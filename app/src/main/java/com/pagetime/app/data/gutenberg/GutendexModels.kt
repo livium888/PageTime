@@ -1,0 +1,15 @@
+package com.pagetime.app.data.gutenberg
+
+data class GutendexBook(
+    val id: Long,
+    val title: String,
+    val authors: List<String>,
+    val downloadCount: Long,
+    val epubUrl: String?,
+    val txtUrl: String?,
+    val htmlUrl: String?,
+    val coverUrl: String?
+) {
+    val authorName: String
+        get() = authors.joinToString(", ").ifBlank { "Unknown author" }
+}

@@ -425,11 +425,11 @@ private fun EpubReader(
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
-                    settings.javaScriptEnabled = false
-                    settings.allowFileAccess = true
-                    settings.allowContentAccess = true
-                    settings.builtInZoomControls = true
-                    settings.displayZoomControls = false
+                    this.settings.javaScriptEnabled = false
+                    this.settings.allowFileAccess = true
+                    this.settings.allowContentAccess = true
+                    this.settings.builtInZoomControls = true
+                    this.settings.displayZoomControls = false
                     setOnScrollChangeListener { _, _, scrollY, _, _ ->
                         onScrolled()
                         val content = contentHeight.takeIf { it > 0 } ?: 1

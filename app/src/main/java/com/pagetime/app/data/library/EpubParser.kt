@@ -6,7 +6,7 @@ import java.io.File
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
-data class EpubChapter(val title: String, val filePath: String)
+data class EpubChapter(val title: String, val filePath: String, val anchor: String? = null)
 
 data class EpubBook(
     val title: String,
@@ -70,20 +70,30 @@ class EpubParser {
                     ncx.documentElement.elementsByLocalName("navPoint").forEach { np ->
                         val label = np.firstByLocalName("navLabel")
                             ?.firstByLocalName("text")?.textContent?.trim()
-                        val src = np.firstByLocalName("content")
-                            ?.getAttribute("src")?.substringBefore('#')
-                        if (!label.isNullOrBlank() && !src.isNullOrBlank()) {
-                            tocLabels[resolve(ncxDir, src)] = label
+                        val rawSrc = np.firstByLocalName("content")
+                            ?.getAttribute("src")
+                        if (!label.isNullOrBlank() && !rawSrc.isNullOrBlank()) {
+                            val srcPath = rawSrc.substringBefore('#')
+                            val anchor = rawSrc.substringAfter('#', "").ifBlank { null }
+                            val resolved = resolve(ncxDir, srcPath)
+                            val key = if (anchor != null) "$resolved#$anchor" else resolved
+                            tocLabels[key] = label
                         }
                     }
                 }
             }
 
-            // 4. Build the reading order (resolved against the OPF directory)
+            // 4. Build the reading order (resolved against the OPF directory).
+            //    Preserve the fragment anchor so single-file EPUBs (where every spine
+            //    item points at the same HTML file with a different #id) can scroll to
+            //    the right section instead of always showing the top of the file.
             val chapters = spine.mapIndexed { index, href ->
-                val path = resolve(opfDir, href.substringBefore('#'))
-                val label = tocLabels[path] ?: "Chapter ${index + 1}"
-                EpubChapter(label, path)
+                val pathPart = href.substringBefore('#')
+                val anchor = href.substringAfter('#', "").ifBlank { null }
+                val path = resolve(opfDir, pathPart)
+                val lookupKey = if (anchor != null) "$path#$anchor" else path
+                val label = tocLabels[lookupKey] ?: tocLabels[path] ?: "Chapter ${index + 1}"
+                EpubChapter(label, path, anchor)
             }
 
             // 5. Extract everything for rendering (chapters, images, stylesheets)

@@ -389,12 +389,20 @@ private fun EpubReader(
     onProgress: (Float) -> Unit
 ) {
     val chapter = chapters[chapterIndex]
-    val chapterFile = remember(chapter, extractRoot) { File(extractRoot, chapter.filePath) }
+    // Key remember blocks on chapterIndex (guaranteed unique per chapter) rather than
+    // on the EpubChapter object or File path, because single-file EPUBs produce
+    // identical filePaths for every chapter.
+    val chapterFile = remember(chapterIndex, extractRoot, chapter.filePath) {
+        File(extractRoot, chapter.filePath)
+    }
     val baseUrl = "file://${chapterFile.parentFile?.absolutePath ?: extractRoot}/"
-    val html = remember(chapterFile, settings, palette) {
+    val html = remember(chapterIndex, chapterFile, settings, palette) {
         buildChapterHtml(chapterFile, settings, palette)
     }
-    val renderKey = "$baseUrl|${settings.fontSizeSp}|${settings.lineHeight}|${settings.fontFamily}|${settings.theme}|${settings.marginDp}"
+    val anchor = chapter.anchor
+    // renderKey MUST include chapterIndex so it always changes when the user navigates,
+    // even for single-file EPUBs where every chapter shares the same filePath/baseUrl.
+    val renderKey = "$chapterIndex|$baseUrl|${chapter.filePath}|${settings.fontSizeSp}|${settings.lineHeight}|${settings.fontFamily}|${settings.theme}|${settings.marginDp}"
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -425,7 +433,9 @@ private fun EpubReader(
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
-                    this.settings.javaScriptEnabled = false
+                    // JavaScript is enabled so anchor-based scrolling works for
+                    // single-file EPUBs (spine items that share one HTML file).
+                    this.settings.javaScriptEnabled = true
                     this.settings.allowFileAccess = true
                     this.settings.allowContentAccess = true
                     this.settings.builtInZoomControls = true
@@ -441,14 +451,37 @@ private fun EpubReader(
             },
             update = { webView ->
                 if (webView.tag != renderKey) {
-                    val sameChapter = (webView.tag as? String)?.substringBefore('|') == baseUrl
-                    val restoreY = if (sameChapter) webView.scrollY else 0
+                    webView.tag = renderKey
+                    // Clear any previously rendered content first so the user doesn't
+                    // see the old chapter (e.g. the cover) lingering while the new
+                    // HTML loads asynchronously.
+                    webView.loadUrl("about:blank")
+                    val targetAnchor = anchor
                     webView.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
-                            if (restoreY > 0) view?.scrollTo(0, restoreY)
+                            view ?: return
+                            // For single-file EPUBs, scroll to the chapter's anchor element.
+                            // For multi-file EPUBs anchor is null and this is a no-op.
+                            if (targetAnchor != null) {
+                                val safeAnchor = targetAnchor
+                                    .replace("\\", "\\\\")
+                                    .replace("'", "\\'")
+                                    .replace("\n", "")
+                                    .replace("\r", "")
+                                val js = """
+                                    (function() {
+                                        var el = document.getElementById('$safeAnchor');
+                                        if (!el) {
+                                            var els = document.getElementsByName('$safeAnchor');
+                                            if (els.length > 0) el = els[0];
+                                        }
+                                        if (el) el.scrollIntoView(true);
+                                    })();
+                                """.trimIndent()
+                                view.evaluateJavascript(js, null)
+                            }
                         }
                     }
-                    webView.tag = renderKey
                     webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
                 }
             },
@@ -477,7 +510,7 @@ private fun buildCss(settings: ReaderSettings, palette: ReaderPalette): String {
     val marginPx = settings.marginDp.toInt()
     return """
         html, body { background-color: ${palette.bgHex} !important; color: ${palette.textHex} !important; }
-        body { font-family: $fontStack !important; font-size: ${fontSizePx}px !important; line-height: ${settings.lineHeight} !important; margin: ${marginPx}px !important; padding: ${marginPx / 2}px !important; }
+        body { font-family: $fontStack !important; font-size: ${fontSizePx}px !important; line-height: ${settings.lineHeight} !important; margin: ${marginPx}px !important; padding: ${marginPx / 2}px !important; overflow: auto !important; }
         p, div, h1, h2, h3, h4, h5, h6, li, blockquote, span, td { color: ${palette.textHex} !important; }
         a { color: #4c8bf5 !important; }
         img { max-width: 100% !important; height: auto !important; }

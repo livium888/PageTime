@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -65,6 +66,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val textContent by vm.textContent.collectAsStateWithLifecycle()
     val sessionSeconds by vm.sessionSeconds.collectAsStateWithLifecycle()
     val balanceSeconds by vm.balanceSeconds.collectAsStateWithLifecycle()
+    val readerError by vm.error.collectAsStateWithLifecycle()
 
     val scrollState = rememberScrollState()
 
@@ -187,7 +189,22 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 }
 
                 else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    if (readerError != null) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Text(
+                                readerError ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = { vm.retry() }) { Text("Retry") }
+                        }
+                    } else {
+                        CircularProgressIndicator()
+                    }
                 }
             }
         }

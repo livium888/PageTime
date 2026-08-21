@@ -107,6 +107,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun clearError() { _error.value = null }
+
     fun download(book: GutendexBook) {
         val id = book.id.toString()
         if (id in _downloading.value) return

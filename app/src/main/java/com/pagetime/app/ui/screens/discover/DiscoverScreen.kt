@@ -28,6 +28,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.rememberSnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -60,6 +63,15 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
 
+    val snackbarHostState = rememberSnackbarHostState()
+    // Show download errors as a snackbar (browse errors are shown inline).
+    LaunchedEffect(error, books.isNotEmpty()) {
+        if (error != null && books.isNotEmpty()) {
+            snackbarHostState.showSnackbar(error!!)
+            viewModel.clearError()
+        }
+    }
+
     val listState = rememberLazyListState()
     val shouldLoadMore by remember {
         derivedStateOf {
@@ -73,7 +85,8 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Discover") }) }
+        topBar = { TopAppBar(title = { Text("Discover") }) },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
             modifier = Modifier

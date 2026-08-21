@@ -41,6 +41,9 @@ class ReaderViewModel(app: Application, private val bookId: String) : AndroidVie
     private val _textContent = MutableStateFlow<String?>(null)
     val textContent = _textContent.asStateFlow()
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error = _error.asStateFlow()
+
     private val _sessionSeconds = MutableStateFlow(0L)
     val sessionSeconds = _sessionSeconds.asStateFlow()
 
@@ -51,21 +54,41 @@ class ReaderViewModel(app: Application, private val bookId: String) : AndroidVie
     private var pendingSeconds = 0L
 
     init {
+        loadBook()
+    }
+
+    fun retry() {
+        _error.value = null
+        _chapters.value = emptyList()
+        _extractRoot.value = null
+        _textContent.value = null
+        loadBook()
+    }
+
+    private fun loadBook() {
         viewModelScope.launch {
             val loaded = if (bookId == "last") repo.getMostRecentBook() else repo.getBook(bookId)
             _book.value = loaded
-            if (loaded == null) return@launch
+            if (loaded == null) {
+                _error.value = "Book not found in library"
+                return@launch
+            }
 
             if (loaded.format == "epub") {
                 withContext(Dispatchers.IO) {
-                    val epub = container.epubParser.parse(
-                        File(loaded.localPath),
-                        File(app.cacheDir, "epub/${loaded.id}")
-                    )
-                    _chapters.value = epub.chapters
-                    _extractRoot.value = File(app.cacheDir, "epub/${loaded.id}").absolutePath
-                    _chapterIndex.value = loaded.currentChapterIndex
-                        .coerceIn(0, (epub.chapters.size - 1).coerceAtLeast(0))
+                    runCatching {
+                        container.epubParser.parse(
+                            File(loaded.localPath),
+                            File(app.cacheDir, "epub/${loaded.id}")
+                        )
+                    }.onSuccess { epub ->
+                        _chapters.value = epub.chapters
+                        _extractRoot.value = File(app.cacheDir, "epub/${loaded.id}").absolutePath
+                        _chapterIndex.value = loaded.currentChapterIndex
+                            .coerceIn(0, (epub.chapters.size - 1).coerceAtLeast(0))
+                    }.onFailure { t ->
+                        _error.value = "Cannot open this EPUB: ${t.message}" ?: "Failed to open book"
+                    }
                 }
             } else {
                 withContext(Dispatchers.IO) {

@@ -41,10 +41,22 @@ class LibraryRepository(
 
             if (g.epubUrl != null) {
                 val file = downloader.download(g.epubUrl, "$id.epub")
-                // Validate it parses and extract now so the reader opens instantly later.
-                epubParser.parse(file, File(context.cacheDir, "epub/$id"))
-                localPath = file.absolutePath
-                format = "epub"
+                // Try EPUB parse; if it fails, fall back to plain text so the book
+                // still lands in the library even when the EPUB is unusual.
+                val parseOk = runCatching { epubParser.parse(file, File(context.cacheDir, "epub/$id")) }.isSuccess
+                if (parseOk) {
+                    localPath = file.absolutePath
+                    format = "epub"
+                } else if (g.txtUrl != null) {
+                    val txtFile = downloader.download(g.txtUrl, "$id.txt")
+                    localPath = txtFile.absolutePath
+                    format = "txt"
+                } else {
+                    // Save the EPUB anyway so the book appears in the library;
+                    // the reader will show an open error if it can't be parsed.
+                    localPath = file.absolutePath
+                    format = "epub"
+                }
             } else if (g.txtUrl != null) {
                 val file = downloader.download(g.txtUrl, "$id.txt")
                 localPath = file.absolutePath

@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class ReaderViewModel(app: Application, private val bookId: String) : AndroidViewModel(app) {
+class ReaderViewModel(private val app: Application, private val bookId: String) : AndroidViewModel(app) {
 
     private val container = (app as PageTimeApp).container
     private val repo = container.libraryRepository

@@ -2,6 +2,7 @@ package com.pagetime.app.data
 
 import android.content.Context
 import com.pagetime.app.data.download.BookDownloader
+import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
@@ -26,7 +27,10 @@ class LibraryRepository(
 
     suspend fun getMostRecentBook(): BookEntity? = bookDao.getMostRecent()
 
-    suspend fun search(query: String): List<GutendexBook> = gutenbergApi.search(query)
+    suspend fun browseGutenberg(page: Int): BookPage = gutenbergApi.browse(page)
+
+    suspend fun searchGutenberg(query: String, page: Int): BookPage =
+        gutenbergApi.search(query, page)
 
     /** Downloads a Gutenberg book (preferring EPUB, falling back to plain text) and imports it. */
     suspend fun downloadBook(g: GutendexBook): Result<BookEntity> = withContext(Dispatchers.IO) {

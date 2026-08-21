@@ -21,7 +21,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
-import com.pagetime.app.ui.screens.search.SearchScreen
+import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
@@ -82,7 +82,7 @@ fun PageTimeAppUi(openReader: Boolean) {
                     onDiscover = { navController.navigate("search") }
                 )
             }
-            composable("search") { SearchScreen() }
+            composable("search") { DiscoverScreen() }
             composable("settings") {
                 SettingsScreen(
                     onManageBlockedApps = { navController.navigate("blocked_apps") },

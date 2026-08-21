@@ -13,3 +13,10 @@ data class GutendexBook(
     val authorName: String
         get() = authors.joinToString(", ").ifBlank { "Unknown author" }
 }
+
+/** A single page of the catalog, used for infinite scrolling. */
+data class BookPage(
+    val books: List<GutendexBook>,
+    val hasNextPage: Boolean,
+    val total: Long
+)

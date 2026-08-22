@@ -78,6 +78,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagetime.app.R
 import com.pagetime.app.data.library.EpubChapter
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
@@ -89,12 +90,15 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
-// Stable keys (unique Int tags) used to remember the press origin between the
-// ACTION_DOWN and ACTION_UP of a tap on the reading surface. These must be stable
-// across recompositions, so they are module-level rather than per-render.
-private val ReaderTapDownX = View.generateViewId()
-private val ReaderTapDownY = View.generateViewId()
-private val ReaderTapDownT = View.generateViewId()
+// Stable keys (resource IDs from res/values/ids.xml) used to remember the press
+// origin between the ACTION_DOWN and ACTION_UP of a tap on the reading surface.
+// These MUST be declared resource ids: View.setTag(int, Object) rejects any other
+// key with "IllegalArgumentException: The key must be an application-specific
+// resource id" — View.generateViewId() values are NOT accepted and crash on the
+// first touch of the reading surface.
+private val ReaderTapDownX = R.id.reader_down_x
+private val ReaderTapDownY = R.id.reader_down_y
+private val ReaderTapDownT = R.id.reader_down_t
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -724,7 +728,9 @@ private fun TocSheet(
                 .heightIn(max = 480.dp)
                 .padding(bottom = 24.dp)
         ) {
-            itemsIndexed(chapters, key = { _, c -> "${c.filePath}#${c.anchor ?: ""}" }) { i, chapter ->
+            // Index-based keys: path+anchor can repeat for single-file EPUBs,
+            // and duplicate LazyColumn keys throw at runtime.
+            itemsIndexed(chapters, key = { i, _ -> i }) { i, chapter ->
                 val selected = i == chapterIndex
                 Row(
                     modifier = Modifier

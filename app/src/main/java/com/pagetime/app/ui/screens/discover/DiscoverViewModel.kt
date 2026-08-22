@@ -123,7 +123,11 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                     .onSuccess { result ->
-                        _books.value = if (reset) result.books else _books.value + result.books
+                        // Dedupe by id: LazyColumn uses id as its item key and throws
+                        // on duplicates, which can happen with hash-based source ids
+                        // or overlapping pages.
+                        val merged = if (reset) result.books else _books.value + result.books
+                        _books.value = merged.distinctBy { it.id }
                         _hasMore.value = result.hasNextPage
                         nextPage = if (result.hasNextPage) page + 1 else null
                     }

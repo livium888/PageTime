@@ -116,8 +116,13 @@ class ReadingGuardTest {
         var p = 0f
         for (i in 1..300) {
             val t = i * S
-            p = (p + 0.02f).coerceAtMost(1f) // 2 %/s → whole book in 50 s
-            guard.onProgress(p, t)
+            // Progress events only fire when the position actually changes
+            // (like a real scroll/locator stream would).
+            val next = (p + 0.02f).coerceAtMost(1f) // 2 %/s → whole book in 50 s
+            if (next != p) {
+                guard.onProgress(next, t)
+                p = next
+            }
             if (guard.onTick(t)) credited++
             sawTooFast = sawTooFast || guard.state.tooFast
         }

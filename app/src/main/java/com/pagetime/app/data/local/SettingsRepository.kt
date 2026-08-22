@@ -43,6 +43,19 @@ class SettingsRepository(private val context: Context) {
         val FONT_FAMILY = stringPreferencesKey("reader_font_family")
         val THEME = stringPreferencesKey("reader_theme")
         val MARGIN = floatPreferencesKey("reader_margin")
+
+        /** Id of the book whose position was saved most recently — drives "continue reading". */
+        val LAST_READ_BOOK = stringPreferencesKey("last_read_book_id")
+    }
+
+    /** The book to resume on re-entry; null until the user has read something. */
+    suspend fun lastReadBookId(): String? {
+        val id = context.dataStore.data.first()[Keys.LAST_READ_BOOK]
+        return id?.takeIf { it.isNotBlank() }
+    }
+
+    suspend fun setLastReadBookId(id: String) {
+        context.dataStore.edit { it[Keys.LAST_READ_BOOK] = id }
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->

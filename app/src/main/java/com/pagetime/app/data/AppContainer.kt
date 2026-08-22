@@ -13,6 +13,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.domain.BalanceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 
 /** Simple manual DI container, owned by the Application. */
@@ -24,8 +25,15 @@ class AppContainer(context: Context) {
      * App-lifetime scope for critical background writes (reading position, earned
      * seconds). ViewModel scopes are cancelled the instant a screen is left, which
      * silently dropped those writes — anything that MUST survive navigation goes here.
+     *
+     * limitedParallelism(1) makes writes SERIAL: position saves are launched from
+     * several places (checkpoint, chapter change, exit) and on a multi-threaded
+     * dispatcher a stale save could land AFTER a newer one and clobber it.
      */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default.limitedParallelism(1)
+    )
 
     val database: AppDatabase =
         Room.databaseBuilder(appContext, AppDatabase::class.java, "pagetime.db").build()
@@ -46,6 +54,7 @@ class AppContainer(context: Context) {
         openLibraryApi = openLibraryApi,
         standardEbooksApi = standardEbooksApi,
         epubParser = epubParser,
+        settingsRepository = settingsRepository,
         context = appContext
     )
 

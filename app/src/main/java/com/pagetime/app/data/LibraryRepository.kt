@@ -10,6 +10,7 @@ import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
+import com.pagetime.app.data.local.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -22,6 +23,7 @@ class LibraryRepository(
     private val openLibraryApi: OpenLibraryApi,
     private val standardEbooksApi: StandardEbooksApi,
     private val epubParser: EpubParser,
+    private val settingsRepository: SettingsRepository,
     private val context: Context
 ) {
 
@@ -29,7 +31,19 @@ class LibraryRepository(
 
     suspend fun getBook(id: String): BookEntity? = bookDao.getById(id)
 
-    suspend fun getMostRecentBook(): BookEntity? = bookDao.getMostRecent()
+    /**
+     * The book to resume: the one last saved with a reading position, falling back
+     * to the newest download. Previously this was "ORDER BY addedAt DESC", i.e. the
+     * most recently DOWNLOADED book — with several test books downloaded, re-entry
+     * kept landing in the wrong book at chapter 1, which looked exactly like
+     * "position not remembered".
+     */
+    suspend fun getMostRecentBook(): BookEntity? {
+        settingsRepository.lastReadBookId()?.let { id ->
+            bookDao.getById(id)?.let { return it }
+        }
+        return bookDao.getMostRecent()
+    }
 
     suspend fun browseGutenberg(page: Int): BookPage = gutenbergApi.browse(page)
 
@@ -103,8 +117,17 @@ class LibraryRepository(
                 coverUrl = g.coverUrl,
                 addedAt = System.currentTimeMillis()
             )
-            bookDao.upsert(book)
-            book
+            // Re-downloading a book must NEVER wipe the reader's position: carry over
+            // any existing progress instead of letting REPLACE insert blank defaults.
+            val existing = bookDao.getById(id)
+            val toSave = if (existing != null) book.copy(
+                addedAt = existing.addedAt,
+                currentChapterIndex = existing.currentChapterIndex,
+                scrollProgress = existing.scrollProgress,
+                totalReadingSeconds = existing.totalReadingSeconds
+            ) else book
+            bookDao.upsert(toSave)
+            toSave
         }
     }
 
@@ -114,8 +137,12 @@ class LibraryRepository(
         runCatching { File(context.cacheDir, "epub/${book.id}").deleteRecursively() }
     }
 
-    suspend fun updateProgress(id: String, chapter: Int, progress: Float) =
+    suspend fun updateProgress(id: String, chapter: Int, progress: Float) {
         bookDao.updateProgress(id, chapter, progress)
+        // Every position save doubles as "this is the book I'm currently reading",
+        // so "continue reading" (reader/last) always resumes the right book.
+        settingsRepository.setLastReadBookId(id)
+    }
 
     suspend fun addReadingSeconds(id: String, seconds: Long) =
         bookDao.addReadingSeconds(id, seconds)

@@ -164,12 +164,21 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         }
     }
 
-    // Restore plain-text scroll position once the text has been laid out.
+    // Restore plain-text scroll position once the text has been laid out. A single
+    // delayed read raced against Compose layout (maxValue is 0 before first layout),
+    // so poll until the scroll range exists, then jump.
     LaunchedEffect(textContent) {
         if (textContent != null && book?.format == "txt") {
-            delay(80)
-            val target = (book?.scrollProgress ?: 0f) * scrollState.maxValue
-            if (target > 0) scrollState.scrollTo(target.toInt())
+            val targetFraction = book?.scrollProgress ?: 0f
+            if (targetFraction <= 0f) return@LaunchedEffect
+            repeat(40) { // up to ~2s
+                val max = scrollState.maxValue
+                if (max > 0) {
+                    scrollState.scrollTo((targetFraction * max).toInt())
+                    return@LaunchedEffect
+                }
+                delay(50)
+            }
         }
     }
 

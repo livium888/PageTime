@@ -66,6 +66,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _epubScrollProgress = MutableStateFlow(0f)
     val epubScrollProgress = _epubScrollProgress.asStateFlow()
 
+    /** Fraction (0..1) of the whole plain-text book the user has scrolled to. */
+    private var txtScrollProgress = 0f
+
     private val _guardState = MutableStateFlow(ReadingGuard.State())
     val guardState = _guardState.asStateFlow()
 
@@ -126,6 +129,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 withContext(Dispatchers.IO) {
                     _textContent.value = runCatching { File(loaded.localPath).readText() }.getOrNull()
                 }
+                // Seed from the DB so an early checkpoint can't overwrite the saved
+                // position with 0 before the user has scrolled anywhere.
+                txtScrollProgress = loaded.scrollProgress.coerceIn(0f, 1f)
             }
         }
     }
@@ -223,14 +229,18 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Persists the plain-text reader's scroll fraction so it survives restarts. */
     fun updateScrollProgress(fraction: Float) {
         val b = _book.value ?: return
-        persistenceScope.launch { repo.updateProgress(b.id, 0, fraction.coerceIn(0f, 1f)) }
+        // Remember it in memory too: saveCurrentPosition() runs on checkpoints and
+        // exit, and must not write 0 over the txt position (it used to do exactly
+        // that because it only ever looked at the EPUB fraction).
+        txtScrollProgress = fraction.coerceIn(0f, 1f)
+        persistenceScope.launch { repo.updateProgress(b.id, 0, txtScrollProgress) }
     }
 
     /** Persists the most recent position to the library so it survives app restarts. */
     private fun saveCurrentPosition() {
         val b = _book.value ?: return
         val chapterIdx = _chapterIndex.value
-        val scroll = _epubScrollProgress.value
+        val scroll = if (b.format == "txt") txtScrollProgress else _epubScrollProgress.value
         // persistenceScope: survives both onCleared()'s scope cancellation and
         // navigation away, so the position is always durably written.
         persistenceScope.launch { repo.updateProgress(b.id, chapterIdx, scroll) }

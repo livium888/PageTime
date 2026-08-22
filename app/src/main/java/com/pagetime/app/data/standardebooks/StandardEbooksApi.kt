@@ -58,7 +58,10 @@ class StandardEbooksApi(
                 try {
                     client.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
-                            return@withContext parseAtom(response.body?.byteStream())
+                            val stream = response.body?.byteStream()
+                            if (stream != null) return@withContext parseAtom(stream)
+                            lastError = RuntimeException("Empty response from Standard Ebooks")
+                            return@use
                         }
                         val code = response.code
                         if (isTransient(code)) {
@@ -166,9 +169,10 @@ class StandardEbooksApi(
         }
         if (epubUrl.isNullOrBlank()) return null
 
-        // Summary for display
+        // Publication year — used as a display hint (Standard Ebooks doesn't
+        // expose download counts; the year gives a sense of the book's era).
         val downloadCount = entry.getElementsByTagNameNS(ATOM_NS, "published")
-            .item(0)?.textContent?.substring(0, 4)?.toIntOrNull() ?: 0L
+            .item(0)?.textContent?.substring(0, 4)?.toIntOrNull()?.toLong() ?: 0L
 
         return GutendexBook(
             id = id,

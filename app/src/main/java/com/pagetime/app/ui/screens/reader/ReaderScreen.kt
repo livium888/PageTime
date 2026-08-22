@@ -90,7 +90,7 @@ import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
-import org.readium.r2.navigator.preferences.FontFamily
+import org.readium.r2.navigator.preferences.FontFamily as ReadiumFontFamily
 import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.InternalReadiumApi
@@ -447,9 +447,9 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
     lineHeight = s.lineHeight.toDouble(),
     pageMargins = s.marginDp / 16.0,
     fontFamily = when (s.fontFamily) {
-        "sans" -> FontFamily.SANS_SERIF
-        "mono" -> FontFamily.MONOSPACE
-        else -> FontFamily.SERIF
+        "sans" -> ReadiumFontFamily.SANS_SERIF
+        "mono" -> ReadiumFontFamily.MONOSPACE
+        else -> ReadiumFontFamily.SERIF
     },
     theme = when (s.theme) {
         "dark", "night" -> Theme.DARK

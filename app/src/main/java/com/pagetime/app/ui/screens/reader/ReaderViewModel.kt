@@ -135,7 +135,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // host is created the moment `_publication` flips non-null and must have the
         // locator at that instant to restore the exact reading spot.
         val savedLocatorJson = settingsRepository.savedLocator(book.id)
-        val opened = runCatching {
+        // try/catch instead of runCatching: retrieve/open are suspend functions and
+        // runCatching's lambda is not a suspend context.
+        val publication = try {
             val asset = readium.assetRetriever.retrieve(
                 File(book.localPath),
                 MediaType.EPUB
@@ -144,10 +146,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 asset,
                 allowUserInteraction = false
             ).getOrThrow()
-        }
-        val publication = opened.getOrNull()
-        if (publication == null) {
-            _error.value = "Cannot open this EPUB: ${opened.exceptionOrNull()?.message}"
+        } catch (t: Throwable) {
+            _error.value = "Cannot open this EPUB: ${t.message}"
             return
         }
         _initialLocatorJson.value = savedLocatorJson

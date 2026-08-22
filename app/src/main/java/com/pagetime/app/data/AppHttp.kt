@@ -18,8 +18,9 @@ import java.util.concurrent.TimeUnit
  */
 object AppHttp {
 
-    private val ipv4FirstDns = Dns { host ->
-        InetAddress.getAllByName(host).sortedByDescending { it is Inet4Address }
+    private val ipv4FirstDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> =
+            InetAddress.getAllByName(hostname).sortedByDescending { it is Inet4Address }
     }
 
     /**

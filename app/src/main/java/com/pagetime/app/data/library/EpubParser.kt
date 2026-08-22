@@ -42,25 +42,42 @@ class EpubParser {
                 .ifBlank { epubFile.nameWithoutExtension }
             val author = metadata?.firstByLocalName("creator")?.textContent?.trim().orEmpty()
 
-            val manifest = mutableMapOf<String, String>()
+            // Store both href and EPUB3 properties (e.g. "nav", "cover-image")
+            // so we can filter out non-content spine items.
+            data class ManifestEntry(val href: String, val properties: String)
+            val manifest = mutableMapOf<String, ManifestEntry>()
             opf.documentElement.firstByLocalName("manifest")
                 ?.elementsByLocalName("item")
                 ?.forEach { item ->
                     val id = item.getAttribute("id")
                     val href = item.getAttribute("href")
-                    if (id.isNotBlank() && href.isNotBlank()) manifest[id] = href
+                    if (id.isNotBlank() && href.isNotBlank()) {
+                        manifest[id] = ManifestEntry(
+                            href = href,
+                            properties = item.getAttribute("properties")
+                        )
+                    }
                 }
 
             val spineElement = opf.documentElement.firstByLocalName("spine")
             val spine = spineElement
                 ?.elementsByLocalName("itemref")
-                ?.mapNotNull { manifest[it.getAttribute("idref")] }
+                ?.mapNotNull { ref ->
+                    val entry = manifest[ref.getAttribute("idref")] ?: return@mapNotNull null
+                    // EPUB3: skip navigation and cover-image items — they aren't
+                    // reading content and showing them blanks the reader.
+                    val props = entry.properties
+                    if (props.contains("nav") || props.contains("cover-image")) {
+                        return@mapNotNull null
+                    }
+                    entry.href
+                }
                 ?: emptyList()
             if (spine.isEmpty()) error("EPUB has no spine")
 
             // 3. Optional chapter labels from the NCX table of contents
             val tocLabels = mutableMapOf<String, String>()
-            val ncxHref = spineElement?.getAttribute("toc")?.let { manifest[it] }
+            val ncxHref = spineElement?.getAttribute("toc")?.let { manifest[it]?.href }
             if (ncxHref != null) {
                 val ncxPath = resolve(opfDir, ncxHref)
                 val ncxEntry = zip.getEntry(ncxPath) ?: zip.getEntry(ncxHref)

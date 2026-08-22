@@ -1,7 +1,6 @@
 package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
-import android.content.Context
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebView
@@ -100,32 +99,7 @@ import kotlin.math.abs
 private val ReaderTapDownX = R.id.reader_down_x
 private val ReaderTapDownY = R.id.reader_down_y
 private val ReaderTapDownT = R.id.reader_down_t
-
-/**
- * WebView that detects when the user scrolls past the bottom of a chapter.
- *
- * Scroll events stop firing once the page is fully scrolled down, so the only
- * reliable "user wants to keep reading past the end" signal is an overscroll:
- * Android clamps the scroll and calls [onOverScrolled] with clampedY=true.
- * [autoAdvanceArmed] is set ~700ms after each chapter finishes loading so the
- * position-restore scroll (which can land at the bottom for end-of-chapter
- * saves) never triggers a spurious advance.
- */
-private class ReaderWebView(context: Context) : WebView(context) {
-    var onOverscrollEnd: (() -> Unit)? = null
-    var autoAdvanceArmed = false
-
-    override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) {
-        super.onOverScrolled(scrollX, scrollY, clampedX, clampedY)
-        if (!autoAdvanceArmed || !clampedY) return
-        val maxScroll = (contentHeight - height).coerceAtLeast(0)
-        // At the bottom (or on chapters shorter than the screen, where maxScroll==0).
-        if (scrollY >= maxScroll - 8) {
-            autoAdvanceArmed = false
-            onOverscrollEnd?.invoke()
-        }
-    }
-}
+private val ReaderAutoAdvanceArmed = R.id.reader_auto_advance_armed
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -544,7 +518,7 @@ private fun EpubReader(
 
     AndroidView(
         factory = { ctx ->
-            ReaderWebView(ctx).apply {
+            WebView(ctx).apply {
                 // JavaScript is enabled so anchor-based scrolling and fractional
                 // position restore work for EPUB chapters.
                 this.settings.javaScriptEnabled = true
@@ -576,6 +550,24 @@ private fun EpubReader(
                                 event.x > view.width * 2f / 3f -> onNext()
                                 else -> onToggleControls()
                             }
+                            return@setOnTouchListener false
+                        }
+                        // --- Auto-advance at end of chapter: a deliberate upward
+                        // swipe while already scrolled to the bottom loads the next
+                        // chapter. Touch events are used instead of overscroll
+                        // callbacks because WebView's scrolling is driven by
+                        // Chromium and onOverScrolled is not reliably called.
+                        // Works on chapters shorter than one screen too, where
+                        // maxScroll == 0 and scrollY == 0.
+                        val swipedUp = dy < -60f && dt < 800L
+                        val armed = webView.getTag(ReaderAutoAdvanceArmed) as? Boolean == true
+                        if (swipedUp && armed) {
+                            val maxScroll =
+                                (webView.contentHeight - webView.height).coerceAtLeast(0)
+                            if (webView.scrollY >= maxScroll - 8) {
+                                webView.setTag(ReaderAutoAdvanceArmed, false)
+                                onNext()
+                            }
                         }
                     }
                 }
@@ -595,9 +587,6 @@ private fun EpubReader(
                 onScrollProgressChanged(fraction)
             }
 
-            // --- Auto-advance: reaching the end of a chapter flows into the next one.
-            webView.onOverscrollEnd = onNext
-
             // --- Load content, but ONLY when the chapter/settings actually changed so
             // we don't reset scroll position on every recomposition.
             if (webView.tag != renderKey) {
@@ -608,57 +597,76 @@ private fun EpubReader(
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         view ?: return
-                        // Restore with retries: a single early attempt runs before the
-                        // chapter finishes laying out (scrollHeight is still tiny), so
-                        // the position landed at ~0. Each retry is a no-op once the
-                        // user has scrolled (scrollY !== 0), so it never fights them.
-                        fun restoreAttempt(attempt: Int) {
-                            view.postDelayed({
-                                if (targetAnchor != null) {
-                                    // Single-file EPUB: scroll to this chapter's anchor element.
-                                    val safeAnchor = targetAnchor
-                                        .replace("\\", "\\\\")
-                                        .replace("'", "\\'")
-                                        .replace("\n", "")
-                                        .replace("\r", "")
-                                    val js = """
-                                        (function() {
-                                            if (window.scrollY !== 0) return;
-                                            var el = document.getElementById('$safeAnchor');
-                                            if (!el) {
-                                                var els = document.getElementsByName('$safeAnchor');
-                                                if (els.length > 0) el = els[0];
+                        if (url == "about:blank") return
+                        //
+                        // Position restore, done the way reader apps actually do it:
+                        // chapter layout is NOT stable when onPageFinished fires
+                        // (fonts/images still load, scrollHeight keeps growing), so a
+                        // single scrollTo lands at the wrong spot. Instead, a JS loop
+                        // re-applies the target for ~4.5s until layout settles, and
+                        // backs off permanently the moment the user scrolls somewhere
+                        // other than where we put them (>40px from our last apply).
+                        //
+                        if (targetAnchor != null) {
+                            // Single-file EPUB: scroll to this chapter's anchor element.
+                            val safeAnchor = targetAnchor
+                                .replace("\\", "\\\\")
+                                .replace("'", "\\'")
+                                .replace("\n", "")
+                                .replace("\r", "")
+                            val js = """
+                                (function() {
+                                    var n = 0;
+                                    var id = setInterval(function() {
+                                        var el = document.getElementById('$safeAnchor');
+                                        if (!el) {
+                                            var els = document.getElementsByName('$safeAnchor');
+                                            if (els.length > 0) el = els[0];
+                                        }
+                                        if (el) {
+                                            if (window.__ptLast != null &&
+                                                Math.abs(window.scrollY - window.__ptLast) > 40) {
+                                                clearInterval(id); return;
                                             }
-                                            if (el) el.scrollIntoView(true);
-                                        })();
-                                    """.trimIndent()
-                                    view.evaluateJavascript(js, null)
-                                } else if (restoreFraction > 0f) {
-                                    // Multi-file EPUB restore: jump to the saved fraction.
-                                    val js = """
-                                        (function() {
-                                            if (window.scrollY !== 0) return;
-                                            var doc = document.documentElement;
-                                            var max = doc.scrollHeight - window.innerHeight;
-                                            if (max < 0) max = 0;
-                                            var pos = Math.round(max * $restoreFraction);
-                                            if (pos > 0) window.scrollTo(0, pos);
-                                        })();
-                                    """.trimIndent()
-                                    view.evaluateJavascript(js, null)
-                                }
-                                if (attempt < 2) restoreAttempt(attempt + 1)
-                            }, if (attempt == 0) 120L else 450L)
+                                            el.scrollIntoView(true);
+                                            window.__ptLast = window.scrollY;
+                                        }
+                                        if (++n >= 30) clearInterval(id);
+                                    }, 150);
+                                })();
+                            """.trimIndent()
+                            view.evaluateJavascript(js, null)
+                        } else if (restoreFraction > 0f) {
+                            // Multi-file EPUB: jump to the saved fraction of the chapter.
+                            val js = """
+                                (function() {
+                                    var target = $restoreFraction;
+                                    var n = 0;
+                                    var id = setInterval(function() {
+                                        if (window.__ptLast != null &&
+                                            Math.abs(window.scrollY - window.__ptLast) > 40) {
+                                            clearInterval(id); return;
+                                        }
+                                        var max = document.documentElement.scrollHeight - window.innerHeight;
+                                        if (max < 0) max = 0;
+                                        var pos = Math.round(max * target);
+                                        if (pos > 0) {
+                                            window.scrollTo(0, pos);
+                                            window.__ptLast = pos;
+                                        }
+                                        if (++n >= 30) clearInterval(id);
+                                    }, 150);
+                                })();
+                            """.trimIndent()
+                            view.evaluateJavascript(js, null)
                         }
-                        restoreAttempt(0)
 
-                        // Arm auto-advance only after the page settles, so the restore
-                        // scroll itself can never trigger a spurious next-chapter jump.
-                        (view as? ReaderWebView)?.let { rw ->
-                            rw.autoAdvanceArmed = false
-                            rw.postDelayed({ rw.autoAdvanceArmed = true }, 700)
-                        }
-                    }
+                        // Arm auto-advance only after the page settles: the position-
+                        // restore scroll itself must never count as "reached the end".
+                        // (Restore generates no touch events anyway — this is belt and
+                        // braces for restores that land at the very bottom.)
+                        view.setTag(ReaderAutoAdvanceArmed, false)
+                        view.postDelayed({ view.setTag(ReaderAutoAdvanceArmed, true) }, 500)
                 }
                 webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
             }

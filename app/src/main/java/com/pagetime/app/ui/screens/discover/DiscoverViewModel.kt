@@ -15,6 +15,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** Catalog sources available from the Discover screen. */
+enum class BookSource {
+    GUTENBERG,
+    OPEN_LIBRARY
+}
+
 class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private val container = (app as PageTimeApp).container
@@ -22,6 +28,9 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _books = MutableStateFlow<List<GutendexBook>>(emptyList())
     val books = _books.asStateFlow()
+
+    private val _source = MutableStateFlow(BookSource.GUTENBERG)
+    val source = _source.asStateFlow()
 
     private val _query = MutableStateFlow("")
     val query = _query.asStateFlow()
@@ -50,6 +59,13 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     private var queryJob: Job? = null
 
     init {
+        reload()
+    }
+
+    fun onSourceChange(value: BookSource) {
+        if (value == _source.value) return
+        _source.value = value
+        _books.value = emptyList()
         reload()
     }
 
@@ -88,8 +104,13 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             }
             try {
                 val q = _query.value.trim()
+                val src = _source.value
                 runCatching {
-                    if (q.isBlank()) repo.browseGutenberg(page) else repo.searchGutenberg(q, page)
+                    if (src == BookSource.GUTENBERG) {
+                        if (q.isBlank()) repo.browseGutenberg(page) else repo.searchGutenberg(q, page)
+                    } else {
+                        if (q.isBlank()) repo.browseOpenLibrary(page) else repo.searchOpenLibrary(q, page)
+                    }
                 }
                     .onSuccess { result ->
                         _books.value = if (reset) result.books else _books.value + result.books

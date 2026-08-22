@@ -6,6 +6,7 @@ import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
+import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.domain.BalanceManager
@@ -27,12 +28,14 @@ class AppContainer(context: Context) {
 
     val settingsRepository = SettingsRepository(appContext)
     val gutenbergApi = GutenbergApi()
+    val openLibraryApi = OpenLibraryApi()
     val epubParser = EpubParser()
 
     val libraryRepository = LibraryRepository(
         bookDao = bookDao,
         downloader = BookDownloader(appContext),
         gutenbergApi = gutenbergApi,
+        openLibraryApi = openLibraryApi,
         epubParser = epubParser,
         context = appContext
     )

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -31,6 +32,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.remember
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -50,11 +53,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pagetime.app.data.gutenberg.GutendexBook
+import com.pagetime.app.ui.screens.discover.BookSource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val books by viewModel.books.collectAsStateWithLifecycle()
+    val source by viewModel.source.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
@@ -80,7 +85,9 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
             lastVisible >= info.totalItemsCount - 6
         }
     }
-    LaunchedEffect(shouldLoadMore) {
+    // Scroll back to the top whenever the source changes.
+    LaunchedEffect(source) { listState.scrollToItem(0) }
+    LaunchedEffect(shouldLoadMore, source) {
         if (shouldLoadMore) viewModel.loadMore()
     }
 
@@ -99,9 +106,42 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                placeholder = { Text("Search Project Gutenberg…") },
+                placeholder = {
+                    Text(
+                        when (source) {
+                            BookSource.GUTENBERG -> "Search Project Gutenberg…"
+                            BookSource.OPEN_LIBRARY -> "Search Open Library…"
+                        }
+                    )
+                },
                 singleLine = true
             )
+            // Source selector
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                BookSource.entries.forEach { s ->
+                    FilterChip(
+                        selected = source == s,
+                        onClick = { viewModel.onSourceChange(s) },
+                        label = {
+                            Text(
+                                when (s) {
+                                    BookSource.GUTENBERG -> "Gutenberg"
+                                    BookSource.OPEN_LIBRARY -> "Open Library"
+                                }
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
+            }
 
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

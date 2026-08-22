@@ -8,7 +8,8 @@ data class GutendexBook(
     val epubUrl: String?,
     val txtUrl: String?,
     val htmlUrl: String?,
-    val coverUrl: String?
+    val coverUrl: String?,
+    val source: String = "gutenberg"
 ) {
     val authorName: String
         get() = authors.joinToString(", ").ifBlank { "Unknown author" }

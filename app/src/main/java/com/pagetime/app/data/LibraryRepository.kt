@@ -6,6 +6,7 @@ import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
+import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,7 @@ class LibraryRepository(
     private val bookDao: BookDao,
     private val downloader: BookDownloader,
     private val gutenbergApi: GutenbergApi,
+    private val openLibraryApi: OpenLibraryApi,
     private val epubParser: EpubParser,
     private val context: Context
 ) {
@@ -31,6 +33,11 @@ class LibraryRepository(
 
     suspend fun searchGutenberg(query: String, page: Int): BookPage =
         gutenbergApi.search(query, page)
+
+    suspend fun browseOpenLibrary(page: Int): BookPage = openLibraryApi.browse(page = page)
+
+    suspend fun searchOpenLibrary(query: String, page: Int): BookPage =
+        openLibraryApi.search(query, page)
 
     /** Downloads a Gutenberg book (preferring EPUB, falling back to plain text) and imports it. */
     suspend fun downloadBook(g: GutendexBook): Result<BookEntity> = withContext(Dispatchers.IO) {

@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
+import com.pagetime.app.data.ReadiumEngine
 import com.pagetime.app.data.library.EpubParser
 import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.standardebooks.StandardEbooksApi
@@ -42,6 +43,7 @@ class AppContainer(context: Context) {
     private val blockedAppDao = database.blockedAppDao()
 
     val settingsRepository = SettingsRepository(appContext)
+    val readiumEngine = ReadiumEngine(appContext)
     val gutenbergApi = GutenbergApi()
     val openLibraryApi = OpenLibraryApi()
     val standardEbooksApi = StandardEbooksApi()

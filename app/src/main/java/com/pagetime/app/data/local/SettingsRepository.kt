@@ -58,6 +58,19 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.LAST_READ_BOOK] = id }
     }
 
+    /** Exact reading position of a book as a Readium Locator JSON string. */
+    suspend fun savedLocator(bookId: String): String? {
+        val json = context.dataStore.data.first()[locatorKey(bookId)]
+        return json?.takeIf { it.isNotBlank() }
+    }
+
+    suspend fun saveLocator(bookId: String, json: String) {
+        context.dataStore.edit { it[locatorKey(bookId)] = json }
+    }
+
+    private fun locatorKey(bookId: String) =
+        stringPreferencesKey("locator_$bookId")
+
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
         Settings(
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,

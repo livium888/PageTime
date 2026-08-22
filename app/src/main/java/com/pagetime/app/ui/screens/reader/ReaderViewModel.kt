@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
-import com.pagetime.app.data.library.EpubChapter
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +18,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.indexOfFirstWithHref
+import org.readium.r2.shared.util.mediatype.MediaType
 import java.io.File
 
 class ReaderViewModel(private val app: Application, private val bookId: String) : AndroidViewModel(app) {
@@ -27,6 +29,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val repo = container.libraryRepository
     private val balanceManager = container.balanceManager
     private val settingsRepository = container.settingsRepository
+    private val readium = container.readiumEngine
 
     // App-lifetime scope for persistence writes. viewModelScope is cancelled the
     // moment this screen is left — launching the "save position" write there meant
@@ -37,15 +40,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private val _book = MutableStateFlow<BookEntity?>(null)
     val book = _book.asStateFlow()
-
-    private val _chapters = MutableStateFlow<List<EpubChapter>>(emptyList())
-    val chapters = _chapters.asStateFlow()
-
-    private val _extractRoot = MutableStateFlow<String?>(null)
-    val extractRoot = _extractRoot.asStateFlow()
-
-    private val _chapterIndex = MutableStateFlow(0)
-    val chapterIndex = _chapterIndex.asStateFlow()
 
     private val _textContent = MutableStateFlow<String?>(null)
     val textContent = _textContent.asStateFlow()
@@ -62,15 +56,20 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _progress = MutableStateFlow(0f)
     val progress = _progress.asStateFlow()
 
-    /** Fraction (0..1) of the current EPUB chapter the user has scrolled to. */
-    private val _epubScrollProgress = MutableStateFlow(0f)
-    val epubScrollProgress = _epubScrollProgress.asStateFlow()
-
-    /** Fraction (0..1) of the whole plain-text book the user has scrolled to. */
-    private var txtScrollProgress = 0f
-
     private val _guardState = MutableStateFlow(ReadingGuard.State())
     val guardState = _guardState.asStateFlow()
+
+    /** The parsed Readium publication for EPUB books; null while loading / for txt. */
+    private val _publication = MutableStateFlow<Publication?>(null)
+    val publication = _publication.asStateFlow()
+
+    /**
+     * Saved reading position as a Readium Locator JSON string, restored by the
+     * navigator on creation. This is an exact position (resource + offset), not an
+     * approximate scroll fraction — the whole point of moving to Readium.
+     */
+    private val _initialLocatorJson = MutableStateFlow<String?>(null)
+    val initialLocatorJson = _initialLocatorJson.asStateFlow()
 
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
@@ -82,15 +81,21 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private var pendingSeconds = 0L
     private var resumed = false
 
+    /** Latest position reported by the navigator (EPUB only). */
+    @Volatile
+    private var latestLocator: org.readium.r2.shared.publication.Locator? = null
+
+    private var locatorSaveJob: Job? = null
+
     init {
         loadBook()
     }
 
     fun retry() {
         _error.value = null
-        _chapters.value = emptyList()
-        _extractRoot.value = null
         _textContent.value = null
+        _publication.value = null
+        _initialLocatorJson.value = null
         loadBook()
     }
 
@@ -108,32 +113,45 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
             if (loaded.format == "epub") {
                 withContext(Dispatchers.IO) {
-                    runCatching {
-                        container.epubParser.parse(
-                            File(loaded.localPath),
-                            File(app.cacheDir, "epub/${loaded.id}")
-                        )
-                    }.onSuccess { epub ->
-                        _chapters.value = epub.chapters
-                        _extractRoot.value = File(app.cacheDir, "epub/${loaded.id}").absolutePath
-                        _chapterIndex.value = loaded.currentChapterIndex
-                            .coerceIn(0, (epub.chapters.size - 1).coerceAtLeast(0))
-                        // Restore the scroll position saved for the current chapter so the
-                        // reader resumes exactly where the user left off, not at the top.
-                        _epubScrollProgress.value = loaded.scrollProgress.coerceIn(0f, 1f)
-                    }.onFailure { t ->
-                        _error.value = "Cannot open this EPUB: ${t.message}"
-                    }
+                    openEpub(loaded)
                 }
             } else {
                 withContext(Dispatchers.IO) {
                     _textContent.value = runCatching { File(loaded.localPath).readText() }.getOrNull()
+                        ?: run {
+                            _error.value = "Cannot read this book's file."
+                            null
+                        }
                 }
                 // Seed from the DB so an early checkpoint can't overwrite the saved
                 // position with 0 before the user has scrolled anywhere.
-                txtScrollProgress = loaded.scrollProgress.coerceIn(0f, 1f)
+                latestTxtFraction = loaded.scrollProgress.coerceIn(0f, 1f)
             }
         }
+    }
+
+    private suspend fun openEpub(book: BookEntity) {
+        // Read the saved position BEFORE publishing the publication: the navigator
+        // host is created the moment `_publication` flips non-null and must have the
+        // locator at that instant to restore the exact reading spot.
+        val savedLocatorJson = settingsRepository.savedLocator(book.id)
+        val opened = runCatching {
+            val asset = readium.assetRetriever.retrieve(
+                File(book.localPath),
+                MediaType.EPUB
+            ).getOrThrow()
+            readium.publicationOpener.open(
+                asset,
+                allowUserInteraction = false
+            ).getOrThrow()
+        }
+        val publication = opened.getOrNull()
+        if (publication == null) {
+            _error.value = "Cannot open this EPUB: ${opened.exceptionOrNull()?.message}"
+            return
+        }
+        _initialLocatorJson.value = savedLocatorJson
+        _publication.value = publication
     }
 
     fun startReading() {
@@ -145,7 +163,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         resumed = false
         tickerJob?.cancel()
         tickerJob = null
-        saveCurrentPosition()
+        persistPositionNow()
         flush()
     }
 
@@ -173,7 +191,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     flush()
                     // Periodic position checkpoint: if the OS kills the process,
                     // we lose at most ~5s of reading progress instead of all of it.
-                    saveCurrentPosition()
+                    persistPositionNow()
                 }
             }
         }
@@ -208,42 +226,70 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _guardState.value = guard.state
     }
 
-    fun goToChapter(index: Int) {
-        val size = _chapters.value.size
-        if (size == 0) return
-        val target = index.coerceIn(0, size - 1)
-        if (target == _chapterIndex.value) return
-        // Persist the position we're leaving so re-opening (or paging back) lands
-        // exactly where the reader stopped, not at the top of the chapter.
-        saveCurrentPosition()
-        _epubScrollProgress.value = 0f
-        _chapterIndex.value = target
-        onProgressChanged(if (size > 1) target.toFloat() / (size - 1) else 0f)
-    }
+    /** Plain-text reader's current scroll fraction (0..1 of the whole book). */
+    @Volatile
+    private var latestTxtFraction: Float = 0f
 
-    /** Called continuously by the EPUB WebView while the user scrolls within a chapter. */
-    fun saveEpubScrollProgress(progress: Float) {
-        _epubScrollProgress.value = progress.coerceIn(0f, 1f)
-    }
-
-    /** Persists the plain-text reader's scroll fraction so it survives restarts. */
+    /** Called continuously by the plain-text reader while the user scrolls. */
     fun updateScrollProgress(fraction: Float) {
         val b = _book.value ?: return
-        // Remember it in memory too: saveCurrentPosition() runs on checkpoints and
-        // exit, and must not write 0 over the txt position (it used to do exactly
-        // that because it only ever looked at the EPUB fraction).
-        txtScrollProgress = fraction.coerceIn(0f, 1f)
-        persistenceScope.launch { repo.updateProgress(b.id, 0, txtScrollProgress) }
+        latestTxtFraction = fraction.coerceIn(0f, 1f)
+        persistenceScope.launch { repo.updateProgress(b.id, 0, latestTxtFraction) }
     }
 
-    /** Persists the most recent position to the library so it survives app restarts. */
-    private fun saveCurrentPosition() {
+    /**
+     * Called by the Readium navigator whenever the visible position changes.
+     * Persists the exact locator (debounced) so re-opening resumes the precise spot,
+     * and derives overall book progress for the HUD.
+     */
+    fun onLocatorChanged(locator: org.readium.r2.shared.publication.Locator) {
+        latestLocator = locator
+        onUserScrolled()
+
+        val publication = _publication.value ?: return
+        val index = publication.readingOrder.indexOfFirstWithHref(locator.href)
+        val fraction = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f)
+        val size = publication.readingOrder.size
+        if (index != null && size > 0) {
+            _progress.value = ((index + fraction) / size).coerceIn(0f, 1f)
+        }
+
+        // Debounce: coalesce bursts of locator updates into one write.
+        if (locatorSaveJob?.isActive != true) {
+            locatorSaveJob = persistenceScope.launch {
+                delay(500)
+                saveLocator()
+            }
+        }
+    }
+
+    private suspend fun saveLocator() {
         val b = _book.value ?: return
-        val chapterIdx = _chapterIndex.value
-        val scroll = if (b.format == "txt") txtScrollProgress else _epubScrollProgress.value
-        // persistenceScope: survives both onCleared()'s scope cancellation and
-        // navigation away, so the position is always durably written.
-        persistenceScope.launch { repo.updateProgress(b.id, chapterIdx, scroll) }
+        val locator = latestLocator ?: return
+        settingsRepository.saveLocator(b.id, locator.toJSON().toString())
+
+        // Keep the legacy DB progress roughly in sync (library UI shows it).
+        val publication = _publication.value ?: return
+        val index = publication.readingOrder.indexOfFirstWithHref(locator.href) ?: 0
+        val frac = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f)
+        val size = publication.readingOrder.size
+        val overall = if (size > 0) ((index + frac) / size).toFloat().coerceIn(0f, 1f) else 0f
+        repo.updateProgress(b.id, index, overall)
+    }
+
+    /** Persists the most recent position immediately (exit, background, checkpoint). */
+    private fun persistPositionNow() {
+        val b = _book.value ?: return
+        when (b.format) {
+            "epub" -> {
+                val locator = latestLocator ?: return
+                persistenceScope.launch { saveLocator() }
+            }
+            else -> {
+                val fraction = latestTxtFraction
+                persistenceScope.launch { repo.updateProgress(b.id, 0, fraction) }
+            }
+        }
     }
 
     fun setFontSize(v: Float) = viewModelScope.launch { settingsRepository.setFontSize(v) }

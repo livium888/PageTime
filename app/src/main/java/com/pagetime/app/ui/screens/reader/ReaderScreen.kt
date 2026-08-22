@@ -1,10 +1,8 @@
 package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
-import android.view.MotionEvent
-import android.view.View
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.os.Bundle
+import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -58,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -74,32 +73,38 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.fragment.app.FragmentActivity
+import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
-import com.pagetime.app.data.library.EpubChapter
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
 import kotlinx.coroutines.delay
-import java.io.File
+import org.json.JSONObject
+import org.readium.r2.navigator.epub.EpubNavigatorFactory
+import org.readium.r2.navigator.epub.EpubNavigatorFragment
+import org.readium.r2.navigator.epub.EpubPreferences
+import org.readium.r2.navigator.input.InputListener
+import org.readium.r2.navigator.input.TapEvent
+import org.readium.r2.navigator.preferences.FontFamily
+import org.readium.r2.navigator.preferences.Theme
+import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.InternalReadiumApi
+import org.readium.r2.shared.publication.Link
+import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.indexOfFirstWithHref
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 
-// Stable keys (resource IDs from res/values/ids.xml) used to remember the press
-// origin between the ACTION_DOWN and ACTION_UP of a tap on the reading surface.
-// These MUST be declared resource ids: View.setTag(int, Object) rejects any other
-// key with "IllegalArgumentException: The key must be an application-specific
-// resource id" — View.generateViewId() values are NOT accepted and crash on the
-// first touch of the reading surface.
-private val ReaderTapDownX = R.id.reader_down_x
-private val ReaderTapDownY = R.id.reader_down_y
-private val ReaderTapDownT = R.id.reader_down_t
-private val ReaderAutoAdvanceArmed = R.id.reader_auto_advance_armed
+private const val NAVIGATOR_TAG = "readium_navigator"
+
+private enum class TapZone { PREV, CENTER, NEXT }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,9 +114,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val vm: ReaderViewModel = viewModel(factory = ReaderViewModelFactory(app, bookId))
 
     val book by vm.book.collectAsStateWithLifecycle()
-    val chapters by vm.chapters.collectAsStateWithLifecycle()
-    val chapterIndex by vm.chapterIndex.collectAsStateWithLifecycle()
-    val extractRoot by vm.extractRoot.collectAsStateWithLifecycle()
     val textContent by vm.textContent.collectAsStateWithLifecycle()
     val sessionSeconds by vm.sessionSeconds.collectAsStateWithLifecycle()
     val creditedSeconds by vm.creditedSeconds.collectAsStateWithLifecycle()
@@ -120,7 +122,8 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val guardState by vm.guardState.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     val settings by vm.readerSettings.collectAsStateWithLifecycle()
-    val epubScrollProgress by vm.epubScrollProgress.collectAsStateWithLifecycle()
+    val publication by vm.publication.collectAsStateWithLifecycle()
+    val initialLocatorJson by vm.initialLocatorJson.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
     val scrollState = rememberScrollState()
@@ -128,6 +131,12 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
+    var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
+    var chapterLabel by remember { mutableStateOf<String?>(null) }
+
+    val tocEntries = remember(publication) {
+        publication?.tableOfContents?.takeIf { it.isNotEmpty() }?.let { flattenToc(it) }
+    }
 
     // Auto-hide the top controls after a short idle so reading becomes immersive.
     LaunchedEffect(controlsVisible) {
@@ -182,7 +191,8 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         }
     }
 
-    // Feed the anti-cheat guard with plain-text scroll movement + progress.
+    // Feed the anti-cheat guard with plain-text scroll movement + progress, and
+    // persist the scroll position so txt books resume in the same spot too.
     LaunchedEffect(textContent) {
         if (textContent == null) return@LaunchedEffect
         snapshotFlow { scrollState.value to scrollState.maxValue }
@@ -190,6 +200,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 vm.onUserScrolled()
                 val fraction = if (max > 0) value.toFloat() / max else 0f
                 vm.onProgressChanged(fraction)
+                vm.updateScrollProgress(fraction)
             }
     }
 
@@ -207,7 +218,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             ) {
                 ReaderTopBar(
                     title = book?.title ?: "Reading",
-                    hasChapters = chapters.isNotEmpty(),
+                    hasChapters = tocEntries != null,
                     balanceSeconds = balanceSeconds,
                     palette = palette,
                     onBack = onBack,
@@ -231,19 +242,29 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                         color = palette.text
                     )
 
-                    book?.format == "epub" && chapters.isNotEmpty() && extractRoot != null -> EpubReader(
-                        chapters = chapters,
-                        chapterIndex = chapterIndex,
-                        extractRoot = extractRoot!!,
+                    publication != null -> ReadiumNavigatorHost(
+                        publication = publication!!,
+                        initialLocatorJson = initialLocatorJson,
                         settings = settings,
-                        palette = palette,
-                        scrollProgress = epubScrollProgress,
-                        onPrev = { vm.goToChapter(vm.chapterIndex.value - 1) },
-                        onNext = { vm.goToChapter(vm.chapterIndex.value + 1) },
-                        onScrolled = { vm.onUserScrolled() },
-                        onProgress = { vm.onProgressChanged(it) },
-                        onScrollProgressChanged = { vm.saveEpubScrollProgress(it) },
-                        onToggleControls = { controlsVisible = !controlsVisible }
+                        onLocatorChanged = { locator ->
+                            vm.onLocatorChanged(locator)
+                            publication?.let { pub ->
+                                val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
+                                val size = pub.readingOrder.size
+                                if (idx != null && size > 0) {
+                                    chapterLabel = "${idx + 1} of $size"
+                                }
+                            }
+                        },
+                        onTapZone = { zone ->
+                            val nav = navigator
+                            when (zone) {
+                                TapZone.PREV -> nav?.goBackward()
+                                TapZone.NEXT -> nav?.goForward()
+                                TapZone.CENTER -> controlsVisible = !controlsVisible
+                            }
+                        },
+                        onNavigatorChanged = { navigator = it }
                     )
 
                     book?.format == "txt" && textContent != null -> Column(
@@ -286,8 +307,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 creditedSeconds = creditedSeconds,
                 progress = progress,
                 guardState = guardState,
-                chapterLabel = if (book?.format == "epub" && chapters.isNotEmpty())
-                    "${chapterIndex + 1} of ${chapters.size}" else null
+                chapterLabel = chapterLabel
             )
         }
 
@@ -308,17 +328,146 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         )
     }
 
-    if (showToc) {
+    if (showToc && tocEntries != null) {
         TocSheet(
-            chapters = chapters,
-            chapterIndex = chapterIndex,
-            onSelect = { i ->
-                vm.goToChapter(i)
+            entries = tocEntries,
+            onSelect = { entry ->
+                navigator?.go(entry.link)
                 showToc = false
             },
             onDismiss = { showToc = false }
         )
     }
+}
+
+/**
+ * Hosts the Readium [EpubNavigatorFragment] — the battle-tested open-source EPUB
+ * engine — inside the Compose tree. Readium handles pagination, position tracking
+ * (exact locators persisted per book) and rendering; this composable only wires
+ * the navigator into the activity's FragmentManager and forwards events.
+ */
+@OptIn(ExperimentalReadiumApi::class, InternalReadiumApi::class)
+@Composable
+private fun ReadiumNavigatorHost(
+    publication: Publication,
+    initialLocatorJson: String?,
+    settings: ReaderSettings,
+    onLocatorChanged: (Locator) -> Unit,
+    onTapZone: (TapZone) -> Unit,
+    onNavigatorChanged: (EpubNavigatorFragment?) -> Unit
+) {
+    val context = LocalContext.current
+    val fragmentManager = (context as? FragmentActivity)?.supportFragmentManager
+
+    val currentOnLocator by rememberUpdatedState(onLocatorChanged)
+    val currentOnTapZone by rememberUpdatedState(onTapZone)
+
+    var container by remember { mutableStateOf<FrameLayout?>(null) }
+
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { ctx ->
+            FrameLayout(ctx).apply {
+                id = R.id.readium_container
+            }.also { container = it }
+        }
+    )
+
+    LaunchedEffect(fragmentManager, container, publication, initialLocatorJson) {
+        val fm = fragmentManager ?: return@LaunchedEffect
+        val frame = container ?: return@LaunchedEffect
+        if (fm.findFragmentByTag(NAVIGATOR_TAG) != null) return@LaunchedEffect
+
+        // The FragmentManager resolves the container view by ID at commit time, so
+        // wait until the Compose-hosted FrameLayout is attached to the window.
+        var waited = 0
+        while (!frame.isAttachedToWindow && waited < 4_000) {
+            delay(50)
+            waited += 50
+        }
+        if (!frame.isAttachedToWindow) return@LaunchedEffect
+
+        val initialLocator = initialLocatorJson?.let { json ->
+            runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
+        }
+
+        val inputListener = object : InputListener {
+            override fun onTap(event: TapEvent): Boolean {
+                val width = frame.width.takeIf { it > 0 } ?: return false
+                return when {
+                    event.point.x < width / 3f -> { currentOnTapZone(TapZone.PREV); true }
+                    event.point.x > width * 2f / 3f -> { currentOnTapZone(TapZone.NEXT); true }
+                    else -> { currentOnTapZone(TapZone.CENTER); true }
+                }
+            }
+        }
+
+        try {
+            val navigatorFactory = EpubNavigatorFactory(publication)
+            fm.fragmentFactory = navigatorFactory.createFragmentFactory(
+                initialLocator = initialLocator,
+                initialPreferences = readiumPreferences(settings),
+                listener = null
+            )
+            fm.commitNow {
+                add(R.id.readium_container, EpubNavigatorFragment::class.java, Bundle(), NAVIGATOR_TAG)
+            }
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            return@LaunchedEffect
+        }
+
+        val nav = fm.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+            ?: return@LaunchedEffect
+        nav.addInputListener(inputListener)
+        onNavigatorChanged(nav)
+
+        try {
+            nav.currentLocator.collect { currentOnLocator(it) }
+        } finally {
+            runCatching {
+                nav.removeInputListener(inputListener)
+                fm.beginTransaction().remove(nav).commitNowAllowingStateLoss()
+            }
+            onNavigatorChanged(null)
+        }
+    }
+
+    // Apply reading preferences initially and whenever they change.
+    LaunchedEffect(settings) {
+        (fragmentManager?.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment)
+            ?.submitPreferences(readiumPreferences(settings))
+    }
+}
+
+/** Maps the app's reader settings onto Readium EPUB preferences. */
+@OptIn(ExperimentalReadiumApi::class)
+private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPreferences(
+    fontSize = (s.fontSizeSp / 16.0) * 100.0,
+    lineHeight = s.lineHeight.toDouble(),
+    pageMargins = s.marginDp / 16.0,
+    fontFamily = when (s.fontFamily) {
+        "sans" -> FontFamily.SANS_SERIF
+        "mono" -> FontFamily.MONOSPACE
+        else -> FontFamily.SERIF
+    },
+    theme = when (s.theme) {
+        "dark", "night" -> Theme.DARK
+        "sepia" -> Theme.SEPIA
+        else -> Theme.LIGHT
+    },
+    publisherStyles = false,
+    scroll = false
+)
+
+private data class TocEntry(val title: String, val depth: Int, val link: Link)
+
+private fun flattenToc(links: List<Link>, depth: Int = 0, out: MutableList<TocEntry> = mutableListOf()): List<TocEntry> {
+    for (link in links) {
+        out.add(TocEntry(title = link.title ?: link.href.toString(), depth = depth, link = link))
+        if (link.children.isNotEmpty()) flattenToc(link.children, depth + 1, out)
+    }
+    return out
 }
 
 private fun currentTimeLabel(): String =
@@ -494,233 +643,10 @@ private fun IdleGate(onContinue: () -> Unit) {
     }
 }
 
-@Composable
-private fun EpubReader(
-    chapters: List<EpubChapter>,
-    chapterIndex: Int,
-    extractRoot: String,
-    settings: ReaderSettings,
-    palette: ReaderPalette,
-    scrollProgress: Float,
-    onPrev: () -> Unit,
-    onNext: () -> Unit,
-    onScrolled: () -> Unit,
-    onProgress: (Float) -> Unit,
-    onScrollProgressChanged: (Float) -> Unit,
-    onToggleControls: () -> Unit
-) {
-    val chapter = chapters[chapterIndex]
-    // Key remember blocks on chapterIndex (guaranteed unique per chapter) rather than
-    // on the EpubChapter object or File path, because single-file EPUBs produce
-    // identical filePaths for every chapter.
-    val chapterFile = remember(chapterIndex, extractRoot, chapter.filePath) {
-        File(extractRoot, chapter.filePath)
-    }
-    val baseUrl = "file://${chapterFile.parentFile?.absolutePath ?: extractRoot}/"
-    val html = remember(chapterIndex, chapterFile, settings, palette) {
-        buildChapterHtml(chapterFile, settings, palette)
-    }
-    val anchor = chapter.anchor
-    // renderKey MUST include chapterIndex so it always changes when the user navigates,
-    // even for single-file EPUBs where every chapter shares the same filePath/baseUrl.
-    val renderKey = "$chapterIndex|$baseUrl|${chapter.filePath}|${settings.fontSizeSp}|${settings.lineHeight}|${settings.fontFamily}|${settings.theme}|${settings.marginDp}"
-
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                // JavaScript is enabled so anchor-based scrolling and fractional
-                // position restore work for EPUB chapters.
-                this.settings.javaScriptEnabled = true
-                this.settings.allowFileAccess = true
-                this.settings.allowContentAccess = true
-                this.settings.builtInZoomControls = true
-                this.settings.displayZoomControls = false
-            }
-        },
-        update = { webView ->
-            // --- Tap zones (left = prev chapter, right = next, center = toggle HUD).
-            // Rebound here on every recomposition so the captured callbacks always
-            // reference the current chapter index and visibility state.
-            webView.setOnTouchListener { view, event ->
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        webView.setTag(ReaderTapDownX, event.x)
-                        webView.setTag(ReaderTapDownY, event.y)
-                        webView.setTag(ReaderTapDownT, System.currentTimeMillis())
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val dx = event.x - (webView.getTag(ReaderTapDownX) as? Float ?: 0f)
-                        val dy = event.y - (webView.getTag(ReaderTapDownY) as? Float ?: 0f)
-                        val dt = System.currentTimeMillis() - (webView.getTag(ReaderTapDownT) as? Long ?: 0L)
-                        val isTap = abs(dx) < 24f && abs(dy) < 24f && dt < 600L
-                        if (isTap && view.width > 0) {
-                            when {
-                                event.x < view.width / 3f -> onPrev()
-                                event.x > view.width * 2f / 3f -> onNext()
-                                else -> onToggleControls()
-                            }
-                            return@setOnTouchListener false
-                        }
-                        // --- Auto-advance at end of chapter: a deliberate upward
-                        // swipe while already scrolled to the bottom loads the next
-                        // chapter. Touch events are used instead of overscroll
-                        // callbacks because WebView's scrolling is driven by
-                        // Chromium and onOverScrolled is not reliably called.
-                        // Works on chapters shorter than one screen too, where
-                        // maxScroll == 0 and scrollY == 0.
-                        val swipedUp = dy < -60f && dt < 800L
-                        val armed = webView.getTag(ReaderAutoAdvanceArmed) as? Boolean == true
-                        if (swipedUp && armed) {
-                            val maxScroll =
-                                (webView.contentHeight - webView.height).coerceAtLeast(0)
-                            if (webView.scrollY >= maxScroll - 8) {
-                                webView.setTag(ReaderAutoAdvanceArmed, false)
-                                onNext()
-                            }
-                        }
-                    }
-                }
-                false
-            }
-
-            // --- Scroll feedback (anti-cheat) + position persistence.
-            // The fraction denominator MUST match the restore math: fraction is of
-            // the *scrollable* distance (content minus viewport), not full content
-            // height. Mismatched denominators made restored positions land wrong.
-            webView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                onScrolled()
-                val maxScroll = (webView.contentHeight - webView.height).coerceAtLeast(1)
-                val fraction = (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
-                val overall = ((chapterIndex + fraction) / chapters.size).coerceIn(0f, 1f)
-                onProgress(overall)
-                onScrollProgressChanged(fraction)
-            }
-
-            // --- Load content, but ONLY when the chapter/settings actually changed so
-            // we don't reset scroll position on every recomposition.
-            if (webView.tag != renderKey) {
-                webView.tag = renderKey
-                webView.loadUrl("about:blank")
-                val targetAnchor = anchor
-                val restoreFraction = scrollProgress
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        view ?: return
-                        if (url == "about:blank") return
-                        //
-                        // Position restore, done the way reader apps actually do it:
-                        // chapter layout is NOT stable when onPageFinished fires
-                        // (fonts/images still load, scrollHeight keeps growing), so a
-                        // single scrollTo lands at the wrong spot. Instead, a JS loop
-                        // re-applies the target for ~4.5s until layout settles, and
-                        // backs off permanently the moment the user scrolls somewhere
-                        // other than where we put them (>40px from our last apply).
-                        //
-                        if (targetAnchor != null) {
-                            // Single-file EPUB: scroll to this chapter's anchor element.
-                            val safeAnchor = targetAnchor
-                                .replace("\\", "\\\\")
-                                .replace("'", "\\'")
-                                .replace("\n", "")
-                                .replace("\r", "")
-                            val js = """
-                                (function() {
-                                    var n = 0;
-                                    var id = setInterval(function() {
-                                        var el = document.getElementById('$safeAnchor');
-                                        if (!el) {
-                                            var els = document.getElementsByName('$safeAnchor');
-                                            if (els.length > 0) el = els[0];
-                                        }
-                                        if (el) {
-                                            if (window.__ptLast != null &&
-                                                Math.abs(window.scrollY - window.__ptLast) > 40) {
-                                                clearInterval(id); return;
-                                            }
-                                            el.scrollIntoView(true);
-                                            window.__ptLast = window.scrollY;
-                                        }
-                                        if (++n >= 30) clearInterval(id);
-                                    }, 150);
-                                })();
-                            """.trimIndent()
-                            view.evaluateJavascript(js, null)
-                        } else if (restoreFraction > 0f) {
-                            // Multi-file EPUB: jump to the saved fraction of the chapter.
-                            val js = """
-                                (function() {
-                                    var target = $restoreFraction;
-                                    var n = 0;
-                                    var id = setInterval(function() {
-                                        if (window.__ptLast != null &&
-                                            Math.abs(window.scrollY - window.__ptLast) > 40) {
-                                            clearInterval(id); return;
-                                        }
-                                        var max = document.documentElement.scrollHeight - window.innerHeight;
-                                        if (max < 0) max = 0;
-                                        var pos = Math.round(max * target);
-                                        if (pos > 0) {
-                                            window.scrollTo(0, pos);
-                                            window.__ptLast = pos;
-                                        }
-                                        if (++n >= 30) clearInterval(id);
-                                    }, 150);
-                                })();
-                            """.trimIndent()
-                            view.evaluateJavascript(js, null)
-                        }
-
-                        // Arm auto-advance only after the page settles: the position-
-                        // restore scroll itself must never count as "reached the end".
-                        // (Restore generates no touch events anyway — this is belt and
-                        // braces for restores that land at the very bottom.)
-                        view.setTag(ReaderAutoAdvanceArmed, false)
-                        view.postDelayed({ view.setTag(ReaderAutoAdvanceArmed, true) }, 500)
-                    }
-                }
-                webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
-            }
-        },
-        modifier = Modifier.fillMaxSize()
-    )
-}
-
 private fun txtFontFamily(key: String): FontFamily = when (key) {
     "sans" -> FontFamily.SansSerif
     "mono" -> FontFamily.Monospace
     else -> FontFamily.Serif
-}
-
-private fun buildChapterHtml(file: File, settings: ReaderSettings, palette: ReaderPalette): String {
-    // Read with explicit UTF-8. runCatching ensures the reader shows a graceful
-    // message instead of crashing if the chapter file is corrupt or unreadable.
-    val raw = runCatching { file.readText(Charsets.UTF_8) }
-        .getOrElse { "<html><body><p>Cannot load this chapter.</p></body></html>" }
-    return injectCss(raw, buildCss(settings, palette))
-}
-
-private fun buildCss(settings: ReaderSettings, palette: ReaderPalette): String {
-    val fontStack = fontStackFor(settings.fontFamily)
-    val fontSizePx = settings.fontSizeSp.toInt()
-    val marginPx = settings.marginDp.toInt()
-    return """
-        html, body { background-color: ${palette.bgHex} !important; color: ${palette.textHex} !important; }
-        body { font-family: $fontStack !important; font-size: ${fontSizePx}px !important; line-height: ${settings.lineHeight} !important; margin: ${marginPx}px !important; padding: ${marginPx / 2}px !important; overflow: auto !important; }
-        p, div, h1, h2, h3, h4, h5, h6, li, blockquote, span, td { color: ${palette.textHex} !important; }
-        a { color: #4c8bf5 !important; }
-        img { max-width: 100% !important; height: auto !important; }
-    """.trimIndent()
-}
-
-private fun injectCss(html: String, css: String): String {
-    val styleBlock = "<style>$css</style>"
-    val headClose = Regex("</head>", RegexOption.IGNORE_CASE).find(html)
-    val bodyClose = Regex("</body>", RegexOption.IGNORE_CASE).find(html)
-    return when {
-        headClose != null -> html.replaceRange(headClose.range.first, headClose.range.first, styleBlock)
-        bodyClose != null -> html.replaceRange(bodyClose.range.first, bodyClose.range.first, styleBlock)
-        else -> styleBlock + html
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -784,9 +710,8 @@ private fun ReaderSettingsSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TocSheet(
-    chapters: List<EpubChapter>,
-    chapterIndex: Int,
-    onSelect: (Int) -> Unit,
+    entries: List<TocEntry>,
+    onSelect: (TocEntry) -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -796,22 +721,22 @@ private fun TocSheet(
                 .heightIn(max = 480.dp)
                 .padding(bottom = 24.dp)
         ) {
-            // Index-based keys: path+anchor can repeat for single-file EPUBs,
-            // and duplicate LazyColumn keys throw at runtime.
-            itemsIndexed(chapters, key = { i, _ -> i }) { i, chapter ->
-                val selected = i == chapterIndex
+            itemsIndexed(entries, key = { i, _ -> i }) { _, entry ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                        .clickable { onSelect(i) }
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                        .clickable { onSelect(entry) }
+                        .padding(
+                            start = (20 + entry.depth * 20).dp,
+                            end = 20.dp,
+                            top = 14.dp,
+                            bottom = 14.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        chapter.title,
+                        entry.title,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                         maxLines = 2
                     )
                 }

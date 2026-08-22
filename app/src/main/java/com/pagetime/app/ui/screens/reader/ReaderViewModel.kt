@@ -137,15 +137,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val savedLocatorJson = settingsRepository.savedLocator(book.id)
         // try/catch instead of runCatching: retrieve/open are suspend functions and
         // runCatching's lambda is not a suspend context.
+        // getOrNull instead of getOrThrow: Readium's Try failure wraps an Error, not
+        // a Throwable, and that getOrThrow overload is deprecated at ERROR level.
         val publication = try {
             val asset = readium.assetRetriever.retrieve(
                 File(book.localPath),
                 MediaType.EPUB
-            ).getOrThrow()
+            ).getOrNull() ?: error("Could not read the book file")
             readium.publicationOpener.open(
                 asset,
                 allowUserInteraction = false
-            ).getOrThrow()
+            ).getOrNull() ?: error("Could not open this EPUB")
         } catch (t: Throwable) {
             _error.value = "Cannot open this EPUB: ${t.message}"
             return

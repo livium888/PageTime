@@ -57,6 +57,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _progress = MutableStateFlow(0f)
     val progress = _progress.asStateFlow()
 
+    /** Fraction (0..1) of the current EPUB chapter the user has scrolled to. */
+    private val _epubScrollProgress = MutableStateFlow(0f)
+    val epubScrollProgress = _epubScrollProgress.asStateFlow()
+
     private val _guardState = MutableStateFlow(ReadingGuard.State())
     val guardState = _guardState.asStateFlow()
 
@@ -106,6 +110,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                         _extractRoot.value = File(app.cacheDir, "epub/${loaded.id}").absolutePath
                         _chapterIndex.value = loaded.currentChapterIndex
                             .coerceIn(0, (epub.chapters.size - 1).coerceAtLeast(0))
+                        // Restore the scroll position saved for the current chapter so the
+                        // reader resumes exactly where the user left off, not at the top.
+                        _epubScrollProgress.value = loaded.scrollProgress.coerceIn(0f, 1f)
                     }.onFailure { t ->
                         _error.value = "Cannot open this EPUB: ${t.message}"
                     }
@@ -127,6 +134,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         resumed = false
         tickerJob?.cancel()
         tickerJob = null
+        saveCurrentPosition()
         flush()
     }
 
@@ -187,17 +195,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         if (size == 0) return
         val target = index.coerceIn(0, size - 1)
         if (target == _chapterIndex.value) return
+        // Persist the position we're leaving so re-opening (or paging back) lands
+        // exactly where the reader stopped, not at the top of the chapter.
+        saveCurrentPosition()
+        _epubScrollProgress.value = 0f
         _chapterIndex.value = target
-        _book.value?.let { b ->
-            viewModelScope.launch { repo.updateProgress(b.id, target, 0f) }
-        }
         onProgressChanged(if (size > 1) target.toFloat() / (size - 1) else 0f)
     }
 
-    fun updateScrollProgress(progress: Float) {
-        _book.value?.let { b ->
-            viewModelScope.launch { repo.updateProgress(b.id, _chapterIndex.value, progress) }
-        }
+    /** Called continuously by the EPUB WebView while the user scrolls within a chapter. */
+    fun saveEpubScrollProgress(progress: Float) {
+        _epubScrollProgress.value = progress.coerceIn(0f, 1f)
+    }
+
+    /** Persists the most recent position to the library so it survives app restarts. */
+    private fun saveCurrentPosition() {
+        val b = _book.value ?: return
+        val chapterIdx = _chapterIndex.value
+        val scroll = _epubScrollProgress.value
+        viewModelScope.launch { repo.updateProgress(b.id, chapterIdx, scroll) }
     }
 
     fun setFontSize(v: Float) = viewModelScope.launch { settingsRepository.setFontSize(v) }
@@ -207,6 +223,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun setMargin(v: Float) = viewModelScope.launch { settingsRepository.setMargin(v) }
 
     override fun onCleared() {
+        // stopReading() also saves the reading position and flushes pending seconds.
         stopReading()
         super.onCleared()
     }

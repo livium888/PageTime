@@ -1,8 +1,14 @@
 package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
+import android.view.MotionEvent
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,8 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.MenuBook
@@ -41,7 +45,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -62,8 +65,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -77,6 +83,10 @@ import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
 import kotlinx.coroutines.delay
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,12 +107,29 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val guardState by vm.guardState.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     val settings by vm.readerSettings.collectAsStateWithLifecycle()
+    val epubScrollProgress by vm.epubScrollProgress.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
     val scrollState = rememberScrollState()
 
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(true) }
+
+    // Auto-hide the top controls after a short idle so reading becomes immersive.
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) return@LaunchedEffect
+        delay(5_000)
+        controlsVisible = false
+    }
+
+    // Keep the screen on while the reader is in the foreground.
+    val rootView = LocalView.current
+    DisposableEffect(rootView) {
+        val previous = rootView.keepScreenOn
+        rootView.keepScreenOn = true
+        onDispose { rootView.keepScreenOn = previous }
+    }
 
     // Run the reading timer while the reader is in the foreground.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -145,66 +172,33 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        Scaffold(
-            containerColor = palette.background,
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            book?.title ?: "Reading",
-                            maxLines = 1,
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        if (chapters.isNotEmpty()) {
-                            IconButton(onClick = { showToc = true }) {
-                                Icon(Icons.Filled.List, contentDescription = "Chapters")
-                            }
-                        }
-                        IconButton(onClick = { showSettings = true }) {
-                            Icon(Icons.Filled.FormatSize, contentDescription = "Reading settings")
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(end = 12.dp)
-                        ) {
-                            Icon(Icons.Outlined.Timer, contentDescription = null, tint = palette.text)
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                formatMinutes(balanceSeconds),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = palette.text
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = palette.background,
-                        titleContentColor = palette.text,
-                        navigationIconContentColor = palette.text,
-                        actionIconContentColor = palette.text
-                    )
-                )
-            },
-            bottomBar = {
-                ReaderBottomBar(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(palette.background)
+        ) {
+            // Top controls — hidden after idle, revealed with a tap.
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = slideInVertically { -it } + fadeIn(),
+                exit = slideOutVertically { -it } + fadeOut()
+            ) {
+                ReaderTopBar(
+                    title = book?.title ?: "Reading",
+                    hasChapters = chapters.isNotEmpty(),
+                    balanceSeconds = balanceSeconds,
                     palette = palette,
-                    sessionSeconds = sessionSeconds,
-                    creditedSeconds = creditedSeconds,
-                    progress = progress,
-                    guardState = guardState
+                    onBack = onBack,
+                    onToc = { showToc = true },
+                    onSettings = { showSettings = true }
                 )
             }
-        ) { padding ->
+
+            // Main reading surface.
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
+                    .weight(1f)
+                    .fillMaxWidth()
                     .background(palette.background)
             ) {
                 when {
@@ -221,10 +215,13 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                         extractRoot = extractRoot!!,
                         settings = settings,
                         palette = palette,
-                        onPrev = { vm.goToChapter(chapterIndex - 1) },
-                        onNext = { vm.goToChapter(chapterIndex + 1) },
+                        scrollProgress = epubScrollProgress,
+                        onPrev = { vm.goToChapter(vm.chapterIndex.value - 1) },
+                        onNext = { vm.goToChapter(vm.chapterIndex.value + 1) },
                         onScrolled = { vm.onUserScrolled() },
-                        onProgress = { vm.onProgressChanged(it) }
+                        onProgress = { vm.onProgressChanged(it) },
+                        onScrollProgressChanged = { vm.saveEpubScrollProgress(it) },
+                        onToggleControls = { controlsVisible = !controlsVisible }
                     )
 
                     book?.format == "txt" && textContent != null -> Column(
@@ -259,6 +256,17 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     }
                 }
             }
+
+            // Bottom progress / status HUD — always visible so reading time is transparent.
+            ReaderBottomBar(
+                palette = palette,
+                sessionSeconds = sessionSeconds,
+                creditedSeconds = creditedSeconds,
+                progress = progress,
+                guardState = guardState,
+                chapterLabel = if (book?.format == "epub" && chapters.isNotEmpty())
+                    "${chapterIndex + 1} of ${chapters.size}" else null
+            )
         }
 
         if (guardState.showIdleGate) {
@@ -291,14 +299,88 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     }
 }
 
+private fun currentTimeLabel(): String =
+    SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderTopBar(
+    title: String,
+    hasChapters: Boolean,
+    balanceSeconds: Long,
+    palette: ReaderPalette,
+    onBack: () -> Unit,
+    onToc: () -> Unit,
+    onSettings: () -> Unit
+) {
+    var nowLabel by remember { mutableStateOf(currentTimeLabel()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            nowLabel = currentTimeLabel()
+        }
+    }
+    TopAppBar(
+        title = {
+            Text(
+                title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+        },
+        actions = {
+            Text(
+                nowLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.secondary,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+            if (hasChapters) {
+                IconButton(onClick = onToc) {
+                    Icon(Icons.Filled.List, contentDescription = "Chapters")
+                }
+            }
+            IconButton(onClick = onSettings) {
+                Icon(Icons.Filled.FormatSize, contentDescription = "Reading settings")
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(end = 12.dp)
+            ) {
+                Icon(Icons.Outlined.Timer, contentDescription = null, tint = palette.text)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    formatMinutes(balanceSeconds),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = palette.text
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = palette.background,
+            titleContentColor = palette.text,
+            navigationIconContentColor = palette.text,
+            actionIconContentColor = palette.text
+        )
+    )
+}
+
 @Composable
 private fun ReaderBottomBar(
     palette: ReaderPalette,
     sessionSeconds: Long,
     creditedSeconds: Long,
     progress: Float,
-    guardState: ReadingGuard.State
+    guardState: ReadingGuard.State,
+    chapterLabel: String?
 ) {
+    val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
     val status = when {
         guardState.tooFast -> "Paused · too fast"
         guardState.showIdleGate -> "Paused · idle"
@@ -312,15 +394,29 @@ private fun ReaderBottomBar(
     }
     Surface(color = palette.background) {
         Column(
-            Modifier
+            modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { progress.coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    if (chapterLabel != null) "Chapter $chapterLabel" else "Reading",
+                    color = palette.secondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "$percent%",
+                    color = palette.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Session ${formatClock(sessionSeconds)}", color = palette.secondary, style = MaterialTheme.typography.bodySmall)
                 Text(status, color = statusColor, style = MaterialTheme.typography.bodySmall)
@@ -383,10 +479,13 @@ private fun EpubReader(
     extractRoot: String,
     settings: ReaderSettings,
     palette: ReaderPalette,
+    scrollProgress: Float,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onScrolled: () -> Unit,
-    onProgress: (Float) -> Unit
+    onProgress: (Float) -> Unit,
+    onScrollProgressChanged: (Float) -> Unit,
+    onToggleControls: () -> Unit
 ) {
     val chapter = chapters[chapterIndex]
     // Key remember blocks on chapterIndex (guaranteed unique per chapter) rather than
@@ -404,65 +503,69 @@ private fun EpubReader(
     // even for single-file EPUBs where every chapter shares the same filePath/baseUrl.
     val renderKey = "$chapterIndex|$baseUrl|${chapter.filePath}|${settings.fontSizeSp}|${settings.lineHeight}|${settings.fontFamily}|${settings.theme}|${settings.marginDp}"
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onPrev, enabled = chapterIndex > 0) {
-                Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous chapter", tint = palette.text)
+    AndroidView(
+        factory = { ctx ->
+            WebView(ctx).apply {
+                // JavaScript is enabled so anchor-based scrolling and fractional
+                // position restore work for EPUB chapters.
+                this.settings.javaScriptEnabled = true
+                this.settings.allowFileAccess = true
+                this.settings.allowContentAccess = true
+                this.settings.builtInZoomControls = true
+                this.settings.displayZoomControls = false
             }
-            Text(
-                chapter.title,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                style = MaterialTheme.typography.bodyMedium,
-                color = palette.secondary
-            )
-            Text(
-                "${chapterIndex + 1} / ${chapters.size}",
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.secondary
-            )
-            IconButton(onClick = onNext, enabled = chapterIndex < chapters.size - 1) {
-                Icon(Icons.Filled.ChevronRight, contentDescription = "Next chapter", tint = palette.text)
-            }
-        }
-        AndroidView(
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    // JavaScript is enabled so anchor-based scrolling works for
-                    // single-file EPUBs (spine items that share one HTML file).
-                    this.settings.javaScriptEnabled = true
-                    this.settings.allowFileAccess = true
-                    this.settings.allowContentAccess = true
-                    this.settings.builtInZoomControls = true
-                    this.settings.displayZoomControls = false
-                    setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                        onScrolled()
-                        val content = contentHeight.takeIf { it > 0 } ?: 1
-                        val fraction = (scrollY.toFloat() / content).coerceIn(0f, 1f)
-                        val overall = ((chapterIndex + fraction) / chapters.size).coerceIn(0f, 1f)
-                        onProgress(overall)
+        },
+        update = { webView ->
+            // --- Tap zones (left = prev chapter, right = next, center = toggle HUD).
+            // Rebound here on every recomposition so the captured callbacks always
+            // reference the current chapter index and visibility state.
+            webView.setOnTouchListener { view, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        webView.setTag(R.id.reader_down_x, event.x)
+                        webView.setTag(R.id.reader_down_y, event.y)
+                        webView.setTag(R.id.reader_down_t, System.currentTimeMillis())
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val dx = event.x - (webView.getTag(R.id.reader_down_x) as? Float ?: 0f)
+                        val dy = event.y - (webView.getTag(R.id.reader_down_y) as? Float ?: 0f)
+                        val dt = System.currentTimeMillis() - (webView.getTag(R.id.reader_down_t) as? Long ?: 0L)
+                        val isTap = abs(dx) < 24f && abs(dy) < 24f && dt < 600L
+                        if (isTap && view.width > 0) {
+                            when {
+                                event.x < view.width / 3f -> onPrev()
+                                event.x > view.width * 2f / 3f -> onNext()
+                                else -> onToggleControls()
+                            }
+                        }
                     }
                 }
-            },
-            update = { webView ->
-                if (webView.tag != renderKey) {
-                    webView.tag = renderKey
-                    // Clear any previously rendered content first so the user doesn't
-                    // see the old chapter (e.g. the cover) lingering while the new
-                    // HTML loads asynchronously.
-                    webView.loadUrl("about:blank")
-                    val targetAnchor = anchor
-                    webView.webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            view ?: return
-                            // For single-file EPUBs, scroll to the chapter's anchor element.
-                            // For multi-file EPUBs anchor is null and this is a no-op.
+                false
+            }
+
+            // --- Scroll feedback (anti-cheat) + position persistence.
+            webView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                onScrolled()
+                val content = webView.contentHeight.takeIf { it > 0 } ?: 1
+                val fraction = (scrollY.toFloat() / content).coerceIn(0f, 1f)
+                val overall = ((chapterIndex + fraction) / chapters.size).coerceIn(0f, 1f)
+                onProgress(overall)
+                onScrollProgressChanged(fraction)
+            }
+
+            // --- Load content, but ONLY when the chapter/settings actually changed so
+            // we don't reset scroll position on every recomposition.
+            if (webView.tag != renderKey) {
+                webView.tag = renderKey
+                webView.loadUrl("about:blank")
+                val targetAnchor = anchor
+                val restoreFraction = scrollProgress
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        view ?: return
+                        view.postDelayed({
                             if (targetAnchor != null) {
+                                // Single-file EPUB: scroll to this chapter's anchor element.
                                 val safeAnchor = targetAnchor
                                     .replace("\\", "\\\\")
                                     .replace("'", "\\'")
@@ -479,17 +582,29 @@ private fun EpubReader(
                                     })();
                                 """.trimIndent()
                                 view.evaluateJavascript(js, null)
+                            } else if (restoreFraction > 0f) {
+                                // Multi-file EPUB restore: jump to the saved fraction.
+                                val js = """
+                                    (function() {
+                                        var doc = document.documentElement;
+                                        var max = doc.scrollHeight - window.innerHeight;
+                                        if (max < 0) max = 0;
+                                        var pos = max * $restoreFraction;
+                                        if (pos > 0) window.scrollTo(0, pos);
+                                    })();
+                                """.trimIndent()
+                                view.evaluateJavascript(js, null)
                             }
-                        }
+                        }, 80)
                     }
-                    webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
                 }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-        )
-    }
+                webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+    )
 }
 
 private fun txtFontFamily(key: String): FontFamily = when (key) {
@@ -554,7 +669,9 @@ private fun ReaderSettingsSheet(
             Text("Text size — ${settings.fontSizeSp.toInt()} sp", style = MaterialTheme.typography.bodyMedium)
             Slider(value = settings.fontSizeSp, onValueChange = onFontSize, valueRange = 12f..32f)
 
-            Text("Line spacing — ${"%.1f".format(settings.lineHeight)}", style = MaterialTheme.typography.bodyMedium)
+            Text("Line spacing — ${
+                "%.1f".format(settings.lineHeight)
+            }", style = MaterialTheme.typography.bodyMedium)
             Slider(value = settings.lineHeight, onValueChange = onLineHeight, valueRange = 1f..2.2f)
 
             Text("Margins — ${settings.marginDp.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
@@ -599,7 +716,7 @@ private fun TocSheet(
                 .heightIn(max = 480.dp)
                 .padding(bottom = 24.dp)
         ) {
-            itemsIndexed(chapters, key = { _, c -> c.filePath }) { i, chapter ->
+            itemsIndexed(chapters, key = { _, c -> "${c.filePath}#${c.anchor ?: ""}" }) { i, chapter ->
                 val selected = i == chapterIndex
                 Row(
                     modifier = Modifier

@@ -667,6 +667,7 @@ private fun EpubReader(
                         // braces for restores that land at the very bottom.)
                         view.setTag(ReaderAutoAdvanceArmed, false)
                         view.postDelayed({ view.setTag(ReaderAutoAdvanceArmed, true) }, 500)
+                    }
                 }
                 webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
             }

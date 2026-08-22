@@ -19,7 +19,13 @@ import kotlinx.coroutines.SupervisorJob
 class AppContainer(context: Context) {
 
     private val appContext = context.applicationContext
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * App-lifetime scope for critical background writes (reading position, earned
+     * seconds). ViewModel scopes are cancelled the instant a screen is left, which
+     * silently dropped those writes — anything that MUST survive navigation goes here.
+     */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val database: AppDatabase =
         Room.databaseBuilder(appContext, AppDatabase::class.java, "pagetime.db").build()

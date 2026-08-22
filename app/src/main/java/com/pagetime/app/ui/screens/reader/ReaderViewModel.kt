@@ -28,6 +28,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val balanceManager = container.balanceManager
     private val settingsRepository = container.settingsRepository
 
+    // App-lifetime scope for persistence writes. viewModelScope is cancelled the
+    // moment this screen is left — launching the "save position" write there meant
+    // it never ran when the user exited the book.
+    private val persistenceScope = container.scope
+
     private val guard = ReadingGuard()
 
     private val _book = MutableStateFlow<BookEntity?>(null)
@@ -158,7 +163,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     _creditedSeconds.value++
                 }
                 _guardState.value = guard.state
-                if (ticks % 5 == 0) flush()
+                if (ticks % 5 == 0) {
+                    flush()
+                    // Periodic position checkpoint: if the OS kills the process,
+                    // we lose at most ~5s of reading progress instead of all of it.
+                    saveCurrentPosition()
+                }
             }
         }
     }
@@ -168,7 +178,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val seconds = pendingSeconds
         pendingSeconds = 0
         val currentBook = _book.value ?: return
-        viewModelScope.launch {
+        // persistenceScope, not viewModelScope: stopReading() runs during teardown
+        // and the pending seconds must still be written after the scope is cancelled.
+        persistenceScope.launch {
             balanceManager.earnFromReading(seconds)
             repo.addReadingSeconds(currentBook.id, seconds)
         }
@@ -211,7 +223,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Persists the plain-text reader's scroll fraction so it survives restarts. */
     fun updateScrollProgress(fraction: Float) {
         val b = _book.value ?: return
-        viewModelScope.launch { repo.updateProgress(b.id, 0, fraction.coerceIn(0f, 1f)) }
+        persistenceScope.launch { repo.updateProgress(b.id, 0, fraction.coerceIn(0f, 1f)) }
     }
 
     /** Persists the most recent position to the library so it survives app restarts. */
@@ -219,7 +231,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val b = _book.value ?: return
         val chapterIdx = _chapterIndex.value
         val scroll = _epubScrollProgress.value
-        viewModelScope.launch { repo.updateProgress(b.id, chapterIdx, scroll) }
+        // persistenceScope: survives both onCleared()'s scope cancellation and
+        // navigation away, so the position is always durably written.
+        persistenceScope.launch { repo.updateProgress(b.id, chapterIdx, scroll) }
     }
 
     fun setFontSize(v: Float) = viewModelScope.launch { settingsRepository.setFontSize(v) }

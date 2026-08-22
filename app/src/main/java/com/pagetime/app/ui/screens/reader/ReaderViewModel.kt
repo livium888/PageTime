@@ -1,6 +1,7 @@
 package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -174,20 +175,21 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // exists AND the reader is actually in the foreground.
         if (_book.value == null) return
         if (tickerJob?.isActive == true) return
-        guard.start(System.currentTimeMillis())
+        guard.start(SystemClock.elapsedRealtime())
         _guardState.value = guard.state
         tickerJob = viewModelScope.launch {
             var ticks = 0
             while (isActive) {
                 delay(1000)
                 ticks++
-                val now = System.currentTimeMillis()
-                guard.onTick(now)
-                _sessionSeconds.value++
-                if (guard.state.crediting) {
+                val now = SystemClock.elapsedRealtime()
+                // onTick decides whether THIS second is creditable: foreground,
+                // recently active, plausible pace, and anti-oscillation budget left.
+                if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
                 }
+                _sessionSeconds.value++
                 _guardState.value = guard.state
                 if (ticks % 5 == 0) {
                     flush()
@@ -213,18 +215,18 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     }
 
     fun onUserScrolled() {
-        guard.onMovement(System.currentTimeMillis())
+        guard.onMovement(SystemClock.elapsedRealtime())
         _guardState.value = guard.state
     }
 
     fun onProgressChanged(progress: Float) {
         _progress.value = progress.coerceIn(0f, 1f)
-        guard.onProgress(_progress.value, System.currentTimeMillis())
+        guard.onProgress(_progress.value, SystemClock.elapsedRealtime())
         _guardState.value = guard.state
     }
 
     fun resumeAfterIdle() {
-        guard.onContinueTapped(System.currentTimeMillis())
+        guard.onContinueTapped(SystemClock.elapsedRealtime())
         _guardState.value = guard.state
     }
 
@@ -246,14 +248,19 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun onLocatorChanged(locator: org.readium.r2.shared.publication.Locator) {
         latestLocator = locator
-        onUserScrolled()
 
-        val publication = _publication.value ?: return
-        val index = publication.readingOrder.indexOfFirstWithHref(locator.href)
+        // Compute whole-book progress from the Readium locator and feed it to the
+        // anti-cheat guard. This is what lets the guard distinguish real reading
+        // (forward progress) from oscillation/idle for EPUBs — previously only the
+        // plain-text path reported progress, so the pace checks never saw EPUBs.
+        val publication = _publication.value
+        val index = publication?.readingOrder?.indexOfFirstWithHref(locator.href)
         val fraction = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f)
-        val size = publication.readingOrder.size
+        val size = publication?.readingOrder?.size ?: 0
         if (index != null && size > 0) {
-            _progress.value = ((index + fraction) / size).coerceIn(0f, 1f)
+            onProgressChanged((index + fraction) / size)
+        } else {
+            onUserScrolled()
         }
 
         // Debounce: coalesce bursts of locator updates into one write.

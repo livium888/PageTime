@@ -1,6 +1,7 @@
 package com.pagetime.app.data
 
 import android.content.Context
+import android.os.PowerManager
 import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
@@ -37,10 +38,13 @@ class AppContainer(context: Context) {
     )
 
     val database: AppDatabase =
-        Room.databaseBuilder(appContext, AppDatabase::class.java, "pagetime.db").build()
+        Room.databaseBuilder(appContext, AppDatabase::class.java, "pagetime.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
 
     private val bookDao = database.bookDao()
     private val blockedAppDao = database.blockedAppDao()
+    private val usageEventDao = database.usageEventDao()
 
     val settingsRepository = SettingsRepository(appContext)
     val readiumEngine = ReadiumEngine(appContext)
@@ -62,9 +66,21 @@ class AppContainer(context: Context) {
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)
 
-    val balanceManager = BalanceManager(settingsRepository)
+    val usageRepository = UsageRepository(usageEventDao)
 
-    val blockController = BlockController(scope, settingsRepository, blockedAppRepository)
+    val balanceManager = BalanceManager(settingsRepository, usageRepository)
+
+    private val powerManager =
+        appContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+
+    val blockController = BlockController(
+        scope = scope,
+        settingsRepository = settingsRepository,
+        blockedAppRepository = blockedAppRepository,
+        balanceManager = balanceManager,
+        usageRepository = usageRepository,
+        powerManager = powerManager
+    )
 
     init {
         blockController.start()

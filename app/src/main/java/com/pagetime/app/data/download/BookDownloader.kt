@@ -1,6 +1,7 @@
 package com.pagetime.app.data.download
 
 import android.content.Context
+import com.pagetime.app.data.AppHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -9,7 +10,9 @@ import java.io.File
 
 class BookDownloader(
     private val context: Context,
-    private val client: OkHttpClient = OkHttpClient()
+    // No callTimeout: EPUB/TXT downloads are large and total time depends on
+    // connection speed. Read-timeout still aborts stalled transfers.
+    private val client: OkHttpClient = AppHttp.newClient()
 ) {
     private val booksDir: File
         get() = File(context.filesDir, "books").apply { mkdirs() }

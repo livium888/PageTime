@@ -7,8 +7,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import com.pagetime.app.data.AppHttp
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
  * Client for the Gutendex API (https://gutendex.com/), the standard open catalog for
@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  * which makes a great default browse list.
  */
 class GutenbergApi(
-    private val client: OkHttpClient = defaultClient()
+    private val client: OkHttpClient = AppHttp.newClient(callTimeoutSeconds = 90L)
 ) {
 
     suspend fun browse(page: Int = 1): BookPage = fetch(search = null, page = page)
@@ -54,8 +54,11 @@ class GutenbergApi(
                         throw RuntimeException("Gutenberg request failed ($code)")
                     }
                 } catch (e: IOException) {
-                    // Network-level timeout / connection reset — retryable.
-                    lastError = e
+                    // Network-level failure (DNS, no route, timeout). Retryable.
+                    lastError = RuntimeException(
+                        "Couldn't reach Project Gutenberg — check your connection",
+                        e
+                    )
                 }
                 attempt++
                 if (attempt < MAX_ATTEMPTS) delay(RETRY_DELAY_MS * (1L shl (attempt - 1)))
@@ -69,15 +72,6 @@ class GutenbergApi(
     companion object {
         private const val MAX_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 700L
-
-        private fun defaultClient(): OkHttpClient =
-            OkHttpClient.Builder()
-                .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
-                .callTimeout(60, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
-                .build()
     }
 
     private fun parsePage(body: String): BookPage {

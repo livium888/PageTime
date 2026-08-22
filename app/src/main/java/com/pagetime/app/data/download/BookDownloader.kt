@@ -24,12 +24,16 @@ class BookDownloader(
         val dest = File(booksDir, destinationName)
         if (dest.exists() && dest.length() > 0) return@withContext dest
 
-        val request = Request.Builder().url(url).get().build()
+        // A User-Agent is required by both Project Gutenberg and Internet Archive;
+        // without it some CDNs (Cloudflare in particular) reject the request.
+        val request = Request.Builder().url(url).get()
+            .header("User-Agent", "PageTime/1.0 (Android ebook reader)")
+            .header("Accept", "*/*")
+            .build()
 
-        // Project Gutenberg's file servers are heavily rate-limited and frequently
-        // answer with 503/502/429 ("try again later"). The download isn't even
-        // attempted again until the user taps Get a second time. Retry transient
-        // responses and network failures a few times with backoff before giving up.
+        // Book sources (Gutenberg, Internet Archive) frequently answer with
+        // 503/502/429 ("try again later") or 302 redirects to CDN nodes. OkHttp
+        // follows redirects automatically; we retry transient failures with backoff.
         var lastError: Throwable? = null
         var attempt = 0
         while (attempt < MAX_ATTEMPTS) {
@@ -49,14 +53,14 @@ class BookDownloader(
                     }
                     val code = response.code
                     if (isTransient(code)) {
-                        lastError = RuntimeException("Gutenberg is busy ($code). Retrying…")
+                        lastError = RuntimeException("Source is busy ($code). Retrying…")
                         return@use
                     }
                     throw RuntimeException("Download failed ($code)")
                 }
             } catch (e: IOException) {
                 // Network-level timeout / connection reset — retryable.
-                lastError = RuntimeException("Couldn't reach Project Gutenberg — check your connection", e)
+                lastError = RuntimeException("Couldn't reach the book source — check your connection", e)
             }
             attempt++
             if (attempt < MAX_ATTEMPTS) delay(RETRY_DELAY_MS * (1L shl (attempt - 1)))
@@ -70,5 +74,7 @@ class BookDownloader(
     companion object {
         private const val MAX_ATTEMPTS = 5
         private const val RETRY_DELAY_MS = 900L
+        // How long to wait before the first retry (then 2x, 4x…).
+        // Total worst-case backoff: ~900ms + 1.8s + 3.6s + 7.2s ≈ 13.5s across 5 attempts.
     }
 }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 
 /** Catalog sources available from the Discover screen. */
 enum class BookSource {
+    STANDARD_EBOOKS,
     GUTENBERG,
     OPEN_LIBRARY
 }
@@ -29,7 +30,10 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     private val _books = MutableStateFlow<List<GutendexBook>>(emptyList())
     val books = _books.asStateFlow()
 
-    private val _source = MutableStateFlow(BookSource.GUTENBERG)
+    // Default to Standard Ebooks — it's the most reliable source (dedicated
+    // servers, high-quality EPUBs, rarely rate-limited) so first-run download
+    // always works. Users can switch to Gutenberg or Open Library if they want.
+    private val _source = MutableStateFlow(BookSource.STANDARD_EBOOKS)
     val source = _source.asStateFlow()
 
     private val _query = MutableStateFlow("")
@@ -106,10 +110,16 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                 val q = _query.value.trim()
                 val src = _source.value
                 runCatching {
-                    if (src == BookSource.GUTENBERG) {
-                        if (q.isBlank()) repo.browseGutenberg(page) else repo.searchGutenberg(q, page)
-                    } else {
-                        if (q.isBlank()) repo.browseOpenLibrary(page) else repo.searchOpenLibrary(q, page)
+                    when (src) {
+                        BookSource.GUTENBERG -> {
+                            if (q.isBlank()) repo.browseGutenberg(page) else repo.searchGutenberg(q, page)
+                        }
+                        BookSource.OPEN_LIBRARY -> {
+                            if (q.isBlank()) repo.browseOpenLibrary(page) else repo.searchOpenLibrary(q, page)
+                        }
+                        BookSource.STANDARD_EBOOKS -> {
+                            if (q.isBlank()) repo.browseStandardEbooks(page) else repo.searchStandardEbooks(q, page)
+                        }
                     }
                 }
                     .onSuccess { result ->

@@ -14,7 +14,7 @@
 
     <string name="balance_earned">Earned</string>
     <string name="empty_library_title">No books yet</string>
-    <string name="empty_library_subtitle">Head to Discover to download a free book from Project Gutenberg.</string>
+    <string name="empty_library_subtitle">Head to Discover to download a free book from Standard Ebooks, Gutenberg, or Open Library.</string>
     <string name="discover_button">Discover books</string>
     <string name="search_hint">Search title or author…</string>
     <string name="download">Download</string>

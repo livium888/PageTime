@@ -94,7 +94,7 @@ fun LibraryScreen(
                 Text("No books yet", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Head to Discover to download a free book from Project Gutenberg.",
+                    "Head to Discover to download a free book from Standard Ebooks, Gutenberg, or Open Library.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

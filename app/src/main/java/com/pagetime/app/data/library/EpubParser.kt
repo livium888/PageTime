@@ -23,6 +23,7 @@ class EpubParser {
 
     fun parse(epubFile: File, extractDir: File): EpubBook {
         if (!epubFile.exists()) error("EPUB file not found: ${epubFile.absolutePath}")
+        if (epubFile.length() < 100) error("EPUB file is too small or corrupted")
 
         ZipFile(epubFile).use { zip ->
             // 1. Locate the OPF via META-INF/container.xml
@@ -31,6 +32,7 @@ class EpubParser {
             val container = parse(zip.getInputStream(containerEntry))
             val opfPath = container.documentElement.elementsByLocalName("rootfile")
                 .firstOrNull()?.getAttribute("full-path")
+                ?.takeIf { it.isNotBlank() }
                 ?: error("No OPF path in container.xml")
             val opfDir = File(opfPath).parent?.takeUnless { it.isBlank() } ?: ""
 
@@ -63,7 +65,8 @@ class EpubParser {
             val spine = spineElement
                 ?.elementsByLocalName("itemref")
                 ?.mapNotNull { ref ->
-                    val entry = manifest[ref.getAttribute("idref")] ?: return@mapNotNull null
+                    val idref = ref.getAttribute("idref")
+                    val entry = manifest[idref] ?: return@mapNotNull null
                     // EPUB3: skip navigation and cover-image items — they aren't
                     // reading content and showing them blanks the reader.
                     val props = entry.properties
@@ -73,10 +76,12 @@ class EpubParser {
                     entry.href
                 }
                 ?: emptyList()
-            if (spine.isEmpty()) error("EPUB has no spine")
+            if (spine.isEmpty()) error("EPUB has no spine (no reading content found)")
 
-            // 3. Optional chapter labels from the NCX table of contents
+            // 3. Optional chapter labels from the NCX (EPUB2) or nav (EPUB3) TOC.
             val tocLabels = mutableMapOf<String, String>()
+
+            // EPUB2: NCX table of contents referenced by the spine "toc" attribute.
             val ncxHref = spineElement?.getAttribute("toc")?.let { manifest[it]?.href }
             if (ncxHref != null) {
                 val ncxPath = resolve(opfDir, ncxHref)
@@ -95,6 +100,35 @@ class EpubParser {
                             val resolved = resolve(ncxDir, srcPath)
                             val key = if (anchor != null) "$resolved#$anchor" else resolved
                             tocLabels[key] = label
+                        }
+                    }
+                }
+            }
+
+            // EPUB3: nav document is the manifest item with properties="nav".
+            //    It uses <nav epub:type="toc"> with nested <li><a href="..."> lists.
+            if (tocLabels.isEmpty()) {
+                val navEntry = manifest.entries.firstOrNull { it.value.properties.contains("nav") }
+                if (navEntry != null) {
+                    val navHref = navEntry.value.href
+                    val navPath = resolve(opfDir, navHref)
+                    val navZipEntry = zip.getEntry(navPath) ?: zip.getEntry(navHref)
+                    if (navZipEntry != null) {
+                        val nav = parse(zip.getInputStream(navZipEntry))
+                        val navDir = File(navPath).parent?.takeUnless { it.isBlank() } ?: ""
+                        // Collect all anchor links in the nav document's TOC list.
+                        nav.documentElement.elementsByLocalName("a").forEach { a ->
+                            val rawSrc = a.getAttribute("href")?.takeIf { it.isNotBlank() } ?: return@forEach
+                            val label = a.textContent?.trim()?.takeIf { it.isNotBlank() } ?: return@forEach
+                            val srcPath = rawSrc.substringBefore('#')
+                            val anchor = rawSrc.substringAfter('#', "").ifBlank { null }
+                            if (srcPath.isNotBlank()) {
+                                val resolved = resolve(navDir, srcPath)
+                                val key = if (anchor != null) "$resolved#$anchor" else resolved
+                                // Don't overwrite a label from a deeper nesting with a
+                                // shallower one; first occurrence wins (top of the TOC).
+                                tocLabels.putIfAbsent(key, label)
+                            }
                         }
                     }
                 }

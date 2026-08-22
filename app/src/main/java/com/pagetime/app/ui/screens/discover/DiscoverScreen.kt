@@ -68,8 +68,8 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
-    // Show download errors as a snackbar (browse errors are shown inline).
-    LaunchedEffect(error, books.isNotEmpty()) {
+    // Show download errors as a snackbar so the user knows why a download failed.
+    LaunchedEffect(error) {
         if (error != null && books.isNotEmpty()) {
             snackbarHostState.showSnackbar(error!!)
             viewModel.clearError()
@@ -110,6 +110,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                         when (source) {
                             BookSource.GUTENBERG -> "Search Project Gutenberg…"
                             BookSource.OPEN_LIBRARY -> "Search Open Library…"
+                            BookSource.STANDARD_EBOOKS -> "Search Standard Ebooks…"
                         }
                     )
                 },
@@ -131,6 +132,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                                 when (s) {
                                     BookSource.GUTENBERG -> "Gutenberg"
                                     BookSource.OPEN_LIBRARY -> "Open Library"
+                                    BookSource.STANDARD_EBOOKS -> "Standard Ebooks"
                                 }
                             )
                         },
@@ -261,7 +263,11 @@ private fun BookRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "${book.downloadCount} downloads",
+                    when (book.source) {
+                        "standardebooks" -> "Standard Ebooks"
+                        "openlibrary" -> "Open Library"
+                        else -> "${book.downloadCount} downloads"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -620,7 +620,9 @@ private fun txtFontFamily(key: String): FontFamily = when (key) {
 }
 
 private fun buildChapterHtml(file: File, settings: ReaderSettings, palette: ReaderPalette): String {
-    val raw = runCatching { file.readText() }
+    // Read with explicit UTF-8. runCatching ensures the reader shows a graceful
+    // message instead of crashing if the chapter file is corrupt or unreadable.
+    val raw = runCatching { file.readText(Charsets.UTF_8) }
         .getOrElse { "<html><body><p>Cannot load this chapter.</p></body></html>" }
     return injectCss(raw, buildCss(settings, palette))
 }

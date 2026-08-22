@@ -1,16 +1,18 @@
 # PageTime
 
-Read to unlock. PageTime lets you download free books from **Project Gutenberg**,
-read them in-app, and bank "browse minutes" that you can spend in apps you'd
-otherwise waste time in (Chrome, Instagram, Facebook, …). While your balance is
-empty, opening a blocked app bounces you straight back to the reader.
+Read to unlock. PageTime lets you download free books from **Standard Ebooks**,
+**Project Gutenberg**, and **Open Library**, read them in-app, and bank "browse minutes"
+that you can spend in apps you'd otherwise waste time in (Chrome, Instagram,
+Facebook, …). While your balance is empty, opening a blocked app bounces you
+straight back to the reader.
 
 This is a native **Kotlin + Jetpack Compose** Android app.
 
 ## How it works
 
-1. **Discover & download** — search [Gutendex](https://gutendex.com/) (a Project
-   Gutenberg API) and download books as EPUB or plain text.
+1. **Discover & download** — search three free ebook sources (Standard Ebooks,
+   Gutenberg via Gutendex, and Open Library + Internet Archive) and download
+   books as EPUB or plain text.
 2. **Read** — an in-app reader (EPUB chapters render in a WebView; plain text in
    Compose). A timer banks browsing time while the reader is open.
 3. **Enforce** — an `AccessibilityService` watches the foreground app. When a
@@ -65,6 +67,8 @@ app/src/main/java/com/pagetime/app/
 ├── data/
 │   ├── local/                           # Room (books, blocked apps) + DataStore settings
 │   ├── gutenberg/                       # Gutendex client + models
+│   ├── standardebooks/                 # Standard Ebooks Atom feed client
+│   ├── openlibrary/                    # Open Library + Internet Archive client
 │   ├── download/                        # file downloader
 │   ├── library/                         # EPUB parser/extractor
 │   └── AppContainer.kt, *Repository.kt  # manual DI + repositories

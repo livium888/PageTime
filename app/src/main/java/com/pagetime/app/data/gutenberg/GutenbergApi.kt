@@ -1,18 +1,23 @@
 package com.pagetime.app.data.gutenberg
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 /**
  * Client for the Gutendex API (https://gutendex.com/), the standard open catalog for
  * Project Gutenberg. With no search term, Gutendex returns the most-downloaded books,
  * which makes a great default browse list.
  */
-class GutenbergApi(private val client: OkHttpClient = OkHttpClient()) {
+class GutenbergApi(
+    private val client: OkHttpClient = defaultClient()
+) {
 
     suspend fun browse(page: Int = 1): BookPage = fetch(search = null, page = page)
 
@@ -26,14 +31,54 @@ class GutenbergApi(private val client: OkHttpClient = OkHttpClient()) {
                     if (page > 1) addQueryParameter("page", page.toString())
                 }
                 .build()
-            val request = Request.Builder().url(url).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw RuntimeException("Gutenberg request failed (${response.code})")
+            val request = Request.Builder().url(url).get().build()
+
+            // Gutendex is a free, shared instance of the Gutenberg catalog API and is
+            // frequently rate-limited or "busy" (503/502/429) under load, especially for
+            // the multi-thousand-book browse pagination. Retry transient failures a few
+            // times with backoff instead of surfacing a hard error on the first busy
+            // moment. Non-transient statuses (e.g. 404) fail immediately.
+            var lastError: Throwable? = null
+            var attempt = 0
+            while (attempt < MAX_ATTEMPTS) {
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            return@withContext parsePage(response.body?.string().orEmpty())
+                        }
+                        val code = response.code
+                        if (isTransient(code)) {
+                            lastError = RuntimeException("Gutenberg is busy right now ($code). Retrying…")
+                            return@use
+                        }
+                        throw RuntimeException("Gutenberg request failed ($code)")
+                    }
+                } catch (e: IOException) {
+                    // Network-level timeout / connection reset — retryable.
+                    lastError = e
                 }
-                parsePage(response.body?.string().orEmpty())
+                attempt++
+                if (attempt < MAX_ATTEMPTS) delay(RETRY_DELAY_MS * (1L shl (attempt - 1)))
             }
+            throw lastError ?: RuntimeException("Gutenberg request failed")
         }
+
+    private fun isTransient(code: Int): Boolean =
+        code == 429 || code == 502 || code == 503 || code == 504 || code >= 500
+
+    companion object {
+        private const val MAX_ATTEMPTS = 4
+        private const val RETRY_DELAY_MS = 700L
+
+        private fun defaultClient(): OkHttpClient =
+            OkHttpClient.Builder()
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .callTimeout(60, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+    }
 
     private fun parsePage(body: String): BookPage {
         val root = JSONObject(body)

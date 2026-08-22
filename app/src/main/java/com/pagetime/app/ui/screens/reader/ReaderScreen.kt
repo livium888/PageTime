@@ -2,6 +2,7 @@ package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
 import android.view.MotionEvent
+import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
@@ -87,6 +88,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+
+// Stable keys (unique Int tags) used to remember the press origin between the
+// ACTION_DOWN and ACTION_UP of a tap on the reading surface. These must be stable
+// across recompositions, so they are module-level rather than per-render.
+private val ReaderTapDownX = View.generateViewId()
+private val ReaderTapDownY = View.generateViewId()
+private val ReaderTapDownT = View.generateViewId()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -522,14 +530,14 @@ private fun EpubReader(
             webView.setOnTouchListener { view, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        webView.setTag(R.id.reader_down_x, event.x)
-                        webView.setTag(R.id.reader_down_y, event.y)
-                        webView.setTag(R.id.reader_down_t, System.currentTimeMillis())
+                        webView.setTag(ReaderTapDownX, event.x)
+                        webView.setTag(ReaderTapDownY, event.y)
+                        webView.setTag(ReaderTapDownT, System.currentTimeMillis())
                     }
                     MotionEvent.ACTION_UP -> {
-                        val dx = event.x - (webView.getTag(R.id.reader_down_x) as? Float ?: 0f)
-                        val dy = event.y - (webView.getTag(R.id.reader_down_y) as? Float ?: 0f)
-                        val dt = System.currentTimeMillis() - (webView.getTag(R.id.reader_down_t) as? Long ?: 0L)
+                        val dx = event.x - (webView.getTag(ReaderTapDownX) as? Float ?: 0f)
+                        val dy = event.y - (webView.getTag(ReaderTapDownY) as? Float ?: 0f)
+                        val dt = System.currentTimeMillis() - (webView.getTag(ReaderTapDownT) as? Long ?: 0L)
                         val isTap = abs(dx) < 24f && abs(dy) < 24f && dt < 600L
                         if (isTap && view.width > 0) {
                             when {
@@ -601,9 +609,7 @@ private fun EpubReader(
                 webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null)
             }
         },
-        modifier = Modifier
-            .fillMaxWidth()
-            .weight(1f)
+        modifier = Modifier.fillMaxSize()
     )
 }
 

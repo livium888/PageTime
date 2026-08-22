@@ -208,6 +208,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _epubScrollProgress.value = progress.coerceIn(0f, 1f)
     }
 
+    /** Persists the plain-text reader's scroll fraction so it survives restarts. */
+    fun updateScrollProgress(fraction: Float) {
+        val b = _book.value ?: return
+        viewModelScope.launch { repo.updateProgress(b.id, 0, fraction.coerceIn(0f, 1f)) }
+    }
+
     /** Persists the most recent position to the library so it survives app restarts. */
     private fun saveCurrentPosition() {
         val b = _book.value ?: return

@@ -39,7 +39,7 @@ class UsageRepositoryTest {
             val first = awaitItem()
             assertEquals(1, first.size)
             assertEquals(120, first.first().seconds)
-            awaitComplete()
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
@@ -52,7 +52,7 @@ class UsageRepositoryTest {
 
         repo.earnedSince(t - 60_000).test {
             assertEquals(60L, awaitItem())
-            awaitComplete()
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
@@ -65,7 +65,7 @@ class UsageRepositoryTest {
 
         repo.spentToday().test {
             assertEquals(1500L, awaitItem())
-            awaitComplete()
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
@@ -85,12 +85,21 @@ class UsageRepositoryTest {
     @Test
     fun `prune removes only rows older than the cutoff`() = runTest {
         val now = System.currentTimeMillis()
-        repo.logSpent("com.instagram", 60, now - 40 * 24 * 3_600_000L, now - 39 * 24 * 3_600_000L)
+        // Direct insert with an old timestamp (repo.log always stamps "now";
+        // pruning works on the persisted timestamp, so the old row must be old).
+        dao.insert(
+            UsageEventEntity(
+                timestamp = now - 40 * 24 * 3_600_000L,
+                type = UsageRepository.TYPE_SPENT,
+                packageName = "com.instagram",
+                seconds = 60
+            )
+        )
         repo.log(UsageRepository.TYPE_EARNED, null, 30)
 
         repo.prune(keepDays = 30)
         val remaining = dao.events
-        assertTrue(remaining.isNotEmpty())
+        assertEquals(1, remaining.size)
         assertEquals(UsageRepository.TYPE_EARNED, remaining.single().type)
     }
 
@@ -101,7 +110,9 @@ class UsageRepositoryTest {
         val events: List<UsageEventEntity> get() = flow.value
 
         override suspend fun insert(event: UsageEventEntity) {
-            flow.value = (flow.value + event).sortedByDescending { it.timestamp }
+            // Newest first, like ORDER BY timestamp DESC in the real DAO; inserting
+            // at the head also handles rows with identical timestamps deterministically.
+            flow.value = listOf(event) + flow.value
         }
 
         override fun observeRecent(limit: Int): Flow<List<UsageEventEntity>> =

@@ -13,7 +13,7 @@ import org.junit.Test
 class ForegroundParserTest {
 
     private val parser = ForegroundParser()
-    private val blocked = setOf("com.instagram.android", "com.twitter.android")
+    private val blocked = setOf("com.instagram", "com.twitter.android")
 
     private fun fg(pkg: String, type: Int, t: Long) = UsageEventSample(pkg, type, t)
 

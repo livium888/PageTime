@@ -57,9 +57,13 @@ class ForegroundParser {
         if (blockedPackages.isEmpty()) return emptyMap()
         val sorted = events.sortedBy { it.time }
 
-        // Start with the screen state we can observe inside the window: if the
-        // first screen/keyguard event says "off", assume the window started off.
-        var interactive = screenOnAtStart(sorted)
+        // Default to screen-on at the window start. In-window screen/keyguard
+        // events then toggle the state from their own timestamp onward; events
+        // before the window (when the caller queries a margin) already adjust
+        // state in the pre-window branch below. We never guess "off" from an
+        // in-window event retroactively — a screen that turned off at minute 2
+        // was on at minute 1.
+        var interactive = true
 
         // pkg -> wall time up to which this package's foreground has already
         // been charged. The interval stays open across screen-off gaps (re-opened
@@ -118,14 +122,5 @@ class ForegroundParser {
         chargeTo(to)
 
         return totals.filterKeys { it in blockedPackages }
-    }
-
-    private fun screenOnAtStart(sorted: List<UsageEventSample>): Boolean {
-        val firstScreenEvent = sorted.firstOrNull {
-            it.type == EVENT_SCREEN_INTERACTIVE || it.type == EVENT_SCREEN_NON_INTERACTIVE ||
-                it.type == EVENT_KEYGUARD_SHOWN || it.type == EVENT_KEYGUARD_HIDDEN
-        } ?: return true
-        return firstScreenEvent.type == EVENT_SCREEN_INTERACTIVE ||
-            firstScreenEvent.type == EVENT_KEYGUARD_HIDDEN
     }
 }

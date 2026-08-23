@@ -1,11 +1,11 @@
 # Detekt configuration.
 #
-# buildUponDefaultConfig: false — the default rule set is intentionally NOT
-# inherited. This project uses Compose (generated, state-heavy code) and already
-# has a lint + ktlint story; detekt exists here for one specific job: catching
-# unused/wildcard imports in CI as part of "make it better, faster, safer" —
-# with zero surprise failures from rules that don't fit this codebase.
-buildUponDefaultConfig: false
+# This config is used WITHOUT the default rule set (the same effect as
+# buildUponDefaultConfig = false, which is a Gradle plugin property, not a
+# config key). The project uses Compose (generated, state-heavy code) and
+# already has a lint + ktlint story; detekt exists here for one specific job:
+# catching unused/wildcard imports in CI — with zero surprise failures from
+# rules that don't fit this codebase.
 
 config:
   validation: true

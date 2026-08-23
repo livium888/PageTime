@@ -18,7 +18,9 @@ class AppBlockerService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        controller?.service = this
+        val app = application as? PageTimeApp
+        app?.container?.blockController?.service = this
+        app?.container?.usageReconciler?.requestReconcile()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

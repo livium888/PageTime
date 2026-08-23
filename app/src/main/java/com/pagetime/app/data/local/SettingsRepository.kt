@@ -122,6 +122,10 @@ class SettingsRepository(private val context: Context) {
     suspend fun lastUsageReconcileAt(): Long? =
         context.dataStore.data.first()[Keys.LAST_USAGE_RECONCILE]
 
+    val lastUsageReconcileAt: Flow<Long?> = context.dataStore.data.map { p ->
+        p[Keys.LAST_USAGE_RECONCILE]
+    }
+
     suspend fun setLastUsageReconcileAt(value: Long) {
         context.dataStore.edit { it[Keys.LAST_USAGE_RECONCILE] = value }
     }

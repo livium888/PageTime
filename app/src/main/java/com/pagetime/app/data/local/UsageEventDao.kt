@@ -26,6 +26,9 @@ interface UsageEventDao {
     )
     fun sumOfTypesSince(types: List<String>, since: Long): Flow<Long>
 
+    @Query("SELECT COUNT(*) FROM usage_events WHERE type = :type AND timestamp >= :since")
+    fun countSince(type: String, since: Long): Flow<Long>
+
     /**
      * Live spend sessions (and reconciled sweeps) with wall-clock windows,
      * used by the UsageStats reconciler to avoid double-charging.

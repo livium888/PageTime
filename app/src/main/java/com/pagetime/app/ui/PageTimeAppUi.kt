@@ -25,6 +25,7 @@ import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
+import com.pagetime.app.ui.screens.settings.UsageAuditScreen
 
 private data class BottomTab(val route: String, val label: String, val icon: ImageVector)
 
@@ -86,11 +87,18 @@ fun PageTimeAppUi(openReader: Boolean) {
             composable("settings") {
                 SettingsScreen(
                     onManageBlockedApps = { navController.navigate("blocked_apps") },
-                    onPermissions = { navController.navigate("permissions") }
+                    onPermissions = { navController.navigate("permissions") },
+                    onUsageAudit = { navController.navigate("usage_audit") }
                 )
             }
             composable("blocked_apps") { BlockedAppsScreen(onBack = { navController.popBackStack() }) }
             composable("permissions") { PermissionsScreen(onBack = { navController.popBackStack() }) }
+            composable("usage_audit") {
+                UsageAuditScreen(
+                    onBack = { navController.popBackStack() },
+                    onPermissions = { navController.navigate("permissions") }
+                )
+            }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
                 ReaderScreen(bookId = bookId, onBack = { navController.popBackStack() })

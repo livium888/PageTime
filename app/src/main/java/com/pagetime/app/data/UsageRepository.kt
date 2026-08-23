@@ -65,6 +65,15 @@ class UsageRepository(private val dao: UsageEventDao) {
 
     fun spentToday(): Flow<Long> = dao.sumOfTypesSince(SPEND_TYPES, System.currentTimeMillis() - DAY_MS)
 
+    fun liveSpentToday(): Flow<Long> =
+        dao.sumSince(TYPE_SPENT, System.currentTimeMillis() - DAY_MS)
+
+    fun reconciledToday(): Flow<Long> =
+        dao.sumSince(TYPE_RECONCILED, System.currentTimeMillis() - DAY_MS)
+
+    fun blockedToday(): Flow<Long> =
+        dao.countSince(TYPE_BLOCKED, System.currentTimeMillis() - DAY_MS)
+
     fun earnedToday(): Flow<Long> = dao.sumSince(TYPE_EARNED, System.currentTimeMillis() - DAY_MS)
 
     /** Live + reconciled spend rows with windows overlapping [from], for the reconciler. */

@@ -43,6 +43,11 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        (application as? PageTimeApp)?.container?.usageReconciler?.requestReconcile()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         openReaderState.value = intent.getBooleanExtra(EXTRA_OPEN_READER, false)

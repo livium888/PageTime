@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The durable-counter backstop. While [BlockController] charges blocked-app time
@@ -47,6 +49,8 @@ class UsageReconciler(
         private const val MIN_GAP_MS = 60_000L
     }
 
+    private val reconcileMutex = Mutex()
+
     fun start() {
         scope.launch {
             // Let settings + blocked-app set + balance load first.
@@ -58,13 +62,18 @@ class UsageReconciler(
         }
     }
 
-    suspend fun runReconcile() {
-        if (!reader.isPermissionGranted()) return
+    /** Request an immediate audit from lifecycle/service callbacks. */
+    fun requestReconcile() {
+        scope.launch { runReconcile() }
+    }
+
+    suspend fun runReconcile() = reconcileMutex.withLock {
+        if (!reader.isPermissionGranted()) return@withLock
 
         // A live spend session is in progress: the ticker is charging it, and the
         // session's ledger row isn't written yet, so reconciling now would
         // double-charge the user. Wait for the next sweep.
-        if (blockController.currentBlockedPackage != null) return
+        if (blockController.currentBlockedPackage != null) return@withLock
 
         val now = System.currentTimeMillis()
         val lastReconcile = settingsRepository.lastUsageReconcileAt()
@@ -72,13 +81,16 @@ class UsageReconciler(
             // First ever sweep: just plant the checkpoint. We don't audit the
             // past before the app existed.
             settingsRepository.setLastUsageReconcileAt(now)
-            return
+            return@withLock
         }
-        if (now - lastReconcile < MIN_GAP_MS) return
+        if (now - lastReconcile < MIN_GAP_MS) return@withLock
 
         val blocked = blockedAppRepository.observeEnabled().first()
             .map { it.packageName }.toSet()
-        if (blocked.isEmpty()) return
+        if (blocked.isEmpty()) {
+            settingsRepository.setLastUsageReconcileAt(now)
+            return@withLock
+        }
 
         val fgMillis = parser.screenOnForegroundMillis(
             events = reader.events(lastReconcile, now),

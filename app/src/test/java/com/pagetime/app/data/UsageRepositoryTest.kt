@@ -69,6 +69,18 @@ class UsageRepositoryTest {
     }
 
     @Test
+    fun `blockedToday counts blocked events without counting spend rows`() = runTest {
+        repo.log(UsageRepository.TYPE_BLOCKED, "com.instagram", 0)
+        repo.log(UsageRepository.TYPE_BLOCKED, "com.twitter.android", 0)
+        repo.log(UsageRepository.TYPE_SPENT, "com.instagram", 60)
+
+        repo.blockedToday().test {
+            assertEquals(2L, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `spentWithWindows returns only live spend rows overlapping the cutoff`() = runTest {
         val t = System.currentTimeMillis()
         repo.logSpent("com.instagram", 120, t - 60_000, t) // windowEnd == now → included
@@ -125,6 +137,11 @@ class UsageRepositoryTest {
         override fun sumOfTypesSince(types: List<String>, since: Long): Flow<Long> =
             flow.map { list ->
                 list.filter { it.type in types && it.timestamp >= since }.sumOf { it.seconds }
+            }
+
+        override fun countSince(type: String, since: Long): Flow<Long> =
+            flow.map { list ->
+                list.count { it.type == type && it.timestamp >= since }.toLong()
             }
 
         override suspend fun spentWithWindows(type: String, from: Long): List<UsageEventEntity> =

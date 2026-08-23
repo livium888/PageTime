@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +36,7 @@ import com.pagetime.app.ui.formatMinutes
 fun SettingsScreen(
     onManageBlockedApps: () -> Unit,
     onPermissions: () -> Unit,
+    onUsageAudit: () -> Unit,
     viewModel: SettingsViewModel = viewModel()
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -93,6 +95,15 @@ fun SettingsScreen(
                 Icon(Icons.Outlined.Block, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Manage blocked apps")
+            }
+
+            OutlinedButton(
+                onClick = onUsageAudit,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.History, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Usage history & protection")
             }
 
             OutlinedButton(

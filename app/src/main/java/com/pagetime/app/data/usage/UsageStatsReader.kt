@@ -31,10 +31,9 @@ class UsageStatsReader(private val context: Context) {
     }
 
     /**
-     * All usage events in [from]..[to]. Screen/keyguard events are only present
-     * on API 28+; on 26–27 the parser simply assumes the screen was on (the live
-     * ticker still guards real charging with PowerManager, so the only
-     * consequence is a slightly conservative reconciliation on those devices).
+     * All usage events in [from]..[to]. Event-type access is gated at API 28;
+     * on API 26–27 the reader emits no typed events, so reconciliation stays
+     * conservative and does not retroactively charge from an unverifiable stream.
      */
     fun events(from: Long, to: Long): List<UsageEventSample> {
         val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager

@@ -52,7 +52,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pagetime.app.data.gutenberg.GutendexBook
-import com.pagetime.app.ui.screens.discover.BookSource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

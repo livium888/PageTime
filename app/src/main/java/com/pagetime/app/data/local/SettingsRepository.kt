@@ -1,6 +1,8 @@
 package com.pagetime.app.data.local
 
 import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -31,7 +33,22 @@ data class ReaderSettings(
     val marginDp: Float = 20f
 )
 
+data class PendingReaderSource(val locatorJson: String?, val fraction: Float?)
+
 class SettingsRepository(private val context: Context) {
+
+    private val securePreferences by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "secure_settings",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
 
     private object Keys {
         val BALANCE = longPreferencesKey("browse_balance_seconds")
@@ -49,6 +66,36 @@ class SettingsRepository(private val context: Context) {
 
         /** Wall-clock time of the last UsageStats reconciliation sweep (0 = never). */
         val LAST_USAGE_RECONCILE = longPreferencesKey("last_usage_reconcile_at")
+    }
+
+    private object SecureKeys {
+        const val GEMINI_API_KEY = "gemini_api_key"
+        const val GEMINI_MODEL = "gemini_model"
+    }
+
+    fun geminiApiKey(): String? = securePreferences
+        .getString(SecureKeys.GEMINI_API_KEY, null)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+    fun setGeminiApiKey(value: String) {
+        securePreferences.edit().putString(SecureKeys.GEMINI_API_KEY, value.trim()).apply()
+    }
+
+    fun clearGeminiApiKey() {
+        securePreferences.edit().remove(SecureKeys.GEMINI_API_KEY).apply()
+    }
+
+    fun geminiModel(): String = securePreferences
+        .getString(SecureKeys.GEMINI_MODEL, "gemini-2.5-flash")
+        ?.removePrefix("models/")
+        ?.takeIf { it.isNotBlank() }
+        ?: "gemini-2.5-flash"
+
+    fun setGeminiModel(value: String) {
+        securePreferences.edit()
+            .putString(SecureKeys.GEMINI_MODEL, value.removePrefix("models/").trim())
+            .apply()
     }
 
     /** The book to resume on re-entry; null until the user has read something. */
@@ -79,6 +126,35 @@ class SettingsRepository(private val context: Context) {
 
     private fun bookmarkScrollKey(bookId: String) =
         floatPreferencesKey("bookmark_scroll_$bookId")
+
+    private fun pendingLocatorKey(bookId: String) =
+        stringPreferencesKey("pending_reader_locator_$bookId")
+
+    private fun pendingFractionKey(bookId: String) =
+        floatPreferencesKey("pending_reader_fraction_$bookId")
+
+    suspend fun setPendingReaderSource(bookId: String, source: PendingReaderSource) {
+        context.dataStore.edit {
+            it.remove(pendingLocatorKey(bookId))
+            it.remove(pendingFractionKey(bookId))
+            source.locatorJson?.let { value -> it[pendingLocatorKey(bookId)] = value }
+            source.fraction?.let { value -> it[pendingFractionKey(bookId)] = value.coerceIn(0f, 1f) }
+        }
+    }
+
+    suspend fun consumePendingReaderSource(bookId: String): PendingReaderSource? {
+        var source: PendingReaderSource? = null
+        context.dataStore.edit { preferences ->
+            val locator = preferences[pendingLocatorKey(bookId)]
+            val fraction = preferences[pendingFractionKey(bookId)]
+            if (locator != null || fraction != null) {
+                source = PendingReaderSource(locator, fraction)
+            }
+            preferences.remove(pendingLocatorKey(bookId))
+            preferences.remove(pendingFractionKey(bookId))
+        }
+        return source
+    }
 
     suspend fun savedBookmarkLocator(bookId: String): String? =
         context.dataStore.data.first()[bookmarkLocatorKey(bookId)]?.takeIf { it.isNotBlank() }

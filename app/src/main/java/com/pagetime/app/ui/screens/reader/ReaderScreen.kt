@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -86,6 +87,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
 import com.pagetime.app.data.local.ReaderSettings
+import com.pagetime.app.data.learning.AiGenerationState
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
 import kotlinx.coroutines.delay
@@ -117,6 +119,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
 
     val book by vm.book.collectAsStateWithLifecycle()
     val textContent by vm.textContent.collectAsStateWithLifecycle()
+    val initialTextFraction by vm.initialTextFraction.collectAsStateWithLifecycle()
     val sessionSeconds by vm.sessionSeconds.collectAsStateWithLifecycle()
     val creditedSeconds by vm.creditedSeconds.collectAsStateWithLifecycle()
     val balanceSeconds by vm.balanceSeconds.collectAsStateWithLifecycle()
@@ -129,15 +132,20 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val initialLocatorReady by vm.initialLocatorReady.collectAsStateWithLifecycle()
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
+    val aiGenerationState by vm.aiGenerationState.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
     val scrollState = rememberScrollState()
 
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
+    var showCardSheet by remember { mutableStateOf(false) }
+    var showChapterPrompt by remember { mutableStateOf(false) }
+    var lastPromptedChapter by remember { mutableStateOf<Int?>(null) }
     var controlsVisible by remember { mutableStateOf(true) }
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
+    var epubRestoreFinished by remember { mutableStateOf(false) }
 
     val tocEntries = remember(publication) {
         publication?.tableOfContents?.takeIf { it.isNotEmpty() }?.let { flattenToc(it) }
@@ -181,10 +189,10 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     // Restore and observe plain-text scrolling in one ordered coroutine. The first
     // scrollState emission is normally 0 while Compose is laying out; observing it
     // in a separate effect could save that startup value over the real position.
-    LaunchedEffect(textContent, book?.id) {
+    LaunchedEffect(textContent, book?.id, initialTextFraction) {
         if (textContent == null || book?.format != "txt") return@LaunchedEffect
 
-        val targetFraction = book?.scrollProgress?.coerceIn(0f, 1f) ?: 0f
+        val targetFraction = initialTextFraction.coerceIn(0f, 1f)
         var restoreApplied = targetFraction <= 0f
         var attempts = 0
         while (!restoreApplied && attempts < 40) { // up to ~2s for the scroll range
@@ -215,6 +223,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             val fraction = if (max > 0) value.toFloat() / max else 0f
             vm.onProgressChanged(fraction)
             vm.updateScrollProgress(fraction)
+            vm.maybeGenerateCardsForTextProgress(fraction)
         }
     }
 
@@ -244,13 +253,29 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                         val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
                         val size = pub.readingOrder.size
                         if (idx != null && size > 0) {
-                            chapterLabel = "${idx + 1} of $size"
+                                    chapterLabel = "${idx + 1} of $size"
+                            if (epubRestoreFinished &&
+                                (locator.locations?.progression?.toFloat() ?: 0f) >= 0.98f &&
+                                lastPromptedChapter != idx
+                            ) {
+                                lastPromptedChapter = idx
+                                controlsVisible = true
+                                showChapterPrompt = true
+                                vm.onChapterCompleted(
+                                    chapterIndex = idx,
+                                    locatorJson = locator.toJSON().toString(),
+                                    textFraction = ((idx + 1f) / size).coerceIn(0f, 1f)
+                                )
+                            }
                         }
                     }
                 },
                 onTapZone = { controlsVisible = !controlsVisible },
                 onNavigatorChanged = { navigator = it },
-                onRestoreComplete = vm::markEpubRestoreComplete
+                onRestoreComplete = {
+                    vm.markEpubRestoreComplete()
+                    epubRestoreFinished = true
+                }
             )
 
             book?.format == "txt" && textContent != null -> Column(
@@ -303,6 +328,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 onBack = onBack,
                 onToc = { showToc = true },
                 onBookmark = vm::toggleBookmark,
+                onCreateCard = { showCardSheet = true },
                 onSettings = { showSettings = true }
             )
         }
@@ -313,14 +339,26 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            ReaderBottomBar(
-                palette = palette,
-                sessionSeconds = sessionSeconds,
-                creditedSeconds = creditedSeconds,
-                progress = progress,
-                guardState = guardState,
-                chapterLabel = chapterLabel
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                if (showChapterPrompt) {
+                    ChapterReviewPrompt(
+                        chapterLabel = chapterLabel ?: "this chapter",
+                        onCreateCard = {
+                            showChapterPrompt = false
+                            showCardSheet = true
+                        },
+                        onDismiss = { showChapterPrompt = false }
+                    )
+                }
+                ReaderBottomBar(
+                    palette = palette,
+                    sessionSeconds = sessionSeconds,
+                    creditedSeconds = creditedSeconds,
+                    progress = progress,
+                    guardState = guardState,
+                    chapterLabel = chapterLabel
+                )
+            }
         }
 
         if (guardState.showIdleGate) {
@@ -330,6 +368,27 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         if (resumeNotice != null) {
             ResumeNotice(text = resumeNotice!!)
         }
+
+        when (val state = aiGenerationState) {
+            AiGenerationState.Generating -> AiGenerationNotice("Creating recall cards…")
+            is AiGenerationState.Generated -> if (state.count > 0) {
+                AiGenerationNotice("${state.count} recall card${if (state.count == 1) "" else "s"} ready")
+            }
+            is AiGenerationState.Failed -> AiGenerationNotice("Automatic cards unavailable")
+            AiGenerationState.Disabled, AiGenerationState.Idle -> Unit
+        }
+    }
+
+    if (showCardSheet) {
+        CardCreationSheet(
+            bookTitle = book?.title ?: "Book",
+            chapterLabel = chapterLabel,
+            onSave = { prompt, answer, explanation ->
+                vm.createLearningCard(prompt, answer, explanation, chapterLabel)
+                showCardSheet = false
+            },
+            onDismiss = { showCardSheet = false }
+        )
     }
 
     if (showSettings) {
@@ -505,6 +564,7 @@ private fun ReaderTopBar(
     onBack: () -> Unit,
     onToc: () -> Unit,
     onBookmark: () -> Unit,
+    onCreateCard: () -> Unit,
     onSettings: () -> Unit
 ) {
     TopAppBar(
@@ -532,6 +592,9 @@ private fun ReaderTopBar(
                     if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                     contentDescription = if (bookmarkPresent) "Remove bookmark" else "Bookmark this position"
                 )
+            }
+            IconButton(onClick = onCreateCard) {
+                Icon(Icons.Outlined.School, contentDescription = "Create review card")
             }
             IconButton(onClick = onSettings) {
                 Icon(Icons.Filled.FormatSize, contentDescription = "Reading settings")
@@ -632,6 +695,25 @@ private fun ResumeNotice(text: String) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.labelLarge
             )
+        }
+    }
+}
+
+@Composable
+private fun AiGenerationNotice(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 72.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 2.dp
+        ) {
+            Text(text, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
         }
     }
 }

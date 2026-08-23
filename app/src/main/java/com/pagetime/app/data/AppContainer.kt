@@ -11,6 +11,8 @@ import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.learning.GeminiLearningClient
+import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
@@ -43,13 +45,19 @@ class AppContainer(context: Context) {
         Room.databaseBuilder(appContext, AppDatabase::class.java, "pagetime.db")
             .addMigrations(
                 AppDatabase.MIGRATION_1_2,
-                AppDatabase.MIGRATION_2_3
+                AppDatabase.MIGRATION_2_3,
+                AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5,
+                AppDatabase.MIGRATION_5_6
             )
             .build()
 
     private val bookDao = database.bookDao()
     private val blockedAppDao = database.blockedAppDao()
     private val usageEventDao = database.usageEventDao()
+    private val learningCardDao = database.learningCardDao()
+    private val learningReviewLogDao = database.learningReviewLogDao()
+    private val learningGenerationDao = database.learningGenerationDao()
 
     val settingsRepository = SettingsRepository(appContext)
     val readiumEngine = ReadiumEngine(appContext)
@@ -74,6 +82,20 @@ class AppContainer(context: Context) {
     val usageRepository = UsageRepository(usageEventDao)
 
     val balanceManager = BalanceManager(settingsRepository, usageRepository)
+
+    val geminiLearningClient = GeminiLearningClient(settingsRepository)
+    val learningContextExtractor = LearningContextExtractor(appContext, epubParser)
+
+    val learningRepository = LearningRepository(
+        database = database,
+        cardDao = learningCardDao,
+        reviewLogDao = learningReviewLogDao,
+        generationDao = learningGenerationDao,
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        geminiClient = geminiLearningClient,
+        contextExtractor = learningContextExtractor
+    )
 
     private val powerManager =
         appContext.getSystemService(Context.POWER_SERVICE) as PowerManager

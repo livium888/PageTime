@@ -13,14 +13,25 @@ This is a native **Kotlin + Jetpack Compose** Android app.
 1. **Discover & download** — search three free ebook sources (Standard Ebooks,
    Gutenberg via Gutendex, and Open Library + Internet Archive) and download
    books as EPUB or plain text.
-2. **Read** — an in-app reader (EPUB chapters render in a WebView; plain text in
-   Compose). A timer banks browsing time while the reader is open.
+2. **Read** — an in-app reader powered by Readium for EPUB pagination and exact
+   locators, with plain text rendered in Compose. A timer banks browsing time while
+   the reader is open.
 3. **Enforce** — an `AccessibilityService` watches the foreground app. When a
    blocked app opens with a zero balance, PageTime shows a full-screen
    "time is up" overlay and offers to reopen the reader. With a positive balance,
    the balance is spent one second at a time while you're in the blocked app.
 
 The reading rate is configurable (default: 1 minute reading = 1 minute browsing).
+
+## Automatic comprehension cards
+
+PageTime can use Gemini to create source-grounded comprehension cards automatically. When a reader completes an EPUB chapter, or crosses a plain-text reading window, the app sends Gemini only the current bounded window plus the two preceding windows. Gemini returns up to four cards containing a topic, active-recall question, answer, explanation, and supporting quote. The app rejects cards whose quote is not present in the supplied text, then schedules accepted cards immediately with FSRS.
+
+Open **Settings → Gemini cards** in the app to enter the key manually. It is stored in Android encrypted preferences and is never shown again after saving. The app calls Gemini's `models.list` endpoint, follows pagination, filters to models that support `generateContent`, and shows those models in the picker. The selected model is saved locally and used for future automatic card generation.
+
+For GitHub Actions/private builds, `GEMINI_API_KEY` can still be supplied as a repository secret and is used only as a build-time fallback. Without either a user key or that build-time value, reading and manual cards continue to work and automatic generation stays disabled.
+
+For a public release, move the Gemini request behind a small authenticated server because any API key packaged in an Android APK can be extracted. The manually entered key is encrypted at rest, but the app still sends it directly to Google's API from the device.
 
 ## Requirements
 
@@ -51,7 +62,7 @@ PageTime needs three special permissions, all configured from
    launch PageTime reconciles this audit trail against its balance ledger and
    retroactively charges any blocked-app time the live ticker missed.
 
-Then pick which apps to block in **Settings → Manage blocked apps**.
+Then pick which apps to block in **Settings → Manage blocked apps**. Create a Gemini API key from Google AI Studio and add it under **Settings → Gemini cards** if you want automatic comprehension cards.
 
 ## Honest limitations
 

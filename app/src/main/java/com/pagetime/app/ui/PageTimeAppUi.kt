@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -21,6 +22,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
+import com.pagetime.app.ui.screens.review.ReviewScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
@@ -31,6 +33,7 @@ private data class BottomTab(val route: String, val label: String, val icon: Ima
 
 private val tabs = listOf(
     BottomTab("library", "Library", Icons.Outlined.MenuBook),
+    BottomTab("review", "Review", Icons.Outlined.School),
     BottomTab("search", "Discover", Icons.Outlined.Search),
     BottomTab("settings", "Settings", Icons.Filled.Settings)
 )
@@ -40,7 +43,7 @@ fun PageTimeAppUi(openReader: Boolean) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val showBottomBar = currentRoute in setOf("library", "search", "settings")
+    val showBottomBar = currentRoute in setOf("library", "review", "search", "settings")
 
     LaunchedEffect(openReader) {
         if (openReader) {
@@ -81,6 +84,12 @@ fun PageTimeAppUi(openReader: Boolean) {
                 LibraryScreen(
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
                     onDiscover = { navController.navigate("search") }
+                )
+            }
+            composable("review") {
+                ReviewScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
                 )
             }
             composable("search") { DiscoverScreen() }

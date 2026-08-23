@@ -17,6 +17,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        buildConfigField(
+            "String",
+            "GEMINI_API_KEY",
+            "\"${providers.gradleProperty("GEMINI_API_KEY").orNull ?: providers.environmentVariable("GEMINI_API_KEY").orNull ?: ""}\""
+        )
     }
 
     buildTypes {
@@ -42,6 +47,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -75,11 +81,14 @@ dependencies {
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.security.crypto)
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.fsrs)
+    implementation(libs.jsoup)
     implementation(libs.coil.compose)
 
     // Readium: open-source EPUB engine (rendering, pagination/scroll, locators).

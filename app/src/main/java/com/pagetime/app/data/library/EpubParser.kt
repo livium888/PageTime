@@ -21,7 +21,7 @@ data class EpubBook(
  */
 class EpubParser {
 
-    fun parse(epubFile: File, extractDir: File): EpubBook {
+    fun parse(epubFile: File, extractDir: File, extractAssets: Boolean = true): EpubBook {
         if (!epubFile.exists()) error("EPUB file not found: ${epubFile.absolutePath}")
         if (epubFile.length() < 100) error("EPUB file is too small or corrupted")
 
@@ -147,19 +147,23 @@ class EpubParser {
                 EpubChapter(label, path, anchor)
             }
 
-            // 5. Extract everything for rendering (chapters, images, stylesheets)
-            extractDir.deleteRecursively()
-            extractDir.mkdirs()
-            val rootPrefix = extractDir.canonicalFile.path + File.separator
-            val entries = zip.entries()
-            while (entries.hasMoreElements()) {
-                val entry = entries.nextElement()
-                if (entry.isDirectory) continue
-                val out = File(extractDir, entry.name).canonicalFile
-                if (!out.path.startsWith(rootPrefix)) continue // guard against path traversal
-                out.parentFile?.mkdirs()
-                zip.getInputStream(entry).use { input ->
-                    out.outputStream().use { output -> input.copyTo(output) }
+            // 5. Extract everything for rendering (chapters, images, stylesheets).
+            // Learning extraction passes false so it can inspect the ZIP directly
+            // without deleting/rebuilding the cache used by the live reader.
+            if (extractAssets) {
+                extractDir.deleteRecursively()
+                extractDir.mkdirs()
+                val rootPrefix = extractDir.canonicalFile.path + File.separator
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val out = File(extractDir, entry.name).canonicalFile
+                    if (!out.path.startsWith(rootPrefix)) continue // guard against path traversal
+                    out.parentFile?.mkdirs()
+                    zip.getInputStream(entry).use { input ->
+                        out.outputStream().use { output -> input.copyTo(output) }
+                    }
                 }
             }
 

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
+import com.pagetime.app.data.learning.AiGenerationState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,6 +45,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private val _textContent = MutableStateFlow<String?>(null)
     val textContent = _textContent.asStateFlow()
+
+    private val _initialTextFraction = MutableStateFlow(0f)
+    val initialTextFraction = _initialTextFraction.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
@@ -99,6 +103,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _resumeNotice = MutableStateFlow<String?>(null)
     val resumeNotice = _resumeNotice.asStateFlow()
 
+    private val _aiGenerationState = MutableStateFlow<AiGenerationState>(AiGenerationState.Idle)
+    val aiGenerationState = _aiGenerationState.asStateFlow()
+
+    private var lastTextGenerationBucket = -1
+    private var lastTextGenerationAttemptAt = 0L
+
     /** No position writes are allowed until the initial restore has completed. */
     @Volatile
     private var locatorRestoreComplete = false
@@ -110,12 +120,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun retry() {
         _error.value = null
         _textContent.value = null
+        _initialTextFraction.value = 0f
         _publication.value = null
         _initialLocatorJson.value = null
         _initialLocatorReady.value = false
         _bookmarkPresent.value = false
         locatorRestoreComplete = false
         txtRestoreComplete = false
+        lastTextGenerationBucket = -1
+        lastTextGenerationAttemptAt = 0L
+        _aiGenerationState.value = AiGenerationState.Idle
         loadBook()
     }
 
@@ -138,14 +152,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 settingsRepository.savedBookmarkScroll(loaded.id) != null
             }
 
+            val pendingSource = settingsRepository.consumePendingReaderSource(loaded.id)
             if (loaded.format == "epub") {
                 withContext(Dispatchers.IO) {
-                    openEpub(loaded)
+                    openEpub(loaded, pendingSource?.locatorJson)
                 }
             } else {
                 // Seed from the DB before publishing content so the Compose effect
                 // cannot observe text before the saved fraction is available.
-                latestTxtFraction = loaded.scrollProgress.coerceIn(0f, 1f)
+                latestTxtFraction = (pendingSource?.fraction ?: loaded.scrollProgress).coerceIn(0f, 1f)
+                _initialTextFraction.value = latestTxtFraction
                 txtRestoreComplete = false
                 withContext(Dispatchers.IO) {
                     _textContent.value = runCatching { File(loaded.localPath).readText() }.getOrNull()
@@ -154,16 +170,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                             null
                         }
                 }
-                txtRestoreComplete = loaded.scrollProgress <= 0f
+                txtRestoreComplete = latestTxtFraction <= 0f
             }
         }
     }
 
-    private suspend fun openEpub(book: BookEntity) {
+    private suspend fun openEpub(book: BookEntity, pendingLocatorJson: String?) {
         // Read the saved position BEFORE publishing the publication: the navigator
         // host is created the moment `_publication` flips non-null and must have the
         // locator at that instant to restore the exact reading spot.
-        val savedLocatorJson = settingsRepository.savedLocator(book.id)
+        val savedLocatorJson = pendingLocatorJson ?: settingsRepository.savedLocator(book.id)
         // try/catch instead of runCatching: retrieve/open are suspend functions and
         // runCatching's lambda is not a suspend context.
         // getOrNull instead of getOrThrow: Readium's Try failure wraps an Error, not
@@ -255,6 +271,71 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _guardState.value = guard.state
     }
 
+    /** Generates once per completed bounded plain-text window, without blocking scroll. */
+    fun maybeGenerateCardsForTextProgress(fraction: Float) {
+        val b = _book.value ?: return
+        if (b.format == "epub") return
+        val bucket = (fraction.coerceIn(0f, 0.9999f) * 5f).toInt()
+        val now = SystemClock.elapsedRealtime()
+        if (bucket <= 0 || bucket < lastTextGenerationBucket) return
+        if (bucket == lastTextGenerationBucket && now - lastTextGenerationAttemptAt < AI_RETRY_AFTER_MS) return
+        lastTextGenerationBucket = bucket
+        lastTextGenerationAttemptAt = now
+        generateCardsForChapter(
+            chapterIndex = bucket,
+            locatorJson = null,
+            textFraction = fraction
+        )
+    }
+
+    /** Called when Readium reaches the end of a chapter after the initial restore. */
+    fun onChapterCompleted(
+        chapterIndex: Int,
+        locatorJson: String?,
+        textFraction: Float?
+    ) {
+        if (!locatorRestoreComplete) return
+        generateCardsForChapter(chapterIndex, locatorJson, textFraction)
+    }
+
+    /** Starts one bounded Gemini generation request without blocking the reader. */
+    private fun generateCardsForChapter(
+        chapterIndex: Int,
+        locatorJson: String?,
+        textFraction: Float?
+    ) {
+        val b = _book.value ?: return
+        if (b.format != "epub" && chapterIndex <= 0) return
+        if (!container.geminiLearningClient.isConfigured) {
+            _aiGenerationState.value = AiGenerationState.Disabled
+            return
+        }
+        if (_aiGenerationState.value is AiGenerationState.Generating) return
+        _aiGenerationState.value = AiGenerationState.Generating
+        persistenceScope.launch {
+            try {
+                val result = container.learningRepository.generateCardsForChapter(
+                    bookId = b.id,
+                    chapterIndex = chapterIndex,
+                    locatorJson = locatorJson,
+                    textFraction = textFraction
+                )
+                _aiGenerationState.value = AiGenerationState.Generated(
+                    count = result.cards.size,
+                    topicCount = result.cards.map { it.topic }.distinctBy(String::lowercase).size
+                )
+                delay(4_000)
+                if (_aiGenerationState.value is AiGenerationState.Generated) {
+                    _aiGenerationState.value = AiGenerationState.Idle
+                }
+            } catch (error: Throwable) {
+                _aiGenerationState.value = AiGenerationState.Failed(
+                    error.message ?: "Automatic card generation failed"
+                )
+            }
+        }
+    }
+
     fun resumeAfterIdle() {
         guard.onContinueTapped(SystemClock.elapsedRealtime())
         _guardState.value = guard.state
@@ -273,6 +354,32 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtRestoreComplete = true
         _progress.value = latestTxtFraction
         showResumeNotice(latestTxtFraction)
+    }
+
+    fun createLearningCard(
+        prompt: String,
+        answer: String,
+        explanation: String?,
+        chapterTitle: String?
+    ) = persistenceScope.launch {
+        val b = _book.value ?: return@launch
+        val publication = _publication.value
+        val locator = latestLocator
+        val chapterIndex = if (publication != null && locator != null) {
+            publication.readingOrder.indexOfFirstWithHref(locator.href) ?: 0
+        } else {
+            b.currentChapterIndex
+        }
+        container.learningRepository.createCard(
+            bookId = b.id,
+            chapterIndex = chapterIndex,
+            chapterTitle = chapterTitle,
+            prompt = prompt,
+            answer = answer,
+            explanation = explanation,
+            sourceLocator = locator?.toJSON()?.toString(),
+            sourceFraction = latestTxtFraction.takeIf { b.format == "txt" }
+        )
     }
 
     fun toggleBookmark() {
@@ -331,6 +438,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 val overall = ((index + fraction) / size).coerceIn(0f, 1f)
                 _progress.value = overall
                 showResumeNotice(overall)
+                // A saved position at a chapter boundary still needs its automatic
+                // card generation, but it must pass through the persisted dedupe
+                // ledger so reopening cannot create duplicate cards.
+                if (fraction >= 0.98f) {
+                    onChapterCompleted(
+                        chapterIndex = index,
+                        locatorJson = locator.toJSON().toString(),
+                        textFraction = overall
+                    )
+                }
             }
         }
     }
@@ -405,6 +522,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     fun applyReaderSettings(settings: ReaderSettings) = viewModelScope.launch {
         settingsRepository.setReaderSettings(settings)
+    }
+
+    companion object {
+        private const val AI_RETRY_AFTER_MS = 15 * 60 * 1000L
     }
 
     override fun onCleared() {

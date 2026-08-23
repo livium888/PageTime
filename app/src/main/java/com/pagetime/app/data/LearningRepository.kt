@@ -114,7 +114,7 @@ class LearningRepository(
             sourceLocator = sourceLocator,
             sourceFraction = sourceFraction?.coerceIn(0f, 1f),
             sourceQuote = null,
-            fsrsCardJson = card.toJson(),
+            fsrsCardJson = FsrsCardCodec.toJson(card),
             createdAt = now.toEpochMilli(),
             updatedAt = now.toEpochMilli()
         ).also { cardDao.upsert(it) }
@@ -172,7 +172,7 @@ class LearningRepository(
                         sourceLocator = locatorJson,
                         sourceFraction = textFraction?.coerceIn(0f, 1f),
                         sourceQuote = generated.sourceQuote,
-                        fsrsCardJson = card.toJson(),
+                        fsrsCardJson = FsrsCardCodec.toJson(card),
                         createdAt = now,
                         updatedAt = now,
                         generatedByAi = true,
@@ -209,7 +209,7 @@ class LearningRepository(
     suspend fun dueCards(now: Instant = Instant.now(), limit: Int = 20): List<LearningCardEntity> =
         cardDao.getAll()
             .filter { isDue(it, now) }
-            .sortedBy { Card.fromJson(it.fsrsCardJson).due }
+            .sortedBy { FsrsCardCodec.fromJson(it.fsrsCardJson).due }
             .take(limit.coerceAtLeast(1))
 
     suspend fun reviewCard(
@@ -220,13 +220,13 @@ class LearningRepository(
         var outcome: ReviewOutcome? = null
         database.withTransaction {
             val existing = cardDao.getById(cardId) ?: error("Learning card not found")
-            val oldCard = Card.fromJson(existing.fsrsCardJson)
+            val oldCard = FsrsCardCodec.fromJson(existing.fsrsCardJson)
             val oldDue = oldCard.due
             val previousReview = oldCard.lastReview
             val result = scheduler.reviewCard(oldCard, rating.toFsrs(), now, null)
             val newCard = result.card()
             val updated = existing.copy(
-                fsrsCardJson = newCard.toJson(),
+                fsrsCardJson = FsrsCardCodec.toJson(newCard),
                 updatedAt = now.toEpochMilli(),
             lastRating = rating.value,
             reviewCount = existing.reviewCount + 1
@@ -257,7 +257,7 @@ class LearningRepository(
         cardDao.getById(cardId)?.let { isDue(it, now) } ?: false
 
     private fun isDue(card: LearningCardEntity, now: Instant): Boolean =
-        LearningPolicy.isDue(Card.fromJson(card.fsrsCardJson).due, now)
+        LearningPolicy.isDue(FsrsCardCodec.fromJson(card.fsrsCardJson).due, now)
 
     companion object {
         private const val STATUS_GENERATING = "generating"

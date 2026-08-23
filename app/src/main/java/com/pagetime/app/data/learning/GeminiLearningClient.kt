@@ -175,20 +175,20 @@ class GeminiLearningClient(
             .getJSONObject(0)
             .getString("text")
         val cardsJson = JSONObject(text).optJSONArray("cards") ?: JSONArray()
-        val cards = buildList {
-            for (i in 0 until cardsJson.length().coerceAtMost(4)) {
-                val item = cardsJson.getJSONObject(i)
-                val card = GeneratedLearningCard(
-                    topic = item.optString("topic").trim(),
-                    question = item.optString("question").trim(),
-                    answer = item.optString("answer").trim(),
-                    explanation = item.optString("explanation").trim(),
-                    sourceQuote = item.optString("sourceQuote").trim(),
-                    confidence = item.optDouble("confidence", 0.0).toFloat()
-                )
-                if (isValid(card, context.recentText) && none { it.topic.equals(card.topic, ignoreCase = true) }) {
-                    add(card)
-                }
+        val cards = mutableListOf<GeneratedLearningCard>()
+        val seenTopics = mutableSetOf<String>()
+        for (i in 0 until cardsJson.length().coerceAtMost(4)) {
+            val item = cardsJson.getJSONObject(i)
+            val card = GeneratedLearningCard(
+                topic = item.optString("topic").trim(),
+                question = item.optString("question").trim(),
+                answer = item.optString("answer").trim(),
+                explanation = item.optString("explanation").trim(),
+                sourceQuote = item.optString("sourceQuote").trim(),
+                confidence = item.optDouble("confidence", 0.0).toFloat()
+            )
+            if (isValid(card, context.recentText) && seenTopics.add(card.topic.lowercase())) {
+                cards.add(card)
             }
         }
         return AiGenerationResult(cards, contextChapterCount = 3, usedCharacters = context.recentText.length)

@@ -60,6 +60,11 @@ class BlockController(
     @Volatile
     private var sessionSpentSeconds = 0L
 
+    /** Wall-clock start of the current spend session; recorded so the UsageStats
+     *  reconciler can subtract exactly what the live ticker already charged. */
+    @Volatile
+    private var sessionStartWallAt = 0L
+
     private var lastBlockedLogAt = 0L
 
     var service: AppBlockerService? = null
@@ -107,6 +112,7 @@ class BlockController(
         if (spendJob?.isActive == true) return
         val pkg = currentBlockedPackage ?: return
         sessionSpentSeconds = 0
+        sessionStartWallAt = System.currentTimeMillis()
         spendJob = scope.launch {
             while (isActive && currentBlockedPackage == pkg) {
                 delay(1000)
@@ -140,8 +146,11 @@ class BlockController(
     private fun flushSpentSession(pkg: String) {
         if (sessionSpentSeconds > 0) {
             val seconds = sessionSpentSeconds
+            val start = sessionStartWallAt
+            val end = System.currentTimeMillis()
             sessionSpentSeconds = 0
-            scope.launch { usageRepository.log(UsageRepository.TYPE_SPENT, pkg, seconds) }
+            sessionStartWallAt = 0L
+            scope.launch { usageRepository.logSpent(pkg, seconds, start, end) }
         }
     }
 

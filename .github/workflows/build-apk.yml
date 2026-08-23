@@ -32,6 +32,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Static analysis (detekt)
+        run: ./gradlew detekt --no-daemon
+
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 

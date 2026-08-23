@@ -46,6 +46,9 @@ class SettingsRepository(private val context: Context) {
 
         /** Id of the book whose position was saved most recently — drives "continue reading". */
         val LAST_READ_BOOK = stringPreferencesKey("last_read_book_id")
+
+        /** Wall-clock time of the last UsageStats reconciliation sweep (0 = never). */
+        val LAST_USAGE_RECONCILE = longPreferencesKey("last_usage_reconcile_at")
     }
 
     /** The book to resume on re-entry; null until the user has read something. */
@@ -113,6 +116,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setRatio(value: Double) {
         context.dataStore.edit { it[Keys.RATIO] = value.coerceIn(0.1, 10.0) }
+    }
+
+    /** Wall-clock time of the last UsageStats reconciliation sweep, or null on first run. */
+    suspend fun lastUsageReconcileAt(): Long? =
+        context.dataStore.data.first()[Keys.LAST_USAGE_RECONCILE]
+
+    suspend fun setLastUsageReconcileAt(value: Long) {
+        context.dataStore.edit { it[Keys.LAST_USAGE_RECONCILE] = value }
     }
 
     suspend fun setFontSize(value: Float) {

@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [BookEntity::class, BlockedAppEntity::class, UsageEventEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -27,6 +27,18 @@ abstract class AppDatabase : RoomDatabase() {
                         "packageName TEXT, " +
                         "seconds INTEGER NOT NULL)"
                 )
+            }
+        }
+
+        /**
+         * v3: usage_events gains the wall-clock window columns that let the
+         * UsageStats reconciler prove which time was already charged (prevents
+         * double-charging when both the live ticker and the reconciler run).
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE usage_events ADD COLUMN windowStart INTEGER")
+                db.execSQL("ALTER TABLE usage_events ADD COLUMN windowEnd INTEGER")
             }
         }
     }

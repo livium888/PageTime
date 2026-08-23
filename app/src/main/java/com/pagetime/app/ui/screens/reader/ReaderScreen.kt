@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -449,6 +450,8 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
     fontFamily = when (s.fontFamily) {
         "sans" -> ReadiumFontFamily.SANS_SERIF
         "mono" -> ReadiumFontFamily.MONOSPACE
+        // Literata is bundled for the plain-text reader; Readium 3.0.0 exposes
+        // no custom-font hook, so EPUBs fall back to its built-in serif stack.
         else -> ReadiumFontFamily.SERIF
     },
     theme = when (s.theme) {
@@ -646,6 +649,7 @@ private fun IdleGate(onContinue: () -> Unit) {
 private fun txtFontFamily(key: String): FontFamily = when (key) {
     "sans" -> FontFamily.SansSerif
     "mono" -> FontFamily.Monospace
+    "literata" -> FontFamily(Font(R.font.literata)) // Google's book-reading typeface, OFL-licensed
     else -> FontFamily.Serif
 }
 
@@ -685,7 +689,12 @@ private fun ReaderSettingsSheet(
 
             Text("Font", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("serif" to "Serif", "sans" to "Sans", "mono" to "Mono").forEach { (key, label) ->
+                listOf(
+                    "serif" to "Serif",
+                    "sans" to "Sans",
+                    "mono" to "Mono",
+                    "literata" to "Literata"
+                ).forEach { (key, label) ->
                     SelectorPill(selected = settings.fontFamily == key, label = label) { onFontFamily(key) }
                 }
             }

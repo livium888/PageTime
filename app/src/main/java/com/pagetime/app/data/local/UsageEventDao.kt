@@ -20,6 +20,23 @@ interface UsageEventDao {
     )
     fun sumSince(type: String, since: Long): Flow<Long>
 
+    @Query(
+        "SELECT COALESCE(SUM(seconds), 0) FROM usage_events " +
+            "WHERE type IN (:types) AND timestamp >= :since"
+    )
+    fun sumOfTypesSince(types: List<String>, since: Long): Flow<Long>
+
+    /**
+     * Live spend sessions (and reconciled sweeps) with wall-clock windows,
+     * used by the UsageStats reconciler to avoid double-charging.
+     */
+    @Query(
+        "SELECT * FROM usage_events WHERE type = :type " +
+            "AND windowStart IS NOT NULL AND windowEnd IS NOT NULL " +
+            "AND windowEnd >= :from"
+    )
+    suspend fun spentWithWindows(type: String, from: Long): List<UsageEventEntity>
+
     @Query("DELETE FROM usage_events WHERE timestamp < :cutoff")
     suspend fun pruneOlderThan(cutoff: Long)
 }

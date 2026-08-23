@@ -16,6 +16,8 @@ class UsageRepository(private val dao: UsageEventDao) {
         const val TYPE_EARNED = "EARNED"
         const val TYPE_SPENT = "SPENT"
         const val TYPE_BLOCKED = "BLOCKED"
+        /** Retroactive charge applied from UsageStats after the service missed time. */
+        const val TYPE_RECONCILED = "RECONCILED"
 
         private const val DAY_MS = 24L * 60 * 60 * 1000
     }
@@ -31,6 +33,24 @@ class UsageRepository(private val dao: UsageEventDao) {
         )
     }
 
+    /**
+     * Records a spend session (live ticker or UsageStats reconciliation) with its
+     * exact wall-clock window so later reconciles can attribute time without
+     * double-charging.
+     */
+    suspend fun logSpent(packageName: String, seconds: Long, windowStart: Long, windowEnd: Long) {
+        dao.insert(
+            UsageEventEntity(
+                timestamp = System.currentTimeMillis(),
+                type = TYPE_SPENT,
+                packageName = packageName,
+                seconds = seconds,
+                windowStart = windowStart,
+                windowEnd = windowEnd
+            )
+        )
+    }
+
     fun recent(limit: Int = 200): Flow<List<UsageEventEntity>> = dao.observeRecent(limit)
 
     fun earnedSince(since: Long): Flow<Long> =
@@ -38,14 +58,20 @@ class UsageRepository(private val dao: UsageEventDao) {
 
     fun spentSince(since: Long): Flow<Map<String, Long>> =
         dao.observeRecent(Int.MAX_VALUE).map { events ->
-            events.filter { it.type == TYPE_SPENT && it.timestamp >= since }
+            events.filter { it.type in SPEND_TYPES && it.timestamp >= since }
                 .groupingBy { it.packageName ?: "unknown" }
                 .fold(0L) { acc, e -> acc + e.seconds }
         }
 
-    fun spentToday(): Flow<Long> = dao.sumSince(TYPE_SPENT, System.currentTimeMillis() - DAY_MS)
+    fun spentToday(): Flow<Long> = dao.sumOfTypesSince(SPEND_TYPES, System.currentTimeMillis() - DAY_MS)
 
     fun earnedToday(): Flow<Long> = dao.sumSince(TYPE_EARNED, System.currentTimeMillis() - DAY_MS)
+
+    /** Live + reconciled spend rows with windows overlapping [from], for the reconciler. */
+    suspend fun spentWithWindows(from: Long): List<UsageEventEntity> =
+        dao.spentWithWindows(TYPE_SPENT, from)
+
+    private val SPEND_TYPES = listOf(TYPE_SPENT, TYPE_RECONCILED)
 
     suspend fun prune(keepDays: Int = 30) {
         dao.pruneOlderThan(System.currentTimeMillis() - keepDays * DAY_MS)

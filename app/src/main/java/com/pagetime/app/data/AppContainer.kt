@@ -12,6 +12,9 @@ import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.usage.ForegroundParser
+import com.pagetime.app.data.usage.UsageReconciler
+import com.pagetime.app.data.usage.UsageStatsReader
 import com.pagetime.app.domain.BalanceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +42,10 @@ class AppContainer(context: Context) {
 
     val database: AppDatabase =
         Room.databaseBuilder(appContext, AppDatabase::class.java, "pagetime.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(
+                AppDatabase.MIGRATION_1_2,
+                AppDatabase.MIGRATION_2_3
+            )
             .build()
 
     private val bookDao = database.bookDao()
@@ -82,7 +88,21 @@ class AppContainer(context: Context) {
         powerManager = powerManager
     )
 
+    /** UsageStats audit: charges blocked-app time even if our service was dead. */
+    val usageStatsReader = UsageStatsReader(appContext)
+    val usageReconciler = UsageReconciler(
+        scope = scope,
+        settingsRepository = settingsRepository,
+        blockedAppRepository = blockedAppRepository,
+        usageRepository = usageRepository,
+        balanceManager = balanceManager,
+        blockController = blockController,
+        reader = usageStatsReader,
+        parser = ForegroundParser()
+    )
+
     init {
         blockController.start()
+        usageReconciler.start()
     }
 }

@@ -39,13 +39,17 @@ On Windows, use `gradlew.bat assembleDebug`.
 
 ## Setup (permissions)
 
-PageTime needs two special permissions, both configured from
+PageTime needs three special permissions, all configured from
 **Settings → Permissions & setup** in the app:
 
 1. **Accessibility service** — enables the blocker to detect when a blocked app
    opens. Android shows this under *Settings → Accessibility*.
 2. **Display over other apps** — lets PageTime show the "time is up" screen over
    a blocked app.
+3. **Usage access** — Android keeps recording which apps you open even when
+   PageTime itself is dead (force-stopped, crashed, swiped away). On every
+   launch PageTime reconciles this audit trail against its balance ledger and
+   retroactively charges any blocked-app time the live ticker missed.
 
 Then pick which apps to block in **Settings → Manage blocked apps**.
 

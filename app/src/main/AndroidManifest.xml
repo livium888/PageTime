@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- UsageStatsManager: lets the app reconcile browse-time spent in blocked apps
+         even when the accessibility service was not running (e.g. after force-stop).
+         Without this, time spent in a blocked app while PageTime was dead would be
+         free. This is a special-access permission, granted from system settings. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Lets us enumerate the user's installed apps so they can pick which ones to block. -->
     <queries>

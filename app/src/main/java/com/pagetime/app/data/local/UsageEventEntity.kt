@@ -13,9 +13,16 @@ import androidx.room.PrimaryKey
 data class UsageEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val timestamp: Long,
-    /** One of UsageRepository.TYPE_EARNED / TYPE_SPENT / TYPE_BLOCKED. */
+    /** One of UsageRepository.TYPE_EARNED / TYPE_SPENT / TYPE_BLOCKED / TYPE_RECONCILED. */
     val type: String,
-    /** Blocked app package for SPENT/BLOCKED events; null for EARNED. */
+    /** Blocked app package for SPENT/BLOCKED/RECONCILED events; null for EARNED. */
     val packageName: String?,
-    val seconds: Long
+    val seconds: Long,
+    /**
+     * Wall-clock window this entry covers (SPENT sessions and RECONCILED sweeps;
+     * null for EARNED/BLOCKED). Kept so the UsageStats reconciler can subtract
+     * already-charged wall time from real foreground time without double-charging.
+     */
+    val windowStart: Long? = null,
+    val windowEnd: Long? = null
 )

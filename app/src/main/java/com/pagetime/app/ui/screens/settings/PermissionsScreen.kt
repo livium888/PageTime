@@ -1,8 +1,11 @@
 package com.pagetime.app.ui.screens.settings
 
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Process
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -47,6 +50,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
     var overlayEnabled by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var usageAccessEnabled by remember { mutableStateOf(hasUsageAccess(context)) }
 
     // Re-check when returning from the system settings screens.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -55,6 +59,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 accessibilityEnabled = isAccessibilityEnabled(context)
                 overlayEnabled = Settings.canDrawOverlays(context)
+                usageAccessEnabled = hasUsageAccess(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -82,7 +87,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                "PageTime needs two special permissions to enforce your reading goal. Neither lets the app read your data.",
+                "PageTime needs three special permissions to enforce your reading goal. None of them let the app read your data.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -106,6 +111,18 @@ fun PermissionsScreen(onBack: () -> Unit) {
                     val uri = Uri.parse("package:${context.packageName}")
                     context.startActivity(
                         Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, uri)
+                    )
+                }
+            )
+
+            PermissionCard(
+                title = "Usage access",
+                description = "The honest clock. Android keeps recording which apps you opened even if PageTime itself is stopped, so PageTime can catch up on time spent in blocked apps after a crash, force-stop, or restart. Without it the counter can't know what happened while it wasn't running.",
+                granted = usageAccessEnabled,
+                buttonLabel = if (usageAccessEnabled) "Open settings" else "Enable",
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                     )
                 }
             )
@@ -141,6 +158,25 @@ private fun PermissionCard(
             Button(onClick = onClick) { Text(buttonLabel) }
         }
     }
+}
+
+private fun hasUsageAccess(context: Context): Boolean {
+    val ops = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        ops.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    } else {
+        @Suppress("DEPRECATION")
+        ops.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    }
+    return mode == AppOpsManager.MODE_ALLOWED
 }
 
 private fun isAccessibilityEnabled(context: Context): Boolean {

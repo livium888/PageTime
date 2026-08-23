@@ -1,0 +1,26 @@
+# Detekt configuration.
+#
+# buildUponDefaultConfig: false — the default rule set is intentionally NOT
+# inherited. This project uses Compose (generated, state-heavy code) and already
+# has a lint + ktlint story; detekt exists here for one specific job: catching
+# unused/wildcard imports in CI as part of "make it better, faster, safer" —
+# with zero surprise failures from rules that don't fit this codebase.
+buildUponDefaultConfig: false
+
+config:
+  validation: true
+  warningsAsErrors: false
+  checkExhaustiveness: false
+  excludes: ''
+
+build:
+  maxIssues: 0
+
+processors:
+  active: false
+
+style:
+  UnusedImports:
+    active: true
+  WildcardImport:
+    active: true

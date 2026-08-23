@@ -74,6 +74,33 @@ class SettingsRepository(private val context: Context) {
     private fun locatorKey(bookId: String) =
         stringPreferencesKey("locator_$bookId")
 
+    private fun bookmarkLocatorKey(bookId: String) =
+        stringPreferencesKey("bookmark_locator_$bookId")
+
+    private fun bookmarkScrollKey(bookId: String) =
+        floatPreferencesKey("bookmark_scroll_$bookId")
+
+    suspend fun savedBookmarkLocator(bookId: String): String? =
+        context.dataStore.data.first()[bookmarkLocatorKey(bookId)]?.takeIf { it.isNotBlank() }
+
+    suspend fun saveBookmarkLocator(bookId: String, json: String) {
+        context.dataStore.edit { it[bookmarkLocatorKey(bookId)] = json }
+    }
+
+    suspend fun savedBookmarkScroll(bookId: String): Float? =
+        context.dataStore.data.first()[bookmarkScrollKey(bookId)]
+
+    suspend fun saveBookmarkScroll(bookId: String, fraction: Float) {
+        context.dataStore.edit { it[bookmarkScrollKey(bookId)] = fraction.coerceIn(0f, 1f) }
+    }
+
+    suspend fun clearBookmark(bookId: String) {
+        context.dataStore.edit {
+            it.remove(bookmarkLocatorKey(bookId))
+            it.remove(bookmarkScrollKey(bookId))
+        }
+    }
+
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
         Settings(
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
@@ -130,23 +157,33 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.LAST_USAGE_RECONCILE] = value }
     }
 
+    suspend fun setReaderSettings(value: ReaderSettings) {
+        context.dataStore.edit {
+            it[Keys.FONT_SIZE] = value.fontSizeSp.coerceIn(12f, 32f)
+            it[Keys.LINE_HEIGHT] = value.lineHeight.coerceIn(1.0f, 2.2f)
+            it[Keys.FONT_FAMILY] = value.fontFamily
+            it[Keys.THEME] = value.theme
+            it[Keys.MARGIN] = value.marginDp.coerceIn(8f, 48f)
+        }
+    }
+
     suspend fun setFontSize(value: Float) {
-        context.dataStore.edit { it[Keys.FONT_SIZE] = value.coerceIn(12f, 32f) }
+        setReaderSettings(readerSettings.first().copy(fontSizeSp = value))
     }
 
     suspend fun setLineHeight(value: Float) {
-        context.dataStore.edit { it[Keys.LINE_HEIGHT] = value.coerceIn(1.0f, 2.2f) }
+        setReaderSettings(readerSettings.first().copy(lineHeight = value))
     }
 
     suspend fun setFontFamily(value: String) {
-        context.dataStore.edit { it[Keys.FONT_FAMILY] = value }
+        setReaderSettings(readerSettings.first().copy(fontFamily = value))
     }
 
     suspend fun setTheme(value: String) {
-        context.dataStore.edit { it[Keys.THEME] = value }
+        setReaderSettings(readerSettings.first().copy(theme = value))
     }
 
     suspend fun setMargin(value: Float) {
-        context.dataStore.edit { it[Keys.MARGIN] = value.coerceIn(8f, 48f) }
+        setReaderSettings(readerSettings.first().copy(marginDp = value))
     }
 }

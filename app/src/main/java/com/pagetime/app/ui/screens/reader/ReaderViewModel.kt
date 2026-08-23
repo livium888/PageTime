@@ -72,6 +72,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _initialLocatorJson = MutableStateFlow<String?>(null)
     val initialLocatorJson = _initialLocatorJson.asStateFlow()
 
+    /** Distinguishes "no saved locator" from "saved locator lookup still loading". */
+    private val _initialLocatorReady = MutableStateFlow(false)
+    val initialLocatorReady = _initialLocatorReady.asStateFlow()
+
+    private val _bookmarkPresent = MutableStateFlow(false)
+    val bookmarkPresent = _bookmarkPresent.asStateFlow()
+
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
 
@@ -87,6 +94,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private var latestLocator: org.readium.r2.shared.publication.Locator? = null
 
     private var locatorSaveJob: Job? = null
+    private var txtSaveJob: Job? = null
+
+    private val _resumeNotice = MutableStateFlow<String?>(null)
+    val resumeNotice = _resumeNotice.asStateFlow()
+
+    /** No position writes are allowed until the initial restore has completed. */
+    @Volatile
+    private var locatorRestoreComplete = false
 
     init {
         loadBook()
@@ -97,6 +112,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _textContent.value = null
         _publication.value = null
         _initialLocatorJson.value = null
+        _initialLocatorReady.value = false
+        _bookmarkPresent.value = false
+        locatorRestoreComplete = false
+        txtRestoreComplete = false
         loadBook()
     }
 
@@ -104,6 +123,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         viewModelScope.launch {
             val loaded = if (bookId == "last") repo.getMostRecentBook() else repo.getBook(bookId)
             _book.value = loaded
+            loaded?.let { persistenceScope.launch { settingsRepository.setLastReadBookId(it.id) } }
             if (loaded == null) {
                 _error.value = "Book not found in library"
                 return@launch
@@ -112,11 +132,21 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             // finished loading; make sure the timer actually starts.
             if (resumed) tryStartTicker()
 
+            _bookmarkPresent.value = if (loaded.format == "epub") {
+                settingsRepository.savedBookmarkLocator(loaded.id) != null
+            } else {
+                settingsRepository.savedBookmarkScroll(loaded.id) != null
+            }
+
             if (loaded.format == "epub") {
                 withContext(Dispatchers.IO) {
                     openEpub(loaded)
                 }
             } else {
+                // Seed from the DB before publishing content so the Compose effect
+                // cannot observe text before the saved fraction is available.
+                latestTxtFraction = loaded.scrollProgress.coerceIn(0f, 1f)
+                txtRestoreComplete = false
                 withContext(Dispatchers.IO) {
                     _textContent.value = runCatching { File(loaded.localPath).readText() }.getOrNull()
                         ?: run {
@@ -124,9 +154,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                             null
                         }
                 }
-                // Seed from the DB so an early checkpoint can't overwrite the saved
-                // position with 0 before the user has scrolled anywhere.
-                latestTxtFraction = loaded.scrollProgress.coerceIn(0f, 1f)
+                txtRestoreComplete = loaded.scrollProgress <= 0f
             }
         }
     }
@@ -153,7 +181,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             _error.value = "Cannot open this EPUB: ${t.message}"
             return
         }
+        locatorRestoreComplete = savedLocatorJson == null
         _initialLocatorJson.value = savedLocatorJson
+        _initialLocatorReady.value = true
         _publication.value = publication
     }
 
@@ -234,11 +264,84 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     @Volatile
     private var latestTxtFraction: Float = 0f
 
+    /** No writes until the Compose scroll restore has applied the saved fraction. */
+    @Volatile
+    private var txtRestoreComplete = false
+
+    fun markTxtRestoreComplete() {
+        if (txtRestoreComplete) return
+        txtRestoreComplete = true
+        _progress.value = latestTxtFraction
+        showResumeNotice(latestTxtFraction)
+    }
+
+    fun toggleBookmark() {
+        val b = _book.value ?: return
+        persistenceScope.launch {
+            if (_bookmarkPresent.value) {
+                settingsRepository.clearBookmark(b.id)
+                _bookmarkPresent.value = false
+                return@launch
+            }
+            when (b.format) {
+                "epub" -> {
+                    val locator = latestLocator ?: return@launch
+                    if (!locatorRestoreComplete) return@launch
+                    settingsRepository.saveBookmarkLocator(b.id, locator.toJSON().toString())
+                }
+                else -> {
+                    if (!txtRestoreComplete) return@launch
+                    settingsRepository.saveBookmarkScroll(b.id, latestTxtFraction)
+                }
+            }
+            _bookmarkPresent.value = true
+        }
+    }
+
     /** Called continuously by the plain-text reader while the user scrolls. */
     fun updateScrollProgress(fraction: Float) {
+        if (!ReaderPositionPolicy.canPersist(txtRestoreComplete)) return
         val b = _book.value ?: return
-        latestTxtFraction = fraction.coerceIn(0f, 1f)
+        latestTxtFraction = ReaderPositionPolicy.clampFraction(fraction)
+        txtSaveJob?.cancel()
+        txtSaveJob = persistenceScope.launch {
+            delay(250)
+            repo.updateProgress(b.id, 0, latestTxtFraction)
+        }
+    }
+
+    /** Flushes the exact current text position before the screen is destroyed. */
+    fun persistTextPositionNow(fraction: Float) {
+        if (!ReaderPositionPolicy.canPersist(txtRestoreComplete)) return
+        val b = _book.value ?: return
+        latestTxtFraction = ReaderPositionPolicy.clampFraction(fraction)
+        txtSaveJob?.cancel()
         persistenceScope.launch { repo.updateProgress(b.id, 0, latestTxtFraction) }
+    }
+
+    /** Marks the Readium initial locator application complete without saving startup state. */
+    fun markEpubRestoreComplete() {
+        locatorRestoreComplete = true
+        latestLocator?.let { locator ->
+            val publication = _publication.value
+            val index = publication?.readingOrder?.indexOfFirstWithHref(locator.href)
+            val fraction = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f)
+            val size = publication?.readingOrder?.size ?: 0
+            if (index != null && size > 0) {
+                val overall = ((index + fraction) / size).coerceIn(0f, 1f)
+                _progress.value = overall
+                showResumeNotice(overall)
+            }
+        }
+    }
+
+    private fun showResumeNotice(progress: Float) {
+        if (progress <= 0.01f) return
+        _resumeNotice.value = "Resumed at ${(progress * 100).toInt()}%"
+        viewModelScope.launch {
+            delay(4_000)
+            _resumeNotice.value = null
+        }
     }
 
     /**
@@ -248,6 +351,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun onLocatorChanged(locator: org.readium.r2.shared.publication.Locator) {
         latestLocator = locator
+        if (!locatorRestoreComplete) return
 
         // Compute whole-book progress from the Readium locator and feed it to the
         // anti-cheat guard. This is what lets the guard distinguish real reading
@@ -264,11 +368,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
 
         // Debounce: coalesce bursts of locator updates into one write.
-        if (locatorSaveJob?.isActive != true) {
-            locatorSaveJob = persistenceScope.launch {
-                delay(500)
-                saveLocator()
-            }
+        locatorSaveJob?.cancel()
+        locatorSaveJob = persistenceScope.launch {
+            delay(500)
+            saveLocator()
         }
     }
 
@@ -291,25 +394,24 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val b = _book.value ?: return
         when (b.format) {
             "epub" -> {
-                val locator = latestLocator ?: return
+                if (!ReaderPositionPolicy.canPersist(locatorRestoreComplete)) return
+                if (latestLocator == null) return
+                locatorSaveJob?.cancel()
                 persistenceScope.launch { saveLocator() }
             }
-            else -> {
-                val fraction = latestTxtFraction
-                persistenceScope.launch { repo.updateProgress(b.id, 0, fraction) }
-            }
+            else -> persistTextPositionNow(latestTxtFraction)
         }
     }
 
-    fun setFontSize(v: Float) = viewModelScope.launch { settingsRepository.setFontSize(v) }
-    fun setLineHeight(v: Float) = viewModelScope.launch { settingsRepository.setLineHeight(v) }
-    fun setFontFamily(v: String) = viewModelScope.launch { settingsRepository.setFontFamily(v) }
-    fun setTheme(v: String) = viewModelScope.launch { settingsRepository.setTheme(v) }
-    fun setMargin(v: Float) = viewModelScope.launch { settingsRepository.setMargin(v) }
+    fun applyReaderSettings(settings: ReaderSettings) = viewModelScope.launch {
+        settingsRepository.setReaderSettings(settings)
+    }
 
     override fun onCleared() {
         // stopReading() also saves the reading position and flushes pending seconds.
         stopReading()
+        locatorSaveJob?.cancel()
+        txtSaveJob?.cancel()
         super.onCleared()
     }
 }

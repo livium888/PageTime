@@ -28,11 +28,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Button
@@ -63,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
@@ -99,13 +103,10 @@ import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 private const val NAVIGATOR_TAG = "readium_navigator"
 
-private enum class TapZone { PREV, CENTER, NEXT }
+private enum class TapZone { CENTER }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,6 +126,9 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val settings by vm.readerSettings.collectAsStateWithLifecycle()
     val publication by vm.publication.collectAsStateWithLifecycle()
     val initialLocatorJson by vm.initialLocatorJson.collectAsStateWithLifecycle()
+    val initialLocatorReady by vm.initialLocatorReady.collectAsStateWithLifecycle()
+    val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
+    val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
     val scrollState = rememberScrollState()
@@ -169,139 +173,146 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             lifecycleOwner.lifecycle.removeObserver(observer)
             vm.stopReading()
             if (book?.format == "txt" && scrollState.maxValue > 0) {
-                vm.updateScrollProgress(scrollState.value.toFloat() / scrollState.maxValue)
+                vm.persistTextPositionNow(scrollState.value.toFloat() / scrollState.maxValue)
             }
         }
     }
 
-    // Restore plain-text scroll position once the text has been laid out. A single
-    // delayed read raced against Compose layout (maxValue is 0 before first layout),
-    // so poll until the scroll range exists, then jump.
-    LaunchedEffect(textContent) {
-        if (textContent != null && book?.format == "txt") {
-            val targetFraction = book?.scrollProgress ?: 0f
-            if (targetFraction <= 0f) return@LaunchedEffect
-            repeat(40) { // up to ~2s
-                val max = scrollState.maxValue
-                if (max > 0) {
-                    scrollState.scrollTo((targetFraction * max).toInt())
-                    return@LaunchedEffect
-                }
+    // Restore and observe plain-text scrolling in one ordered coroutine. The first
+    // scrollState emission is normally 0 while Compose is laying out; observing it
+    // in a separate effect could save that startup value over the real position.
+    LaunchedEffect(textContent, book?.id) {
+        if (textContent == null || book?.format != "txt") return@LaunchedEffect
+
+        val targetFraction = book?.scrollProgress?.coerceIn(0f, 1f) ?: 0f
+        var restoreApplied = targetFraction <= 0f
+        var attempts = 0
+        while (!restoreApplied && attempts < 40) { // up to ~2s for the scroll range
+            val max = scrollState.maxValue
+            if (max > 0) {
+                scrollState.scrollTo((targetFraction * max).toInt())
+                restoreApplied = true
+            } else {
                 delay(50)
+                attempts++
             }
+        }
+
+        // A zero scroll range means the whole text fits on one screen, so there is
+        // no position to restore. For a real scrollable book, never persist until
+        // the saved fraction was actually applied.
+        if (!restoreApplied && scrollState.maxValue > 0) return@LaunchedEffect
+        vm.markTxtRestoreComplete()
+
+        snapshotFlow {
+            Triple(scrollState.value, scrollState.maxValue, scrollState.isScrollInProgress)
+        }.collect { (value, max, userIsScrolling) ->
+            // maxValue can change during layout and scrollTo() emits too. Neither
+            // represents user reading movement and neither may overwrite the saved
+            // position or mint reading credit.
+            if (!userIsScrolling) return@collect
+            vm.onUserScrolled()
+            val fraction = if (max > 0) value.toFloat() / max else 0f
+            vm.onProgressChanged(fraction)
+            vm.updateScrollProgress(fraction)
         }
     }
 
-    // Feed the anti-cheat guard with plain-text scroll movement + progress, and
-    // persist the scroll position so txt books resume in the same spot too.
-    LaunchedEffect(textContent) {
-        if (textContent == null) return@LaunchedEffect
-        snapshotFlow { scrollState.value to scrollState.maxValue }
-            .collect { (value, max) ->
-                vm.onUserScrolled()
-                val fraction = if (max > 0) value.toFloat() / max else 0f
-                vm.onProgressChanged(fraction)
-                vm.updateScrollProgress(fraction)
-            }
-    }
+    // The reading surface always owns the full viewport. Controls float above it,
+    // so showing or hiding them never changes pagination or scroll geometry.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
+        when {
+            book == null -> CenteredMessage(
+                icon = { Icon(Icons.Outlined.MenuBook, null, tint = palette.text, modifier = Modifier.size(48.dp)) },
+                title = "No book to read yet.",
+                subtitle = "Download a book from Discover first.",
+                color = palette.text
+            )
 
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(palette.background)
-        ) {
-            // Top controls — hidden after idle, revealed with a tap.
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = slideInVertically { -it } + fadeIn(),
-                exit = slideOutVertically { -it } + fadeOut()
+            publication != null -> ReadiumNavigatorHost(
+                publication = publication!!,
+                initialLocatorReady = initialLocatorReady,
+                initialLocatorJson = initialLocatorJson,
+                settings = settings,
+                onLocatorChanged = { locator ->
+                    vm.onLocatorChanged(locator)
+                    publication?.let { pub ->
+                        val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
+                        val size = pub.readingOrder.size
+                        if (idx != null && size > 0) {
+                            chapterLabel = "${idx + 1} of $size"
+                        }
+                    }
+                },
+                onTapZone = { controlsVisible = !controlsVisible },
+                onNavigatorChanged = { navigator = it },
+                onRestoreComplete = vm::markEpubRestoreComplete
+            )
+
+            book?.format == "txt" && textContent != null -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+                    }
+                    .padding(horizontal = settings.marginDp.dp, vertical = 16.dp)
             ) {
-                ReaderTopBar(
-                    title = book?.title ?: "Reading",
-                    hasChapters = tocEntries != null,
-                    balanceSeconds = balanceSeconds,
-                    palette = palette,
-                    onBack = onBack,
-                    onToc = { showToc = true },
-                    onSettings = { showSettings = true }
+                Text(
+                    text = textContent!!,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontFamily = txtFontFamily(settings.fontFamily),
+                    fontSize = settings.fontSizeSp.sp,
+                    lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
+                    color = palette.text
                 )
             }
 
-            // Main reading surface.
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(palette.background)
-            ) {
-                when {
-                    book == null -> CenteredMessage(
-                        icon = { Icon(Icons.Outlined.MenuBook, null, tint = palette.text, modifier = Modifier.size(48.dp)) },
-                        title = "No book to read yet.",
-                        subtitle = "Download a book from Discover first.",
-                        color = palette.text
-                    )
-
-                    publication != null -> ReadiumNavigatorHost(
-                        publication = publication!!,
-                        initialLocatorJson = initialLocatorJson,
-                        settings = settings,
-                        onLocatorChanged = { locator ->
-                            vm.onLocatorChanged(locator)
-                            publication?.let { pub ->
-                                val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
-                                val size = pub.readingOrder.size
-                                if (idx != null && size > 0) {
-                                    chapterLabel = "${idx + 1} of $size"
-                                }
-                            }
-                        },
-                        onTapZone = { zone ->
-                            val nav = navigator
-                            when (zone) {
-                                TapZone.PREV -> nav?.goBackward()
-                                TapZone.NEXT -> nav?.goForward()
-                                TapZone.CENTER -> controlsVisible = !controlsVisible
-                            }
-                        },
-                        onNavigatorChanged = { navigator = it }
-                    )
-
-                    book?.format == "txt" && textContent != null -> Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(scrollState)
-                            .padding(horizontal = settings.marginDp.dp, vertical = 16.dp)
+            else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (readerError != null) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(24.dp)
                     ) {
-                        Text(
-                            text = textContent!!,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontFamily = txtFontFamily(settings.fontFamily),
-                            fontSize = settings.fontSizeSp.sp,
-                            lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
-                            color = palette.text
-                        )
+                        Text(readerError ?: "", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { vm.retry() }) { Text("Retry") }
                     }
-
-                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        if (readerError != null) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(24.dp)
-                            ) {
-                                Text(readerError ?: "", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-                                Spacer(Modifier.height(8.dp))
-                                TextButton(onClick = { vm.retry() }) { Text("Retry") }
-                            }
-                        } else {
-                            CircularProgressIndicator()
-                        }
-                    }
+                } else {
+                    CircularProgressIndicator()
                 }
             }
+        }
 
-            // Bottom progress / status HUD — always visible so reading time is transparent.
+        AnimatedVisibility(
+            visible = controlsVisible,
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = slideInVertically { -it } + fadeIn(),
+            exit = slideOutVertically { -it } + fadeOut()
+        ) {
+            ReaderTopBar(
+                title = book?.title ?: "Reading",
+                hasChapters = tocEntries != null,
+                balanceSeconds = balanceSeconds,
+                bookmarkPresent = bookmarkPresent,
+                palette = palette,
+                onBack = onBack,
+                onToc = { showToc = true },
+                onBookmark = vm::toggleBookmark,
+                onSettings = { showSettings = true }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
             ReaderBottomBar(
                 palette = palette,
                 sessionSeconds = sessionSeconds,
@@ -315,16 +326,16 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         if (guardState.showIdleGate) {
             IdleGate(onContinue = { vm.resumeAfterIdle() })
         }
+
+        if (resumeNotice != null) {
+            ResumeNotice(text = resumeNotice!!)
+        }
     }
 
     if (showSettings) {
         ReaderSettingsSheet(
             settings = settings,
-            onFontSize = vm::setFontSize,
-            onLineHeight = vm::setLineHeight,
-            onFontFamily = vm::setFontFamily,
-            onTheme = vm::setTheme,
-            onMargin = vm::setMargin,
+            onApply = vm::applyReaderSettings,
             onDismiss = { showSettings = false }
         )
     }
@@ -351,11 +362,13 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
 @Composable
 private fun ReadiumNavigatorHost(
     publication: Publication,
+    initialLocatorReady: Boolean,
     initialLocatorJson: String?,
     settings: ReaderSettings,
     onLocatorChanged: (Locator) -> Unit,
     onTapZone: (TapZone) -> Unit,
-    onNavigatorChanged: (EpubNavigatorFragment?) -> Unit
+    onNavigatorChanged: (EpubNavigatorFragment?) -> Unit,
+    onRestoreComplete: () -> Unit
 ) {
     val context = LocalContext.current
     val fragmentManager = (context as? FragmentActivity)?.supportFragmentManager
@@ -374,8 +387,9 @@ private fun ReadiumNavigatorHost(
         }
     )
 
-    LaunchedEffect(fragmentManager, container, publication, initialLocatorJson) {
+    LaunchedEffect(fragmentManager, container, publication, initialLocatorReady, initialLocatorJson) {
         val fm = fragmentManager ?: return@LaunchedEffect
+        if (!initialLocatorReady) return@LaunchedEffect
         val frame = container ?: return@LaunchedEffect
         if (fm.findFragmentByTag(NAVIGATOR_TAG) != null) return@LaunchedEffect
 
@@ -392,14 +406,14 @@ private fun ReadiumNavigatorHost(
             runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
         }
 
+        // A tap only toggles the chrome. Page movement is reserved for Readium's
+        // deliberate swipe/pagination gestures; accidental edge taps cannot turn pages.
         val inputListener = object : InputListener {
-            override fun onTap(event: TapEvent): Boolean {
-                val width = frame.width.takeIf { it > 0 } ?: return false
-                return when {
-                    event.point.x < width / 3f -> { currentOnTapZone(TapZone.PREV); true }
-                    event.point.x > width * 2f / 3f -> { currentOnTapZone(TapZone.NEXT); true }
-                    else -> { currentOnTapZone(TapZone.CENTER); true }
+            override fun onTap(@Suppress("UNUSED_PARAMETER") event: TapEvent): Boolean {
+                if (ReaderInteractionPolicy.togglesChromeOnTap()) {
+                    currentOnTapZone(TapZone.CENTER)
                 }
+                return true
             }
         }
 
@@ -424,7 +438,14 @@ private fun ReadiumNavigatorHost(
         onNavigatorChanged(nav)
 
         try {
-            nav.currentLocator.collect { currentOnLocator(it) }
+            var firstLocator = true
+            nav.currentLocator.collect {
+                currentOnLocator(it)
+                if (firstLocator) {
+                    firstLocator = false
+                    onRestoreComplete()
+                }
+            }
         } finally {
             runCatching {
                 nav.removeInputListener(inputListener)
@@ -473,27 +494,19 @@ private fun flattenToc(links: List<Link>, depth: Int = 0, out: MutableList<TocEn
     return out
 }
 
-private fun currentTimeLabel(): String =
-    SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReaderTopBar(
     title: String,
     hasChapters: Boolean,
     balanceSeconds: Long,
+    bookmarkPresent: Boolean,
     palette: ReaderPalette,
     onBack: () -> Unit,
     onToc: () -> Unit,
+    onBookmark: () -> Unit,
     onSettings: () -> Unit
 ) {
-    var nowLabel by remember { mutableStateOf(currentTimeLabel()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(30_000)
-            nowLabel = currentTimeLabel()
-        }
-    }
     TopAppBar(
         title = {
             Text(
@@ -509,16 +522,16 @@ private fun ReaderTopBar(
             }
         },
         actions = {
-            Text(
-                nowLabel,
-                style = MaterialTheme.typography.bodySmall,
-                color = palette.secondary,
-                modifier = Modifier.padding(start = 4.dp)
-            )
             if (hasChapters) {
                 IconButton(onClick = onToc) {
                     Icon(Icons.Filled.List, contentDescription = "Chapters")
                 }
+            }
+            IconButton(onClick = onBookmark) {
+                Icon(
+                    if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                    contentDescription = if (bookmarkPresent) "Remove bookmark" else "Bookmark this position"
+                )
             }
             IconButton(onClick = onSettings) {
                 Icon(Icons.Filled.FormatSize, contentDescription = "Reading settings")
@@ -601,6 +614,29 @@ private fun ReaderBottomBar(
 }
 
 @Composable
+private fun ResumeNotice(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 72.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 4.dp
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
+    }
+}
+
+@Composable
 private fun CenteredMessage(
     icon: @Composable () -> Unit,
     title: String,
@@ -657,14 +693,29 @@ private fun txtFontFamily(key: String): FontFamily = when (key) {
 @Composable
 private fun ReaderSettingsSheet(
     settings: ReaderSettings,
-    onFontSize: (Float) -> Unit,
-    onLineHeight: (Float) -> Unit,
-    onFontFamily: (String) -> Unit,
-    onTheme: (String) -> Unit,
-    onMargin: (Float) -> Unit,
+    onApply: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    var fontSize by remember(settings) { mutableStateOf(settings.fontSizeSp) }
+    var lineHeight by remember(settings) { mutableStateOf(settings.lineHeight) }
+    var fontFamily by remember(settings) { mutableStateOf(settings.fontFamily) }
+    var theme by remember(settings) { mutableStateOf(settings.theme) }
+    var margin by remember(settings) { mutableStateOf(settings.marginDp) }
+
+    fun applyAndDismiss() {
+        onApply(
+            ReaderSettings(
+                fontSizeSp = fontSize,
+                lineHeight = lineHeight,
+                fontFamily = fontFamily,
+                theme = theme,
+                marginDp = margin
+            )
+        )
+        onDismiss()
+    }
+
+    ModalBottomSheet(onDismissRequest = ::applyAndDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -676,16 +727,16 @@ private fun ReaderSettingsSheet(
             Text("Reading settings", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
 
-            Text("Text size — ${settings.fontSizeSp.toInt()} sp", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = settings.fontSizeSp, onValueChange = onFontSize, valueRange = 12f..32f)
+            Text("Text size — ${fontSize.toInt()} sp", style = MaterialTheme.typography.bodyMedium)
+            Slider(value = fontSize, onValueChange = { fontSize = it }, valueRange = 12f..32f)
 
             Text("Line spacing — ${
-                "%.1f".format(settings.lineHeight)
+                "%.1f".format(lineHeight)
             }", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = settings.lineHeight, onValueChange = onLineHeight, valueRange = 1f..2.2f)
+            Slider(value = lineHeight, onValueChange = { lineHeight = it }, valueRange = 1f..2.2f)
 
-            Text("Margins — ${settings.marginDp.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = settings.marginDp, onValueChange = onMargin, valueRange = 8f..48f)
+            Text("Margins — ${margin.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
+            Slider(value = margin, onValueChange = { margin = it }, valueRange = 8f..48f)
 
             Text("Font", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -695,7 +746,7 @@ private fun ReaderSettingsSheet(
                     "mono" to "Mono",
                     "literata" to "Literata"
                 ).forEach { (key, label) ->
-                    SelectorPill(selected = settings.fontFamily == key, label = label) { onFontFamily(key) }
+                    SelectorPill(selected = fontFamily == key, label = label) { fontFamily = key }
                 }
             }
 
@@ -706,7 +757,7 @@ private fun ReaderSettingsSheet(
             ) {
                 ReaderPalettes.forEach { p ->
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        ThemeSwatch(selected = settings.theme == p.key, palette = p) { onTheme(p.key) }
+                        ThemeSwatch(selected = theme == p.key, palette = p) { theme = p.key }
                         Spacer(Modifier.height(4.dp))
                         Text(p.label, style = MaterialTheme.typography.labelSmall)
                     }

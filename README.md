@@ -14,9 +14,10 @@ This is a native **Kotlin + Jetpack Compose** Android app.
    Ebooks, Gutenberg via Gutendex, and Open Library + Internet Archive), or use
    **Library → +** to import an EPUB or plain-text file from your phone. Imported
    files are copied into PageTime's private storage and remain available offline.
-2. **Read** — an in-app reader powered by Readium for EPUB pagination and exact
-   locators, with plain text rendered in Compose. A timer banks browsing time while
-   the reader is open.
+2. **Read** — an immersive in-app reader powered by Readium for EPUB pagination
+   and exact locators. Plain-text books use stable, swipeable pages with saved
+   positions and book-style typography. A timer banks browsing time while the reader
+   is open.
 3. **Enforce** — an `AccessibilityService` watches the foreground app. When a
    blocked app opens with a zero balance, PageTime shows a full-screen
    "time is up" overlay and offers to reopen the reader. With a positive balance,
@@ -94,7 +95,7 @@ app/src/main/java/com/pagetime/app/
 
 ## Roadmap ideas
 
-- EPUB table-of-contents navigation and font/theme settings.
+- EPUB search, highlights, and richer annotation tools.
 - A "browse minute" schedule (daily cap, different ratios per app).
 - Strict mode / emergency unlock for unavoidable app use.
 - Open-book cover grid and download progress.

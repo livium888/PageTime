@@ -6,6 +6,7 @@ import androidx.security.crypto.MasterKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -117,6 +118,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveLocator(bookId: String, json: String) {
         context.dataStore.edit { it[locatorKey(bookId)] = json }
     }
+
+    suspend fun savedTextOffset(bookId: String): Int? =
+        context.dataStore.data.first()[textOffsetKey(bookId)]
+
+    suspend fun saveTextOffset(bookId: String, offset: Int) {
+        context.dataStore.edit { it[textOffsetKey(bookId)] = offset.coerceAtLeast(0) }
+    }
+
+    private fun textOffsetKey(bookId: String) =
+        intPreferencesKey("text_offset_$bookId")
 
     private fun locatorKey(bookId: String) =
         stringPreferencesKey("locator_$bookId")

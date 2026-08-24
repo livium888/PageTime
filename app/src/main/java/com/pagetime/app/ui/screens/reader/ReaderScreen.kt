@@ -6,8 +6,7 @@ import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +28,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -120,6 +121,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val book by vm.book.collectAsStateWithLifecycle()
     val textContent by vm.textContent.collectAsStateWithLifecycle()
     val initialTextFraction by vm.initialTextFraction.collectAsStateWithLifecycle()
+    val initialTextOffset by vm.initialTextOffset.collectAsStateWithLifecycle()
     val sessionSeconds by vm.sessionSeconds.collectAsStateWithLifecycle()
     val creditedSeconds by vm.creditedSeconds.collectAsStateWithLifecycle()
     val balanceSeconds by vm.balanceSeconds.collectAsStateWithLifecycle()
@@ -135,14 +137,14 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val aiGenerationState by vm.aiGenerationState.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
-    val scrollState = rememberScrollState()
 
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
     var showCardSheet by remember { mutableStateOf(false) }
     var showChapterPrompt by remember { mutableStateOf(false) }
     var lastPromptedChapter by remember { mutableStateOf<Int?>(null) }
-    var controlsVisible by remember { mutableStateOf(true) }
+    var controlsVisible by remember { mutableStateOf(false) }
+    var textPageLabel by remember { mutableStateOf<String?>(null) }
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
     var epubRestoreFinished by remember { mutableStateOf(false) }
@@ -180,50 +182,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             vm.stopReading()
-            if (book?.format == "txt" && scrollState.maxValue > 0) {
-                vm.persistTextPositionNow(scrollState.value.toFloat() / scrollState.maxValue)
-            }
-        }
-    }
-
-    // Restore and observe plain-text scrolling in one ordered coroutine. The first
-    // scrollState emission is normally 0 while Compose is laying out; observing it
-    // in a separate effect could save that startup value over the real position.
-    LaunchedEffect(textContent, book?.id, initialTextFraction) {
-        if (textContent == null || book?.format != "txt") return@LaunchedEffect
-
-        val targetFraction = initialTextFraction.coerceIn(0f, 1f)
-        var restoreApplied = targetFraction <= 0f
-        var attempts = 0
-        while (!restoreApplied && attempts < 40) { // up to ~2s for the scroll range
-            val max = scrollState.maxValue
-            if (max > 0) {
-                scrollState.scrollTo((targetFraction * max).toInt())
-                restoreApplied = true
-            } else {
-                delay(50)
-                attempts++
-            }
-        }
-
-        // A zero scroll range means the whole text fits on one screen, so there is
-        // no position to restore. For a real scrollable book, never persist until
-        // the saved fraction was actually applied.
-        if (!restoreApplied && scrollState.maxValue > 0) return@LaunchedEffect
-        vm.markTxtRestoreComplete()
-
-        snapshotFlow {
-            Triple(scrollState.value, scrollState.maxValue, scrollState.isScrollInProgress)
-        }.collect { (value, max, userIsScrolling) ->
-            // maxValue can change during layout and scrollTo() emits too. Neither
-            // represents user reading movement and neither may overwrite the saved
-            // position or mint reading credit.
-            if (!userIsScrolling) return@collect
-            vm.onUserScrolled()
-            val fraction = if (max > 0) value.toFloat() / max else 0f
-            vm.onProgressChanged(fraction)
-            vm.updateScrollProgress(fraction)
-            vm.maybeGenerateCardsForTextProgress(fraction)
         }
     }
 
@@ -278,24 +236,19 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 }
             )
 
-            book?.format == "txt" && textContent != null -> Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { controlsVisible = !controlsVisible })
-                    }
-                    .padding(horizontal = settings.marginDp.dp, vertical = 16.dp)
-            ) {
-                Text(
-                    text = textContent!!,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontFamily = txtFontFamily(settings.fontFamily),
-                    fontSize = settings.fontSizeSp.sp,
-                    lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
-                    color = palette.text
-                )
-            }
+            book?.format == "txt" && textContent != null -> TextReaderHost(
+                content = textContent!!,
+                initialFraction = initialTextFraction,
+                initialOffset = initialTextOffset,
+                settings = settings,
+                palette = palette,
+                onPageChanged = { page, pageCount, pageStartOffset, userInitiated ->
+                    textPageLabel = "Page ${page + 1} of $pageCount"
+                    vm.onTextPageChanged(page, pageCount, userInitiated, pageStartOffset)
+                },
+                onRestoreComplete = vm::markTxtRestoreComplete,
+                onToggleChrome = { controlsVisible = !controlsVisible }
+            )
 
             else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 if (readerError != null) {
@@ -316,8 +269,8 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         AnimatedVisibility(
             visible = controlsVisible,
             modifier = Modifier.align(Alignment.TopCenter),
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut()
+            enter = fadeIn(),
+            exit = fadeOut()
         ) {
             ReaderTopBar(
                 title = book?.title ?: "Reading",
@@ -356,7 +309,8 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     creditedSeconds = creditedSeconds,
                     progress = progress,
                     guardState = guardState,
-                    chapterLabel = chapterLabel
+                    chapterLabel = chapterLabel,
+                    pageLabel = textPageLabel
                 )
             }
         }
@@ -408,6 +362,76 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             },
             onDismiss = { showToc = false }
         )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TextReaderHost(
+    content: String,
+    initialFraction: Float,
+    initialOffset: Int,
+    settings: ReaderSettings,
+    palette: ReaderPalette,
+    onPageChanged: (page: Int, pageCount: Int, pageStartOffset: Int, userInitiated: Boolean) -> Unit,
+    onRestoreComplete: () -> Unit,
+    onToggleChrome: () -> Unit
+) {
+    val pages = remember(content) { TextPageLayout.paginate(content) }
+    val initialPage = remember(pages, initialFraction, initialOffset) {
+        val offset = if (initialOffset > 0) initialOffset else {
+            (initialFraction.coerceIn(0f, 1f) * content.length).toInt()
+        }
+        TextPageLayout.pageForOffset(pages, offset)
+    }
+    val pagerState = rememberPagerState(
+        initialPage = initialPage,
+        pageCount = { pages.size }
+    )
+
+    LaunchedEffect(pagerState, pages) {
+        onPageChanged(
+            pagerState.currentPage,
+            pages.size,
+            pages[pagerState.currentPage].startOffset,
+            userInitiated = false
+        )
+        onRestoreComplete()
+        snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
+            .collect { (page, scrolling) ->
+                if (scrolling) {
+                    onPageChanged(page, pages.size, pages[page].startOffset, userInitiated = true)
+                }
+            }
+    }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = Modifier.fillMaxSize(),
+        beyondViewportPageCount = 1,
+        userScrollEnabled = true
+    ) { pageIndex ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        val centerStart = size.width / 3f
+                        val centerEnd = size.width * 2f / 3f
+                        if (offset.x in centerStart..centerEnd) onToggleChrome()
+                    }
+                }
+                .padding(horizontal = settings.marginDp.dp, vertical = 24.dp)
+        ) {
+            Text(
+                text = pages[pageIndex].text,
+                style = MaterialTheme.typography.bodyLarge,
+                fontFamily = txtFontFamily(settings.fontFamily),
+                fontSize = settings.fontSizeSp.sp,
+                lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
+                color = palette.text
+            )
+        }
     }
 }
 
@@ -628,7 +652,8 @@ private fun ReaderBottomBar(
     creditedSeconds: Long,
     progress: Float,
     guardState: ReadingGuard.State,
-    chapterLabel: String?
+    chapterLabel: String?,
+    pageLabel: String?
 ) {
     val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
     val status = when {
@@ -655,7 +680,11 @@ private fun ReaderBottomBar(
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
-                    if (chapterLabel != null) "Chapter $chapterLabel" else "Reading",
+                    when {
+                        chapterLabel != null -> "Chapter $chapterLabel"
+                        pageLabel != null -> pageLabel
+                        else -> "Reading"
+                    },
                     color = palette.secondary,
                     style = MaterialTheme.typography.bodySmall
                 )

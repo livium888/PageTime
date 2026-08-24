@@ -49,6 +49,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _initialTextFraction = MutableStateFlow(0f)
     val initialTextFraction = _initialTextFraction.asStateFlow()
 
+    private val _initialTextOffset = MutableStateFlow(0)
+    val initialTextOffset = _initialTextOffset.asStateFlow()
+
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
 
@@ -121,6 +124,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _error.value = null
         _textContent.value = null
         _initialTextFraction.value = 0f
+        _initialTextOffset.value = 0
         _publication.value = null
         _initialLocatorJson.value = null
         _initialLocatorReady.value = false
@@ -160,8 +164,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             } else {
                 // Seed from the DB before publishing content so the Compose effect
                 // cannot observe text before the saved fraction is available.
+                val savedOffset = settingsRepository.savedTextOffset(loaded.id) ?: 0
                 latestTxtFraction = (pendingSource?.fraction ?: loaded.scrollProgress).coerceIn(0f, 1f)
                 _initialTextFraction.value = latestTxtFraction
+                _initialTextOffset.value = savedOffset
                 txtRestoreComplete = false
                 withContext(Dispatchers.IO) {
                     _textContent.value = runCatching { File(loaded.localPath).readText() }.getOrNull()
@@ -354,6 +360,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtRestoreComplete = true
         _progress.value = latestTxtFraction
         showResumeNotice(latestTxtFraction)
+    }
+
+    /** Updates text progress only after the initial page has been restored. */
+    fun onTextPageChanged(
+        pageIndex: Int,
+        pageCount: Int,
+        userInitiated: Boolean,
+        pageStartOffset: Int = 0
+    ) {
+        if (pageCount <= 0) return
+        val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
+        _progress.value = fraction
+        if (!userInitiated || !txtRestoreComplete) return
+        onUserScrolled()
+        updateScrollProgress(fraction)
+        persistenceScope.launch {
+            settingsRepository.saveTextOffset(bookId, pageStartOffset)
+        }
+        maybeGenerateCardsForTextProgress(fraction)
     }
 
     fun createLearningCard(

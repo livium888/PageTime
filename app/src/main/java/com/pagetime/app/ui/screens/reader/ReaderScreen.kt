@@ -274,7 +274,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 onLocatorChanged = { locator ->
                     vm.onLocatorChanged(locator)
                     publication?.let { pub ->
-                        currentChapterHref = locator.href
+                        currentChapterHref = locator.href.toString()
                         val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
                         val size = pub.readingOrder.size
                         if (idx != null && size > 0) {

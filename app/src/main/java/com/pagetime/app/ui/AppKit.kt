@@ -160,8 +160,8 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 /** Rounded surface card used for grouped content. */
 @Composable
 fun AppCard(
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),

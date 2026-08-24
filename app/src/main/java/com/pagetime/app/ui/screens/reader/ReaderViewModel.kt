@@ -549,6 +549,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         settingsRepository.setReaderSettings(settings)
     }
 
+    /** Persists the brightness chosen with the Kobo-style edge gesture. */
+    fun setReaderBrightness(value: Float?) {
+        persistenceScope.launch {
+            settingsRepository.setReaderBrightness(value)
+        }
+    }
+
     companion object {
         private const val AI_RETRY_AFTER_MS = 15 * 60 * 1000L
     }

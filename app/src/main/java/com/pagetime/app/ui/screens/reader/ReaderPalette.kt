@@ -1,6 +1,9 @@
 package com.pagetime.app.ui.screens.reader
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import com.pagetime.app.R
 
 data class ReaderPalette(
     val key: String,
@@ -26,4 +29,12 @@ fun fontStackFor(fontFamily: String): String = when (fontFamily) {
     "sans" -> "Roboto, 'Segoe UI', Helvetica, Arial, sans-serif"
     "mono" -> "'Courier New', Courier, monospace"
     else -> "Georgia, 'Times New Roman', 'Iowan Old Style', serif"
+}
+
+/** Font used by both the plain-text pages and the appearance sheet's live preview. */
+fun readerFontFamily(key: String): FontFamily = when (key) {
+    "sans" -> FontFamily.SansSerif
+    "mono" -> FontFamily.Monospace
+    "literata" -> FontFamily(Font(R.font.literata)) // Google's book-reading typeface, OFL-licensed
+    else -> FontFamily.Serif
 }

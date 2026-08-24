@@ -3,6 +3,7 @@ package com.pagetime.app.ui.screens.reader
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
@@ -10,36 +11,39 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Brightness5
+import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.NightsStay
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Button
@@ -76,8 +80,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -146,6 +148,9 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     var showToc by remember { mutableStateOf(false) }
     var showCardSheet by remember { mutableStateOf(false) }
     var showChapterPrompt by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
+    var showSleepTimer by remember { mutableStateOf(false) }
+    var showGoTo by remember { mutableStateOf(false) }
     var lastPromptedChapter by remember { mutableStateOf<Int?>(null) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -154,6 +159,14 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
     var epubRestoreFinished by remember { mutableStateOf(false) }
+    var currentChapterHref by remember { mutableStateOf<String?>(null) }
+    var sleepDeadline by remember { mutableStateOf<Long?>(null) }
+    var txtGoRequest by remember { mutableStateOf<Pair<Float, Long>?>(null) }
+    var progressMode by remember { mutableStateOf(ProgressIndicatorMode.PERCENT) }
+    var sleepRemainingMs by remember { mutableStateOf<Long?>(null) }
+    // While the Kobo-style edge gesture is dragging, this preview overrides the
+    // window brightness live; the saved setting is only written on drag end.
+    var previewBrightness by remember { mutableStateOf<Float?>(null) }
 
     val tocEntries = remember(publication) {
         publication?.let { pub ->
@@ -175,6 +188,21 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         controlsVisible = false
     }
 
+    // Kobo-style sleep timer: count down, then gracefully leave the book.
+    LaunchedEffect(sleepDeadline) {
+        sleepRemainingMs = null
+        val deadline = sleepDeadline ?: return@LaunchedEffect
+        while (true) {
+            val remaining = deadline - SystemClock.elapsedRealtime()
+            if (remaining <= 0) {
+                onBack()
+                break
+            }
+            sleepRemainingMs = remaining
+            delay(1_000)
+        }
+    }
+
     // Keep the screen on while the reader is in the foreground.
     val rootView = LocalView.current
     DisposableEffect(rootView) {
@@ -184,15 +212,18 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     }
 
     // Apply the reader's brightness only to this window, then restore the user's
-    // device setting as soon as they leave the book.
+    // device setting as soon as they leave the book. The edge-drag gesture feeds a
+    // transient preview value so dragging dims the screen in real time before the
+    // setting is saved.
     val window = (context as? Activity)?.window
-    DisposableEffect(window, settings.brightness) {
+    DisposableEffect(window, settings.brightness, previewBrightness) {
         if (window == null) {
             onDispose { }
         } else {
             val previousBrightness = window.attributes.screenBrightness
             val attributes = window.attributes
-            attributes.screenBrightness = settings.brightness
+            attributes.screenBrightness = previewBrightness
+                ?: settings.brightness
                 ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             window.attributes = attributes
             onDispose {
@@ -243,10 +274,11 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 onLocatorChanged = { locator ->
                     vm.onLocatorChanged(locator)
                     publication?.let { pub ->
+                        currentChapterHref = locator.href
                         val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
                         val size = pub.readingOrder.size
                         if (idx != null && size > 0) {
-                                    chapterLabel = "${idx + 1} of $size"
+                            chapterLabel = "${idx + 1} of $size"
                             if (epubRestoreFinished &&
                                 (locator.locations?.progression?.toFloat() ?: 0f) >= 0.98f &&
                                 lastPromptedChapter != idx
@@ -277,6 +309,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                 initialOffset = initialTextOffset,
                 settings = settings,
                 palette = palette,
+                goRequest = txtGoRequest,
                 onPageChanged = { page, pageCount, pageStartOffset, userInitiated ->
                     textPageLabel = "Page ${page + 1} of $pageCount"
                     vm.onTextPageChanged(page, pageCount, userInitiated, pageStartOffset)
@@ -301,6 +334,21 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             }
         }
 
+        // Kobo-style left-edge gesture: drag vertically to dim or brighten the
+        // book without opening any menu. Lives under the chrome so the back button
+        // and bars always stay responsive.
+        if (book != null && (publication != null || textContent != null)) {
+            BrightnessSwipeOverlay(
+                currentBrightness = settings.brightness,
+                onDrag = { previewBrightness = it },
+                onDragEnd = {
+                    previewBrightness = null
+                    vm.setReaderBrightness(it)
+                },
+                onToggleChrome = { controlsVisible = !controlsVisible }
+            )
+        }
+
         AnimatedVisibility(
             visible = controlsVisible,
             modifier = Modifier.align(Alignment.TopCenter),
@@ -310,11 +358,16 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
             ReaderTopBar(
                 title = book?.title ?: "Reading",
                 hasChapters = tocEntries != null,
+                hasGoTo = book?.format == "txt" && textContent != null,
                 balanceSeconds = balanceSeconds,
                 bookmarkPresent = bookmarkPresent,
+                sleepRemainingSeconds = sleepRemainingMs?.let { (it / 1000).toInt().coerceAtLeast(0) },
                 palette = palette,
                 onBack = onBack,
                 onToc = { showToc = true },
+                onGoTo = { showGoTo = true },
+                onStats = { showStats = true },
+                onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
                 onCreateCard = { showCardSheet = true },
                 onSettings = { showSettings = true }
@@ -345,7 +398,16 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     progress = progress,
                     guardState = guardState,
                     chapterLabel = chapterLabel,
-                    pageLabel = textPageLabel
+                    pageLabel = textPageLabel,
+                    chapterCount = publication?.readingOrder?.size,
+                    mode = progressMode,
+                    onModeToggle = {
+                        progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
+                            ProgressIndicatorMode.TIME_LEFT
+                        } else {
+                            ProgressIndicatorMode.PERCENT
+                        }
+                    }
                 )
             }
         }
@@ -381,7 +443,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     }
 
     if (showSettings) {
-        ReaderSettingsSheet(
+        ReaderAppearanceSheet(
             settings = settings,
             onApply = vm::applyReaderSettings,
             onDismiss = { showSettings = false }
@@ -391,11 +453,49 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     if (showToc && tocEntries != null) {
         TocSheet(
             entries = tocEntries,
+            currentHref = currentChapterHref,
             onSelect = { entry ->
                 navigator?.go(entry.link)
                 showToc = false
             },
             onDismiss = { showToc = false }
+        )
+    }
+
+    if (showSleepTimer) {
+        SleepTimerSheet(
+            currentRemainingSeconds = sleepRemainingMs?.let { (it / 1000).toInt() },
+            onPick = { minutes ->
+                sleepDeadline = if (minutes == null) {
+                    null
+                } else {
+                    SystemClock.elapsedRealtime() + minutes * 60_000L
+                }
+                showSleepTimer = false
+            },
+            onDismiss = { showSleepTimer = false }
+        )
+    }
+
+    if (showStats) {
+        ReadingStatsSheet(
+            bookTitle = book?.title ?: "Book",
+            sessionSeconds = sessionSeconds,
+            creditedSeconds = creditedSeconds,
+            progress = progress,
+            balanceSeconds = balanceSeconds,
+            onDismiss = { showStats = false }
+        )
+    }
+
+    if (showGoTo && book?.format == "txt" && textContent != null) {
+        GoToSheet(
+            progress = progress,
+            onSeek = { fraction ->
+                txtGoRequest = fraction to SystemClock.elapsedRealtime()
+                showGoTo = false
+            },
+            onDismiss = { showGoTo = false }
         )
     }
 }
@@ -408,6 +508,7 @@ private fun TextReaderHost(
     initialOffset: Int,
     settings: ReaderSettings,
     palette: ReaderPalette,
+    goRequest: Pair<Float, Long>?,
     onPageChanged: (page: Int, pageCount: Int, pageStartOffset: Int, userInitiated: Boolean) -> Unit,
     onRestoreComplete: () -> Unit,
     onToggleChrome: () -> Unit
@@ -440,6 +541,14 @@ private fun TextReaderHost(
             }
     }
 
+    // Kindle-style "Go to position": jump straight to the page matching a fraction.
+    LaunchedEffect(goRequest) {
+        val (fraction, _) = goRequest ?: return@LaunchedEffect
+        if (pages.isNotEmpty()) {
+            pagerState.scrollToPage(TextPageLayout.pageForFraction(pages, fraction))
+        }
+    }
+
     HorizontalPager(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
@@ -463,9 +572,10 @@ private fun TextReaderHost(
                 style = MaterialTheme.typography.bodyLarge.copy(
                     letterSpacing = (settings.fontSizeSp * 0.015f).sp
                 ),
-                fontFamily = txtFontFamily(settings.fontFamily),
+                fontFamily = readerFontFamily(settings.fontFamily),
                 fontSize = settings.fontSizeSp.sp,
                 lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
+                textAlign = if (settings.alignment == "justify") TextAlign.Justify else TextAlign.Start,
                 color = palette.text
             )
         }
@@ -618,11 +728,16 @@ private fun flattenToc(links: List<Link>, depth: Int = 0, out: MutableList<TocEn
 private fun ReaderTopBar(
     title: String,
     hasChapters: Boolean,
+    hasGoTo: Boolean,
     balanceSeconds: Long,
     bookmarkPresent: Boolean,
+    sleepRemainingSeconds: Int?,
     palette: ReaderPalette,
     onBack: () -> Unit,
     onToc: () -> Unit,
+    onGoTo: () -> Unit,
+    onStats: () -> Unit,
+    onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
     onCreateCard: () -> Unit,
     onSettings: () -> Unit
@@ -656,6 +771,15 @@ private fun ReaderTopBar(
                     color = palette.text
                 )
             }
+            if (sleepRemainingSeconds != null) {
+                TextButton(onClick = onSleepTimer) {
+                    Text(
+                        "Sleep ${formatTimerSeconds(sleepRemainingSeconds)}",
+                        color = palette.text,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
             Box {
                 TextButton(onClick = { optionsExpanded = true }) {
                     Text("Options")
@@ -671,6 +795,16 @@ private fun ReaderTopBar(
                             onClick = {
                                 optionsExpanded = false
                                 onToc()
+                            }
+                        )
+                    }
+                    if (hasGoTo) {
+                        DropdownMenuItem(
+                            text = { Text("Go to position") },
+                            leadingIcon = { Icon(Icons.Outlined.FindInPage, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onGoTo()
                             }
                         )
                     }
@@ -696,11 +830,27 @@ private fun ReaderTopBar(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Reading settings") },
+                        text = { Text("Reading statistics") },
+                        leadingIcon = { Icon(Icons.Outlined.BarChart, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onStats()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Appearance (Aa)") },
                         leadingIcon = { Icon(Icons.Filled.FormatSize, contentDescription = null) },
                         onClick = {
                             optionsExpanded = false
                             onSettings()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Sleep timer") },
+                        leadingIcon = { Icon(Icons.Outlined.NightsStay, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onSleepTimer()
                         }
                     )
                 }
@@ -723,7 +873,10 @@ private fun ReaderBottomBar(
     progress: Float,
     guardState: ReadingGuard.State,
     chapterLabel: String?,
-    pageLabel: String?
+    pageLabel: String?,
+    chapterCount: Int?,
+    mode: ProgressIndicatorMode,
+    onModeToggle: () -> Unit
 ) {
     val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
     val status = when {
@@ -737,6 +890,11 @@ private fun ReaderBottomBar(
         guardState.crediting -> MaterialTheme.colorScheme.primary
         else -> palette.secondary
     }
+    val indicatorText = when (mode) {
+        ProgressIndicatorMode.PERCENT -> "$percent%"
+        ProgressIndicatorMode.TIME_LEFT ->
+            estimatedTimeLeft(progress, creditedSeconds) ?: "$percent%"
+    }
     Surface(color = palette.background) {
         Column(
             modifier = Modifier
@@ -747,8 +905,23 @@ private fun ReaderBottomBar(
                 progress = { progress.coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            // Kindle-style chapter markers along the progress line.
+            if (chapterCount != null && chapterCount > 1) {
+                Spacer(Modifier.height(3.dp))
+                Row(Modifier.fillMaxWidth().height(5.dp)) {
+                    repeat(chapterCount.coerceAtMost(60)) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .padding(horizontal = 1.dp)
+                                .fillMaxHeight()
+                                .background(palette.text.copy(alpha = 0.22f))
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     when {
                         chapterLabel != null -> "Chapter $chapterLabel"
@@ -756,16 +929,22 @@ private fun ReaderBottomBar(
                         else -> "Reading"
                     },
                     color = palette.secondary,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    "$percent%",
-                    color = palette.text,
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold
+                    modifier = Modifier.weight(1f)
                 )
+                TextButton(
+                    onClick = onModeToggle,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        indicatorText,
+                        color = palette.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Session ${formatClock(sessionSeconds)}", color = palette.secondary, style = MaterialTheme.typography.bodySmall)
                 Text(status, color = statusColor, style = MaterialTheme.typography.bodySmall)
@@ -863,118 +1042,13 @@ private fun IdleGate(onContinue: () -> Unit) {
     }
 }
 
-private fun txtFontFamily(key: String): FontFamily = when (key) {
-    "sans" -> FontFamily.SansSerif
-    "mono" -> FontFamily.Monospace
-    "literata" -> FontFamily(Font(R.font.literata)) // Google's book-reading typeface, OFL-licensed
-    else -> FontFamily.Serif
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ReaderSettingsSheet(
-    settings: ReaderSettings,
-    onApply: (ReaderSettings) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var fontSize by remember(settings) { mutableStateOf(settings.fontSizeSp) }
-    var lineHeight by remember(settings) { mutableStateOf(settings.lineHeight) }
-    var fontFamily by remember(settings) { mutableStateOf(settings.fontFamily) }
-    var theme by remember(settings) { mutableStateOf(settings.theme) }
-    var margin by remember(settings) { mutableStateOf(settings.marginDp) }
-    var brightness by remember(settings) { mutableStateOf(settings.brightness ?: 1f) }
-    var useSystemBrightness by remember(settings) { mutableStateOf(settings.brightness == null) }
-
-    fun applyAndDismiss() {
-        onApply(
-            ReaderSettings(
-                fontSizeSp = fontSize,
-                lineHeight = lineHeight,
-                fontFamily = fontFamily,
-                theme = theme,
-                marginDp = margin,
-                brightness = brightness.takeIf { !useSystemBrightness }
-            )
-        )
-        onDismiss()
-    }
-
-    ModalBottomSheet(onDismissRequest = ::applyAndDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Reading settings", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(4.dp))
-
-            Text("Text size — ${fontSize.toInt()} sp", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = fontSize, onValueChange = { fontSize = it }, valueRange = 12f..32f)
-
-            Text("Line spacing — ${
-                "%.1f".format(lineHeight)
-            }", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = lineHeight, onValueChange = { lineHeight = it }, valueRange = 1f..2.2f)
-
-            Text("Margins — ${margin.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
-            Slider(value = margin, onValueChange = { margin = it }, valueRange = 8f..48f)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    if (useSystemBrightness) "Brightness — System" else "Brightness — ${(brightness * 100).toInt()}%",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                TextButton(onClick = { useSystemBrightness = !useSystemBrightness }) {
-                    Text(if (useSystemBrightness) "Adjust" else "Use system")
-                }
-            }
-            Slider(
-                value = brightness,
-                onValueChange = { brightness = it },
-                valueRange = 0.15f..1f,
-                enabled = !useSystemBrightness
-            )
-
-            Text("Font", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    "serif" to "Serif",
-                    "sans" to "Sans",
-                    "mono" to "Mono",
-                    "literata" to "Literata"
-                ).forEach { (key, label) ->
-                    SelectorPill(selected = fontFamily == key, label = label) { fontFamily = key }
-                }
-            }
-
-            Text("Theme", style = MaterialTheme.typography.titleMedium)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ReaderPalettes.forEach { p ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        ThemeSwatch(selected = theme == p.key, palette = p) { theme = p.key }
-                        Spacer(Modifier.height(4.dp))
-                        Text(p.label, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TocSheet(
     entries: List<TocEntry>,
+    currentHref: String?,
     onSelect: (TocEntry) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -986,6 +1060,7 @@ private fun TocSheet(
                 .padding(bottom = 24.dp)
         ) {
             itemsIndexed(entries, key = { i, _ -> i }) { _, entry ->
+                val isCurrent = currentHref != null && entry.link.href.toString() == currentHref
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1001,7 +1076,167 @@ private fun TocSheet(
                     Text(
                         entry.title,
                         style = MaterialTheme.typography.bodyLarge,
-                        maxLines = 2
+                        color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (isCurrent) {
+                        Text(
+                            "You are here",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private enum class ProgressIndicatorMode { PERCENT, TIME_LEFT }
+
+private fun formatTimerSeconds(totalSeconds: Int): String {
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return when {
+        minutes >= 60 -> "${minutes / 60}h ${minutes % 60}m"
+        minutes > 0 -> "${minutes}m ${seconds}s"
+        else -> "${seconds}s"
+    }
+}
+
+/** Kindle-style "time left in book" derived from the user's own reading pace. */
+private fun estimatedTimeLeft(progress: Float, creditedSeconds: Long): String? {
+    if (creditedSeconds < 60L || progress <= 0.01f || progress >= 0.995f) return null
+    val speed = progress / creditedSeconds.toFloat().coerceAtLeast(1f)
+    val remainingSeconds = ((1f - progress) / speed).toLong()
+    return when {
+        remainingSeconds < 60L -> "~${remainingSeconds}s left"
+        remainingSeconds < 3600L -> "~${remainingSeconds / 60}m left"
+        else -> "~${remainingSeconds / 3600}h ${(remainingSeconds % 3600) / 60}m left"
+    }
+}
+
+/**
+ * Kobo-style left-edge gesture: a vertical drag on the edge of the book dims or
+ * brightens the screen immediately, and the choice is saved on release. Only the
+ * thin strip participates, so page swipes anywhere else are untouched. Lives below
+ * the chrome so the top bar and back button always stay responsive.
+ */
+@Composable
+private fun BrightnessSwipeOverlay(
+    currentBrightness: Float?,
+    onDrag: (Float) -> Unit,
+    onDragEnd: (Float) -> Unit,
+    onToggleChrome: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var active by remember { mutableStateOf(false) }
+    var dragBrightness by remember { mutableStateOf(1f) }
+
+    Box(
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures { onToggleChrome() }
+            }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = {
+                        active = true
+                        dragBrightness = currentBrightness ?: 1f
+                    },
+                    onDragEnd = {
+                        if (active) {
+                            active = false
+                            onDragEnd(dragBrightness)
+                        }
+                    },
+                    onDragCancel = { active = false },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        if (!active) {
+                            active = true
+                            dragBrightness = currentBrightness ?: 1f
+                        }
+                        val heightPx = size.height.toFloat().coerceAtLeast(1f)
+                        dragBrightness = (dragBrightness - dragAmount / heightPx)
+                            .coerceIn(0.15f, 1f)
+                        onDrag(dragBrightness)
+                    }
+                )
+            }
+    ) {
+        if (active) {
+            Box(Modifier.align(Alignment.CenterStart).padding(start = 64.dp)) {
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    shape = RoundedCornerShape(20.dp),
+                    tonalElevation = 4.dp
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Outlined.Brightness5,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("${(dragBrightness * 100).toInt()}%", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SleepTimerSheet(
+    currentRemainingSeconds: Int?,
+    onPick: (Int?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("Sleep timer", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "The book closes gently when the timer ends.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (currentRemainingSeconds != null) {
+                TextButton(onClick = { onPick(null) }) {
+                    Text("Cancel timer · ${formatTimerSeconds(currentRemainingSeconds)} left")
+                }
+            }
+            listOf(5, 10, 15, 30, 45, 60).forEach { minutes ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onPick(minutes) }
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Outlined.NightsStay,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        if (minutes == 5) "5 minutes" else "$minutes minutes",
+                        style = MaterialTheme.typography.bodyLarge
                     )
                 }
             }
@@ -1009,30 +1244,82 @@ private fun TocSheet(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SelectorPill(selected: Boolean, label: String, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(50),
-        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-    ) {
-        Text(label, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+private fun GoToSheet(
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var fraction by remember { mutableStateOf(progress.coerceIn(0f, 1f)) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Go to position", style = MaterialTheme.typography.titleLarge)
+            Text("${(fraction * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
+            Slider(
+                value = fraction,
+                onValueChange = { fraction = it },
+                valueRange = 0f..1f
+            )
+            Button(onClick = { onSeek(fraction) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Go")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReadingStatsSheet(
+    bookTitle: String,
+    sessionSeconds: Long,
+    creditedSeconds: Long,
+    progress: Float,
+    balanceSeconds: Long,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text("Reading statistics", style = MaterialTheme.typography.titleLarge)
+            Text(
+                bookTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(12.dp))
+            StatRow("This session", formatClock(sessionSeconds))
+            StatRow("Time earned", formatClock(creditedSeconds))
+            StatRow("Book progress", "${(progress.coerceIn(0f, 1f) * 100).toInt()}%")
+            estimatedTimeLeft(progress, creditedSeconds)?.let {
+                StatRow("Estimated time left", it)
+            }
+            StatRow("Balance", formatMinutes(balanceSeconds))
+        }
     }
 }
 
 @Composable
-private fun ThemeSwatch(selected: Boolean, palette: ReaderPalette, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(palette.background)
-            .border(
-                width = if (selected) 3.dp else 1.dp,
-                color = if (selected) MaterialTheme.colorScheme.primary else Color(0xFFCCCCCC),
-                shape = CircleShape
-            )
-            .clickable(onClick = onClick)
-    )
+private fun StatRow(label: String, value: String) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    }
 }

@@ -32,6 +32,8 @@ data class ReaderSettings(
     /** "light", "sepia", "dark", or "night" */
     val theme: String = "light",
     val marginDp: Float = 20f,
+    /** "justify" or "left" — how plain-text pages align their body copy. */
+    val alignment: String = "justify",
     /** 0.15..1.0 overrides the window brightness; null means use the system setting. */
     val brightness: Float? = null
 )
@@ -63,6 +65,7 @@ class SettingsRepository(private val context: Context) {
         val FONT_FAMILY = stringPreferencesKey("reader_font_family")
         val THEME = stringPreferencesKey("reader_theme")
         val MARGIN = floatPreferencesKey("reader_margin")
+        val ALIGNMENT = stringPreferencesKey("reader_alignment")
         val BRIGHTNESS = floatPreferencesKey("reader_brightness")
 
         /** Id of the book whose position was saved most recently — drives "continue reading". */
@@ -206,6 +209,7 @@ class SettingsRepository(private val context: Context) {
             fontFamily = p[Keys.FONT_FAMILY] ?: "serif",
             theme = p[Keys.THEME] ?: "light",
             marginDp = p[Keys.MARGIN] ?: 20f,
+            alignment = p[Keys.ALIGNMENT] ?: "justify",
             brightness = p[Keys.BRIGHTNESS]?.coerceIn(0.15f, 1f)
         )
     }
@@ -255,6 +259,7 @@ class SettingsRepository(private val context: Context) {
             it[Keys.FONT_FAMILY] = value.fontFamily
             it[Keys.THEME] = value.theme
             it[Keys.MARGIN] = value.marginDp.coerceIn(8f, 48f)
+            it[Keys.ALIGNMENT] = value.alignment
             if (value.brightness == null) {
                 it.remove(Keys.BRIGHTNESS)
             } else {
@@ -281,5 +286,16 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setMargin(value: Float) {
         setReaderSettings(readerSettings.first().copy(marginDp = value))
+    }
+
+    /** Saves a reader brightness override (null restores the system setting). */
+    suspend fun setReaderBrightness(value: Float?) {
+        context.dataStore.edit { p ->
+            if (value == null) {
+                p.remove(Keys.BRIGHTNESS)
+            } else {
+                p[Keys.BRIGHTNESS] = value.coerceIn(0.15f, 1f)
+            }
+        }
     }
 }

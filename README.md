@@ -10,9 +10,10 @@ This is a native **Kotlin + Jetpack Compose** Android app.
 
 ## How it works
 
-1. **Discover & download** — search three free ebook sources (Standard Ebooks,
-   Gutenberg via Gutendex, and Open Library + Internet Archive) and download
-   books as EPUB or plain text.
+1. **Discover, download, or import** — search three free ebook sources (Standard
+   Ebooks, Gutenberg via Gutendex, and Open Library + Internet Archive), or use
+   **Library → +** to import an EPUB or plain-text file from your phone. Imported
+   files are copied into PageTime's private storage and remain available offline.
 2. **Read** — an in-app reader powered by Readium for EPUB pagination and exact
    locators, with plain text rendered in Compose. A timer banks browsing time while
    the reader is open.
@@ -62,7 +63,7 @@ PageTime needs three special permissions, all configured from
    launch PageTime reconciles this audit trail against its balance ledger and
    retroactively charges any blocked-app time the live ticker missed.
 
-Then pick which apps to block in **Settings → Manage blocked apps**. Create a Gemini API key from Google AI Studio and add it under **Settings → Gemini cards** if you want automatic comprehension cards.
+Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB or plain-text file. Create a Gemini API key from Google AI Studio and add it under **Settings → Gemini cards** if you want automatic comprehension cards.
 
 ## Honest limitations
 
@@ -96,6 +97,5 @@ app/src/main/java/com/pagetime/app/
 - EPUB table-of-contents navigation and font/theme settings.
 - A "browse minute" schedule (daily cap, different ratios per app).
 - Strict mode / emergency unlock for unavoidable app use.
-- Open-book cover grid, download progress, and offline book import (`.epub` via
-  the system file picker).
+- Open-book cover grid and download progress.
 - Idle detection so the timer pauses when you're not actually reading.

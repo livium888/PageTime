@@ -1,5 +1,7 @@
 package com.pagetime.app.ui.screens.library
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,20 +18,26 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,12 +59,44 @@ fun LibraryScreen(
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
+    val importing by viewModel.importing.collectAsStateWithLifecycle()
+    val importError by viewModel.importError.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        viewModel.importBook(uri) { imported -> onOpenBook(imported.id) }
+    }
+
+    LaunchedEffect(importError) {
+        importError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearImportError()
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("PageTime") },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            filePicker.launch(
+                                arrayOf(
+                                    "application/epub+zip",
+                                    "text/plain",
+                                    "text/*",
+                                    "application/octet-stream"
+                                )
+                            )
+                        },
+                        enabled = !importing
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "Import book")
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Outlined.Timer,
@@ -94,12 +134,31 @@ fun LibraryScreen(
                 Text("No books yet", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Head to Discover to download a free book from Standard Ebooks, Gutenberg, or Open Library.",
+                    "Download from Discover, or import an EPUB or plain-text file directly from your phone.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(16.dp))
-                TextButton(onClick = onDiscover) { Text("Discover books") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onDiscover) { Text("Discover books") }
+                    Button(
+                        onClick = {
+                            filePicker.launch(
+                                arrayOf(
+                                    "application/epub+zip",
+                                    "text/plain",
+                                    "text/*",
+                                    "application/octet-stream"
+                                )
+                            )
+                        },
+                        enabled = !importing
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (importing) "Importing…" else "Import from phone")
+                    }
+                }
             }
         } else {
             LazyColumn(
@@ -109,6 +168,26 @@ fun LibraryScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                item {
+                    Button(
+                        onClick = {
+                            filePicker.launch(
+                                arrayOf(
+                                    "application/epub+zip",
+                                    "text/plain",
+                                    "text/*",
+                                    "application/octet-stream"
+                                )
+                            )
+                        },
+                        enabled = !importing,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (importing) "Importing…" else "Import EPUB or text from phone")
+                    }
+                }
                 items(books, key = { it.id }) { book ->
                     BookRow(
                         book = book,

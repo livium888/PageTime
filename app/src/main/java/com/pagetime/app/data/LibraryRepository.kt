@@ -1,6 +1,8 @@
 package com.pagetime.app.data
 
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutendexBook
@@ -15,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 class LibraryRepository(
     private val bookDao: BookDao,
@@ -128,6 +131,61 @@ class LibraryRepository(
             ) else book
             bookDao.upsert(toSave)
             toSave
+        }
+    }
+
+    /**
+     * Imports an EPUB or plain-text document selected with Android's system picker.
+     * The provider URI is copied into app-private storage, so the book remains
+     * readable after the user removes the original file or its temporary URI grant.
+     */
+    suspend fun importLocalBook(uri: Uri): Result<BookEntity> = withContext(Dispatchers.IO) {
+        runCatching {
+            val resolver = context.contentResolver
+            val displayName = resolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: "Imported book"
+            val mimeType = resolver.getType(uri).orEmpty().lowercase()
+            val extension = displayName.substringAfterLast('.', "").lowercase()
+            val format = when {
+                extension == "epub" || mimeType == "application/epub+zip" -> "epub"
+                extension in setOf("txt", "text", "md") || mimeType.startsWith("text/") -> "txt"
+                else -> error("Choose an EPUB or plain-text file")
+            }
+            val id = "local-${UUID.randomUUID()}"
+            val booksDir = File(context.filesDir, "books").apply { mkdirs() }
+            val destination = File(booksDir, "$id.$format")
+            val input = resolver.openInputStream(uri) ?: error("Could not open the selected file")
+            input.use { source ->
+                destination.outputStream().use { target -> source.copyTo(target) }
+            }
+            require(destination.length() > 0) { "The selected file is empty" }
+
+            val metadata = if (format == "epub") {
+                // Parsing here both validates the archive and extracts assets for Readium.
+                epubParser.parse(destination, File(context.cacheDir, "epub/$id"))
+            } else {
+                null
+            }
+            val title = metadata?.title
+                ?.takeIf { it.isNotBlank() }
+                ?: displayName.substringBeforeLast('.', displayName).ifBlank { "Imported book" }
+            val author = metadata?.author?.takeIf { it.isNotBlank() } ?: "Unknown author"
+            BookEntity(
+                id = id,
+                title = title,
+                author = author,
+                format = format,
+                localPath = destination.absolutePath,
+                coverUrl = null,
+                addedAt = System.currentTimeMillis()
+            ).also { bookDao.upsert(it) }
         }
     }
 

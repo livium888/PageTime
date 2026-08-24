@@ -16,8 +16,9 @@ This is a native **Kotlin + Jetpack Compose** Android app.
    files are copied into PageTime's private storage and remain available offline.
 2. **Read** — an immersive in-app reader powered by Readium for EPUB pagination
    and exact locators. Plain-text books use stable, swipeable pages with saved
-   positions and book-style typography. A timer banks browsing time while the reader
-   is open.
+   positions and book-style typography. Reader settings include serif/sans/mono fonts,
+   sepia and night themes, spacing, margins, and a per-reader brightness override.
+   A timer banks browsing time while the reader is open.
 3. **Enforce** — an `AccessibilityService` watches the foreground app. When a
    blocked app opens with a zero balance, PageTime shows a full-screen
    "time is up" overlay and offers to reopen the reader. With a positive balance,

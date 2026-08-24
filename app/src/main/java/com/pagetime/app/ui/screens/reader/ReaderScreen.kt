@@ -1,7 +1,9 @@
 package com.pagetime.app.ui.screens.reader
 
+import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -166,6 +168,26 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         val previous = rootView.keepScreenOn
         rootView.keepScreenOn = true
         onDispose { rootView.keepScreenOn = previous }
+    }
+
+    // Apply the reader's brightness only to this window, then restore the user's
+    // device setting as soon as they leave the book.
+    val window = (context as? Activity)?.window
+    DisposableEffect(window, settings.brightness) {
+        if (window == null) {
+            onDispose { }
+        } else {
+            val previousBrightness = window.attributes.screenBrightness
+            val attributes = window.attributes
+            attributes.screenBrightness = settings.brightness
+                ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            window.attributes = attributes
+            onDispose {
+                val restored = window.attributes
+                restored.screenBrightness = previousBrightness
+                window.attributes = restored
+            }
+        }
     }
 
     // Run the reading timer while the reader is in the foreground.
@@ -811,6 +833,8 @@ private fun ReaderSettingsSheet(
     var fontFamily by remember(settings) { mutableStateOf(settings.fontFamily) }
     var theme by remember(settings) { mutableStateOf(settings.theme) }
     var margin by remember(settings) { mutableStateOf(settings.marginDp) }
+    var brightness by remember(settings) { mutableStateOf(settings.brightness ?: 1f) }
+    var useSystemBrightness by remember(settings) { mutableStateOf(settings.brightness == null) }
 
     fun applyAndDismiss() {
         onApply(
@@ -819,7 +843,8 @@ private fun ReaderSettingsSheet(
                 lineHeight = lineHeight,
                 fontFamily = fontFamily,
                 theme = theme,
-                marginDp = margin
+                marginDp = margin,
+                brightness = brightness.takeIf { !useSystemBrightness }
             )
         )
         onDismiss()
@@ -847,6 +872,26 @@ private fun ReaderSettingsSheet(
 
             Text("Margins — ${margin.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
             Slider(value = margin, onValueChange = { margin = it }, valueRange = 8f..48f)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    if (useSystemBrightness) "Brightness — System" else "Brightness — ${(brightness * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                TextButton(onClick = { useSystemBrightness = !useSystemBrightness }) {
+                    Text(if (useSystemBrightness) "Adjust" else "Use system")
+                }
+            }
+            Slider(
+                value = brightness,
+                onValueChange = { brightness = it },
+                valueRange = 0.15f..1f,
+                enabled = !useSystemBrightness
+            )
 
             Text("Font", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

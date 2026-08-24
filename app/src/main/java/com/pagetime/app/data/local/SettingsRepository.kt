@@ -31,7 +31,9 @@ data class ReaderSettings(
     val fontFamily: String = "serif",
     /** "light", "sepia", "dark", or "night" */
     val theme: String = "light",
-    val marginDp: Float = 20f
+    val marginDp: Float = 20f,
+    /** 0.15..1.0 overrides the window brightness; null means use the system setting. */
+    val brightness: Float? = null
 )
 
 data class PendingReaderSource(val locatorJson: String?, val fraction: Float?)
@@ -61,6 +63,7 @@ class SettingsRepository(private val context: Context) {
         val FONT_FAMILY = stringPreferencesKey("reader_font_family")
         val THEME = stringPreferencesKey("reader_theme")
         val MARGIN = floatPreferencesKey("reader_margin")
+        val BRIGHTNESS = floatPreferencesKey("reader_brightness")
 
         /** Id of the book whose position was saved most recently — drives "continue reading". */
         val LAST_READ_BOOK = stringPreferencesKey("last_read_book_id")
@@ -202,7 +205,8 @@ class SettingsRepository(private val context: Context) {
             lineHeight = p[Keys.LINE_HEIGHT] ?: 1.5f,
             fontFamily = p[Keys.FONT_FAMILY] ?: "serif",
             theme = p[Keys.THEME] ?: "light",
-            marginDp = p[Keys.MARGIN] ?: 20f
+            marginDp = p[Keys.MARGIN] ?: 20f,
+            brightness = p[Keys.BRIGHTNESS]?.coerceIn(0.15f, 1f)
         )
     }
 
@@ -251,6 +255,11 @@ class SettingsRepository(private val context: Context) {
             it[Keys.FONT_FAMILY] = value.fontFamily
             it[Keys.THEME] = value.theme
             it[Keys.MARGIN] = value.marginDp.coerceIn(8f, 48f)
+            if (value.brightness == null) {
+                it.remove(Keys.BRIGHTNESS)
+            } else {
+                it[Keys.BRIGHTNESS] = value.brightness.coerceIn(0.15f, 1f)
+            }
         }
     }
 

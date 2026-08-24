@@ -7,6 +7,8 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.gutenberg.GutendexBook
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +30,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = container.libraryRepository
 
     private val _books = MutableStateFlow<List<GutendexBook>>(emptyList())
+    private val _searchingAll = MutableStateFlow(false)
+    val searchingAll = _searchingAll.asStateFlow()
     val books = _books.asStateFlow()
 
     // Default to Standard Ebooks — it's the most reliable source (dedicated
@@ -64,6 +68,35 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         reload()
+    }
+
+    fun searchAllSources() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            val q = _query.value.trim()
+            if (q.isBlank()) return@launch
+            _searchingAll.value = true
+            _loading.value = true
+            _error.value = null
+            try {
+                val results = listOf(
+                    async { runCatching { repo.searchGutenberg(q, 1).books } },
+                    async { runCatching { repo.searchOpenLibrary(q, 1).books } },
+                    async { runCatching { repo.searchStandardEbooks(q, 1).books } }
+                ).awaitAll().flatMap { it.getOrElse { emptyList() } }
+                    .filter { it.language == "en" }
+                    .distinctBy { it.id }
+                _books.value = results
+                _hasMore.value = false
+                nextPage = null
+                if (results.isEmpty()) {
+                    _error.value = "No English downloadable results found across the catalogs"
+                }
+            } finally {
+                _loading.value = false
+                _searchingAll.value = false
+            }
+        }
     }
 
     fun onSourceChange(value: BookSource) {

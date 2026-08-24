@@ -81,6 +81,11 @@ class OpenLibraryApi(
         val books = mutableListOf<GutendexBook>()
         for (i in 0 until docs.length()) {
             val d = docs.optJSONObject(i) ?: continue
+            val languages = d.optJSONArray("language")
+            val isEnglish = languages == null || (0 until languages.length()).any {
+                languages.optString(it).let { value -> value == "eng" || value == "en" }
+            }
+            if (!isEnglish) continue
             val iaArr = d.optJSONArray("ia")
             val ia = iaArr?.optString(0)?.ifBlank { null } ?: continue
             val coverId = d.optLong("cover_i", 0L)

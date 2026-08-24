@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,7 +31,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.runtime.remember
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Text
@@ -65,6 +65,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val error by viewModel.error.collectAsStateWithLifecycle()
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
+    val searchingAll by viewModel.searchingAll.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     // Show download errors as a snackbar so the user knows why a download failed.
@@ -115,6 +116,15 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                 },
                 singleLine = true
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                OutlinedButton(
+                    onClick = viewModel::searchAllSources,
+                    enabled = query.isNotBlank() && !loading && !searchingAll
+                ) { Text("Search all sources") }
+            }
             // Source selector
             Row(
                 modifier = Modifier
@@ -263,9 +273,9 @@ private fun BookRow(
                 )
                 Text(
                     when (book.source) {
-                        "standardebooks" -> "Standard Ebooks"
-                        "openlibrary" -> "Open Library"
-                        else -> "${book.downloadCount} downloads"
+                        "standardebooks" -> "Source · Standard Ebooks"
+                        "openlibrary" -> "Source · Open Library"
+                        else -> "Source · Project Gutenberg · ${book.downloadCount} downloads"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

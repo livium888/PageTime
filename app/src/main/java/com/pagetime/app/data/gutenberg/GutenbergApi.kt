@@ -89,6 +89,9 @@ class GutenbergApi(
             }
 
             val formats = o.optJSONObject("formats") ?: JSONObject()
+            val languages = o.optJSONArray("languages")
+            val language = languages?.optString(0).orEmpty()
+            if (language.isNotBlank() && language != "en") continue
             val txtUrl = formats.optString("text/plain; charset=utf-8").ifBlank { null }
                 ?: formats.optString("text/plain; charset=us-ascii").ifBlank { null }
                 ?: formats.optString("text/plain").ifBlank { null }

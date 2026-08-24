@@ -130,6 +130,10 @@ class StandardEbooksApi(
     }
 
     private fun parseEntry(entry: Element): GutendexBook? {
+        val language = entry.getElementsByTagNameNS(ATOM_NS, "language")
+            .item(0)?.textContent?.trim().orEmpty()
+        if (language.isNotBlank() && language != "en") return null
+
         val title = entry.getElementsByTagNameNS(ATOM_NS, "title")
             .item(0)?.textContent?.trim().orEmpty().ifBlank { return null }
 

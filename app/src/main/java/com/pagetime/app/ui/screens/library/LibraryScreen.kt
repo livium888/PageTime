@@ -33,6 +33,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -253,11 +254,20 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit)
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "${formatMinutes(book.totalReadingSeconds)} read · ${book.format.uppercase()}",
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${formatMinutes(book.totalReadingSeconds)} read · ${book.format.uppercase()}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (book.scrollProgress > 0f) {
+                        Spacer(Modifier.width(8.dp))
+                        AssistChip(
+                            onClick = onClick,
+                            label = { Text("${(book.scrollProgress * 100).toInt()}%") }
+                        )
+                    }
+                }
             }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Filled.Delete, contentDescription = "Delete")

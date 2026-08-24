@@ -456,10 +456,13 @@ private fun TextReaderHost(
                     }
                 }
                 .padding(horizontal = settings.marginDp.dp, vertical = 24.dp)
+                .background(palette.background)
         ) {
             Text(
                 text = pages[pageIndex].text,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    letterSpacing = (settings.fontSizeSp * 0.015f).sp
+                ),
                 fontFamily = txtFontFamily(settings.fontFamily),
                 fontSize = settings.fontSizeSp.sp,
                 lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
@@ -581,10 +584,9 @@ private fun ReadiumNavigatorHost(
 
 /** Maps the app's reader settings onto Readium EPUB preferences. */
 @OptIn(ExperimentalReadiumApi::class)
-private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPreferences(
-    fontSize = (s.fontSizeSp / 16.0) * 100.0,
-    lineHeight = s.lineHeight.toDouble(),
-    pageMargins = s.marginDp / 16.0,
+private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPreferences(        fontSize = (s.fontSizeSp / 16.0) * 100.0,
+        lineHeight = s.lineHeight.toDouble(),
+        pageMargins = s.marginDp / 16.0,
     fontFamily = when (s.fontFamily) {
         "sans" -> ReadiumFontFamily.SANS_SERIF
         "mono" -> ReadiumFontFamily.MONOSPACE

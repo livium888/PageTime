@@ -56,7 +56,18 @@ class BookDownloader(
                         lastError = RuntimeException("Source is busy ($code). Retrying…")
                         return@use
                     }
-                    throw RuntimeException("Download failed ($code)")
+                    val sourceName = when {
+                        url.contains("archive.org", ignoreCase = true) -> "Internet Archive"
+                        url.contains("standardebooks.org", ignoreCase = true) -> "Standard Ebooks"
+                        url.contains("gutendex.com", ignoreCase = true) -> "Gutendex"
+                        else -> "book source"
+                    }
+                    val message = when (code) {
+                        401, 403 -> "$sourceName did not allow this download ($code). Try another edition or source."
+                        404 -> "$sourceName could not find this file (404). Try another edition or source."
+                        else -> "$sourceName download failed ($code)"
+                    }
+                    throw RuntimeException(message)
                 }
             } catch (e: IOException) {
                 // Network-level timeout / connection reset — retryable.

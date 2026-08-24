@@ -45,6 +45,8 @@ import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -145,14 +147,25 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     var showCardSheet by remember { mutableStateOf(false) }
     var showChapterPrompt by remember { mutableStateOf(false) }
     var lastPromptedChapter by remember { mutableStateOf<Int?>(null) }
-    var controlsVisible by remember { mutableStateOf(false) }
+    // Show the chrome briefly on entry so the reader's options are discoverable;
+    // it fades away automatically and can be recalled with a center tap.
+    var controlsVisible by remember { mutableStateOf(true) }
     var textPageLabel by remember { mutableStateOf<String?>(null) }
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
     var epubRestoreFinished by remember { mutableStateOf(false) }
 
     val tocEntries = remember(publication) {
-        publication?.tableOfContents?.takeIf { it.isNotEmpty() }?.let { flattenToc(it) }
+        publication?.let { pub ->
+            pub.tableOfContents.takeIf { it.isNotEmpty() }?.let { flattenToc(it) }
+                ?: pub.readingOrder.mapIndexed { index, link ->
+                    TocEntry(
+                        title = link.title?.takeIf { it.isNotBlank() } ?: "Chapter ${index + 1}",
+                        depth = 0,
+                        link = link
+                    )
+                }
+        }
     }
 
     // Auto-hide the top controls after a short idle so reading becomes immersive.
@@ -612,6 +625,8 @@ private fun ReaderTopBar(
     onCreateCard: () -> Unit,
     onSettings: () -> Unit
 ) {
+    var optionsExpanded by remember { mutableStateOf(false) }
+
     TopAppBar(
         title = {
             Text(
@@ -627,26 +642,9 @@ private fun ReaderTopBar(
             }
         },
         actions = {
-            if (hasChapters) {
-                IconButton(onClick = onToc) {
-                    Icon(Icons.Filled.List, contentDescription = "Chapters")
-                }
-            }
-            IconButton(onClick = onBookmark) {
-                Icon(
-                    if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                    contentDescription = if (bookmarkPresent) "Remove bookmark" else "Bookmark this position"
-                )
-            }
-            IconButton(onClick = onCreateCard) {
-                Icon(Icons.Outlined.School, contentDescription = "Create review card")
-            }
-            IconButton(onClick = onSettings) {
-                Icon(Icons.Filled.FormatSize, contentDescription = "Reading settings")
-            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(end = 12.dp)
+                modifier = Modifier.padding(end = 4.dp)
             ) {
                 Icon(Icons.Outlined.Timer, contentDescription = null, tint = palette.text)
                 Spacer(Modifier.width(4.dp))
@@ -655,6 +653,55 @@ private fun ReaderTopBar(
                     style = MaterialTheme.typography.titleMedium,
                     color = palette.text
                 )
+            }
+            Box {
+                TextButton(onClick = { optionsExpanded = true }) {
+                    Text("Options")
+                }
+                DropdownMenu(
+                    expanded = optionsExpanded,
+                    onDismissRequest = { optionsExpanded = false }
+                ) {
+                    if (hasChapters) {
+                        DropdownMenuItem(
+                            text = { Text("Chapters") },
+                            leadingIcon = { Icon(Icons.Filled.List, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onToc()
+                            }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
+                        leadingIcon = {
+                            Icon(
+                                if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                                contentDescription = null
+                            )
+                        },
+                        onClick = {
+                            optionsExpanded = false
+                            onBookmark()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Create recall card") },
+                        leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onCreateCard()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Reading settings") },
+                        leadingIcon = { Icon(Icons.Filled.FormatSize, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onSettings()
+                        }
+                    )
+                }
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(

@@ -394,13 +394,13 @@ private fun TextReaderHost(
             pagerState.currentPage,
             pages.size,
             pages[pagerState.currentPage].startOffset,
-            userInitiated = false
+            false
         )
         onRestoreComplete()
         snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
             .collect { (page, scrolling) ->
                 if (scrolling) {
-                    onPageChanged(page, pages.size, pages[page].startOffset, userInitiated = true)
+                    onPageChanged(page, pages.size, pages[page].startOffset, true)
                 }
             }
     }
@@ -408,7 +408,6 @@ private fun TextReaderHost(
     HorizontalPager(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
-        beyondViewportPageCount = 1,
         userScrollEnabled = true
     ) { pageIndex ->
         Box(

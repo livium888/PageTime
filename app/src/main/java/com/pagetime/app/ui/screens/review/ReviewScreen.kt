@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -106,15 +108,16 @@ fun ReviewScreen(
                 if (cards.isEmpty()) {
                     EmptyReview(Modifier.fillMaxWidth().padding(top = 40.dp))
                 } else {
-                    ReviewCard(
-                        card = cards.first(),
-                        bookTitle = titles[cards.first().bookId] ?: "Book",
-                        revealed = revealed,
-                        onReveal = viewModel::reveal,
-                        onRate = viewModel::rate,
-                        onOpenSource = { viewModel.openSource(cards.first()) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+            ReviewCard(
+                card = cards.first(),
+                bookTitle = titles[cards.first().bookId] ?: "Book",
+                revealed = revealed,
+                onReveal = viewModel::reveal,
+                onRate = viewModel::rate,
+                onOpenSource = { viewModel.openSource(cards.first()) },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(24.dp))
                 }
             }
         }
@@ -226,10 +229,30 @@ private fun ReviewCard(
 
         if (revealed) {
             Text("How well did you remember it?", style = MaterialTheme.typography.titleMedium)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LearningRating.entries.forEach { rating ->
-                    OutlinedButton(onClick = { onRate(rating) }, modifier = Modifier.weight(1f)) {
-                        Text(rating.label)
+            LearningRating.entries.chunked(2).forEach { row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    row.forEach { rating ->
+                        val primary = rating == LearningRating.GOOD || rating == LearningRating.EASY
+                        if (primary) {
+                            Button(
+                                onClick = { onRate(rating) },
+                                modifier = Modifier.weight(1f).height(56.dp),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text(rating.label, style = MaterialTheme.typography.labelLarge)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onRate(rating) },
+                                modifier = Modifier.weight(1f).height(56.dp),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text(rating.label, style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
                     }
                 }
             }

@@ -17,18 +17,31 @@ object TextPageLayout {
     private const val TARGET_CHARS_PER_PAGE = 2_400
     private const val MIN_CHARS_PER_PAGE = 1_600
 
-    fun paginate(content: String): List<TextPage> {
+    /**
+     * Page size adapts to the active typography: bigger text or looser spacing
+     * means fewer characters per page, so changing the font visibly re-flows the
+     * book instead of clipping it.
+     */
+    fun targetCharsFor(settings: com.pagetime.app.data.local.ReaderSettings): Int {
+        val fontFactor = 16f / settings.fontSizeSp.coerceIn(12f, 32f)
+        val lineFactor = 1.5f / settings.lineHeight.coerceIn(1.0f, 2.2f)
+        return (TARGET_CHARS_PER_PAGE * fontFactor * lineFactor)
+            .toInt()
+            .coerceIn(900, 4_200)
+    }
+
+    fun paginate(content: String, targetChars: Int = TARGET_CHARS_PER_PAGE): List<TextPage> {
         if (content.isEmpty()) return listOf(TextPage(0, 0, 0, ""))
         val pages = mutableListOf<TextPage>()
         var start = 0
         var pageIndex = 0
 
         while (start < content.length) {
-            val preferredEnd = (start + TARGET_CHARS_PER_PAGE).coerceAtMost(content.length)
+            val preferredEnd = (start + targetChars).coerceAtMost(content.length)
             val end = if (preferredEnd == content.length) {
                 content.length
             } else {
-                findBoundary(content, start, preferredEnd)
+                findBoundary(content, start, preferredEnd, targetChars)
             }
             val safeEnd = end.coerceIn((start + 1).coerceAtMost(content.length), content.length)
             pages += TextPage(
@@ -61,8 +74,8 @@ object TextPageLayout {
             .coerceIn(0f, 1f)
     }
 
-    private fun findBoundary(content: String, start: Int, preferredEnd: Int): Int {
-        val minimum = (start + MIN_CHARS_PER_PAGE).coerceAtMost(preferredEnd)
+    private fun findBoundary(content: String, start: Int, preferredEnd: Int, targetChars: Int): Int {
+        val minimum = (start + (MIN_CHARS_PER_PAGE.coerceAtMost(targetChars))).coerceAtMost(preferredEnd)
         val paragraph = content.lastIndexOf("\n\n", preferredEnd)
         if (paragraph >= minimum) return paragraph + 2
         val newline = content.lastIndexOf('\n', preferredEnd)

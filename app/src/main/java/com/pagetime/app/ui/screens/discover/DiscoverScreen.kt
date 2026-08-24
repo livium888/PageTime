@@ -12,15 +12,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,37 +103,57 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = viewModel::onQueryChange,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                placeholder = {
-                    Text(
-                        when (source) {
-                            BookSource.GUTENBERG -> "Search Project Gutenberg…"
-                            BookSource.OPEN_LIBRARY -> "Search Open Library…"
-                            BookSource.STANDARD_EBOOKS -> "Search Standard Ebooks…"
-                            BookSource.INTERNET_ARCHIVE -> "Search Internet Archive…"
-                        }
-                    )
-                },
-                singleLine = true
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.End
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = viewModel::onQueryChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            when (source) {
+                                BookSource.GUTENBERG -> "Project Gutenberg…"
+                                BookSource.OPEN_LIBRARY -> "Open Library…"
+                                BookSource.STANDARD_EBOOKS -> "Standard Ebooks…"
+                                BookSource.INTERNET_ARCHIVE -> "Internet Archive…"
+                            }
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Search, contentDescription = null)
+                    },
+                    singleLine = true,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+                )
                 OutlinedButton(
                     onClick = viewModel::searchAllSources,
-                    enabled = query.isNotBlank() && !loading && !searchingAll
-                ) { Text("Search all sources") }
+                    enabled = query.isNotBlank() && !loading && !searchingAll,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    if (searchingAll) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Search")
+                    }
+                }
             }
             // Source selector
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -242,11 +266,11 @@ private fun BookRow(
     downloading: Boolean,
     onDownload: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (book.coverUrl != null) {
@@ -255,14 +279,14 @@ private fun BookRow(
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
@@ -273,7 +297,7 @@ private fun BookRow(
                     )
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     book.title,
@@ -299,18 +323,26 @@ private fun BookRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp))
             when {
-                downloading -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                downloading -> CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
                 downloaded -> Icon(
                     Icons.Filled.DownloadDone,
                     contentDescription = "Downloaded",
                     tint = MaterialTheme.colorScheme.primary
                 )
-                else -> Button(onClick = onDownload) {
+                else -> Button(
+                    onClick = onDownload,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
+                ) {
                     Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Get")
+                    Spacer(Modifier.width(6.dp))
+                    Text("Get", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }

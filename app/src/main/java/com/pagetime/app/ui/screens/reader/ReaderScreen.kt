@@ -513,7 +513,12 @@ private fun TextReaderHost(
     onRestoreComplete: () -> Unit,
     onToggleChrome: () -> Unit
 ) {
-    val pages = remember(content) { TextPageLayout.paginate(content) }
+    // Pages re-paginate when typography changes so the same fraction of the book
+    // stays in view and the text always fits the screen at the new setting.
+    val pages = remember(content, settings.fontSizeSp, settings.lineHeight, settings.marginDp) {
+        TextPageLayout.paginate(content, TextPageLayout.targetCharsFor(settings))
+    }
+    var lastFraction by remember { mutableStateOf(0f) }
     val initialPage = remember(pages, initialFraction, initialOffset) {
         val offset = if (initialOffset > 0) initialOffset else {
             (initialFraction.coerceIn(0f, 1f) * content.length).toInt()
@@ -526,6 +531,9 @@ private fun TextReaderHost(
     )
 
     LaunchedEffect(pagerState, pages) {
+        if (lastFraction > 0f && pages.isNotEmpty() && pagerState.currentPage != TextPageLayout.pageForFraction(pages, lastFraction)) {
+            pagerState.scrollToPage(TextPageLayout.pageForFraction(pages, lastFraction))
+        }
         onPageChanged(
             pagerState.currentPage,
             pages.size,
@@ -535,6 +543,7 @@ private fun TextReaderHost(
         onRestoreComplete()
         snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
             .collect { (page, scrolling) ->
+                lastFraction = TextPageLayout.fractionForPage(page, pages.size)
                 if (scrolling) {
                     onPageChanged(page, pages.size, pages[page].startOffset, true)
                 }
@@ -545,6 +554,7 @@ private fun TextReaderHost(
     LaunchedEffect(goRequest) {
         val (fraction, _) = goRequest ?: return@LaunchedEffect
         if (pages.isNotEmpty()) {
+            lastFraction = fraction
             pagerState.scrollToPage(TextPageLayout.pageForFraction(pages, fraction))
         }
     }
@@ -694,7 +704,9 @@ private fun ReadiumNavigatorHost(
 
 /** Maps the app's reader settings onto Readium EPUB preferences. */
 @OptIn(ExperimentalReadiumApi::class)
-private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPreferences(        fontSize = (s.fontSizeSp / 16.0) * 100.0,
+private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPreferences(
+        // Readium's font size is a multiplier where 1.0 = 100%, not a percentage.
+        fontSize = s.fontSizeSp / 16.0,
         lineHeight = s.lineHeight.toDouble(),
         pageMargins = s.marginDp / 16.0,
     fontFamily = when (s.fontFamily) {

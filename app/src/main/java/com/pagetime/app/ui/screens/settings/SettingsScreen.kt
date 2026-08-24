@@ -44,6 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.learning.GeminiModel
+import com.pagetime.app.ui.AppCard
+import com.pagetime.app.ui.AppSettingsRow
+import com.pagetime.app.ui.SectionHeader
 import com.pagetime.app.ui.formatMinutes
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,39 +79,52 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Your time", style = MaterialTheme.typography.titleMedium)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            formatMinutes(balanceSeconds),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Total reading", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(formatMinutes(totalReadingSeconds), style = MaterialTheme.typography.titleMedium)
-                    }
+            AppCard {
+                Text("Your time", style = MaterialTheme.typography.titleLarge)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        formatMinutes(balanceSeconds),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total reading", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(formatMinutes(totalReadingSeconds), style = MaterialTheme.typography.titleMedium)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("Reading rate", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = ratio.toFloat(),
+                    onValueChange = { viewModel.setRatio(it.toDouble()) },
+                    valueRange = 0.5f..3.0f,
+                    steps = 4
+                )
             }
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Reading rate", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = ratio.toFloat(),
-                        onValueChange = { viewModel.setRatio(it.toDouble()) },
-                        valueRange = 0.5f..3.0f,
-                        steps = 4
-                    )
-                }
-            }
+            SectionHeader("Protection")
+            AppSettingsRow(
+                icon = Icons.Outlined.Block,
+                label = "Manage blocked apps",
+                onClick = onManageBlockedApps
+            )
+            AppSettingsRow(
+                icon = Icons.Outlined.History,
+                label = "Usage history & protection",
+                onClick = onUsageAudit
+            )
+            AppSettingsRow(
+                icon = Icons.Outlined.AccessibilityNew,
+                label = "Permissions & setup",
+                onClick = onPermissions
+            )
+            SectionHeader("Comprehension")
+            Spacer(Modifier.height(4.dp))
 
             GeminiSettingsCard(
                 keyInput = geminiKeyInput,
@@ -130,24 +146,6 @@ fun SettingsScreen(
                 },
                 onRefresh = geminiViewModel::refreshModels
             )
-
-            OutlinedButton(onClick = onManageBlockedApps, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.Block, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Manage blocked apps")
-            }
-
-            OutlinedButton(onClick = onUsageAudit, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.History, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Usage history & protection")
-            }
-
-            OutlinedButton(onClick = onPermissions, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.AccessibilityNew, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Permissions & setup")
-            }
         }
     }
 }

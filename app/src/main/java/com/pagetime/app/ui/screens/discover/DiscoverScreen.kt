@@ -111,6 +111,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                             BookSource.GUTENBERG -> "Search Project Gutenberg…"
                             BookSource.OPEN_LIBRARY -> "Search Open Library…"
                             BookSource.STANDARD_EBOOKS -> "Search Standard Ebooks…"
+                            BookSource.INTERNET_ARCHIVE -> "Search Internet Archive…"
                         }
                     )
                 },
@@ -142,6 +143,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                                     BookSource.GUTENBERG -> "Gutenberg"
                                     BookSource.OPEN_LIBRARY -> "Open Library"
                                     BookSource.STANDARD_EBOOKS -> "Standard Ebooks"
+                                    BookSource.INTERNET_ARCHIVE -> "Internet Archive"
                                 }
                             )
                         },
@@ -275,6 +277,7 @@ private fun BookRow(
                     when (book.source) {
                         "standardebooks" -> "Source · Standard Ebooks"
                         "openlibrary" -> "Source · Open Library"
+                        "internetarchive" -> "Source · Internet Archive"
                         else -> "Source · Project Gutenberg · ${book.downloadCount} downloads"
                     },
                     style = MaterialTheme.typography.bodySmall,

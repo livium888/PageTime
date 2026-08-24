@@ -21,7 +21,8 @@ import kotlinx.coroutines.launch
 enum class BookSource {
     STANDARD_EBOOKS,
     GUTENBERG,
-    OPEN_LIBRARY
+    OPEN_LIBRARY,
+    INTERNET_ARCHIVE
 }
 
 class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
@@ -82,7 +83,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                 val results = listOf(
                     async { runCatching { repo.searchGutenberg(q, 1).books } },
                     async { runCatching { repo.searchOpenLibrary(q, 1).books } },
-                    async { runCatching { repo.searchStandardEbooks(q, 1).books } }
+                    async { runCatching { repo.searchStandardEbooks(q, 1).books } },
+                    async { runCatching { repo.searchInternetArchive(q, 1).books } }
                 ).awaitAll().flatMap { it.getOrElse { emptyList() } }
                     .filter { it.language == "en" }
                     .distinctBy { it.id }
@@ -152,6 +154,10 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         BookSource.STANDARD_EBOOKS -> {
                             if (q.isBlank()) repo.browseStandardEbooks(page) else repo.searchStandardEbooks(q, page)
+                        }
+                        BookSource.INTERNET_ARCHIVE -> {
+                            if (q.isBlank()) error("Search Internet Archive by title or author")
+                            else repo.searchInternetArchive(q, page)
                         }
                     }
                 }

@@ -7,6 +7,7 @@ import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.gutenberg.GutenbergApi
+import com.pagetime.app.data.internetarchive.InternetArchiveApi
 import com.pagetime.app.data.library.EpubParser
 import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.standardebooks.StandardEbooksApi
@@ -23,6 +24,7 @@ class LibraryRepository(
     private val bookDao: BookDao,
     private val downloader: BookDownloader,
     private val gutenbergApi: GutenbergApi,
+    private val internetArchiveApi: InternetArchiveApi,
     private val openLibraryApi: OpenLibraryApi,
     private val standardEbooksApi: StandardEbooksApi,
     private val epubParser: EpubParser,
@@ -52,6 +54,9 @@ class LibraryRepository(
 
     suspend fun searchGutenberg(query: String, page: Int): BookPage =
         gutenbergApi.search(query, page)
+
+    suspend fun searchInternetArchive(query: String, page: Int): BookPage =
+        internetArchiveApi.search(query, page)
 
     suspend fun browseOpenLibrary(page: Int): BookPage = openLibraryApi.browse(page = page)
 

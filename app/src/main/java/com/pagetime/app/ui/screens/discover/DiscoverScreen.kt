@@ -175,6 +175,21 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     }
                 }
 
+                error != null && books.isEmpty() -> Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            error ?: "No results",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(24.dp),
+                            textAlign = TextAlign.Center
+                        )
+                        TextButton(onClick = viewModel::retry) { Text("Try again") }
+                    }
+                }
+
                 else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),

@@ -89,6 +89,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                     .filter { it.language == "en" }
                     .distinctBy { it.id }
                 _books.value = results
+                _source.value = BookSource.STANDARD_EBOOKS
                 _hasMore.value = false
                 nextPage = null
                 if (results.isEmpty()) {
@@ -112,10 +113,13 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         _query.value = value
         queryJob?.cancel()
         queryJob = viewModelScope.launch {
+            delay(400)
             if (value.isBlank()) {
-                reload()
+                _books.value = emptyList()
+                _hasMore.value = false
+                nextPage = null
+                _error.value = "Enter a title or author to search"
             } else {
-                delay(400)
                 reload()
             }
         }

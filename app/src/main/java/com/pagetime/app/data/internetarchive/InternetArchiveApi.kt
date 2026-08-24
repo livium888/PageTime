@@ -26,7 +26,8 @@ class InternetArchiveApi(
         val books = mutableListOf<GutendexBook>()
         for (i in 0 until docs.length()) {
             val doc = docs.optJSONObject(i) ?: continue
-            val identifier = doc.optString("identifier").ifBlank { continue }
+            val identifier = doc.optString("identifier").trim()
+            if (identifier.isBlank()) continue
             val files = runCatching { get("https://archive.org/metadata/$identifier") }
                 .getOrNull()?.let { JSONObject(it).optJSONArray("files") } ?: continue
             val epub = findFile(files, ".epub") ?: continue

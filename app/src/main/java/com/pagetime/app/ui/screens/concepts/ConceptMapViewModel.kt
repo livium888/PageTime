@@ -9,7 +9,6 @@ import com.pagetime.app.data.ConceptMapRepository
 import com.pagetime.app.data.local.BookEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class ConceptMapViewModel(app: Application) : AndroidViewModel(app) {

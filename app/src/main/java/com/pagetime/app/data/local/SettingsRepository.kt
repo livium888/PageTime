@@ -40,6 +40,16 @@ data class ReaderSettings(
 
 data class PendingReaderSource(val locatorJson: String?, val fraction: Float?)
 
+data class MapMoment(
+    val bookId: String,
+    val chapterIndex: Int,
+    val conceptCount: Int,
+    val relationshipCount: Int,
+    val featuredConcept: String?,
+    val featuredRelationship: String?,
+    val createdAt: Long
+)
+
 class SettingsRepository(private val context: Context) {
 
     private val securePreferences by lazy {
@@ -73,6 +83,14 @@ class SettingsRepository(private val context: Context) {
 
         /** Wall-clock time of the last UsageStats reconciliation sweep (0 = never). */
         val LAST_USAGE_RECONCILE = longPreferencesKey("last_usage_reconcile_at")
+
+        val MAP_MOMENT_BOOK = stringPreferencesKey("map_moment_book")
+        val MAP_MOMENT_CHAPTER = intPreferencesKey("map_moment_chapter")
+        val MAP_MOMENT_CONCEPTS = intPreferencesKey("map_moment_concepts")
+        val MAP_MOMENT_RELATIONSHIPS = intPreferencesKey("map_moment_relationships")
+        val MAP_MOMENT_FEATURED_CONCEPT = stringPreferencesKey("map_moment_featured_concept")
+        val MAP_MOMENT_FEATURED_RELATIONSHIP = stringPreferencesKey("map_moment_featured_relationship")
+        val MAP_MOMENT_CREATED_AT = longPreferencesKey("map_moment_created_at")
     }
 
     private object SecureKeys {
@@ -113,6 +131,33 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLastReadBookId(id: String) {
         context.dataStore.edit { it[Keys.LAST_READ_BOOK] = id }
+    }
+
+    val lastMapMoment: Flow<MapMoment?> = context.dataStore.data.map { p ->
+        val bookId = p[Keys.MAP_MOMENT_BOOK] ?: return@map null
+        MapMoment(
+            bookId = bookId,
+            chapterIndex = p[Keys.MAP_MOMENT_CHAPTER] ?: 0,
+            conceptCount = p[Keys.MAP_MOMENT_CONCEPTS] ?: 0,
+            relationshipCount = p[Keys.MAP_MOMENT_RELATIONSHIPS] ?: 0,
+            featuredConcept = p[Keys.MAP_MOMENT_FEATURED_CONCEPT],
+            featuredRelationship = p[Keys.MAP_MOMENT_FEATURED_RELATIONSHIP],
+            createdAt = p[Keys.MAP_MOMENT_CREATED_AT] ?: 0L
+        )
+    }
+
+    suspend fun saveMapMoment(moment: MapMoment) {
+        context.dataStore.edit {
+            it[Keys.MAP_MOMENT_BOOK] = moment.bookId
+            it[Keys.MAP_MOMENT_CHAPTER] = moment.chapterIndex
+            it[Keys.MAP_MOMENT_CONCEPTS] = moment.conceptCount
+            it[Keys.MAP_MOMENT_RELATIONSHIPS] = moment.relationshipCount
+            it.remove(Keys.MAP_MOMENT_FEATURED_CONCEPT)
+            it.remove(Keys.MAP_MOMENT_FEATURED_RELATIONSHIP)
+            moment.featuredConcept?.let { value -> it[Keys.MAP_MOMENT_FEATURED_CONCEPT] = value }
+            moment.featuredRelationship?.let { value -> it[Keys.MAP_MOMENT_FEATURED_RELATIONSHIP] = value }
+            it[Keys.MAP_MOMENT_CREATED_AT] = moment.createdAt
+        }
     }
 
     /** Exact reading position of a book as a Readium Locator JSON string. */

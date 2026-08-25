@@ -11,6 +11,8 @@ import com.pagetime.app.data.local.ConceptDao
 import com.pagetime.app.data.local.ConceptEntity
 import com.pagetime.app.data.local.ConceptRelationshipDao
 import com.pagetime.app.data.local.ConceptRelationshipEntity
+import com.pagetime.app.data.local.MapMoment
+import com.pagetime.app.data.local.SettingsRepository
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -23,7 +25,8 @@ class ConceptMapRepository(
     private val relationshipDao: ConceptRelationshipDao,
     private val bookDao: BookDao,
     private val contextExtractor: LearningContextExtractor,
-    private val geminiClient: GeminiLearningClient
+    private val geminiClient: GeminiLearningClient,
+    private val settingsRepository: SettingsRepository
 ) {
     fun observeBookMap(bookId: String): Flow<ConceptMap> = combine(
         conceptDao.observeForBook(bookId),
@@ -50,6 +53,18 @@ class ConceptMapRepository(
         database.withTransaction {
             merge(bookId, chapterIndex, generated)
         }
+        val featured = generated.relationships.firstOrNull()
+        settingsRepository.saveMapMoment(
+            MapMoment(
+                bookId = bookId,
+                chapterIndex = chapterIndex,
+                conceptCount = generated.concepts.size,
+                relationshipCount = generated.relationships.size,
+                featuredConcept = featured?.sourceLabel ?: generated.concepts.firstOrNull()?.label,
+                featuredRelationship = featured?.let { "${it.relationType} ${it.targetLabel}" },
+                createdAt = System.currentTimeMillis()
+            )
+        )
         return generated
     }
 

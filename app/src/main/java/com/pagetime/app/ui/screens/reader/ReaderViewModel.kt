@@ -109,6 +109,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _aiGenerationState = MutableStateFlow<AiGenerationState>(AiGenerationState.Idle)
     val aiGenerationState = _aiGenerationState.asStateFlow()
 
+    private val _mapMoment = MutableStateFlow<com.pagetime.app.data.local.MapMoment?>(null)
+    val mapMoment = _mapMoment.asStateFlow()
+
     private var lastTextGenerationBucket = -1
     private var lastTextGenerationAttemptAt = 0L
 
@@ -322,9 +325,21 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     locatorJson = locatorJson,
                     textFraction = textFraction
                 )
-                container.conceptMapRepository.generateForReadingWindow(
+                val mapResult = container.conceptMapRepository.generateForReadingWindow(
                     bookId = b.id,
                     chapterIndex = chapterIndex
+                )
+                _mapMoment.value = com.pagetime.app.data.local.MapMoment(
+                    bookId = b.id,
+                    chapterIndex = chapterIndex,
+                    conceptCount = mapResult.concepts.size,
+                    relationshipCount = mapResult.relationships.size,
+                    featuredConcept = mapResult.relationships.firstOrNull()?.sourceLabel
+                        ?: mapResult.concepts.firstOrNull()?.label,
+                    featuredRelationship = mapResult.relationships.firstOrNull()?.let {
+                        "${it.relationType} ${it.targetLabel}"
+                    },
+                    createdAt = System.currentTimeMillis()
                 )
                 _aiGenerationState.value = AiGenerationState.Generated(
                     count = result.cards.size,

@@ -110,7 +110,8 @@ class AppContainer(context: Context) {
         relationshipDao = conceptRelationshipDao,
         bookDao = bookDao,
         contextExtractor = learningContextExtractor,
-        geminiClient = geminiLearningClient
+        geminiClient = geminiLearningClient,
+        settingsRepository = settingsRepository
     )
 
     private val powerManager =

@@ -35,6 +35,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.Bookmark
@@ -93,6 +94,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
+import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.learning.AiGenerationState
 import com.pagetime.app.ui.formatClock
@@ -117,9 +119,52 @@ private const val NAVIGATOR_TAG = "readium_navigator"
 
 private enum class TapZone { CENTER }
 
+@Composable
+private fun MapMomentPrompt(
+    moment: MapMoment,
+    onExplore: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 4.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("A new map moment", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${moment.conceptCount} new ideas · ${moment.relationshipCount} connections",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Dismiss")
+                }
+            }
+            moment.featuredConcept?.let { concept ->
+                Text(
+                    moment.featuredRelationship?.let { "$concept $it" } ?: concept,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = onExplore) { Text("Explore in 2 minutes") }
+                TextButton(onClick = onDismiss) { Text("Not now") }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(bookId: String, onBack: () -> Unit) {
+fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) -> Unit = {}) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
     val vm: ReaderViewModel = viewModel(factory = ReaderViewModelFactory(app, bookId))
@@ -141,6 +186,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val aiGenerationState by vm.aiGenerationState.collectAsStateWithLifecycle()
+    val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -151,6 +197,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
+    var showMapMoment by remember { mutableStateOf(false) }
     var lastPromptedChapter by remember { mutableStateOf<Int?>(null) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -179,6 +226,10 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
                     )
                 }
         }
+    }
+
+    LaunchedEffect(mapMoment) {
+        showMapMoment = mapMoment?.let { it.conceptCount > 0 || it.relationshipCount > 0 } == true
     }
 
     // Auto-hide the top controls after a short idle so reading becomes immersive.
@@ -422,6 +473,19 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
 
         if (resumeNotice != null) {
             ResumeNotice(text = resumeNotice!!)
+        }
+
+        if (showMapMoment) {
+            mapMoment?.let { moment ->
+                MapMomentPrompt(
+                    moment = moment,
+                    onExplore = {
+                        showMapMoment = false
+                        onOpenConcepts(moment.bookId)
+                    },
+                    onDismiss = { showMapMoment = false }
+                )
+            }
         }
 
         when (val state = aiGenerationState) {

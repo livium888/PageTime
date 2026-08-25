@@ -29,6 +29,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val balanceSeconds = container.balanceManager.browseBalanceSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    val lastMapMoment = container.settingsRepository.lastMapMoment
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val totalReadingSeconds = container.settingsRepository.settings
         .map { it.totalReadingSeconds }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)

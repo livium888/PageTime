@@ -50,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pagetime.app.data.local.BookEntity
+import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.ui.AppPrimaryButton
 import com.pagetime.app.ui.Spacing
 import com.pagetime.app.ui.formatMinutes
@@ -65,12 +66,14 @@ private val IMPORT_MIME_TYPES = arrayOf(
 @Composable
 fun LibraryScreen(
     onOpenBook: (String) -> Unit,
+    onOpenConcepts: (String) -> Unit,
     onDiscover: () -> Unit,
     viewModel: LibraryViewModel = viewModel()
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
+    val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -214,6 +217,17 @@ fun LibraryScreen(
                         onClick = launchImport
                     )
                 }
+                if (lastMapMoment != null) {
+                    item {
+                        books.firstOrNull { it.id == lastMapMoment?.bookId }?.let { book ->
+                            ContinueThinkingCard(
+                                book = book,
+                                moment = lastMapMoment!!,
+                                onClick = { onOpenConcepts(book.id) }
+                            )
+                        }
+                    }
+                }
                 items(books, key = { it.id }) { book ->
                     BookRow(
                         book = book,
@@ -222,6 +236,36 @@ fun LibraryScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ContinueThinkingCard(book: BookEntity, moment: MapMoment, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Continue your thinking", style = MaterialTheme.typography.titleMedium)
+            Text(book.title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${moment.conceptCount} new ideas · ${moment.relationshipCount} connections",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            moment.featuredConcept?.let { concept ->
+                Text(
+                    moment.featuredRelationship?.let { "$concept $it" } ?: concept,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text("Explore the map in about 2 minutes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
     }
 }

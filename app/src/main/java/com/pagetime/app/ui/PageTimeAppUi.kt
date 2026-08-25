@@ -132,6 +132,7 @@ fun PageTimeAppUi(openReader: Boolean) {
             composable("library") {
                 LibraryScreen(
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
+                    onOpenConcepts = { bookId -> navController.navigate("concepts?bookId=$bookId") },
                     onDiscover = { navController.navigate("search") }
                 )
             }
@@ -143,6 +144,12 @@ fun PageTimeAppUi(openReader: Boolean) {
             }
             composable("concepts") {
                 ConceptMapScreen(onBack = { navController.popBackStack() })
+            }
+            composable("concepts?bookId={bookId}") { entry ->
+                ConceptMapScreen(
+                    onBack = { navController.popBackStack() },
+                    initialBookId = entry.arguments?.getString("bookId")
+                )
             }
             composable("search") { DiscoverScreen() }
             composable("settings") {
@@ -162,7 +169,11 @@ fun PageTimeAppUi(openReader: Boolean) {
             }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
-                ReaderScreen(bookId = bookId, onBack = { navController.popBackStack() })
+                ReaderScreen(
+                    bookId = bookId,
+                    onBack = { navController.popBackStack() },
+                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts?bookId=$conceptBookId") }
+                )
             }
         }
     }

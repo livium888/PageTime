@@ -53,6 +53,7 @@ private enum class MapMode { Ideas, Connections }
 @Composable
 fun ConceptMapScreen(
     onBack: () -> Unit,
+    initialBookId: String? = null,
     viewModel: ConceptMapViewModel = viewModel()
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
@@ -63,6 +64,14 @@ fun ConceptMapScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var mode by remember { mutableStateOf(MapMode.Ideas) }
+
+    LaunchedEffect(initialBookId, books) {
+        initialBookId?.let { bookId ->
+            if (books.any { it.id == bookId } && selectedBookId != bookId) {
+                viewModel.selectBook(bookId)
+            }
+        }
+    }
 
     LaunchedEffect(message) {
         message?.let {

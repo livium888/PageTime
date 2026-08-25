@@ -15,13 +15,36 @@ android {
         applicationId = "com.pagetime.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
+        // Monotonic so every build is a valid update over the previous one.
+        // Minutes since epoch (~8.5M now) always increases and fits in an Int.
+        versionCode = (System.currentTimeMillis() / 60_000L).toInt()
         versionName = "1.0"
         buildConfigField(
             "String",
             "GEMINI_API_KEY",
             "\"${providers.gradleProperty("GEMINI_API_KEY").orNull ?: providers.environmentVariable("GEMINI_API_KEY").orNull ?: ""}\""
         )
+    }
+
+    // Stable release key so users can update in place instead of uninstalling.
+    // The keystore comes from repository secrets as base64; without them (local
+    // dev) the release build is simply left unsigned and debug builds are used.
+    signingConfigs {
+        create("release") {
+            val base64 = providers.environmentVariable("KEYSTORE_BASE64").orNull
+            val password = providers.environmentVariable("KEYSTORE_PASSWORD").orNull
+            if (!base64.isNullOrBlank() && !password.isNullOrBlank()) {
+                val keystoreFile = java.io.File(
+                    System.getenv("RUNNER_TEMP") ?: System.getProperty("java.io.tmpdir"),
+                    "pagetime-release.p12"
+                )
+                keystoreFile.writeBytes(java.util.Base64.getDecoder().decode(base64))
+                storeFile = keystoreFile
+                storePassword = password
+                keyAlias = providers.environmentVariable("KEY_ALIAS").orNull ?: "pagetime"
+                keyPassword = providers.environmentVariable("KEY_PASSWORD").orNull ?: password
+            }
+        }
     }
 
     buildTypes {
@@ -31,6 +54,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (providers.environmentVariable("KEYSTORE_BASE64").isPresent) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

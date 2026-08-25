@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConceptEntity::class,
         ConceptRelationshipEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -72,10 +72,20 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS concepts (id TEXT NOT NULL PRIMARY KEY, bookId TEXT NOT NULL, label TEXT NOT NULL, normalizedLabel TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL, firstChapterIndex INTEGER NOT NULL, lastChapterIndex INTEGER NOT NULL, sourceQuote TEXT, confidence REAL NOT NULL, mentionCount INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, UNIQUE(bookId, normalizedLabel))")
-                db.execSQL("CREATE TABLE IF NOT EXISTS concept_relationships (id TEXT NOT NULL PRIMARY KEY, bookId TEXT NOT NULL, sourceConceptId TEXT NOT NULL, targetConceptId TEXT NOT NULL, relationType TEXT NOT NULL, explanation TEXT NOT NULL, sourceQuote TEXT, confidence REAL NOT NULL, firstChapterIndex INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, UNIQUE(bookId, sourceConceptId, targetConceptId, relationType))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS concepts (id TEXT NOT NULL PRIMARY KEY, bookId TEXT NOT NULL, label TEXT NOT NULL, normalizedLabel TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL, firstChapterIndex INTEGER NOT NULL, lastChapterIndex INTEGER NOT NULL, sourceQuote TEXT, confidence REAL NOT NULL, mentionCount INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS concept_relationships (id TEXT NOT NULL PRIMARY KEY, bookId TEXT NOT NULL, sourceConceptId TEXT NOT NULL, targetConceptId TEXT NOT NULL, relationType TEXT NOT NULL, explanation TEXT NOT NULL, sourceQuote TEXT, confidence REAL NOT NULL, firstChapterIndex INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_concepts_bookId ON concepts(bookId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_concepts_bookId_normalizedLabel ON concepts(bookId, normalizedLabel)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_concept_relationships_bookId ON concept_relationships(bookId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_concept_relationships_bookId_sourceConceptId_targetConceptId_relationType ON concept_relationships(bookId, sourceConceptId, targetConceptId, relationType)")
+            }
+        }
+
+        /** Repairs v7 installs created with inline UNIQUE constraints. */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_concepts_bookId_normalizedLabel ON concepts(bookId, normalizedLabel)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_concept_relationships_bookId_sourceConceptId_targetConceptId_relationType ON concept_relationships(bookId, sourceConceptId, targetConceptId, relationType)")
             }
         }
     }

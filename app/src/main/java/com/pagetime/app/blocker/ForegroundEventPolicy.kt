@@ -1,63 +1,60 @@
 package com.pagetime.app.blocker
 
 /**
- * Classifies accessibility foreground events so transient system surfaces never
- * cancel enforcement.
+ * Decides whether a `TYPE_WINDOW_STATE_CHANGED` event really means "a different
+ * app is now in front of the user".
  *
- * The block screen is a window too — and so are the notification shade, the
- * keyboard, toasts, and permission dialogs. Each of those used to look like
- * "the user left the blocked app", tearing enforcement down milliseconds after
- * it appeared, and nothing brought it back because the blocked app emits no new
- * window-state event while it sits in the foreground. This policy makes those
- * events re-assert the block instead; only a genuinely different app counts as
- * leaving.
+ * Window-state events fire for a great many things that are NOT an app switch:
+ * our own time-up overlay taking input focus, the notification shade, the
+ * keyboard, toasts, and system dialogs. The blocker used to treat every one of
+ * them as a foreground change, which cleared `currentBlockedPackage` and tore
+ * the block screen down again milliseconds after it appeared — the overlay's own
+ * focus event was enough to dismiss the overlay.
  */
 object ForegroundEventPolicy {
 
-    enum class Action {
-        /** Not a foreground-app signal at all; do nothing. */
-        IGNORE,
-
-        /** A transient or system surface; keep any active block alive. */
-        REASSERT,
-
-        /** The foreground app genuinely changed. */
-        SWITCH
-    }
-
-    /** Packages that draw system surfaces above apps but are not apps themselves. */
-    private val systemSurfaces = setOf(
-        "com.android.systemui",
+    /** Packages that own transient system chrome, never a foreground "app". */
+    private val TRANSIENT_PACKAGES = setOf(
         "android",
-        "com.android.permissioncontroller",
-        "com.google.android.permissioncontroller",
-        "com.android.packageinstaller"
+        "com.android.systemui",
     )
 
     /**
-     * @param packageName package that owns the window from the event
-     * @param windowClass class name of the window (may be null)
-     * @param ownPackage PageTime's own package
+     * Framework window classes that stack on top of the real foreground app.
+     * Matched case-insensitively, but only inside the `android.` namespace: the
+     * real AOSP names mix cases across OEMs (`android.inputmethodservice.` is
+     * lower-case where `Toast` is not), while an app's own activity class must
+     * never be mistaken for transient chrome.
      */
-    fun classify(packageName: String?, windowClass: String?, ownPackage: String): Action {
-        if (packageName.isNullOrBlank()) return Action.IGNORE
-        // Our own overlay/reader windows fire window-state events for our
-        // package; they must never count as leaving the blocked app.
-        if (packageName == ownPackage) return Action.REASSERT
-        if (packageName in systemSurfaces) return Action.REASSERT
-        if (windowClass != null && isTransientWindow(windowClass)) return Action.REASSERT
-        return Action.SWITCH
-    }
+    private const val FRAMEWORK_NAMESPACE = "android."
+
+    private val TRANSIENT_CLASS_MARKERS = listOf(
+        "toast",
+        "popupwindow",
+        "inputmethod",
+    )
 
     /**
-     * Toasts, popups, dialogs, and input-method windows sit on top of whatever
-     * app is foreground; seeing one does not mean the user left it.
+     * @param packageName the event's package.
+     * @param className the event's window/view class, when reported.
+     * @param selfPackage PageTime's own package — our overlay and reader must
+     *        never be mistaken for the user leaving the blocked app.
      */
-    private fun isTransientWindow(windowClass: String): Boolean {
-        val lower = windowClass.lowercase()
-        return "toast" in lower ||
-            "popup" in lower ||
-            "inputmethod" in lower ||
-            "dialog" in lower
+    fun isForegroundChange(
+        packageName: String?,
+        className: String?,
+        selfPackage: String
+    ): Boolean {
+        if (packageName.isNullOrBlank()) return false
+        if (packageName == selfPackage) return false
+        if (packageName in TRANSIENT_PACKAGES) return false
+        if (className != null && isTransientWindowClass(className)) return false
+        return true
+    }
+
+    private fun isTransientWindowClass(className: String): Boolean {
+        if (!className.startsWith(FRAMEWORK_NAMESPACE)) return false
+        val lowered = className.lowercase()
+        return TRANSIENT_CLASS_MARKERS.any { lowered.contains(it) }
     }
 }

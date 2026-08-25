@@ -12,8 +12,6 @@ class AppBlockerService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var overlay: TimeUpOverlay? = null
-    private var fallbackRedirected = false
-    private var fallbackPending = false
 
     private val controller: BlockController?
         get() = (application as? PageTimeApp)?.container?.blockController
@@ -21,32 +19,35 @@ class AppBlockerService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         val app = application as? PageTimeApp
-        val blockController = app?.container?.blockController
-        blockController?.service = this
+        app?.container?.blockController?.service = this
         app?.container?.usageReconciler?.requestReconcile()
-
-        // A service can reconnect while the blocked app is already on screen and
-        // emit no new window-state event. Re-evaluate that window immediately.
-        rootInActiveWindow?.packageName?.toString()?.let { packageName ->
-            handleForegroundEvent(packageName, rootInActiveWindow?.className?.toString())
-        } ?: blockController?.reassertIfBlocked()
+        // The service can connect (or reconnect after a process death) while a
+        // blocked app is already in front. Without this, nothing is enforced until
+        // that app happens to emit another window event — which it never does while
+        // it stays foreground.
+        rootInActiveWindow?.packageName?.toString()?.let { controller?.onForegroundPackage(it) }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val value = event ?: return
-        if (value.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            value.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) return
-        val packageName = value.packageName?.toString() ?: return
-        handleForegroundEvent(packageName, value.className?.toString())
-    }
-
-    private fun handleForegroundEvent(packageName: String, windowClass: String?) {
-        val blockController = controller ?: return
-        when (ForegroundEventPolicy.classify(packageName, windowClass, this.packageName)) {
-            ForegroundEventPolicy.Action.IGNORE -> Unit
-            ForegroundEventPolicy.Action.REASSERT -> blockController.reassertIfBlocked()
-            ForegroundEventPolicy.Action.SWITCH -> blockController.onForegroundPackage(packageName)
+        event ?: return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                val eventPackage = event.packageName?.toString()
+                if (!ForegroundEventPolicy.isForegroundChange(
+                        packageName = eventPackage,
+                        className = event.className?.toString(),
+                        selfPackage = packageName
+                    )
+                ) {
+                    // Transient chrome (shade, keyboard, toast) or our own overlay:
+                    // the blocked app is still there, so just make sure we still are.
+                    controller?.reassert()
+                    return
+                }
+                controller?.onForegroundPackage(eventPackage)
+            }
+            // Something re-stacked the windows — possibly on top of our block screen.
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> controller?.reassert()
         }
     }
 
@@ -58,36 +59,44 @@ class AppBlockerService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /** Attempts to show the block screen; fallback happens on the main looper. */
-    fun showTimeUp() {
-        if (fallbackPending) return
-        fallbackPending = true
-        mainHandler.post {
-            fallbackPending = false
-            if (overlay == null) overlay = TimeUpOverlay(this) { openReader() }
-            val attached = overlay?.show() == true
-            if (!attached && !fallbackRedirected) {
-                fallbackRedirected = true
-                openReader()
-            }
-        }
+    /** Shows the block screen. Returns false if no overlay window could be added. */
+    fun showTimeUp(): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) return showTimeUpNow()
+        mainHandler.post { showTimeUpNow() }
+        return overlay?.isShowing() ?: false
+    }
+
+    private fun showTimeUpNow(): Boolean {
+        val current = overlay ?: TimeUpOverlay(this) { openReader() }.also { overlay = it }
+        return current.show()
     }
 
     fun dismissTimeUp() {
+        mainHandler.post { overlay?.dismiss() }
+    }
+
+    /**
+     * Last-resort enforcement when no overlay can be drawn: an accessibility service
+     * can always send the user home, no special permission required.
+     */
+    fun bounceOut() {
         mainHandler.post {
-            overlay?.dismiss()
-            fallbackRedirected = false
-            fallbackPending = false
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            openReader()
         }
     }
 
     private fun openReader() {
         controller?.releaseBlock()
-        performGlobalAction(GLOBAL_ACTION_HOME)
+        dismissTimeUp()
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(MainActivity.EXTRA_OPEN_READER, true)
         }
-        startActivity(intent)
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Background activity launch refused; the user is at least out of the app.
+        }
     }
 }

@@ -50,7 +50,7 @@ class ConceptMapViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectConcept(id: String?) {
-        _selectedConceptId.value = id
+        _selectedConceptId.value = id?.takeIf { it.isNotBlank() }
     }
 
     fun generateNow() {

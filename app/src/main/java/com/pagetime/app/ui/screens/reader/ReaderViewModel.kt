@@ -312,10 +312,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     ) {
         val b = _book.value ?: return
         if (b.format != "epub" && chapterIndex <= 0) return
-        if (!container.geminiLearningClient.isConfigured) {
-            _aiGenerationState.value = AiGenerationState.Disabled
-            return
-        }
         if (_aiGenerationState.value is AiGenerationState.Generating) return
         _aiGenerationState.value = AiGenerationState.Generating
         persistenceScope.launch {
@@ -336,7 +332,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 }
             } catch (error: Throwable) {
                 _aiGenerationState.value = AiGenerationState.Failed(
-                    error.message ?: "Automatic card generation failed"
+                    error.message ?: "Could not create a review card"
                 )
             }
         }

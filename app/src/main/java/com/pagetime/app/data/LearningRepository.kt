@@ -14,6 +14,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.learning.AiGenerationResult
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
+import com.pagetime.app.data.learning.LocalRecallCardGenerator
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
 import io.github.openspacedrepetition.Scheduler
@@ -21,6 +22,7 @@ import java.time.Duration
 import java.time.Instant
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 
@@ -156,8 +158,22 @@ class LearningRepository(
             return AiGenerationResult(emptyList(), contextChapterCount = 3, usedCharacters = context.recentText.length)
         }
         return try {
-            val result = geminiClient.generate(context)
-            result.cards.forEach { generated ->
+            val aiCards = if (geminiClient.isConfigured) {
+                // Gemini cards are richer, but a transient API failure or empty
+                // response must not leave the reader with no learning loop.
+                try {
+                    geminiClient.generate(context).cards
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    null
+                }
+            } else {
+                null
+            }
+            val generatedByAi = !aiCards.isNullOrEmpty()
+            val cards = aiCards?.takeIf { it.isNotEmpty() }
+                ?: LocalRecallCardGenerator.generate(context)
+            cards.forEach { generated ->
                 val card = Card.builder().due(Instant.now()).build()
                 cardDao.upsert(
                     LearningCardEntity(
@@ -175,14 +191,18 @@ class LearningRepository(
                         fsrsCardJson = FsrsCardCodec.toJson(card),
                         createdAt = now,
                         updatedAt = now,
-                        generatedByAi = true,
+                        generatedByAi = generatedByAi,
                         aiConfidence = generated.confidence,
                         generationKey = key
                     )
                 )
             }
-            generationDao.complete(bookId, key, STATUS_COMPLETE, result.cards.size, System.currentTimeMillis())
-            result
+            generationDao.complete(bookId, key, STATUS_COMPLETE, cards.size, System.currentTimeMillis())
+            AiGenerationResult(
+                cards = cards,
+                contextChapterCount = 3,
+                usedCharacters = context.recentText.length
+            )
         } catch (error: Throwable) {
             generationDao.complete(bookId, key, STATUS_FAILED, 0, System.currentTimeMillis())
             throw error
@@ -228,8 +248,8 @@ class LearningRepository(
             val updated = existing.copy(
                 fsrsCardJson = FsrsCardCodec.toJson(newCard),
                 updatedAt = now.toEpochMilli(),
-            lastRating = rating.value,
-            reviewCount = existing.reviewCount + 1
+                lastRating = rating.value,
+                reviewCount = existing.reviewCount + 1
             )
             cardDao.upsert(updated)
             reviewLogDao.insert(

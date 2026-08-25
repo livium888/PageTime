@@ -58,6 +58,7 @@ class BlockController(
         private set
 
     private var spendJob: Job? = null
+    private var enforceJob: Job? = null
 
     /** Seconds charged in the currently-open spend session (flushed to the ledger at session end). */
     @Volatile
@@ -90,8 +91,11 @@ class BlockController(
                 // Mirror persisted balance into memory. During an active spend session
                 // our own write-through echoes back here with the same value — harmless.
                 balanceSeconds = s.browseBalanceSeconds
-                if (balanceSeconds <= 0 && currentBlockedPackage != null && spendJob?.isActive != true) {
-                    showTimeUp()
+                if (balanceSeconds <= 0 && currentBlockedPackage != null) {
+                    startEnforcement()
+                } else if (balanceSeconds > 0 && currentBlockedPackage != null && spendJob?.isActive != true) {
+                    stopEnforcement()
+                    startSpending()
                 }
             }
         }
@@ -100,25 +104,43 @@ class BlockController(
     fun onForegroundPackage(packageName: String?) {
         val isBlocked = packageName != null && packageName in blockedPackages
         if (!isBlocked) {
-            if (currentBlockedPackage != null) endSpendSession()
-            currentBlockedPackage = null
-            service?.dismissTimeUp()
+            releaseBlock()
             return
         }
 
-        // Same blocked app still foreground and already being handled → no-op.
-        if (packageName == currentBlockedPackage && spendJob?.isActive == true) return
+        // The same blocked app can emit many window events while an overlay or
+        // keyboard is present. Keep the existing session and reassert zero balance.
+        if (packageName == currentBlockedPackage) {
+            if (balanceSeconds <= 0) startEnforcement() else if (spendJob?.isActive != true) startSpending()
+            return
+        }
 
-        endSpendSession()
+        releaseBlock()
         currentBlockedPackage = packageName
         if (balanceSeconds <= 0) {
-            showTimeUp()
+            startEnforcement()
         } else {
             startSpending()
         }
     }
 
+    /** Reasserts the current block after PageTime/system transient windows. */
+    fun reassertIfBlocked() {
+        if (currentBlockedPackage != null && balanceSeconds <= 0) {
+            startEnforcement()
+        }
+    }
+
+    /** Explicit escape used only when the user chooses to read. */
+    fun releaseBlock() {
+        if (currentBlockedPackage != null) endSpendSession()
+        currentBlockedPackage = null
+        stopEnforcement()
+        service?.dismissTimeUp()
+    }
+
     private fun startSpending() {
+        stopEnforcement()
         if (spendJob?.isActive == true) return
         val pkg = currentBlockedPackage ?: return
         sessionSpentSeconds = 0
@@ -138,10 +160,29 @@ class BlockController(
                     flushSpentSession(pkg)
                     logBlocked(pkg)
                     withContext(Dispatchers.Main) { service?.showTimeUp() }
+                    startEnforcement()
                     break
                 }
             }
         }
+    }
+
+    private fun startEnforcement() {
+        if (enforceJob?.isActive == true) {
+            service?.showTimeUp()
+            return
+        }
+        enforceJob = scope.launch {
+            while (isActive && currentBlockedPackage != null && balanceSeconds <= 0) {
+                service?.showTimeUp()
+                delay(1_000)
+            }
+        }
+    }
+
+    private fun stopEnforcement() {
+        enforceJob?.cancel()
+        enforceJob = null
     }
 
     /** Ends the current spend session, flushing its summary to the ledger. */
@@ -169,12 +210,6 @@ class BlockController(
         if (now - lastBlockedLogAt < BLOCKED_LOG_DEBOUNCE_MS) return
         lastBlockedLogAt = now
         scope.launch { usageRepository.log(UsageRepository.TYPE_BLOCKED, pkg, 0) }
-    }
-
-    private fun showTimeUp() {
-        service?.showTimeUp()
-        val pkg = currentBlockedPackage ?: return
-        logBlocked(pkg)
     }
 
     /** Manual top-up path (kept for API compatibility); routes through the serialized mutator. */

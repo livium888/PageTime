@@ -32,7 +32,7 @@ PageTime can use Gemini to create source-grounded comprehension cards automatica
 
 Open **Settings → Gemini cards** in the app to enter the key manually. It is stored in Android encrypted preferences and is never shown again after saving. The app calls Gemini's `models.list` endpoint, follows pagination, filters to models that support `generateContent`, and shows those models in the picker. The selected model is saved locally and used for future automatic card generation.
 
-For GitHub Actions/private builds, `GEMINI_API_KEY` can still be supplied as a repository secret and is used only as a build-time fallback. Without either a user key or that build-time value, reading and manual cards continue to work and automatic generation stays disabled.
+For GitHub Actions/private builds, `GEMINI_API_KEY` can still be supplied as a repository secret and is used only as a build-time fallback. Without a Gemini key, PageTime still creates lightweight offline recall cards from the completed passage; Gemini is optional and adds richer topic-based cards.
 
 For a public release, move the Gemini request behind a small authenticated server because any API key packaged in an Android APK can be extracted. The manually entered key is encrypted at rest, but the app still sends it directly to Google's API from the device.
 

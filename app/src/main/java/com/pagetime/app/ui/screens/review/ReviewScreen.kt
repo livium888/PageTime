@@ -193,13 +193,19 @@ private fun ReviewCard(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.secondary
             )
-            card.sourceQuote?.let { quote ->
-                Text(
-                    "Source: \"$quote\"",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        } else {
+            Text(
+                "Offline recall card from this passage",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+        card.sourceQuote?.let { quote ->
+            Text(
+                "Source: \"$quote\"",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         if (card.sourceLocator != null || card.sourceFraction != null) {
             OutlinedButton(onClick = onOpenSource) { Text("Open source passage") }

@@ -10,17 +10,20 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
@@ -55,6 +58,8 @@ fun PageTimeAppUi(openReader: Boolean) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    val learningBadgeViewModel: LearningBadgeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val dueCount by learningBadgeViewModel.dueCount.collectAsStateWithLifecycle()
     val showBottomBar = currentRoute in setOf("library", "review", "search", "settings")
 
     LaunchedEffect(openReader) {
@@ -85,10 +90,21 @@ fun PageTimeAppUi(openReader: Boolean) {
                                 }
                             },
                             icon = {
-                                Icon(
-                                    if (selected) tab.filled else tab.outlined,
-                                    contentDescription = tab.label
-                                )
+                                if (tab.route == "review" && dueCount > 0) {
+                                    BadgedBox(
+                                        badge = { Badge { Text(dueCount.coerceAtMost(99).toString()) } }
+                                    ) {
+                                        Icon(
+                                            if (selected) tab.filled else tab.outlined,
+                                            contentDescription = tab.label
+                                        )
+                                    }
+                                } else {
+                                    Icon(
+                                        if (selected) tab.filled else tab.outlined,
+                                        contentDescription = tab.label
+                                    )
+                                }
                             },
                             label = { Text(tab.label) },
                             colors = NavigationBarItemDefaults.colors(

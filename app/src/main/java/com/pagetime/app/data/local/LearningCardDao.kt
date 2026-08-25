@@ -29,6 +29,9 @@ interface LearningCardDao {
     @Query("DELETE FROM learning_cards WHERE id = :id")
     suspend fun deleteById(id: String)
 
+    @Query("DELETE FROM learning_cards WHERE bookId = :bookId AND generationKey = :generationKey")
+    suspend fun deleteByGenerationKey(bookId: String, generationKey: String)
+
     @Query("SELECT COUNT(*) FROM learning_cards")
     fun observeTotalCount(): Flow<Int>
 

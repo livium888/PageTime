@@ -155,9 +155,9 @@ private fun EmptyReview(modifier: Modifier) {
     ) {
         Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.padding(4.dp))
-        Text("Nothing due right now", style = MaterialTheme.typography.titleLarge)
+        Text("No cards are due yet", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Your next review will appear here when FSRS says it is useful to revisit.",
+            "Keep reading for about a minute, then use Reader → Options → Generate cards now. New cards appear here immediately.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp)
         )

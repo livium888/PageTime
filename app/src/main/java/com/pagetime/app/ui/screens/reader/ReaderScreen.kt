@@ -425,6 +425,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
                 onCreateCard = { showCardSheet = true },
+                onGenerateCards = vm::generateCardsNow,
                 onSettings = { showSettings = true }
             )
         }
@@ -490,9 +491,13 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
 
         when (val state = aiGenerationState) {
             AiGenerationState.Generating -> AiGenerationNotice("Creating recall cards…")
-            is AiGenerationState.Generated -> if (state.count > 0) {
-                AiGenerationNotice("${state.count} recall card${if (state.count == 1) "" else "s"} ready")
-            }
+            is AiGenerationState.Generated -> AiGenerationNotice(
+                if (state.count > 0) {
+                    "${state.count} recall card${if (state.count == 1) "" else "s"} ready · open Review"
+                } else {
+                    "No card was found in this passage · try Generate cards now"
+                }
+            )
             is AiGenerationState.Failed -> AiGenerationNotice("Automatic cards unavailable")
             AiGenerationState.Disabled, AiGenerationState.Idle -> Unit
         }
@@ -820,6 +825,7 @@ private fun ReaderTopBar(
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
     onCreateCard: () -> Unit,
+    onGenerateCards: () -> Unit,
     onSettings: () -> Unit
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
@@ -899,6 +905,14 @@ private fun ReaderTopBar(
                         onClick = {
                             optionsExpanded = false
                             onBookmark()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Generate cards now") },
+                        leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onGenerateCards()
                         }
                     )
                     DropdownMenuItem(

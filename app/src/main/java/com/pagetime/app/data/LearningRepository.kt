@@ -128,7 +128,8 @@ class LearningRepository(
         bookId: String,
         chapterIndex: Int,
         locatorJson: String?,
-        textFraction: Float?
+        textFraction: Float?,
+        force: Boolean = false
     ): AiGenerationResult {
         val book = bookDao.getById(bookId) ?: error("Book not found")
         val context = contextExtractor.extract(book, chapterIndex)
@@ -138,7 +139,7 @@ class LearningRepository(
         if (previous != null) {
             val isStale = previous.status == STATUS_GENERATING && now - previous.updatedAt >= GENERATION_STALE_AFTER_MS
             val canRetry = previous.status == STATUS_FAILED && now - previous.updatedAt >= GENERATION_RETRY_AFTER_MS
-            if (!isStale && !canRetry) {
+            if (!force && !isStale && !canRetry) {
                 return AiGenerationResult(emptyList(), contextChapterCount = 3, usedCharacters = context.recentText.length)
             }
             generationDao.release(bookId, key)
@@ -156,6 +157,9 @@ class LearningRepository(
         )
         if (claimed == -1L) {
             return AiGenerationResult(emptyList(), contextChapterCount = 3, usedCharacters = context.recentText.length)
+        }
+        if (force) {
+            cardDao.deleteByGenerationKey(bookId, key)
         }
         return try {
             val aiCards = if (geminiClient.isConfigured) {

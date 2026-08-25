@@ -10,6 +10,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.learning.AiGenerationState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -114,6 +115,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private var lastTextGenerationBucket = -1
     private var lastTextGenerationAttemptAt = 0L
+    private var epubChapterReadingSeconds = 0L
+    private var lastEpubGenerationChapter = -1
 
     /** No position writes are allowed until the initial restore has completed. */
     @Volatile
@@ -136,6 +139,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtRestoreComplete = false
         lastTextGenerationBucket = -1
         lastTextGenerationAttemptAt = 0L
+        epubChapterReadingSeconds = 0L
+        lastEpubGenerationChapter = -1
         _aiGenerationState.value = AiGenerationState.Idle
         loadBook()
     }
@@ -243,6 +248,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
+                    if (_book.value?.format == "epub") {
+                        epubChapterReadingSeconds++
+                        if (epubChapterReadingSeconds % 5L == 0L) {
+                            maybeGenerateCardsForEpubProgress()
+                        }
+                    }
                 }
                 _sessionSeconds.value++
                 _guardState.value = guard.state
@@ -304,17 +315,50 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         textFraction: Float?
     ) {
         if (!locatorRestoreComplete) return
+        epubChapterReadingSeconds = 0L
         generateCardsForChapter(chapterIndex, locatorJson, textFraction)
+    }
+
+    /** Allows the reader to recover immediately from a failed or missed automatic run. */
+    fun generateCardsNow() {
+        val b = _book.value ?: return
+        val chapterIndex = currentChapterIndex() ?: b.currentChapterIndex
+        if (b.format != "epub" && chapterIndex < 0) return
+        generateCardsForChapter(
+            chapterIndex = chapterIndex,
+            locatorJson = latestLocator?.toJSON()?.toString(),
+            textFraction = latestTxtFraction.takeIf { b.format == "txt" },
+            force = true
+        )
+    }
+
+    private fun maybeGenerateCardsForEpubProgress() {
+        if (!locatorRestoreComplete || _book.value?.format != "epub") return
+        val chapterIndex = currentChapterIndex() ?: return
+        if (chapterIndex == lastEpubGenerationChapter || epubChapterReadingSeconds < EPUB_GENERATION_AFTER_SECONDS) return
+        lastEpubGenerationChapter = chapterIndex
+        generateCardsForChapter(
+            chapterIndex = chapterIndex,
+            locatorJson = latestLocator?.toJSON()?.toString(),
+            textFraction = null
+        )
+    }
+
+    private fun currentChapterIndex(): Int? {
+        val locator = latestLocator ?: return null
+        val publication = _publication.value ?: return null
+        return publication.readingOrder.indexOfFirstWithHref(locator.href)
     }
 
     /** Starts one bounded Gemini generation request without blocking the reader. */
     private fun generateCardsForChapter(
         chapterIndex: Int,
         locatorJson: String?,
-        textFraction: Float?
+        textFraction: Float?,
+        force: Boolean = false
     ) {
         val b = _book.value ?: return
-        if (b.format != "epub" && chapterIndex <= 0) return
+        if (b.format != "epub" && chapterIndex < 0) return
         if (_aiGenerationState.value is AiGenerationState.Generating) return
         _aiGenerationState.value = AiGenerationState.Generating
         persistenceScope.launch {
@@ -323,28 +367,35 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     bookId = b.id,
                     chapterIndex = chapterIndex,
                     locatorJson = locatorJson,
-                    textFraction = textFraction
-                )
-                val mapResult = container.conceptMapRepository.generateForReadingWindow(
-                    bookId = b.id,
-                    chapterIndex = chapterIndex
-                )
-                _mapMoment.value = com.pagetime.app.data.local.MapMoment(
-                    bookId = b.id,
-                    chapterIndex = chapterIndex,
-                    conceptCount = mapResult.concepts.size,
-                    relationshipCount = mapResult.relationships.size,
-                    featuredConcept = mapResult.relationships.firstOrNull()?.sourceLabel
-                        ?: mapResult.concepts.firstOrNull()?.label,
-                    featuredRelationship = mapResult.relationships.firstOrNull()?.let {
-                        "${it.relationType} ${it.targetLabel}"
-                    },
-                    createdAt = System.currentTimeMillis()
+                    textFraction = textFraction,
+                    force = force
                 )
                 _aiGenerationState.value = AiGenerationState.Generated(
                     count = result.cards.size,
                     topicCount = result.cards.map { it.topic }.distinctBy(String::lowercase).size
                 )
+
+                // A map outage must not turn successfully saved cards into a failure.
+                try {
+                    val mapResult = container.conceptMapRepository.generateForReadingWindow(
+                        bookId = b.id,
+                        chapterIndex = chapterIndex
+                    )
+                    _mapMoment.value = com.pagetime.app.data.local.MapMoment(
+                        bookId = b.id,
+                        chapterIndex = chapterIndex,
+                        conceptCount = mapResult.concepts.size,
+                        relationshipCount = mapResult.relationships.size,
+                        featuredConcept = mapResult.relationships.firstOrNull()?.sourceLabel
+                            ?: mapResult.concepts.firstOrNull()?.label,
+                        featuredRelationship = mapResult.relationships.firstOrNull()?.let {
+                            "${it.relationType} ${it.targetLabel}"
+                        },
+                        createdAt = System.currentTimeMillis()
+                    )
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                }
                 delay(4_000)
                 if (_aiGenerationState.value is AiGenerationState.Generated) {
                     _aiGenerationState.value = AiGenerationState.Idle
@@ -573,6 +624,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     companion object {
         private const val AI_RETRY_AFTER_MS = 15 * 60 * 1000L
+        private const val EPUB_GENERATION_AFTER_SECONDS = 60L
     }
 
     override fun onCleared() {

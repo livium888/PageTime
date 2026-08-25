@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Base64
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -34,11 +37,11 @@ android {
             val base64 = providers.environmentVariable("KEYSTORE_BASE64").orNull
             val password = providers.environmentVariable("KEYSTORE_PASSWORD").orNull
             if (!base64.isNullOrBlank() && !password.isNullOrBlank()) {
-                val keystoreFile = java.io.File(
+                val keystoreFile = File(
                     System.getenv("RUNNER_TEMP") ?: System.getProperty("java.io.tmpdir"),
                     "pagetime-release.p12"
                 )
-                keystoreFile.writeBytes(java.util.Base64.getDecoder().decode(base64))
+                keystoreFile.writeBytes(Base64.getDecoder().decode(base64))
                 storeFile = keystoreFile
                 storePassword = password
                 keyAlias = providers.environmentVariable("KEY_ALIAS").orNull ?: "pagetime"

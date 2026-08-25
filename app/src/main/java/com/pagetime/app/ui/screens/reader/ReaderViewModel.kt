@@ -322,6 +322,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     locatorJson = locatorJson,
                     textFraction = textFraction
                 )
+                container.conceptMapRepository.generateForReadingWindow(
+                    bookId = b.id,
+                    chapterIndex = chapterIndex
+                )
                 _aiGenerationState.value = AiGenerationState.Generated(
                     count = result.cards.size,
                     topicCount = result.cards.map { it.topic }.distinctBy(String::lowercase).size

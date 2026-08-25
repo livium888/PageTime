@@ -5,10 +5,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -34,6 +36,7 @@ import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.review.ReviewScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
+import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
@@ -49,6 +52,7 @@ private data class BottomTab(
 private val tabs = listOf(
     BottomTab("library", "Library", Icons.Outlined.MenuBook, Icons.Filled.MenuBook),
     BottomTab("review", "Review", Icons.Outlined.School, Icons.Filled.School),
+    BottomTab("concepts", "Map", Icons.Outlined.AccountTree, Icons.Filled.AccountTree),
     BottomTab("search", "Discover", Icons.Outlined.Search, Icons.Filled.Search),
     BottomTab("settings", "Settings", Icons.Outlined.Settings, Icons.Filled.Settings)
 )
@@ -60,7 +64,7 @@ fun PageTimeAppUi(openReader: Boolean) {
     val currentRoute = backStackEntry?.destination?.route
     val learningBadgeViewModel: LearningBadgeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val dueCount by learningBadgeViewModel.dueCount.collectAsStateWithLifecycle()
-    val showBottomBar = currentRoute in setOf("library", "review", "search", "settings")
+    val showBottomBar = currentRoute in setOf("library", "review", "concepts", "search", "settings")
 
     LaunchedEffect(openReader) {
         if (openReader) {
@@ -136,6 +140,9 @@ fun PageTimeAppUi(openReader: Boolean) {
                     onBack = { navController.popBackStack() },
                     onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
                 )
+            }
+            composable("concepts") {
+                ConceptMapScreen(onBack = { navController.popBackStack() })
             }
             composable("search") { DiscoverScreen() }
             composable("settings") {

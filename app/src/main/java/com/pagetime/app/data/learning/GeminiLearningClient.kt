@@ -72,6 +72,67 @@ class GeminiLearningClient(
         return GeminiConnectionResult(models, selected)
     }
 
+    suspend fun generateConceptMap(
+        context: LearningContext,
+        existingConcepts: List<String>
+    ): ConceptMapGenerationResult = withContext(Dispatchers.IO) {
+        val apiKey = currentApiKey()
+        check(apiKey.isNotBlank()) { "Gemini API key is not configured" }
+        val conceptSchema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("label", JSONObject().put("type", "STRING"))
+                .put("description", JSONObject().put("type", "STRING"))
+                .put("type", JSONObject().put("type", "STRING"))
+                .put("sourceQuote", JSONObject().put("type", "STRING"))
+                .put("confidence", JSONObject().put("type", "NUMBER")))
+            .put("required", JSONArray(listOf("label", "description", "type", "sourceQuote", "confidence")))
+        val relationshipSchema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("sourceLabel", JSONObject().put("type", "STRING"))
+                .put("targetLabel", JSONObject().put("type", "STRING"))
+                .put("relationType", JSONObject().put("type", "STRING"))
+                .put("explanation", JSONObject().put("type", "STRING"))
+                .put("sourceQuote", JSONObject().put("type", "STRING"))
+                .put("confidence", JSONObject().put("type", "NUMBER")))
+            .put("required", JSONArray(listOf("sourceLabel", "targetLabel", "relationType", "explanation", "sourceQuote", "confidence")))
+        val schema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("concepts", JSONObject().put("type", "ARRAY").put("items", conceptSchema))
+                .put("relationships", JSONObject().put("type", "ARRAY").put("items", relationshipSchema)))
+            .put("required", JSONArray(listOf("concepts", "relationships")))
+        val prompt = """
+            Build a true concept map from the supplied reading, not a hierarchical mind map.
+            Return important concepts and meaningful directed relationships between them.
+            Relationship labels must explain the meaning: causes, supports, contrasts with,
+            depends on, example of, defines, leads to, or related to. Never invent facts.
+            Reuse an existing concept label when the new passage refers to the same idea.
+            Every sourceQuote must be copied exactly from SOURCE TEXT.
+            Existing concepts: ${existingConcepts.take(80).joinToString(", ").ifBlank { "none" }}
+            Return only the requested JSON.
+
+            BOOK: ${context.bookTitle}
+            CHAPTER: ${context.chapterTitle}
+            SOURCE TEXT:
+            ${context.recentText}
+        """.trimIndent()
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject()
+                .put("responseMimeType", "application/json")
+                .put("responseSchema", schema))
+            .toString()
+        val request = Request.Builder()
+            .url("$endpointBase/models/${currentModel()}:generateContent")
+            .header("x-goog-api-key", apiKey)
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        parseConceptMapResponse(executeWithRetry(request), context)
+    }
+
     suspend fun generate(context: LearningContext): AiGenerationResult = withContext(Dispatchers.IO) {
         val apiKey = currentApiKey()
         check(apiKey.isNotBlank()) { "Gemini API key is not configured" }
@@ -129,6 +190,53 @@ class GeminiLearningClient(
             if (attempt < 2) delay(700L * (attempt + 1))
         }
         throw lastError ?: IllegalStateException("Gemini request failed")
+    }
+
+    private fun parseConceptMapResponse(raw: String, context: LearningContext): ConceptMapGenerationResult {
+        val text = JSONObject(raw).getJSONArray("candidates")
+            .getJSONObject(0).getJSONObject("content").getJSONArray("parts")
+            .getJSONObject(0).getString("text")
+        val root = JSONObject(text)
+        val source = normalize(context.recentText)
+        val concepts = mutableListOf<GeneratedConcept>()
+        val labels = mutableSetOf<String>()
+        val conceptArray = root.optJSONArray("concepts") ?: JSONArray()
+        for (index in 0 until conceptArray.length().coerceAtMost(12)) {
+            val item = conceptArray.optJSONObject(index) ?: continue
+            val concept = GeneratedConcept(
+                label = item.optString("label").trim(),
+                description = item.optString("description").trim(),
+                type = item.optString("type").trim().ifBlank { "idea" },
+                sourceQuote = item.optString("sourceQuote").trim(),
+                confidence = item.optDouble("confidence", 0.0).toFloat()
+            )
+            val key = concept.label.lowercase()
+            if (concept.label.length in 2..100 && concept.description.length in 8..500 &&
+                concept.sourceQuote.length in 12..500 && concept.confidence >= 0.55f &&
+                source.contains(normalize(concept.sourceQuote)) && labels.add(key)
+            ) concepts += concept
+        }
+        val validLabels = concepts.map { it.label.lowercase() }.toSet()
+        val relationships = mutableListOf<GeneratedConceptRelationship>()
+        val relationshipArray = root.optJSONArray("relationships") ?: JSONArray()
+        for (index in 0 until relationshipArray.length().coerceAtMost(24)) {
+            val item = relationshipArray.optJSONObject(index) ?: continue
+            val relationship = GeneratedConceptRelationship(
+                sourceLabel = item.optString("sourceLabel").trim(),
+                targetLabel = item.optString("targetLabel").trim(),
+                relationType = item.optString("relationType").trim().ifBlank { "related to" },
+                explanation = item.optString("explanation").trim(),
+                sourceQuote = item.optString("sourceQuote").trim(),
+                confidence = item.optDouble("confidence", 0.0).toFloat()
+            )
+            if (relationship.sourceLabel.lowercase() in validLabels &&
+                relationship.targetLabel.lowercase() in validLabels &&
+                relationship.sourceLabel.lowercase() != relationship.targetLabel.lowercase() &&
+                relationship.explanation.length >= 8 && relationship.sourceQuote.length >= 12 &&
+                relationship.confidence >= 0.55f && source.contains(normalize(relationship.sourceQuote))
+            ) relationships += relationship
+        }
+        return ConceptMapGenerationResult(concepts, relationships)
     }
 
     private fun parseModels(root: JSONObject): List<GeminiModel> {

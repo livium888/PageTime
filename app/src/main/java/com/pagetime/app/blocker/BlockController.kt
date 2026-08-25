@@ -182,6 +182,7 @@ class BlockController(
         currentBlockedPackage = null
         lastForegroundPackage = null
         stopEnforcing()
+        service?.dismissTimeUp()
     }
 
     private fun onBalanceChanged() {
@@ -234,12 +235,27 @@ class BlockController(
         logBlocked(pkg)
         enforceJob = scope.launch {
             while (isActive && currentBlockedPackage == pkg && balanceSeconds <= 0) {
-                val shown = withContext(Dispatchers.Main) { service?.showTimeUp() ?: false }
-                if (!shown) {
-                    // No overlay window available at all (permission revoked, OEM
-                    // restriction). Fall back to removing them from the app.
-                    withContext(Dispatchers.Main) { service?.bounceOut() }
-                    break
+                val svc = service
+                when {
+                    // The service is reconnecting (process restart, user toggled it).
+                    // Keep the state and retry — a missing service is not a failed
+                    // overlay, and giving up here would end enforcement for good.
+                    svc == null -> Unit
+
+                    // Screen off: nobody can see the block screen, and re-adding a
+                    // window every second would burn wakeups in the user's pocket.
+                    // The same reason the spend ticker does not drain here.
+                    !powerManager.isInteractive -> Unit
+
+                    else -> {
+                        val shown = withContext(Dispatchers.Main) { svc.showTimeUp() }
+                        if (!shown) {
+                            // No overlay window available at all (permission revoked,
+                            // OEM restriction). Fall back to removing them from the app.
+                            withContext(Dispatchers.Main) { svc.bounceOut() }
+                            break
+                        }
+                    }
                 }
                 delay(ENFORCE_INTERVAL_MS)
             }

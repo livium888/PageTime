@@ -45,7 +45,15 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        (application as? PageTimeApp)?.container?.usageReconciler?.requestReconcile()
+        val container = (application as? PageTimeApp)?.container
+        // PageTime itself is in front, so there is nothing to enforce. The blocker
+        // deliberately does not treat our own package as a foreground change (the
+        // time-up overlay's own focus event must not dismiss the overlay), so the
+        // block state has to be released here instead — otherwise re-reading the
+        // blocked-app set while the user sits in Settings would raise the block
+        // screen over our own UI.
+        container?.blockController?.releaseBlock()
+        container?.usageReconciler?.requestReconcile()
     }
 
     override fun onNewIntent(intent: Intent) {

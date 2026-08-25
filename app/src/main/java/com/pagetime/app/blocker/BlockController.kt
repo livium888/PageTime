@@ -4,6 +4,7 @@ import android.os.PowerManager
 import com.pagetime.app.data.BlockedAppRepository
 import com.pagetime.app.data.UsageRepository
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.usage.PendingLedgerWrites
 import com.pagetime.app.domain.BalanceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +94,9 @@ class BlockController(
     private var sessionStartWallAt = 0L
 
     private var lastBlockedLogAt = 0L
+
+    /** Keeps flushed SPENT rows ordered ahead of any reconcile that reads them. */
+    private val pendingLedgerWrites = PendingLedgerWrites()
 
     private val _serviceConnected = MutableStateFlow(false)
     val serviceConnected: StateFlow<Boolean> = _serviceConnected.asStateFlow()
@@ -283,7 +287,7 @@ class BlockController(
             val end = System.currentTimeMillis()
             sessionSpentSeconds = 0
             sessionStartWallAt = 0L
-            scope.launch { usageRepository.logSpent(pkg, seconds, start, end) }
+            pendingLedgerWrites.track(scope) { usageRepository.logSpent(pkg, seconds, start, end) }
         }
     }
 
@@ -293,6 +297,13 @@ class BlockController(
         lastBlockedLogAt = now
         scope.launch { usageRepository.log(UsageRepository.TYPE_BLOCKED, pkg, 0) }
     }
+
+    /**
+     * Suspends until the SPENT rows of any just-ended session have landed. The
+     * reconciler calls this before reading the ledger, so a session that ended
+     * moments earlier is not charged twice.
+     */
+    suspend fun awaitLedgerWrites() = pendingLedgerWrites.await()
 
     /** Manual top-up path (kept for API compatibility); routes through the serialized mutator. */
     fun addBalance(seconds: Long) {

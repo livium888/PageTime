@@ -75,6 +75,12 @@ class UsageReconciler(
         // double-charge the user. Wait for the next sweep.
         if (blockController.currentBlockedPackage != null) return@withLock
 
+        // A session that ended moments ago may still be writing its SPENT row —
+        // the flush is launched, not awaited. Reading the ledger before it lands
+        // would make alreadyChargedSeconds under-count and charge those seconds a
+        // second time, on top of what the live ticker already took.
+        blockController.awaitLedgerWrites()
+
         val now = System.currentTimeMillis()
         val lastReconcile = settingsRepository.lastUsageReconcileAt()
         if (lastReconcile == null) {

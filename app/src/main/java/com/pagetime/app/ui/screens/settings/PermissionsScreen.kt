@@ -2,6 +2,7 @@ package com.pagetime.app.ui.screens.settings
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -89,9 +90,16 @@ fun PermissionsScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
+
             PermissionCard(
                 title = "Accessibility service",
-                description = "Detects when a blocked app opens so it can send you back to the reader.",
+                description = buildString {
+                    append("Detects when a blocked app opens so it can send you back to the reader.")
+                    if (!accessibilityEnabled && isSamsung) {
+                        append("\n\nSamsung devices may block this permission for apps not installed from the Play Store. If you see “App was denied access”, this is a Samsung security restriction, not a PageTime issue. The reading features still work fully without this permission.")
+                    }
+                },
                 granted = accessibilityEnabled,
                 buttonLabel = if (accessibilityEnabled) "Open settings" else "Enable",
                 onClick = {

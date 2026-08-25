@@ -54,6 +54,13 @@ class ForegroundEventPolicyTest {
     }
 
     @Test
+    fun `an app class that merely mentions chrome is still a foreground change`() {
+        // The `android.` namespace guard: only framework windows are transient, or
+        // an app named like the chrome it isn't would slip past the blocker.
+        assertTrue(isChange("com.toasted.app", "com.toasted.app.ToastActivity"))
+    }
+
+    @Test
     fun `missing package is not a foreground change`() {
         assertFalse(isChange(null))
         assertFalse(isChange(""))

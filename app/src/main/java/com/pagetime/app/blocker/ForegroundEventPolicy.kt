@@ -19,11 +19,19 @@ object ForegroundEventPolicy {
         "com.android.systemui",
     )
 
-    /** Window classes that are overlays on top of the real foreground app. */
+    /**
+     * Framework window classes that stack on top of the real foreground app.
+     * Matched case-insensitively, but only inside the `android.` namespace: the
+     * real AOSP names mix cases across OEMs (`android.inputmethodservice.` is
+     * lower-case where `Toast` is not), while an app's own activity class must
+     * never be mistaken for transient chrome.
+     */
+    private const val FRAMEWORK_NAMESPACE = "android."
+
     private val TRANSIENT_CLASS_MARKERS = listOf(
-        "Toast",
-        "PopupWindow",
-        "InputMethod",
+        "toast",
+        "popupwindow",
+        "inputmethod",
     )
 
     /**
@@ -40,7 +48,13 @@ object ForegroundEventPolicy {
         if (packageName.isNullOrBlank()) return false
         if (packageName == selfPackage) return false
         if (packageName in TRANSIENT_PACKAGES) return false
-        if (className != null && TRANSIENT_CLASS_MARKERS.any { className.contains(it) }) return false
+        if (className != null && isTransientWindowClass(className)) return false
         return true
+    }
+
+    private fun isTransientWindowClass(className: String): Boolean {
+        if (!className.startsWith(FRAMEWORK_NAMESPACE)) return false
+        val lowered = className.lowercase()
+        return TRANSIENT_CLASS_MARKERS.any { lowered.contains(it) }
     }
 }

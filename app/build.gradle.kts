@@ -54,7 +54,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (providers.environmentVariable("KEYSTORE_BASE64").isPresent) {
+            if (!providers.environmentVariable("KEYSTORE_BASE64").orNull.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

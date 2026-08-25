@@ -339,6 +339,10 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit) {
         // and bars always stay responsive.
         if (book != null && (publication != null || textContent != null)) {
             BrightnessSwipeOverlay(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(44.dp),
                 currentBrightness = settings.brightness,
                 onDrag = { previewBrightness = it },
                 onDragEnd = {
@@ -913,22 +917,32 @@ private fun ReaderBottomBar(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
-            LinearProgressIndicator(
-                progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth()
-            )
-            // Kindle-style chapter markers along the progress line.
-            if (chapterCount != null && chapterCount > 1) {
-                Spacer(Modifier.height(3.dp))
-                Row(Modifier.fillMaxWidth().height(5.dp)) {
-                    repeat(chapterCount.coerceAtMost(60)) {
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .padding(horizontal = 1.dp)
-                                .fillMaxHeight()
-                                .background(palette.text.copy(alpha = 0.22f))
-                        )
+            // Tapping anywhere on the bar cycles the indicator between
+            // percentage and estimated time left, like Kindle.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onModeToggle)
+            ) {
+                Column {
+                    LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // Kindle-style chapter markers along the progress line.
+                    if (chapterCount != null && chapterCount > 1) {
+                        Spacer(Modifier.height(3.dp))
+                        Row(Modifier.fillMaxWidth().height(5.dp)) {
+                            repeat(chapterCount.coerceAtMost(60)) {
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 1.dp)
+                                        .fillMaxHeight()
+                                        .background(palette.text.copy(alpha = 0.22f))
+                                )
+                            }
+                        }
                     }
                 }
             }

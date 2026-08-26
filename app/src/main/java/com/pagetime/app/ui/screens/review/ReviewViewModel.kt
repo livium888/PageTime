@@ -99,7 +99,7 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val outcome = repository.reviewCard(card.id, rating)
-                _message.value = "${rating.label}. Next review in ${formatInterval(outcome.intervalDays)}."
+                _message.value = "${rating.label} saved. Next review: ${formatNextReview(outcome.nextDue)}."
                 _stats.value = repository.observeStats().first()
                 _cards.value = _cards.value.drop(1)
                 _revealed.value = false
@@ -118,11 +118,5 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearMessage() {
         _message.value = null
-    }
-
-    private fun formatInterval(days: Long): String = when {
-        days <= 0 -> "less than a day"
-        days == 1L -> "1 day"
-        else -> "$days days"
     }
 }

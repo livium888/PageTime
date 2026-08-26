@@ -13,17 +13,12 @@ import com.pagetime.app.data.local.PendingReaderSource
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.learning.AiGenerationResult
 import com.pagetime.app.data.learning.GeminiLearningClient
-import com.pagetime.app.data.learning.GenerationMode
-import com.pagetime.app.data.learning.GenerationPolicy
 import com.pagetime.app.data.learning.LearningContextExtractor
-import com.pagetime.app.data.learning.LocalRecallCardGenerator
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
 import io.github.openspacedrepetition.Scheduler
-import org.json.JSONArray
 import java.time.Duration
 import java.time.Instant
-import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -132,6 +127,11 @@ class LearningRepository(
 
     suspend fun deleteCard(cardId: String) = cardDao.deleteById(cardId)
 
+    /**
+     * Card generation is disabled. The app now uses the Explain Back
+     * chat-based learning method instead of auto-generated MCQ cards.
+     * Existing cards are still reviewed via FSRS, but no new ones are created.
+     */
     suspend fun generateCardsForChapter(
         bookId: String,
         chapterIndex: Int,
@@ -139,136 +139,7 @@ class LearningRepository(
         textFraction: Float?,
         force: Boolean = false
     ): AiGenerationResult {
-        val book = bookDao.getById(bookId) ?: error("Book not found")
-        val context = try {
-            val base = contextExtractor.extract(book, chapterIndex)
-            // Pass existing card topics so the prompt avoids duplicating
-            // concepts the reader has already seen.
-            val existingTopics = cardDao.getAll()
-                .filter { it.bookId == bookId }
-                .mapNotNull { it.topic?.takeIf(String::isNotBlank) }
-                .distinctBy(String::lowercase)
-            base.copy(existingCardTopics = existingTopics)
-        } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            throw IllegalStateException(
-                "Could not read this book's text for card generation: " +
-                    (error.message ?: "unknown error")
-            )
-        }
-        val key = generationKey(context)
-        val now = System.currentTimeMillis()
-        val previous = generationDao.get(bookId, key)
-        if (previous != null) {
-            val isStale = previous.status == STATUS_GENERATING && now - previous.updatedAt >= GENERATION_STALE_AFTER_MS
-            val canRetry = previous.status == STATUS_FAILED && now - previous.updatedAt >= GENERATION_RETRY_AFTER_MS
-            if (!force && !isStale && !canRetry) {
-                return AiGenerationResult(emptyList(), contextChapterCount = 1, usedCharacters = context.recentText.length)
-            }
-            generationDao.release(bookId, key)
-        }
-        val claimed = generationDao.claim(
-            LearningGenerationEntity(
-                bookId = bookId,
-                generationKey = key,
-                chapterIndex = chapterIndex,
-                status = STATUS_GENERATING,
-                cardCount = 0,
-                createdAt = now,
-                updatedAt = now
-            )
-        )
-        if (claimed == -1L) {
-            return AiGenerationResult(emptyList(), contextChapterCount = 1, usedCharacters = context.recentText.length)
-        }
-        if (force) {
-            cardDao.deleteByGenerationKey(bookId, key)
-        }
-        return try {
-            val localCards = LocalRecallCardGenerator.generate(context)
-            val mode = settingsRepository.generationMode()
-            val useGemini = GenerationPolicy.shouldCallGemini(
-                mode = mode,
-                localItemCount = localCards.size,
-                geminiConfigured = geminiClient.isConfigured
-            )
-            val aiCards = if (useGemini) {
-                // Gemini cards are richer, but a transient API failure or empty
-                // response must not leave the reader with no learning loop.
-                try {
-                    val run = suspend {
-                        geminiClient.generate(context)
-                    }
-                    (aiUsageRepository?.track(
-                        bookId = context.bookId,
-                        operation = AiUsageRepository.OPERATION_CARDS,
-                        model = geminiClient.currentModel(),
-                        inputCharacters = context.recentText.length,
-                        outputItems = { it.cards.size },
-                        block = run
-                    ) ?: run()).cards
-                } catch (error: Throwable) {
-                    if (error is CancellationException) throw error
-                    emptyList()
-                }
-            } else {
-                emptyList()
-            }
-            val generatedByAi = aiCards.isNotEmpty()
-            val cards = if (mode == GenerationMode.GEMINI_FIRST) {
-                aiCards.takeIf { it.isNotEmpty() } ?: localCards
-            } else {
-                localCards.takeIf { it.isNotEmpty() } ?: aiCards
-            }
-            cards.forEach { generated ->
-                val card = Card.builder().due(Instant.now()).build()
-                cardDao.upsert(
-                    LearningCardEntity(
-                        id = UUID.randomUUID().toString(),
-                        bookId = bookId,
-                        chapterIndex = chapterIndex,
-                        chapterTitle = context.chapterTitle,
-                        topic = generated.topic,
-                        prompt = generated.question,
-                        answer = generated.answer,
-                        explanation = generated.explanation,
-                        sourceLocator = locatorJson,
-                        sourceFraction = textFraction?.coerceIn(0f, 1f),
-                        sourceQuote = generated.sourceQuote,
-                        fsrsCardJson = FsrsCardCodec.toJson(card),
-                        createdAt = now,
-                        updatedAt = now,
-                        generatedByAi = generatedByAi,
-                        aiConfidence = generated.confidence,
-                        generationKey = key,
-                        cardType = generated.cardType,
-                        mcqOptions = generated.mcqOptions?.let { serializeOptions(it) }
-                    )
-                )
-            }
-            generationDao.complete(bookId, key, STATUS_COMPLETE, cards.size, System.currentTimeMillis())
-            AiGenerationResult(
-                cards = cards,
-                contextChapterCount = 1,
-                usedCharacters = context.recentText.length
-            )
-        } catch (error: Throwable) {
-            generationDao.complete(bookId, key, STATUS_FAILED, 0, System.currentTimeMillis())
-            throw error
-        }
-    }
-
-    private fun generationKey(
-        context: com.pagetime.app.data.learning.LearningContext
-    ): String {
-        // Stable per chapter: a chapter's text never changes, so the key is the
-        // same for every checkpoint inside it. That means the AI processes each
-        // chapter exactly once and every later checkpoint is served from the
-        // cache instead of making another API call. Reading progress within the
-        // chapter deliberately does not participate in the key.
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest("${context.bookId}:${context.chapterIndex}:${context.recentText}".toByteArray())
-        return digest.joinToString("") { "%02x".format(it) }
+        return AiGenerationResult(emptyList(), contextChapterCount = 0, usedCharacters = 0)
     }
 
     suspend fun getCard(cardId: String): LearningCardEntity? = cardDao.getById(cardId)
@@ -345,11 +216,4 @@ class LearningRepository(
     private fun serializeOptions(options: List<String>): String =
         JSONArray(options).toString()
 
-    companion object {
-        private const val STATUS_GENERATING = "generating"
-        private const val STATUS_COMPLETE = "complete"
-        private const val STATUS_FAILED = "failed"
-        private const val GENERATION_STALE_AFTER_MS = 10 * 60 * 1000L
-        private const val GENERATION_RETRY_AFTER_MS = 15 * 60 * 1000L
-    }
 }

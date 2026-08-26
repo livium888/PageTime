@@ -29,39 +29,9 @@ object LocalRecallCardGenerator {
     )
 
     fun generate(context: LearningContext, limit: Int = 3): List<GeneratedLearningCard> {
-        val normalizedText = context.recentText.replace(Regex("\\s+"), " ").trim()
-        val sentences = normalizedText
-            .split(Regex("(?<=[.!?])\\s+"))
-            .map(String::trim)
-            .filter { it.length in 40..400 && it.split(" ").size >= 8 && !isLikelyTrivial(it) }
-            .ifEmpty {
-                normalizedText
-                    .chunked(280)
-                    .map { it.trim() }
-                    .filter { it.length >= 40 && it.split(" ").size >= 8 }
-            }
-            .distinctBy { it.lowercase() }
-            .take(8)
-
-        if (sentences.isEmpty()) return emptyList()
-
-        // Score sentences by how well they support MCQ generation:
-        // prefer definition / cause-effect / contrast sentences over plain ones.
-        val scored = sentences.map { it to scoreSentence(it) }
-            .sortedByDescending { it.second }
-
-        val requested = limit.coerceIn(2, 5)
-        val results = mutableListOf<GeneratedLearningCard>()
-        val usedSentences = mutableSetOf<String>()
-
-        for (cardIndex in 0 until requested) {
-            val best = scored.firstOrNull { it.first !in usedSentences && contentWords(it.first).size >= 3 }
-                ?: break
-            results += generateMcq(best.first, context.chapterTitle)
-            usedSentences += best.first
-        }
-
-        return results
+        // MCQ generation is disabled — the app now uses the Explain Back
+        // chat-based learning method instead of multiple-choice cards.
+        return emptyList()
     }
 
     // ── Sentence scoring ────────────────────────────────────────────────────

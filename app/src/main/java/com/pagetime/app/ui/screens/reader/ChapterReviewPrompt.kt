@@ -29,10 +29,10 @@ fun ChapterReviewPrompt(
         ) {
             Text("Chapter complete", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Want to write one question about $chapterLabel? A short recall check helps the important ideas stick.",
+                "Want to explain the key ideas from $chapterLabel in your own words? The Feynman technique: if you can explain it simply, you understand it.",
                 style = MaterialTheme.typography.bodyMedium
             )
-            TextButton(onClick = onCreateCard) { Text("Create a recall card") }
+            TextButton(onClick = onCreateCard) { Text("Explain what you learned") }
             TextButton(onClick = onDismiss) { Text("Not now") }
         }
     }

@@ -42,6 +42,11 @@ import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
 import com.pagetime.app.ui.screens.settings.UsageAuditScreen
 import com.pagetime.app.ui.screens.settings.AiUsageScreen
+import com.pagetime.app.ui.screens.reader.ExplainBackScreen
+import com.pagetime.app.ui.screens.reader.ExplainBackViewModel
+import com.pagetime.app.ui.screens.reader.ExplainBackViewModelFactory
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 private data class BottomTab(
     val route: String,
@@ -177,8 +182,58 @@ fun PageTimeAppUi(openReader: Boolean) {
                 ReaderScreen(
                     bookId = bookId,
                     onBack = { navController.popBackStack() },
-                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts?bookId=$conceptBookId") }
+                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts?bookId=$conceptBookId") },
+                    onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle ->
+                        val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
+                        val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
+                        navController.navigate(
+                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle"
+                        )
+                    }
                 )
+            }
+            composable("explain-back/{bookId}/{chapterIndex}/{chapterTitle}/{bookTitle}") { entry ->
+                val bookId = entry.arguments?.getString("bookId") ?: ""
+                val chapterIndex = entry.arguments?.getString("chapterIndex")?.toIntOrNull() ?: 0
+                val chapterTitle = URLDecoder.decode(
+                    entry.arguments?.getString("chapterTitle") ?: "", "UTF-8"
+                )
+                val bookTitle = URLDecoder.decode(
+                    entry.arguments?.getString("bookTitle") ?: "", "UTF-8"
+                )
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val app = context.applicationContext as com.pagetime.app.PageTimeApp
+                val vm: ExplainBackViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                    factory = ExplainBackViewModelFactory(app, bookId, chapterIndex, bookTitle, chapterTitle)
+                )
+                val concepts by vm.concepts.collectAsStateWithLifecycle()
+                val messages by vm.messages.collectAsStateWithLifecycle()
+                val isLoading by vm.isLoading.collectAsStateWithLifecycle()
+                val isFinished by vm.isFinished.collectAsStateWithLifecycle()
+
+                if (isFinished) {
+                    navController.popBackStack()
+                } else if (concepts.isNotEmpty()) {
+                    ExplainBackScreen(
+                        conceptLabel = vm.currentConcept,
+                        bookTitle = bookTitle,
+                        chapterTitle = chapterTitle,
+                        messages = messages,
+                        isLoading = isLoading,
+                        canRevise = messages.any { it.isAi },
+                        onSendExplanation = vm::submitExplanation,
+                        onRevise = vm::revise,
+                        onNextConcept = vm::nextConcept,
+                        onBack = { navController.popBackStack() }
+                    )
+                } else {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    }
+                }
             }
         }
     }

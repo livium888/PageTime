@@ -10,7 +10,6 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.ConceptMap
-import com.pagetime.app.data.learning.AiGenerationState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,8 +72,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _publication = MutableStateFlow<Publication?>(null)
     val publication = _publication.asStateFlow()
 
-    /** Tracks the last chapter we pre-generated so we fire only once per transition. */
-    private var lastPreGeneratedChapterIndex: Int? = null
 
     /**
      * Saved reading position as a Readium Locator JSON string, restored by the
@@ -98,8 +95,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     val conceptMap = container.conceptMapRepository.observeBookMap(bookId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ConceptMap(emptyList(), emptyList()))
 
-    val aiSettings = settingsRepository.aiSettings
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
 
     val balanceSeconds = balanceManager.browseBalanceSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
@@ -118,14 +113,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _resumeNotice = MutableStateFlow<String?>(null)
     val resumeNotice = _resumeNotice.asStateFlow()
 
-    private val _aiGenerationState = MutableStateFlow<AiGenerationState>(AiGenerationState.Idle)
-    val aiGenerationState = _aiGenerationState.asStateFlow()
-
     private val _mapMoment = MutableStateFlow<com.pagetime.app.data.local.MapMoment?>(null)
     val mapMoment = _mapMoment.asStateFlow()
-
-    private var readingSecondsSinceCheckpoint = 0L
-    private var lastCheckpointProgress = -1f
 
     /** No position writes are allowed until the initial restore has completed. */
     @Volatile
@@ -146,9 +135,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _bookmarkPresent.value = false
         locatorRestoreComplete = false
         txtRestoreComplete = false
-        readingSecondsSinceCheckpoint = 0L
-        lastCheckpointProgress = -1f
-        _aiGenerationState.value = AiGenerationState.Idle
         loadBook()
     }
 
@@ -255,8 +241,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
-                    readingSecondsSinceCheckpoint++
-                    maybeGenerateCardsAtReadingCheckpoint()
                 }
                 _sessionSeconds.value++
                 _guardState.value = guard.state
@@ -294,115 +278,35 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _guardState.value = guard.state
     }
 
-    /** Allows the reader to recover immediately from a failed or missed automatic run. */
-    fun generateCardsNow() {
-        val b = _book.value ?: return
-        val chapterIndex = currentChapterIndex() ?: b.currentChapterIndex
-        if (b.format != "epub" && chapterIndex < 0) return
-        generateCardsForChapter(
-            chapterIndex = chapterIndex,
-            locatorJson = latestLocator?.toJSON()?.toString(),
-            textFraction = latestTxtFraction.takeIf { b.format == "txt" },
-            force = true
-        )
-    }
-
-    /** Starts a small comprehension checkpoint after roughly three minutes of active reading. */
-    private fun maybeGenerateCardsAtReadingCheckpoint() {
-        val book = _book.value ?: return
-        val progress = _progress.value.coerceIn(0f, 1f)
-        val generating = _aiGenerationState.value is AiGenerationState.Generating
-        if (!ReadingCheckpointPolicy.shouldGenerate(
-                creditedSeconds = readingSecondsSinceCheckpoint,
-                progress = progress,
-                lastCheckpointProgress = lastCheckpointProgress,
-                generationInProgress = generating,
-                intervalSeconds = aiSettings.value.analysisLevel.intervalSeconds
-            )
-        ) return
-
-        val chapterIndex = if (book.format == "epub") {
-            currentChapterIndex() ?: return
-        } else {
-            (progress.coerceIn(0f, 0.9999f) * 5f).toInt()
-        }
-        readingSecondsSinceCheckpoint = 0L
-        lastCheckpointProgress = progress
-        generateCardsForChapter(
-            chapterIndex = chapterIndex,
-            locatorJson = latestLocator?.toJSON()?.toString(),
-            textFraction = progress
-        )
-    }
-
     private fun currentChapterIndex(): Int? {
         val locator = latestLocator ?: return null
         val publication = _publication.value ?: return null
         return publication.readingOrder.indexOfFirstWithHref(locator.href)
     }
 
-    /** Starts one bounded Gemini generation request without blocking the reader. */
-    private fun generateCardsForChapter(
-        chapterIndex: Int,
-        locatorJson: String?,
-        textFraction: Float?,
-        force: Boolean = false
-    ) {
+    /** Updates the concept map when the chapter changes. */
+    private fun updateConceptMap(chapterIndex: Int) {
         val b = _book.value ?: return
-        if (b.format != "epub" && chapterIndex < 0) return
-        if (_aiGenerationState.value is AiGenerationState.Generating) return
-        _aiGenerationState.value = AiGenerationState.Generating
         persistenceScope.launch {
             try {
-                val result = container.learningRepository.generateCardsForChapter(
+                val mapResult = container.conceptMapRepository.generateForReadingWindow(
+                    bookId = b.id,
+                    chapterIndex = chapterIndex
+                )
+                _mapMoment.value = com.pagetime.app.data.local.MapMoment(
                     bookId = b.id,
                     chapterIndex = chapterIndex,
-                    locatorJson = locatorJson,
-                    textFraction = textFraction,
-                    force = force
+                    conceptCount = mapResult.concepts.size,
+                    relationshipCount = mapResult.relationships.size,
+                    featuredConcept = mapResult.relationships.firstOrNull()?.sourceLabel
+                        ?: mapResult.concepts.firstOrNull()?.label,
+                    featuredRelationship = mapResult.relationships.firstOrNull()?.let {
+                        "${it.relationType} ${it.targetLabel}"
+                    },
+                    createdAt = System.currentTimeMillis()
                 )
-                _aiGenerationState.value = AiGenerationState.Generated(
-                    count = result.cards.size,
-                    topicCount = result.cards.map { it.topic }.distinctBy(String::lowercase).size
-                )
-
-                // A map outage must not turn successfully saved cards into a failure.
-                try {
-                    val mapResult = container.conceptMapRepository.generateForReadingWindow(
-                        bookId = b.id,
-                        chapterIndex = chapterIndex
-                    )
-                    _mapMoment.value = com.pagetime.app.data.local.MapMoment(
-                        bookId = b.id,
-                        chapterIndex = chapterIndex,
-                        conceptCount = mapResult.concepts.size,
-                        relationshipCount = mapResult.relationships.size,
-                        featuredConcept = mapResult.relationships.firstOrNull()?.sourceLabel
-                            ?: mapResult.concepts.firstOrNull()?.label,
-                        featuredRelationship = mapResult.relationships.firstOrNull()?.let {
-                            "${it.relationType} ${it.targetLabel}"
-                        },
-                        createdAt = System.currentTimeMillis()
-                    )
-                } catch (error: Throwable) {
-                    if (error is CancellationException) throw error
-                }
-                delay(4_000)
-                if (_aiGenerationState.value is AiGenerationState.Generated) {
-                    _aiGenerationState.value = AiGenerationState.Idle
-                }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-                // A transient failure must not pin an alarming notice to the screen
-                // forever: show the real reason briefly, then clear it so the next
-                // chapter trigger or a manual "Generate cards now" can retry.
-                _aiGenerationState.value = AiGenerationState.Failed(
-                    error.message ?: "Could not create a review card"
-                )
-                delay(8_000)
-                if (_aiGenerationState.value is AiGenerationState.Failed) {
-                    _aiGenerationState.value = AiGenerationState.Idle
-                }
             }
         }
     }
@@ -443,32 +347,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         persistenceScope.launch {
             settingsRepository.saveTextOffset(bookId, pageStartOffset)
         }
-    }
-
-    fun createLearningCard(
-        prompt: String,
-        answer: String,
-        explanation: String?,
-        chapterTitle: String?
-    ) = persistenceScope.launch {
-        val b = _book.value ?: return@launch
-        val publication = _publication.value
-        val locator = latestLocator
-        val chapterIndex = if (publication != null && locator != null) {
-            publication.readingOrder.indexOfFirstWithHref(locator.href) ?: 0
-        } else {
-            b.currentChapterIndex
-        }
-        container.learningRepository.createCard(
-            bookId = b.id,
-            chapterIndex = chapterIndex,
-            chapterTitle = chapterTitle,
-            prompt = prompt,
-            answer = answer,
-            explanation = explanation,
-            sourceLocator = locator?.toJSON()?.toString(),
-            sourceFraction = latestTxtFraction.takeIf { b.format == "txt" }
-        )
     }
 
     fun toggleBookmark() {
@@ -563,46 +441,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             onUserScrolled()
         }
 
-        // Pre-generate cards for the new chapter in the background so the first
-        // checkpoint in the new chapter is instant (the cached result is served).
-        val chapterIndex = publication?.readingOrder?.indexOfFirstWithHref(locator.href)
-        if (chapterIndex != null && chapterIndex != lastPreGeneratedChapterIndex) {
-            lastPreGeneratedChapterIndex = chapterIndex
-            preGenerateChapter(chapterIndex)
-        }
-
         // Debounce: coalesce bursts of locator updates into one write.
         locatorSaveJob?.cancel()
         locatorSaveJob = persistenceScope.launch {
             delay(500)
             saveLocator()
-        }
-    }
-
-    /**
-     * Background generation on chapter transition. Runs fire-and-forget so the
-     * user sees no delay; the result is cached in the generation table and
-     * served instantly on the next checkpoint.
-     */
-    private fun preGenerateChapter(chapterIndex: Int) {
-        val b = _book.value ?: return
-        if (b.format != "epub" && chapterIndex < 0) return
-        persistenceScope.launch {
-            try {
-                container.learningRepository.generateCardsForChapter(
-                    bookId = b.id,
-                    chapterIndex = chapterIndex,
-                    locatorJson = null,
-                    textFraction = null
-                )
-                container.conceptMapRepository.generateForReadingWindow(
-                    bookId = b.id,
-                    chapterIndex = chapterIndex
-                )
-            } catch (_: Throwable) {
-                // Transient failure during background pre-generation — not
-                // visible to the user; the normal checkpoint path will retry.
-            }
         }
     }
 

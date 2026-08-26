@@ -96,7 +96,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
 import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.local.ReaderSettings
-import com.pagetime.app.data.learning.AiGenerationState
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
 import kotlinx.coroutines.delay
@@ -165,7 +164,12 @@ private fun MapMomentPrompt(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) -> Unit = {}) {
+fun ReaderScreen(
+    bookId: String,
+    onBack: () -> Unit,
+    onOpenConcepts: (String) -> Unit = {},
+    onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String) -> Unit = { _, _, _, _ -> }
+) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
     val vm: ReaderViewModel = viewModel(factory = ReaderViewModelFactory(app, bookId))
@@ -186,7 +190,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
     val initialLocatorReady by vm.initialLocatorReady.collectAsStateWithLifecycle()
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
-    val aiGenerationState by vm.aiGenerationState.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
 
@@ -194,7 +197,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
 
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
-    var showCardSheet by remember { mutableStateOf(false) }
+    var showChapterReviewPrompt by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
@@ -425,8 +428,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
-                onCreateCard = { showCardSheet = true },
-                onGenerateCards = vm::generateCardsNow,
                 onSettings = { showSettings = true }
             )
         }
@@ -480,20 +481,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
             }
         }
 
-        when (val state = aiGenerationState) {
-            AiGenerationState.Generating -> AiGenerationNotice("Creating recall cards…")
-            is AiGenerationState.Generated -> AiGenerationNotice(
-                if (state.count > 0) {
-                    "${state.count} recall card${if (state.count == 1) "" else "s"} ready · open Review"
-                } else {
-                    "No card was found in this passage · try Generate cards now"
-                }
-            )
-            is AiGenerationState.Failed -> AiGenerationNotice(
-                state.message?.takeIf { it.isNotBlank() } ?: "Automatic cards unavailable"
-            )
-            AiGenerationState.Disabled, AiGenerationState.Idle -> Unit
-        }
+    
     }
 
     conceptMap.concepts.firstOrNull { it.id == activeConceptId }?.let { concept ->
@@ -509,15 +497,17 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
         )
     }
 
-    if (showCardSheet) {
-        CardCreationSheet(
-            bookTitle = book?.title ?: "Book",
-            chapterLabel = chapterLabel,
-            onSave = { prompt, answer, explanation ->
-                vm.createLearningCard(prompt, answer, explanation, chapterLabel)
-                showCardSheet = false
+    if (showChapterReviewPrompt) {
+        ChapterReviewPrompt(
+            chapterLabel = chapterLabel ?: "this chapter",
+            onCreateCard = {
+                showChapterReviewPrompt = false
+                val chIdx = currentChapterIndex ?: book?.currentChapterIndex ?: 0
+                val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
+                val bTitle = book?.title ?: "Book"
+                onExplainBack(bookId, chIdx, chTitle, bTitle)
             },
-            onDismiss = { showCardSheet = false }
+            onDismiss = { showChapterReviewPrompt = false }
         )
     }
 
@@ -842,8 +832,6 @@ private fun ReaderTopBar(
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
-    onCreateCard: () -> Unit,
-    onGenerateCards: () -> Unit,
     onSettings: () -> Unit
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
@@ -926,19 +914,11 @@ private fun ReaderTopBar(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Generate cards now") },
+                        text = { Text("Explain what you learned") },
                         leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
                         onClick = {
                             optionsExpanded = false
-                            onGenerateCards()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Create recall card") },
-                        leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onCreateCard()
+                            showChapterReviewPrompt = true
                         }
                     )
                     DropdownMenuItem(
@@ -1099,24 +1079,6 @@ private fun ResumeNotice(text: String) {
     }
 }
 
-@Composable
-private fun AiGenerationNotice(text: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 72.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        Surface(
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            shape = RoundedCornerShape(20.dp),
-            tonalElevation = 2.dp
-        ) {
-            Text(text, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-        }
-    }
-}
 
 @Composable
 private fun CenteredMessage(

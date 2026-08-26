@@ -145,11 +145,10 @@ class GeminiLearningClient(
             .put("sourceQuote", JSONObject().put("type", "STRING"))
             .put("confidence", JSONObject().put("type", "NUMBER"))
             .put("cardType", JSONObject().put("type", "STRING"))
-            .put("mcqOptions", JSONObject().put("type", "ARRAY").put("items", JSONObject().put("type", "STRING")))
         val cardItemSchema = JSONObject()
             .put("type", "OBJECT")
             .put("properties", cardFields)
-            .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence", "cardType", "mcqOptions")))
+            .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence", "cardType")))
         val cardsSchema = JSONObject()
             .put("type", "ARRAY")
             .put("minItems", 3)
@@ -382,14 +381,8 @@ class GeminiLearningClient(
         val seenTopics = mutableSetOf<String>()
         for (i in 0 until cardsJson.length().coerceAtMost(5)) {
             val item = cardsJson.getJSONObject(i)
-            // All cards are MCQ — coerce the type and validate structure.
-            val cardType = "mcq"
-            val mcqOpts = run {
-                val arr = item.optJSONArray("mcqOptions")
-                if (arr != null && arr.length() in 2..6) {
-                    (0 until arr.length()).map { arr.getString(it) }
-                } else null
-            }
+            // Cards are now concept-focused Q&A for the explain-back flow.
+            val cardType = item.optString("cardType", "qa").trim().ifBlank { "qa" }
 
             val card = GeneratedLearningCard(
                 topic = item.optString("topic").trim(),
@@ -399,7 +392,7 @@ class GeminiLearningClient(
                 sourceQuote = item.optString("sourceQuote").trim(),
                 confidence = item.optDouble("confidence", 0.0).toFloat(),
                 cardType = cardType,
-                mcqOptions = mcqOpts
+                mcqOptions = null
             )
             if (isValid(card, context.recentText) && seenTopics.add(card.topic.lowercase())) {
                 cards.add(card)
@@ -415,13 +408,6 @@ class GeminiLearningClient(
         if (card.explanation.length !in 10..800) return false
         if (card.sourceQuote.length !in 20..500) return false
         if (card.confidence < 0.60f) return false
-        // MCQ validation: every card must have plausible options and the correct
-        // answer must appear among them.
-        val opts = card.mcqOptions
-        if (opts == null || opts.size !in 2..6) return false
-        if (opts.none { it.equals(card.answer, ignoreCase = true) }) return false
-        // Options must be unique (case-insensitive).
-        if (opts.map { it.lowercase() }.toSet().size != opts.size) return false
         return normalize(source).contains(normalize(card.sourceQuote))
     }
 
@@ -438,47 +424,39 @@ class GeminiLearningClient(
             """.trimMargin()
         } else ""
         return """
-        |You create MULTIPLE-CHOICE comprehension review cards following Wozniak's
-        |20 rules of knowledge formulation. Use ONLY the supplied source text. Do not
-        |invent facts, plot events, names, or quotes.
+        |You create comprehension review concepts from the supplied reading.
+        |Use ONLY the source text. Do not invent facts, plot events, names, or quotes.
         |
-        |Return exactly 3 to 5 high-quality multiple-choice questions. Each question
-        |must follow this structure:
+        |Return exactly 3 to 5 key concepts from this chapter. Each concept should
+        |test whether the reader truly understands the core ideas — not surface recall.
         |
-        |  question: A self-contained sentence from the passage with the key term or
-        |  concept replaced by "______". The reader should be able to answer without
-        |  seeing the source text.
+        |For each concept:
         |
-        |  answer: The correct term that fills the blank (must be one of the options).
-        |
-        |  mcqOptions: 3-4 plausible answer choices. The correct answer must be
-        |  among them. Distractors must be related terms from the same domain that a
-        |  reader might confuse — not random words. They should be mutually exclusive
-        |  and genuinely plausible to someone who skimmed the chapter.
-        |
-        |  explanation: One sentence explaining WHY the correct answer is right.
-        |
-        |  sourceQuote: A verbatim quote from the source text (20-500 chars) that
-        |  justifies the answer.
-        |
-        |  topic: The core concept being tested (e.g. "Mitochondria function" not
+        |  topic: The concept name (e.g. "Natural selection mechanism" not
         |  "Chapter details").
         |
-        |  confidence: 0.70-0.98. Only create questions where forgetting the answer
-        |  would genuinely damage the reader's understanding of the chapter.
+        |  question: A clear prompt asking the reader to explain this concept in their
+        |  own words (e.g. "Explain how natural selection works according to the author").
+        |  Make it specific to what the author argues, not a generic textbook question.
+        |
+        |  answer: A brief 1-2 sentence model answer that covers the key points.
+        |
+        |  explanation: One sentence explaining why this concept matters for
+        |  understanding the chapter's argument.
+        |
+        |  sourceQuote: A verbatim quote from the source text (20-500 chars) that
+        |  grounds the concept.
+        |
+        |  confidence: 0.70-0.98. Only include concepts where not understanding them
+        |  would genuinely damage the reader's comprehension of the chapter.
         |
         |QUALITY RULES (non-negotiable):
-        |  - Test central arguments, definitions, mechanisms, cause/effect chains,
+        |  - Focus on central arguments, definitions, mechanisms, cause/effect chains,
         |    principles, or meaningful contrasts.
         |  - NEVER test incidental names, dates, trivial details, or searchable trivia.
-        |  - NEVER create a question where the answer is obvious from the question
-        |    text alone.
-        |  - Each question should target a DIFFERENT concept — no two questions about
-        |    the same topic.
-        |  - Distractors should feel like real terms someone studying this material
-        |    would encounter. Prefer concepts from the same chapter or field.
-        |  - question must be self-contained and unambiguous.
-        |  - answer must be concise (one term or short phrase, not a full sentence).
+        |  - Each concept should target a DIFFERENT idea — no two about the same topic.
+        |  - Questions should require the reader to synthesize, not just recall.
+        |  - The model answer should be clear enough that a 12-year-old could follow it.
         |
         |$dedupHint
         |

@@ -69,10 +69,11 @@ object FsrsCardCodec {
     }
 
     private fun readNullableDouble(obj: JSONObject, key: String): Double? =
-        obj.optString(key, "")
-            .trim()
-            .toDoubleOrNull()
-            ?.takeIf { it.isFinite() }
+        if (obj.has(key) && !obj.isNull(key)) {
+            obj.getDouble(key).takeIf { it.isFinite() }
+        } else {
+            null
+        }
 
     private fun readState(obj: JSONObject): State =
         runCatching { State.valueOf(obj.optString("state", State.LEARNING.name)) }

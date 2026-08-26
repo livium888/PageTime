@@ -53,9 +53,13 @@ object FsrsCardCodec {
         if (obj.has("step") && !obj.isNull("step") && state == storedState) {
             builder.step(obj.getInt("step"))
         }
-        if (state != State.LEARNING || isValidScheduledCard) {
-            builder.stability(requireNotNull(storedStability))
-            builder.difficulty(requireNotNull(storedDifficulty))
+        if (isValidScheduledCard) {
+            // The boolean check above guarantees both values are present and
+            // positive; keep the local non-null values explicit for the Java API.
+            val stability = storedStability ?: 0.001
+            val difficulty = storedDifficulty ?: 1.0
+            builder.stability(stability)
+            builder.difficulty(difficulty)
         }
         if (obj.has("due") && !obj.isNull("due")) builder.due(Instant.ofEpochMilli(obj.getLong("due")))
         if (obj.has("lastReview") && !obj.isNull("lastReview") && state == storedState) {
@@ -65,7 +69,10 @@ object FsrsCardCodec {
     }
 
     private fun readNullableDouble(obj: JSONObject, key: String): Double? =
-        if (obj.has(key) && !obj.isNull(key)) obj.optDouble(key).takeIf { it.isFinite() } else null
+        obj.optString(key, "")
+            .trim()
+            .toDoubleOrNull()
+            ?.takeIf { it.isFinite() }
 
     private fun readState(obj: JSONObject): State =
         runCatching { State.valueOf(obj.optString("state", State.LEARNING.name)) }

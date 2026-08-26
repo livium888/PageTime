@@ -17,8 +17,8 @@ class LearningContextExtractor(
     private val context: Context,
     private val epubParser: EpubParser
 ) {
-    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 24_000): LearningContext {
-        require(maxCharacters in 4_000..40_000)
+    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 8_000): LearningContext {
+        require(maxCharacters in 2_000..40_000)
         return if (book.format == "epub") {
             extractEpub(book, chapterIndex, maxCharacters)
         } else {

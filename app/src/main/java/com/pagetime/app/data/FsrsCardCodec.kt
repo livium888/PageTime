@@ -19,28 +19,53 @@ object FsrsCardCodec {
     fun toJson(card: Card): String = JSONObject()
         .put("state", card.state.name)
         .put("step", card.step)
-        .put("stability", card.stability ?: 0.0)
-        .put("difficulty", card.difficulty ?: 0.0)
+        // FSRS uses null stability + null difficulty to identify a never-reviewed
+        // card. Do not replace those nulls with zero: that sends NEW cards through
+        // the reviewed-card branch and causes getStability() failures.
+        .put("stability", card.stability)
+        .put("difficulty", card.difficulty)
         .put("due", card.due?.toEpochMilli())
         .put("lastReview", card.lastReview?.toEpochMilli())
         .toString()
 
     fun fromJson(json: String): Card {
         val obj = JSONObject(json)
+        val storedState = readState(obj)
+        val storedStability = readNullableDouble(obj, "stability")
+        val storedDifficulty = readNullableDouble(obj, "difficulty")
+
+        // A NEW FSRS card is represented by BOTH values being null. Older builds
+        // incorrectly persisted 0.0 for these fields; normalize those cards back
+        // to the true NEW state before Scheduler.reviewCard() sees them. A partially
+        // populated card is unsafe too, so reset it rather than letting the scheduler
+        // dereference a missing stability/difficulty value.
+        val isValidScheduledCard = storedStability != null &&
+            storedDifficulty != null &&
+            storedStability > 0.0 &&
+            storedDifficulty > 0.0
+        val state = if (storedState != State.LEARNING && !isValidScheduledCard) {
+            State.LEARNING
+        } else {
+            storedState
+        }
         val builder = Card.builder()
-            .state(readState(obj))
-        if (obj.has("step") && !obj.isNull("step")) builder.step(obj.getInt("step"))
-        // Always set stability — the FSRS scheduler requires it to be non-null,
-        // but NEW cards serialize as null. Default to 0.0 so reviewCard() never NPEs.
-        builder.stability(obj.optDouble("stability", 0.0))
-        // Same for difficulty: default to 0.0 when null/missing.
-        builder.difficulty(obj.optDouble("difficulty", 0.0))
+            .state(state)
+        if (obj.has("step") && !obj.isNull("step") && state == storedState) {
+            builder.step(obj.getInt("step"))
+        }
+        if (state != State.LEARNING || isValidScheduledCard) {
+            builder.stability(requireNotNull(storedStability))
+            builder.difficulty(requireNotNull(storedDifficulty))
+        }
         if (obj.has("due") && !obj.isNull("due")) builder.due(Instant.ofEpochMilli(obj.getLong("due")))
-        if (obj.has("lastReview") && !obj.isNull("lastReview")) {
+        if (obj.has("lastReview") && !obj.isNull("lastReview") && state == storedState) {
             builder.lastReview(Instant.ofEpochMilli(obj.getLong("lastReview")))
         }
         return builder.build()
     }
+
+    private fun readNullableDouble(obj: JSONObject, key: String): Double? =
+        if (obj.has(key) && !obj.isNull(key)) obj.optDouble(key).takeIf { it.isFinite() } else null
 
     private fun readState(obj: JSONObject): State =
         runCatching { State.valueOf(obj.optString("state", State.LEARNING.name)) }

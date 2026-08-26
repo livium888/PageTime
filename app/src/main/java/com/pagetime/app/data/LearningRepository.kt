@@ -265,9 +265,14 @@ class LearningRepository(
             val result = scheduler.reviewCard(oldCard, rating.toFsrs(), now, null)
             val newCard = result.card()
             val nextDue = newCard.due ?: now.plus(Duration.ofDays(1))
+            val persistedCard = if (newCard.due == null) {
+                Card(newCard).apply { due = nextDue }
+            } else {
+                newCard
+            }
             val intervalDays = Duration.between(now, nextDue).toDays().coerceAtLeast(0)
             val updated = existing.copy(
-                fsrsCardJson = FsrsCardCodec.toJson(newCard),
+                fsrsCardJson = FsrsCardCodec.toJson(persistedCard),
                 updatedAt = now.toEpochMilli(),
                 lastRating = rating.value,
                 reviewCount = existing.reviewCount + 1

@@ -8,6 +8,7 @@ import com.pagetime.app.data.LearningRating
 import com.pagetime.app.data.LearningRepository
 import com.pagetime.app.data.LearningStats
 import com.pagetime.app.data.local.LearningCardEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -44,6 +45,9 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
     /** For MCQ cards: whether the user's selection was correct (null = not yet checked). */
     private val _mcqResult = MutableStateFlow<Boolean?>(null)
     val mcqResult = _mcqResult.asStateFlow()
+
+    // Prevent two quick taps from trying to review the same card concurrently.
+    private var ratingInProgress = false
 
     init {
         refresh()
@@ -90,14 +94,25 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rate(rating: LearningRating) {
         val card = _cards.value.firstOrNull() ?: return
+        if (ratingInProgress) return
+        ratingInProgress = true
         viewModelScope.launch {
-            val outcome = repository.reviewCard(card.id, rating)
-            _message.value = "${rating.label}. Next review in ${formatInterval(outcome.intervalDays)}."
-            _stats.value = repository.observeStats().first()
-            _cards.value = _cards.value.drop(1)
-            _revealed.value = false
-            _selectedMcqOption.value = null
-            _mcqResult.value = null
+            try {
+                val outcome = repository.reviewCard(card.id, rating)
+                _message.value = "${rating.label}. Next review in ${formatInterval(outcome.intervalDays)}."
+                _stats.value = repository.observeStats().first()
+                _cards.value = _cards.value.drop(1)
+                _revealed.value = false
+                _selectedMcqOption.value = null
+                _mcqResult.value = null
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                // Never let a malformed legacy card or a scheduler/database error
+                // crash the Activity. Keep the card visible so the user can retry.
+                _message.value = "Couldn't save that review. Please try again."
+            } finally {
+                ratingInProgress = false
+            }
         }
     }
 

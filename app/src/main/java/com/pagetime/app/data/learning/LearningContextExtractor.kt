@@ -109,6 +109,7 @@ class LearningContextExtractor(
                         lower.contains("cover") || lower.contains("titlepage"))
                 }
                 .sortedBy { it.name }
+                .toList()
                 .takeLast(3)
                 .joinToString("\n\n") { entry ->
                     runCatching {

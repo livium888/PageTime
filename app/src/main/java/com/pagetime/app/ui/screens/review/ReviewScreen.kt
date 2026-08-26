@@ -183,7 +183,7 @@ private fun CardHeader(
                 color = MaterialTheme.colorScheme.onTertiaryContainer
             )
         }
-        Text(titles[card.bookId] ?: card.bookTitle, style = MaterialTheme.typography.titleMedium)
+        Text(titles[card.bookId] ?: "Book", style = MaterialTheme.typography.titleMedium)
         Text(
             card.chapterTitle ?: "Chapter ${card.chapterIndex + 1}",
             style = MaterialTheme.typography.bodyMedium,

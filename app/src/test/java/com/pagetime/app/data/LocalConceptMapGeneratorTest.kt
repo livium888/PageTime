@@ -2,7 +2,6 @@ package com.pagetime.app.data
 
 import com.pagetime.app.data.learning.LearningContext
 import com.pagetime.app.data.learning.LocalConceptMapGenerator
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

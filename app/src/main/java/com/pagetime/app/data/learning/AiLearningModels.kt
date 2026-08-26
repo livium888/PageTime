@@ -30,3 +30,18 @@ data class AiGenerationResult(
     val contextChapterCount: Int,
     val usedCharacters: Int
 )
+
+/**
+ * AI evaluation of a Feynman-style explanation.  Each score is 1–5.
+ */
+data class ExplanationEvaluation(
+    val accuracy: Int,
+    val completeness: Int,
+    val clarity: Int,
+    val whatTheyGotRight: String,
+    val whatTheyMissed: String,
+    val suggestedImprovement: String,
+    val simplerVersion: String
+) {
+    val overallScore: Float get() = (accuracy + completeness + clarity) / 3f
+}

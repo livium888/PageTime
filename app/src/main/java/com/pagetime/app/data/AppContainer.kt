@@ -53,7 +53,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
-                AppDatabase.MIGRATION_9_10
+                AppDatabase.MIGRATION_9_10,
+                AppDatabase.MIGRATION_10_11
             )
             .build()
 
@@ -66,6 +67,7 @@ class AppContainer(context: Context) {
     private val conceptDao = database.conceptDao()
     private val conceptRelationshipDao = database.conceptRelationshipDao()
     private val aiUsageDao = database.aiUsageDao()
+    private val explanationDao = database.explanationDao()
 
     val settingsRepository = SettingsRepository(appContext)
     val aiUsageRepository = AiUsageRepository(aiUsageDao)
@@ -119,6 +121,13 @@ class AppContainer(context: Context) {
         geminiClient = geminiLearningClient,
         settingsRepository = settingsRepository,
         aiUsageRepository = aiUsageRepository
+    )
+
+    val explainBackRepository = ExplainBackRepository(
+        conceptDao = conceptDao,
+        explanationDao = explanationDao,
+        geminiClient = geminiLearningClient,
+        contextExtractor = learningContextExtractor
     )
 
     private val powerManager =

@@ -278,6 +278,97 @@ class GeminiLearningClient(
     private fun currentApiKey(): String =
         settingsRepository.geminiApiKey()?.takeIf { it.isNotBlank() } ?: buildTimeApiKey
 
+    /**
+     * Evaluates a reader's explanation of a concept using the Feynman Technique.
+     * Returns structured feedback on accuracy, completeness, and clarity.
+     */
+    suspend fun evaluateExplanation(
+        conceptLabel: String,
+        keyPoints: List<String>,
+        sourceExcerpt: String,
+        userExplanation: String,
+        bookTitle: String,
+        chapterTitle: String
+    ): ExplanationEvaluation = withContext(Dispatchers.IO) {
+        val apiKey = currentApiKey()
+        check(apiKey.isNotBlank()) { "Gemini API key is not configured" }
+        val prompt = """
+            |You are evaluating a reader's understanding of a concept from a book.
+            |Be encouraging but honest. The goal is to help the reader truly understand,
+            |not just memorize.
+            |
+            |Book: $bookTitle
+            |Chapter: $chapterTitle
+            |Concept: $conceptLabel
+            |Key aspects the reader should cover: ${keyPoints.joinToString(", ")}
+            |
+            |Source text excerpt:
+            |$sourceExcerpt
+            |
+            |Reader's explanation:
+            |$userExplanation
+            |
+            |Evaluate on three dimensions (1–5 scale each):
+            |1. ACCURACY: Are the facts correct?
+            |2. COMPLETENESS: Did they cover the key aspects?
+            |3. CLARITY: Could a 12-year-old follow this explanation?
+            |
+            |Return JSON:
+            |{
+            |  "accuracy": <1-5>,
+            |  "completeness": <1-5>,
+            |  "clarity": <1-5>,
+            |  "whatTheyGotRight": "<specific points they explained correctly>",
+            |  "whatTheyMissed": "<what they missed or got wrong>",
+            |  "suggestedImprovement": "<one specific suggestion>",
+            |  "simplerVersion": "<a clear, simple 2-3 sentence version of the ideal explanation>"
+            |}
+            |
+            |Return only the JSON.
+        """.trimMargin()
+        val schema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("accuracy", JSONObject().put("type", "INTEGER"))
+                .put("completeness", JSONObject().put("type", "INTEGER"))
+                .put("clarity", JSONObject().put("type", "INTEGER"))
+                .put("whatTheyGotRight", JSONObject().put("type", "STRING"))
+                .put("whatTheyMissed", JSONObject().put("type", "STRING"))
+                .put("suggestedImprovement", JSONObject().put("type", "STRING"))
+                .put("simplerVersion", JSONObject().put("type", "STRING")))
+            .put("required", JSONArray(listOf(
+                "accuracy", "completeness", "clarity",
+                "whatTheyGotRight", "whatTheyMissed",
+                "suggestedImprovement", "simplerVersion"
+            )))
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject()
+                .put("responseMimeType", "application/json")
+                .put("responseSchema", schema))
+            .toString()
+        val request = Request.Builder()
+            .url("$endpointBase/models/${currentModel()}:generateContent")
+            .header("x-goog-api-key", apiKey)
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        val raw = executeWithRetry(request)
+        val text = JSONObject(raw).getJSONArray("candidates")
+            .getJSONObject(0).getJSONObject("content")
+            .getJSONArray("parts").getJSONObject(0).getString("text")
+        val json = JSONObject(text)
+        ExplanationEvaluation(
+            accuracy = json.optInt("accuracy", 3),
+            completeness = json.optInt("completeness", 3),
+            clarity = json.optInt("clarity", 3),
+            whatTheyGotRight = json.optString("whatTheyGotRight", ""),
+            whatTheyMissed = json.optString("whatTheyMissed", ""),
+            suggestedImprovement = json.optString("suggestedImprovement", ""),
+            simplerVersion = json.optString("simplerVersion", "")
+        )
+    }
+
     private fun parseResponse(raw: String, context: LearningContext): AiGenerationResult {
         val root = JSONObject(raw)
         val text = root.getJSONArray("candidates")

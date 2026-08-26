@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LearningGenerationEntity::class,
         ConceptEntity::class,
         ConceptRelationshipEntity::class,
-        AiUsageEntity::class
+        AiUsageEntity::class,
+        ExplanationEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conceptDao(): ConceptDao
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao
     abstract fun aiUsageDao(): AiUsageDao
+    abstract fun explanationDao(): ExplanationDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -104,6 +106,35 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS ai_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, bookId TEXT NOT NULL, operation TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, inputCharacters INTEGER NOT NULL, outputItems INTEGER NOT NULL DEFAULT 0, secondaryItems INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, completedAt INTEGER)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_usage_events_createdAt ON ai_usage_events(createdAt)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_usage_events_bookId ON ai_usage_events(bookId)")
+            }
+        }
+
+        /** Adds the explanations table for Feynman-style concept explanations. */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS explanations (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        bookId TEXT NOT NULL,
+                        chapterIndex INTEGER NOT NULL,
+                        chapterTitle TEXT,
+                        conceptLabel TEXT NOT NULL,
+                        conceptKeyPoints TEXT NOT NULL,
+                        userExplanation TEXT NOT NULL,
+                        aiFeedback TEXT,
+                        accuracyScore INTEGER,
+                        completenessScore INTEGER,
+                        clarityScore INTEGER,
+                        overallScore REAL,
+                        whatTheyGotRight TEXT,
+                        whatTheyMissed TEXT,
+                        suggestedImprovement TEXT,
+                        simplerVersion TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """)
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_explanations_bookId_chapterIndex ON explanations(bookId, chapterIndex)")
             }
         }
     }

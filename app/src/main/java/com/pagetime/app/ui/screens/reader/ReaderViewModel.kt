@@ -328,8 +328,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         generateCardsForChapter(
             chapterIndex = chapterIndex,
             locatorJson = latestLocator?.toJSON()?.toString(),
-            textFraction = progress,
-            readingProgress = progress
+            textFraction = progress
         )
     }
 
@@ -344,7 +343,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         chapterIndex: Int,
         locatorJson: String?,
         textFraction: Float?,
-        readingProgress: Float? = null,
         force: Boolean = false
     ) {
         val b = _book.value ?: return
@@ -358,7 +356,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     chapterIndex = chapterIndex,
                     locatorJson = locatorJson,
                     textFraction = textFraction,
-                    readingProgress = readingProgress,
                     force = force
                 )
                 _aiGenerationState.value = AiGenerationState.Generated(

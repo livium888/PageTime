@@ -12,12 +12,16 @@ import org.jsoup.Jsoup
  * Builds the only text window Gemini is allowed to see. The active chapter plus the
  * prior two chapters gives enough continuity to identify topics without uploading a
  * whole book or unrelated earlier content.
+ *
+ * The window is generous (16k characters) because each chapter is processed by the
+ * AI at most once and the result is cached locally; a wider window buys better
+ * cards and a richer concept map without multiplying API calls.
  */
 class LearningContextExtractor(
     private val context: Context,
     private val epubParser: EpubParser
 ) {
-    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 8_000): LearningContext {
+    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 16_000): LearningContext {
         require(maxCharacters in 2_000..40_000)
         return if (book.format == "epub") {
             extractEpub(book, chapterIndex, maxCharacters)

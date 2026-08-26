@@ -45,5 +45,5 @@ enum class AiAnalysisLevel(
 
 data class AiSettings(
     val analysisLevel: AiAnalysisLevel = AiAnalysisLevel.LIGHT,
-    val generationMode: GenerationMode = GenerationMode.LOCAL_FIRST
+    val generationMode: GenerationMode = GenerationMode.GEMINI_FIRST
 )

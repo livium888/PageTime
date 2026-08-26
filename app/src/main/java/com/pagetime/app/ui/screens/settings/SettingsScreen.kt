@@ -180,7 +180,7 @@ private fun AiAnalysisSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Automatic AI analysis", style = MaterialTheme.typography.titleMedium)
             Text(
-                "The reader keeps tracking progress locally. Cards and concepts are built on-device first; Gemini is only called when the local pass comes up empty.",
+                "The reader keeps tracking progress locally. Each chapter is analyzed once — cards and the concept map are generated and cached, so later checkpoints never re-send the same text.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -216,7 +216,7 @@ private fun GenerationModeSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("How cards & concepts are built", style = MaterialTheme.typography.titleMedium)
             Text(
-                "On-device first keeps everything local and uses Gemini only when needed. AI-assisted prefers Gemini for richer results.",
+                "AI-assisted prefers Gemini for richer cards and concepts. On-device first keeps everything local and only uses Gemini when the local pass comes up empty. Either way each chapter is processed once and cached.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

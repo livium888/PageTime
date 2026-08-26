@@ -114,6 +114,7 @@ class AppContainer(context: Context) {
         conceptDao = conceptDao,
         relationshipDao = conceptRelationshipDao,
         bookDao = bookDao,
+        generationDao = learningGenerationDao,
         contextExtractor = learningContextExtractor,
         geminiClient = geminiLearningClient,
         settingsRepository = settingsRepository,

@@ -64,9 +64,9 @@ class GenerationPolicyTest {
     }
 
     @Test
-    fun `unknown or missing mode defaults to on-device first`() {
-        assertEquals(GenerationMode.LOCAL_FIRST, GenerationMode.fromKey(null))
-        assertEquals(GenerationMode.LOCAL_FIRST, GenerationMode.fromKey("bogus"))
-        assertEquals(GenerationMode.GEMINI_FIRST, GenerationMode.fromKey("gemini_first"))
+    fun `unknown or missing mode defaults to AI-assisted`() {
+        assertEquals(GenerationMode.GEMINI_FIRST, GenerationMode.fromKey(null))
+        assertEquals(GenerationMode.GEMINI_FIRST, GenerationMode.fromKey("bogus"))
+        assertEquals(GenerationMode.LOCAL_FIRST, GenerationMode.fromKey("local_first"))
     }
 }

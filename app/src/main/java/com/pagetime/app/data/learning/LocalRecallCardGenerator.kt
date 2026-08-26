@@ -53,7 +53,7 @@ object LocalRecallCardGenerator {
 
         // Score sentences by how well they support different card types.
         val scored = sentences.map { it to scoreSentence(it) }
-            .sortedByDescending { it.second }
+            .sortedByDescending { it.second.clozeScore }
 
         val requested = limit.coerceIn(2, 3)
         val results = mutableListOf<GeneratedLearningCard>()
@@ -121,7 +121,7 @@ object LocalRecallCardGenerator {
         if (Regex("\\b(for example|for instance|such as|e\\.g\\.|including)\\b").containsMatchIn(lower))
             return Pattern.EXAMPLE
         // List: has semicolons or "first…second…third"
-        if (sentence.contains(';') || Regex("\\b(first|second|third|finally)\\b").containsMatchIn(lower))
+        if (lower.contains(';') || Regex("\\b(first|second|third|finally)\\b").containsMatchIn(lower))
             return Pattern.LIST
         return Pattern.PLAIN
     }
@@ -162,13 +162,13 @@ object LocalRecallCardGenerator {
     }
 
     private fun generateCloze(sentence: String, chapterTitle: String): GeneratedLearningCard {
-        val candidates = clozeCandidates(sentence)
-        val (index, answer) = candidates.firstOrNull()
-            ?: (sentence.split(" ").size / 2 to sentence.split(" ").getOrElse(sentence.split(" ").size / 2) { "unknown" })
-
         val words = sentence.split(" ")
+        val bestIndex = (clozeCandidates(sentence).firstOrNull()?.first ?: (words.size / 2))
+            .coerceIn(0, words.lastIndex)
+        val answer = words.getOrElse(bestIndex) { "unknown" }
+
         val clozeText = words.toMutableList().apply {
-            this[index] = "{{c1::$answer}}"
+            this[bestIndex] = "{{c1::$answer}}"
         }.joinToString(" ")
 
         return GeneratedLearningCard(

@@ -137,7 +137,6 @@ class LearningRepository(
         chapterIndex: Int,
         locatorJson: String?,
         textFraction: Float?,
-        readingProgress: Float? = null,
         force: Boolean = false
     ): AiGenerationResult {
         val book = bookDao.getById(bookId) ?: error("Book not found")
@@ -150,7 +149,7 @@ class LearningRepository(
                     (error.message ?: "unknown error")
             )
         }
-        val key = generationKey(context, readingProgress)
+        val key = generationKey(context)
         val now = System.currentTimeMillis()
         val previous = generationDao.get(bookId, key)
         if (previous != null) {
@@ -253,14 +252,15 @@ class LearningRepository(
     }
 
     private fun generationKey(
-        context: com.pagetime.app.data.learning.LearningContext,
-        readingProgress: Float?
+        context: com.pagetime.app.data.learning.LearningContext
     ): String {
-        // Round to whole-book percentage so reopening at the same checkpoint is
-        // deduplicated while later reading can produce a new bounded window.
-        val progressKey = readingProgress?.coerceIn(0f, 1f)?.times(100)?.toInt()
+        // Stable per chapter: a chapter's text never changes, so the key is the
+        // same for every checkpoint inside it. That means the AI processes each
+        // chapter exactly once and every later checkpoint is served from the
+        // cache instead of making another API call. Reading progress within the
+        // chapter deliberately does not participate in the key.
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest("${context.bookId}:${context.chapterIndex}:${progressKey ?: -1}:${context.recentText}".toByteArray())
+            .digest("${context.bookId}:${context.chapterIndex}:${context.recentText}".toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }
 

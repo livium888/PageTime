@@ -4,9 +4,10 @@ package com.pagetime.app.data.learning
  * Controls how automatic comprehension analysis chooses between the on-device
  * generators and Gemini.
  *
- * The default is [LOCAL_FIRST]: cards and the concept map are built on the device
- * and Gemini is only contacted when the local pass produced nothing usable, which
- * keeps API usage near zero for most reading sessions.
+ * The default is [GEMINI_FIRST]: Gemini produces the cards and concept map, and
+ * the on-device generators only fill in when Gemini is unavailable or fails.
+ * API volume is bounded by caching: each chapter is processed at most once, so
+ * Gemini is contacted per chapter rather than per reading checkpoint.
  */
 enum class GenerationMode(
     val key: String,
@@ -26,7 +27,7 @@ enum class GenerationMode(
 
     companion object {
         fun fromKey(key: String?): GenerationMode =
-            entries.firstOrNull { it.key == key } ?: LOCAL_FIRST
+            entries.firstOrNull { it.key == key } ?: GEMINI_FIRST
     }
 }
 
@@ -35,7 +36,9 @@ enum class GenerationMode(
  *
  * In [GenerationMode.LOCAL_FIRST] mode Gemini is skipped entirely whenever the
  * on-device pass produced results; in [GenerationMode.GEMINI_FIRST] mode Gemini
- * is preferred and local generation only fills in when it fails.
+ * is preferred and local generation only fills in when it fails. Either way the
+ * call is additionally gated by the per-chapter generation cache, so Gemini is
+ * contacted at most once per chapter regardless of checkpoint frequency.
  */
 object GenerationPolicy {
     fun shouldCallGemini(

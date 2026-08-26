@@ -274,7 +274,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun generationMode(): GenerationMode =
         context.dataStore.data.first()[Keys.GENERATION_MODE]
             ?.let(GenerationMode::fromKey)
-            ?: GenerationMode.LOCAL_FIRST
+            ?: GenerationMode.GEMINI_FIRST
 
     suspend fun setGenerationMode(mode: GenerationMode) {
         context.dataStore.edit { it[Keys.GENERATION_MODE] = mode.key }

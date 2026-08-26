@@ -144,10 +144,12 @@ class GeminiLearningClient(
             .put("explanation", JSONObject().put("type", "STRING"))
             .put("sourceQuote", JSONObject().put("type", "STRING"))
             .put("confidence", JSONObject().put("type", "NUMBER"))
+            .put("cardType", JSONObject().put("type", "STRING"))
+            .put("mcqOptions", JSONObject().put("type", "ARRAY").put("items", JSONObject().put("type", "STRING")))
         val cardItemSchema = JSONObject()
             .put("type", "OBJECT")
             .put("properties", cardFields)
-            .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence")))
+            .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence", "cardType")))
         val cardsSchema = JSONObject()
             .put("type", "ARRAY")
             .put("items", cardItemSchema)
@@ -285,15 +287,29 @@ class GeminiLearningClient(
         val cardsJson = JSONObject(text).optJSONArray("cards") ?: JSONArray()
         val cards = mutableListOf<GeneratedLearningCard>()
         val seenTopics = mutableSetOf<String>()
-        for (i in 0 until cardsJson.length().coerceAtMost(4)) {
+        for (i in 0 until cardsJson.length().coerceAtMost(6)) {
             val item = cardsJson.getJSONObject(i)
+            val rawCardType = item.optString("cardType", "qa").trim().lowercase()
+            val cardType = when (rawCardType) {
+                "cloze", "mcq", "qa" -> rawCardType
+                else -> "qa"
+            }
+            val mcqOpts = if (cardType == "mcq") {
+                val arr = item.optJSONArray("mcqOptions")
+                if (arr != null && arr.length() in 2..6) {
+                    (0 until arr.length()).map { arr.getString(it) }
+                } else null
+            } else null
+
             val card = GeneratedLearningCard(
                 topic = item.optString("topic").trim(),
                 question = item.optString("question").trim(),
                 answer = item.optString("answer").trim(),
                 explanation = item.optString("explanation").trim(),
                 sourceQuote = item.optString("sourceQuote").trim(),
-                confidence = item.optDouble("confidence", 0.0).toFloat()
+                confidence = item.optDouble("confidence", 0.0).toFloat(),
+                cardType = cardType,
+                mcqOptions = mcqOpts
             )
             if (isValid(card, context.recentText) && seenTopics.add(card.topic.lowercase())) {
                 cards.add(card)
@@ -304,11 +320,17 @@ class GeminiLearningClient(
 
     private fun isValid(card: GeneratedLearningCard, source: String): Boolean {
         if (card.topic.length !in 3..100) return false
-        if (card.question.length !in 12..300) return false
+        if (card.question.length !in 12..500) return false
         if (card.answer.length !in 2..800) return false
         if (card.explanation.length !in 10..800) return false
         if (card.sourceQuote.length !in 20..500) return false
         if (card.confidence < 0.65f) return false
+        if (card.cardType == "mcq") {
+            val opts = card.mcqOptions
+            if (opts == null || opts.size !in 2..6) return false
+            // Correct answer must be among the options
+            if (opts.none { it.equals(card.answer, ignoreCase = true) }) return false
+        }
         return normalize(source).contains(normalize(card.sourceQuote))
     }
 
@@ -316,13 +338,32 @@ class GeminiLearningClient(
         value.replace(Regex("\\s+"), " ").trim().lowercase()
 
     private fun buildPrompt(context: LearningContext): String = """
-        You create comprehension review cards for a reader.
-        Use only the supplied source text. Do not invent facts, plot events, names, or quotes.
-        Identify 1 to 4 distinct important topics, prioritizing ideas, causes, decisions,
-        conflicts, relationships, and concepts over trivial details.
-        Each card must test active recall, not recognition. The sourceQuote must be copied
-        exactly from the supplied text, 20 to 500 characters, and must support the answer.
-        Return only JSON matching the schema.
+        You create comprehension review cards following Wozniak's 20 rules of knowledge formulation.
+        Use ONLY the supplied source text. Do not invent facts, plot events, names, or quotes.
+        Return exactly 6 cards using a MIX of THREE card types:
+
+        1. CLOZE (2 cards): The question IS the sentence from the text with one key word blanked
+           out using {{c1::word}} notation. Minimal interpretation burden. Test whether the reader
+           remembers the specific word from the passage.
+           Example: question = "The mitochondria are the {{c1::powerhouse}} of the cell."
+
+        2. MCQ (2 cards): A sentence from the text with the key term replaced by "______", followed
+           by 3-4 plausible answer choices. Include 2-3 distractors that are related terms from
+           the same passage but wrong. The correct answer must be one of the choices.
+           Example: question = "Newton's law of universal gravitation states that every mass attracts every other mass with a force proportional to the product of their masses and inversely proportional to the square of the distance between them. This force is called ______."
+           mcqOptions = ["gravity", "inertia", "momentum", "friction"]
+
+        3. QA (2 cards): A direct, unambiguous question about an important concept or relationship
+           in the passage. The answer should be concise and factual — the reader must recall it
+           from memory, not recognize it.
+           Example: question = "What did Maria Curie discover?" answer = "She discovered radium and polonium."
+
+        For ALL card types:
+        - sourceQuote must be copied EXACTLY from the supplied text (20-500 chars)
+        - question must be self-contained — the reader can answer without seeing the source text
+        - answer must be concise and unambiguous
+        - explanation must briefly explain WHY the answer is correct
+
         Book: ${context.bookTitle}
         Current chapter: ${context.chapterTitle}
         Recent context includes the current chapter and the two preceding chapters.

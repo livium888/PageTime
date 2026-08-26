@@ -6,7 +6,11 @@ data class GeneratedLearningCard(
     val answer: String,
     val explanation: String,
     val sourceQuote: String,
-    val confidence: Float
+    val confidence: Float,
+    /** "qa" (default), "cloze", or "mcq" per Wozniak's 20 rules. */
+    val cardType: String = "qa",
+    /** For MCQ cards: list of answer choices including the correct one. */
+    val mcqOptions: List<String>? = null
 )
 
 data class LearningContext(

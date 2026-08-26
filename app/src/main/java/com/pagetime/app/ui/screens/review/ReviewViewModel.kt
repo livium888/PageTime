@@ -37,6 +37,14 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
     private val _sourceToOpen = MutableStateFlow<LearningCardEntity?>(null)
     val sourceToOpen = _sourceToOpen.asStateFlow()
 
+    /** For MCQ cards: the option the user tapped (null = none selected yet). */
+    private val _selectedMcqOption = MutableStateFlow<String?>(null)
+    val selectedMcqOption = _selectedMcqOption.asStateFlow()
+
+    /** For MCQ cards: whether the user's selection was correct (null = not yet checked). */
+    private val _mcqResult = MutableStateFlow<Boolean?>(null)
+    val mcqResult = _mcqResult.asStateFlow()
+
     init {
         refresh()
     }
@@ -51,11 +59,21 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
                 repository.getBookTitle(card.bookId)?.let { card.bookId to it }
             }.toMap()
             _revealed.value = false
+            _selectedMcqOption.value = null
+            _mcqResult.value = null
             _loading.value = false
         }
     }
 
     fun reveal() {
+        _revealed.value = true
+    }
+
+    /** Called when user taps an MCQ option — check correctness and reveal. */
+    fun selectMcqOption(option: String) {
+        val card = _cards.value.firstOrNull() ?: return
+        _selectedMcqOption.value = option
+        _mcqResult.value = option.equals(card.answer, ignoreCase = true)
         _revealed.value = true
     }
 
@@ -78,6 +96,8 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
             _stats.value = repository.observeStats().first()
             _cards.value = _cards.value.drop(1)
             _revealed.value = false
+            _selectedMcqOption.value = null
+            _mcqResult.value = null
         }
     }
 

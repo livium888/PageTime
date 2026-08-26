@@ -7,7 +7,8 @@ data class LearningCardPreview(
     val chapterLabel: String,
     val mastery: String,
     val reviewCount: Int,
-    val hasSource: Boolean
+    val hasSource: Boolean,
+    val cardType: String
 )
 
 fun LearningCardEntity.preview(): LearningCardPreview = LearningCardPreview(
@@ -15,5 +16,6 @@ fun LearningCardEntity.preview(): LearningCardPreview = LearningCardPreview(
     chapterLabel = chapterTitle ?: "Chapter ${chapterIndex + 1}",
     mastery = masteryLabel(),
     reviewCount = reviewCount,
-    hasSource = sourceLocator != null || sourceFraction != null
+    hasSource = sourceLocator != null || sourceFraction != null,
+    cardType = cardType
 )

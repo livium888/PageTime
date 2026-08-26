@@ -18,6 +18,7 @@ import com.pagetime.app.data.learning.LocalRecallCardGenerator
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
 import io.github.openspacedrepetition.Scheduler
+import org.json.JSONArray
 import java.time.Duration
 import java.time.Instant
 import java.security.MessageDigest
@@ -98,7 +99,9 @@ class LearningRepository(
         explanation: String?,
         sourceLocator: String?,
         sourceFraction: Float?,
-        now: Instant = Instant.now()
+        now: Instant = Instant.now(),
+        cardType: String = "qa",
+        mcqOptions: List<String>? = null
     ): LearningCardEntity {
         require(prompt.isNotBlank()) { "A question is required" }
         require(answer.isNotBlank()) { "An answer is required" }
@@ -118,7 +121,9 @@ class LearningRepository(
             sourceQuote = null,
             fsrsCardJson = FsrsCardCodec.toJson(card),
             createdAt = now.toEpochMilli(),
-            updatedAt = now.toEpochMilli()
+            updatedAt = now.toEpochMilli(),
+            cardType = cardType,
+            mcqOptions = mcqOptions?.let { serializeOptions(it) }
         ).also { cardDao.upsert(it) }
     }
 
@@ -205,7 +210,9 @@ class LearningRepository(
                         updatedAt = now,
                         generatedByAi = generatedByAi,
                         aiConfidence = generated.confidence,
-                        generationKey = key
+                        generationKey = key,
+                        cardType = generated.cardType,
+                        mcqOptions = generated.mcqOptions?.let { serializeOptions(it) }
                     )
                 )
             }
@@ -290,6 +297,9 @@ class LearningRepository(
 
     private fun isDue(card: LearningCardEntity, now: Instant): Boolean =
         LearningPolicy.isDue(FsrsCardCodec.fromJson(card.fsrsCardJson).due, now)
+
+    private fun serializeOptions(options: List<String>): String =
+        JSONArray(options).toString()
 
     companion object {
         private const val STATUS_GENERATING = "generating"

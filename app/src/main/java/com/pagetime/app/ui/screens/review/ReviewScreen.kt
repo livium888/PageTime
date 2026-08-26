@@ -1,5 +1,6 @@
 package com.pagetime.app.ui.screens.review
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -26,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -34,12 +37,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.LearningRating
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.masteryLabel
+import org.json.JSONArray
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,6 +64,8 @@ fun ReviewScreen(
     val titles by viewModel.bookTitles.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val sourceToOpen by viewModel.sourceToOpen.collectAsStateWithLifecycle()
+    val selectedMcqOption by viewModel.selectedMcqOption.collectAsStateWithLifecycle()
+    val mcqResult by viewModel.mcqResult.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(message) {
@@ -108,19 +119,325 @@ fun ReviewScreen(
                 if (cards.isEmpty()) {
                     EmptyReview(Modifier.fillMaxWidth().padding(top = 40.dp))
                 } else {
-            ReviewCard(
-                card = cards.first(),
-                bookTitle = titles[cards.first().bookId] ?: "Book",
-                revealed = revealed,
-                onReveal = viewModel::reveal,
-                onRate = viewModel::rate,
-                onOpenSource = { viewModel.openSource(cards.first()) },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(24.dp))
+                    val card = cards.first()
+                    val cardTypeLabel = when (card.cardType) {
+                        "cloze" -> "Cloze deletion"
+                        "mcq" -> "Multiple choice"
+                        else -> "Active recall"
+                    }
+
+                    // Card type badge + metadata
+                    CardHeader(card, titles, cardTypeLabel)
+
+                    // Card content — renders differently per type
+                    when (card.cardType) {
+                        "mcq" -> McqCardContent(
+                            card = card,
+                            selectedOption = selectedMcqOption,
+                            result = mcqResult,
+                            revealed = revealed,
+                            onSelectOption = viewModel::selectMcqOption,
+                            onReveal = viewModel::reveal,
+                            onOpenSource = { viewModel.openSource(card) }
+                        )
+                        "cloze" -> ClozeCardContent(
+                            card = card,
+                            revealed = revealed,
+                            onReveal = viewModel::reveal,
+                            onOpenSource = { viewModel.openSource(card) }
+                        )
+                        else -> QaCardContent(
+                            card = card,
+                            revealed = revealed,
+                            onReveal = viewModel::reveal,
+                            onOpenSource = { viewModel.openSource(card) }
+                        )
+                    }
+
+                    // Rating buttons — always shown after reveal
+                    if (revealed) {
+                        RatingSection(onRate = viewModel::rate)
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CardHeader(
+    card: LearningCardEntity,
+    titles: Map<String, String>,
+    cardTypeLabel: String
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Card type chip
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer
+        ) {
+            Text(
+                cardTypeLabel,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+        }
+        Text(titles[card.bookId] ?: card.bookTitle, style = MaterialTheme.typography.titleMedium)
+        Text(
+            card.chapterTitle ?: "Chapter ${card.chapterIndex + 1}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("${card.masteryLabel()} · ${card.reviewCount} reviews", style = MaterialTheme.typography.labelMedium)
+        if (card.generatedByAi) {
+            Text(
+                "Topic: ${card.topic ?: "Important idea"}",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+        card.sourceQuote?.let { quote ->
+            Text(
+                "\"$quote\"",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (card.sourceLocator != null || card.sourceFraction != null) {
+            OutlinedButton(onClick = { }) { Text("Open source passage") }
+        }
+    }
+}
+
+// ─── Cloze Deletion Card ──────────────────────────────────────────────
+
+@Composable
+private fun ClozeCardContent(
+    card: LearningCardEntity,
+    revealed: Boolean,
+    onReveal: () -> Unit,
+    onOpenSource: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Render the cloze text with the {{c1::answer}} pattern highlighted
+            val clozeText = card.prompt
+            if (clozeText.contains("{{c1::")) {
+                val before = clozeText.substringBefore("{{c1::")
+                val hidden = clozeText.substringAfter("{{c1::").substringBefore("}}")
+                val after = clozeText.substringAfter("}}")
+                if (revealed) {
+                    // Show the answer highlighted inline
+                    Text(
+                        buildAnnotatedString {
+                            append(before)
+                            withStyle(SpanStyle(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )) { append(hidden) }
+                            append(after)
+                        },
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                } else {
+                    // Show blank
+                    Text(
+                        buildAnnotatedString {
+                            append(before)
+                            withStyle(SpanStyle(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                background = MaterialTheme.colorScheme.primaryContainer
+                            )) { append("_____") }
+                            append(after)
+                        },
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                }
+            } else {
+                Text(card.prompt, style = MaterialTheme.typography.headlineSmall)
+            }
+
+            if (!revealed) {
+                Button(onClick = onReveal, modifier = Modifier.fillMaxWidth()) {
+                    Text("Complete the blank")
+                }
+            } else {
+                Text("Answer", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(card.answer, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                card.explanation?.let {
+                    Text("Explanation", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
+
+// ─── Multiple Choice Card ─────────────────────────────────────────────
+
+@Composable
+private fun McqCardContent(
+    card: LearningCardEntity,
+    selectedOption: String?,
+    result: Boolean?,
+    revealed: Boolean,
+    onSelectOption: (String) -> Unit,
+    onReveal: () -> Unit,
+    onOpenSource: () -> Unit
+) {
+    val options = remember(card.mcqOptions) {
+        card.mcqOptions?.let { parseOptions(it) } ?: emptyList()
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(card.prompt, style = MaterialTheme.typography.headlineSmall)
+
+            if (!revealed && options.isNotEmpty()) {
+                // Show selectable options
+                options.forEach { option ->
+                    val isSelected = selectedOption == option
+                    val bgColor = if (isSelected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                    Surface(
+                        onClick = { onSelectOption(option) },
+                        shape = RoundedCornerShape(14.dp),
+                        color = bgColor,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                    ) {
+                        Text(
+                            option,
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                }
+            } else if (revealed && options.isNotEmpty()) {
+                // Show options with correct/incorrect highlighting
+                options.forEach { option ->
+                    val isCorrect = option.equals(card.answer, ignoreCase = true)
+                    val isSelected = selectedOption == option
+                    val bgColor = when {
+                        isCorrect -> Color(0xFFDCFCE7) // green-50
+                        isSelected && !isCorrect -> Color(0xFFFEE2E2) // red-50
+                        else -> MaterialTheme.colorScheme.surface
+                    }
+                    val borderColor = when {
+                        isCorrect -> Color(0xFF22C55E) // green-500
+                        isSelected && !isCorrect -> Color(0xFFEF4444) // red-500
+                        else -> MaterialTheme.colorScheme.outlineVariant
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = bgColor,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(width = 2.dp, color = borderColor, shape = RoundedCornerShape(14.dp))
+                    ) {
+                        Row(
+                            Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            if (isCorrect) {
+                                Icon(Icons.Filled.Check, contentDescription = "Correct",
+                                    tint = Color(0xFF22C55E))
+                            } else if (isSelected) {
+                                Icon(Icons.Filled.Close, contentDescription = "Incorrect",
+                                    tint = Color(0xFFEF4444))
+                            }
+                            Text(option, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+
+                // Explanation after answer
+                card.explanation?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Why", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
+
+// ─── Standard Q&A Card ────────────────────────────────────────────────
+
+@Composable
+private fun QaCardContent(
+    card: LearningCardEntity,
+    revealed: Boolean,
+    onReveal: () -> Unit,
+    onOpenSource: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(card.prompt, style = MaterialTheme.typography.headlineSmall)
+            if (revealed) {
+                Text("Answer", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(card.answer, style = MaterialTheme.typography.bodyLarge)
+                card.explanation?.let {
+                    Text("Why", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                Button(onClick = onReveal, modifier = Modifier.fillMaxWidth()) { Text("Reveal answer") }
+            }
+        }
+    }
+}
+
+// ─── Shared Components ────────────────────────────────────────────────
+
+@Composable
+private fun RatingSection(onRate: (LearningRating) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("How well did you remember it?", style = MaterialTheme.typography.titleMedium)
+        LearningRating.entries.chunked(2).forEach { row ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                row.forEach { rating ->
+                    val primary = rating == LearningRating.GOOD || rating == LearningRating.EASY
+                    if (primary) {
+                        Button(
+                            onClick = { onRate(rating) },
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(rating.label, style = MaterialTheme.typography.labelLarge)
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onRate(rating) },
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(rating.label, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }
+        Text(
+            "Your rating changes only this card's future review time. It does not change reading progress or earned time.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -164,109 +481,12 @@ private fun EmptyReview(modifier: Modifier) {
     }
 }
 
-@Composable
-private fun ReviewCard(
-    card: LearningCardEntity,
-    bookTitle: String,
-    revealed: Boolean,
-    onReveal: () -> Unit,
-    onRate: (LearningRating) -> Unit,
-    onOpenSource: () -> Unit,
-    modifier: Modifier
-) {
-    Column(
-        modifier = modifier
-            .padding(0.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text("Active recall", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        Text(bookTitle, style = MaterialTheme.typography.titleMedium)
-        Text(
-            card.chapterTitle ?: "Chapter ${card.chapterIndex + 1}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("${card.masteryLabel()} · ${card.reviewCount} reviews", style = MaterialTheme.typography.labelMedium)
-        if (card.generatedByAi) {
-            Text(
-                "AI topic: ${card.topic ?: "Important idea"}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary
-            )
-        } else {
-            Text(
-                "Offline recall card from this passage",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary
-            )
-        }
-        card.sourceQuote?.let { quote ->
-            Text(
-                "Source: \"$quote\"",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (card.sourceLocator != null || card.sourceFraction != null) {
-            OutlinedButton(onClick = onOpenSource) { Text("Open source passage") }
-        } else {
-            Text(
-                "No source position saved",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(card.prompt, style = MaterialTheme.typography.headlineSmall)
-                if (revealed) {
-                    Text("Answer", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(card.answer, style = MaterialTheme.typography.bodyLarge)
-                    card.explanation?.let {
-                        Text("Why", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        Text(it, style = MaterialTheme.typography.bodyMedium)
-                    }
-                } else {
-                    Button(onClick = onReveal, modifier = Modifier.fillMaxWidth()) { Text("Reveal answer") }
-                }
-            }
-        }
-
-        if (revealed) {
-            Text("How well did you remember it?", style = MaterialTheme.typography.titleMedium)
-            LearningRating.entries.chunked(2).forEach { row ->
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    row.forEach { rating ->
-                        val primary = rating == LearningRating.GOOD || rating == LearningRating.EASY
-                        if (primary) {
-                            Button(
-                                onClick = { onRate(rating) },
-                                modifier = Modifier.weight(1f).height(56.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Text(rating.label, style = MaterialTheme.typography.labelLarge)
-                            }
-                        } else {
-                            OutlinedButton(
-                                onClick = { onRate(rating) },
-                                modifier = Modifier.weight(1f).height(56.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Text(rating.label, style = MaterialTheme.typography.labelLarge)
-                            }
-                        }
-                    }
-                }
-            }
-            Text(
-                "Your rating changes only this card's future review time. It does not change reading progress or earned time.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+/** Parse the JSON array of MCQ options from the stored string. */
+private fun parseOptions(json: String): List<String> {
+    return try {
+        val arr = JSONArray(json)
+        (0 until arr.length()).map { arr.getString(it) }
+    } catch (_: Exception) {
+        emptyList()
     }
 }

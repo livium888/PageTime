@@ -32,5 +32,14 @@ data class LearningCardEntity(
     val generatedByAi: Boolean = false,
     val aiConfidence: Float? = null,
     /** Hash of the bounded context window; prevents regenerating the same chapter. */
-    val generationKey: String? = null
+    val generationKey: String? = null,
+    /**
+     * Card type per Wozniak's 20 rules of knowledge formulation.
+     * "qa"   = standard question-and-answer (default, backward-compatible)
+     * "cloze" = cloze deletion — prompt contains the sentence with {{c1::answer}}
+     * "mcq"  = multiple choice — mcqOptions holds the JSON array of choices
+     */
+    val cardType: String = "qa",
+    /** JSON array of 3–4 answer choices for MCQ cards, e.g. `["A","B","C","D"]`. */
+    val mcqOptions: String? = null
 )

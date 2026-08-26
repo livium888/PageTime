@@ -42,7 +42,7 @@ class GeminiLearningClient(
         val all = mutableListOf<GeminiModel>()
         var pageToken: String? = null
         repeat(MAX_MODEL_PAGES) {
-                val url = buildString {
+            val url = buildString {
                 append(endpointBase)
                 append("/models")
                 pageToken?.let {
@@ -149,11 +149,11 @@ class GeminiLearningClient(
         val cardItemSchema = JSONObject()
             .put("type", "OBJECT")
             .put("properties", cardFields)
-            .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence", "cardType")))
+            .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence", "cardType", "mcqOptions")))
         val cardsSchema = JSONObject()
             .put("type", "ARRAY")
-            .put("minItems", 2)
-            .put("maxItems", 3)
+            .put("minItems", 3)
+            .put("maxItems", 5)
             .put("items", cardItemSchema)
         val schema = JSONObject()
             .put("type", "OBJECT")
@@ -289,19 +289,16 @@ class GeminiLearningClient(
         val cardsJson = JSONObject(text).optJSONArray("cards") ?: JSONArray()
         val cards = mutableListOf<GeneratedLearningCard>()
         val seenTopics = mutableSetOf<String>()
-        for (i in 0 until cardsJson.length().coerceAtMost(3)) {
+        for (i in 0 until cardsJson.length().coerceAtMost(5)) {
             val item = cardsJson.getJSONObject(i)
-            val rawCardType = item.optString("cardType", "qa").trim().lowercase()
-            val cardType = when (rawCardType) {
-                "cloze", "mcq", "qa" -> rawCardType
-                else -> "qa"
-            }
-            val mcqOpts = if (cardType == "mcq") {
+            // All cards are MCQ — coerce the type and validate structure.
+            val cardType = "mcq"
+            val mcqOpts = run {
                 val arr = item.optJSONArray("mcqOptions")
                 if (arr != null && arr.length() in 2..6) {
                     (0 until arr.length()).map { arr.getString(it) }
                 } else null
-            } else null
+            }
 
             val card = GeneratedLearningCard(
                 topic = item.optString("topic").trim(),
@@ -317,68 +314,92 @@ class GeminiLearningClient(
                 cards.add(card)
             }
         }
-        return AiGenerationResult(cards, contextChapterCount = 3, usedCharacters = context.recentText.length)
+        return AiGenerationResult(cards, contextChapterCount = 1, usedCharacters = context.recentText.length)
     }
 
     private fun isValid(card: GeneratedLearningCard, source: String): Boolean {
         if (card.topic.length !in 3..100) return false
         if (card.question.length !in 12..500) return false
-        if (card.answer.length !in 2..800) return false
+        if (card.answer.length !in 2..200) return false
         if (card.explanation.length !in 10..800) return false
         if (card.sourceQuote.length !in 20..500) return false
-        if (card.confidence < 0.65f) return false
-        if (card.cardType == "mcq") {
-            val opts = card.mcqOptions
-            if (opts == null || opts.size !in 2..6) return false
-            // Correct answer must be among the options
-            if (opts.none { it.equals(card.answer, ignoreCase = true) }) return false
-        }
+        if (card.confidence < 0.60f) return false
+        // MCQ validation: every card must have plausible options and the correct
+        // answer must appear among them.
+        val opts = card.mcqOptions
+        if (opts == null || opts.size !in 2..6) return false
+        if (opts.none { it.equals(card.answer, ignoreCase = true) }) return false
+        // Options must be unique (case-insensitive).
+        if (opts.map { it.lowercase() }.toSet().size != opts.size) return false
         return normalize(source).contains(normalize(card.sourceQuote))
     }
 
     private fun normalize(value: String): String =
         value.replace(Regex("\\s+"), " ").trim().lowercase()
 
-    private fun buildPrompt(context: LearningContext): String = """
-        You create comprehension review cards following Wozniak's 20 rules of knowledge formulation.
-        Use ONLY the supplied source text. Do not invent facts, plot events, names, or quotes.
-        Return 2 or 3 cards using a purposeful MIX of these card types. Never create a card just
-        to fill a quota. Before writing a card, ask: "Would forgetting this damage understanding
-        of the chapter?" If not, omit it.
-
-        1. CLOZE (prefer 1 card): The question IS the sentence from the text with one key word blanked
-           out using {{c1::word}} notation. Minimal interpretation burden. Test whether the reader
-           remembers the specific word from the passage.
-           Example: question = "The mitochondria are the {{c1::powerhouse}} of the cell."
-
-        2. MCQ (at most 1 card): Use this only when the passage contains a genuinely meaningful
-           distinction with plausible, mutually exclusive alternatives. A sentence from the text with
-           the key term replaced by "______", followed
-           by 3-4 plausible answer choices. Include 2-3 distractors that are related terms from
-           the same passage but wrong. The correct answer must be one of the choices.
-           Example: question = "Newton's law of universal gravitation states that every mass attracts every other mass with a force proportional to the product of their masses and inversely proportional to the square of the distance between them. This force is called ______."
-           mcqOptions = ["gravity", "inertia", "momentum", "friction"]
-
-        3. QA (prefer 1 card): A direct, unambiguous question about an important concept or relationship
-           in the passage. The answer should be concise and factual — the reader must recall it
-           from memory, not recognize it.
-           Example: question = "What did Maria Curie discover?" answer = "She discovered radium and polonium."
-
-        For ALL card types:
-        - Test only central arguments, definitions, mechanisms, cause/effect, principles, or meaningful contrasts.
-        - Reject incidental names, dates, examples, terminology lists, and searchable trivia unless essential.
-        - sourceQuote must be copied EXACTLY from the supplied text (20-500 chars).
-        - question must be self-contained — the reader can answer without seeing the source text.
-        - answer must be concise and unambiguous.
-        - explanation must briefly explain WHY the answer is correct without repeating a full source passage.
-
-        Book: ${context.bookTitle}
-        Current chapter: ${context.chapterTitle}
-        Recent context includes the current chapter and the two preceding chapters.
-
-        SOURCE TEXT:
-        ${context.recentText}
-    """.trimIndent()
+    private fun buildPrompt(context: LearningContext): String {
+        val dedupHint = if (context.existingCardTopics.isNotEmpty()) {
+            val existing = context.existingCardTopics.take(20).joinToString(", ")
+            """
+            |EXISTING CARDS (do not duplicate these — test a different aspect of the
+            |chapter or a deeper implication):
+            |$existing
+            """.trimMargin()
+        } else ""
+        return """
+        |You create MULTIPLE-CHOICE comprehension review cards following Wozniak's
+        |20 rules of knowledge formulation. Use ONLY the supplied source text. Do not
+        |invent facts, plot events, names, or quotes.
+        |
+        |Return exactly 3 to 5 high-quality multiple-choice questions. Each question
+        |must follow this structure:
+        |
+        |  question: A self-contained sentence from the passage with the key term or
+        |  concept replaced by "______". The reader should be able to answer without
+        |  seeing the source text.
+        |
+        |  answer: The correct term that fills the blank (must be one of the options).
+        |
+        |  mcqOptions: 3-4 plausible answer choices. The correct answer must be
+        |  among them. Distractors must be related terms from the same domain that a
+        |  reader might confuse — not random words. They should be mutually exclusive
+        |  and genuinely plausible to someone who skimmed the chapter.
+        |
+        |  explanation: One sentence explaining WHY the correct answer is right.
+        |
+        |  sourceQuote: A verbatim quote from the source text (20-500 chars) that
+        |  justifies the answer.
+        |
+        |  topic: The core concept being tested (e.g. "Mitochondria function" not
+        |  "Chapter details").
+        |
+        |  confidence: 0.70-0.98. Only create questions where forgetting the answer
+        |  would genuinely damage the reader's understanding of the chapter.
+        |
+        |QUALITY RULES (non-negotiable):
+        |  - Test central arguments, definitions, mechanisms, cause/effect chains,
+        |    principles, or meaningful contrasts.
+        |  - NEVER test incidental names, dates, trivial details, or searchable trivia.
+        |  - NEVER create a question where the answer is obvious from the question
+        |    text alone.
+        |  - Each question should target a DIFFERENT concept — no two questions about
+        |    the same topic.
+        |  - Distractors should feel like real terms someone studying this material
+        |    would encounter. Prefer concepts from the same chapter or field.
+        |  - question must be self-contained and unambiguous.
+        |  - answer must be concise (one term or short phrase, not a full sentence).
+        |
+        |$dedupHint
+        |
+        |Book: ${context.bookTitle}
+        |Chapter: ${context.chapterTitle}
+        |
+        |SOURCE TEXT:
+        |${context.recentText}
+        |
+        |Return only the requested JSON.
+        """.trimMargin()
+    }
 
     companion object {
         private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)

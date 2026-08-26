@@ -141,7 +141,14 @@ class LearningRepository(
     ): AiGenerationResult {
         val book = bookDao.getById(bookId) ?: error("Book not found")
         val context = try {
-            contextExtractor.extract(book, chapterIndex)
+            val base = contextExtractor.extract(book, chapterIndex)
+            // Pass existing card topics so the prompt avoids duplicating
+            // concepts the reader has already seen.
+            val existingTopics = cardDao.getAll()
+                .filter { it.bookId == bookId }
+                .mapNotNull { it.topic?.takeIf(String::isNotBlank) }
+                .distinctBy(String::lowercase)
+            base.copy(existingCardTopics = existingTopics)
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             throw IllegalStateException(
@@ -156,7 +163,7 @@ class LearningRepository(
             val isStale = previous.status == STATUS_GENERATING && now - previous.updatedAt >= GENERATION_STALE_AFTER_MS
             val canRetry = previous.status == STATUS_FAILED && now - previous.updatedAt >= GENERATION_RETRY_AFTER_MS
             if (!force && !isStale && !canRetry) {
-                return AiGenerationResult(emptyList(), contextChapterCount = 3, usedCharacters = context.recentText.length)
+                return AiGenerationResult(emptyList(), contextChapterCount = 1, usedCharacters = context.recentText.length)
             }
             generationDao.release(bookId, key)
         }
@@ -172,7 +179,7 @@ class LearningRepository(
             )
         )
         if (claimed == -1L) {
-            return AiGenerationResult(emptyList(), contextChapterCount = 3, usedCharacters = context.recentText.length)
+            return AiGenerationResult(emptyList(), contextChapterCount = 1, usedCharacters = context.recentText.length)
         }
         if (force) {
             cardDao.deleteByGenerationKey(bookId, key)
@@ -242,7 +249,7 @@ class LearningRepository(
             generationDao.complete(bookId, key, STATUS_COMPLETE, cards.size, System.currentTimeMillis())
             AiGenerationResult(
                 cards = cards,
-                contextChapterCount = 3,
+                contextChapterCount = 1,
                 usedCharacters = context.recentText.length
             )
         } catch (error: Throwable) {

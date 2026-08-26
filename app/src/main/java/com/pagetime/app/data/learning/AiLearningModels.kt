@@ -19,7 +19,10 @@ data class LearningContext(
     val chapterIndex: Int,
     val chapterTitle: String,
     val recentText: String,
-    val sourceFormat: String
+    val sourceFormat: String,
+    /** Topics already covered by existing cards in this book — used by the
+     *  prompt to avoid generating duplicates. */
+    val existingCardTopics: List<String> = emptyList()
 )
 
 data class AiGenerationResult(

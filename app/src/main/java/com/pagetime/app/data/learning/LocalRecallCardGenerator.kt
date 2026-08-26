@@ -2,25 +2,16 @@ package com.pagetime.app.data.learning
 
 /**
  * Creates review cards without a network dependency, following Wozniak's 20 rules
- * of knowledge formulation. Produces a mix of three card types:
+ * of knowledge formulation. This fallback produces **multiple-choice questions only**
+ * — one card per meaningfully different concept in the reading window.
  *
- * 1. **Cloze deletions** — the sentence IS the prompt with the key word blanked out.
- *    Rule #1 (Minimize the burden of interpreting the item), Rule #5 (Formulate
- *    cloze deletions). The target word is chosen by semantic position and length,
- *    not blindly by length.
- *
- * 2. **Multiple choice** — tests recognition alongside recall. Distractors are
- *    drawn from the same sentence so they share the same domain. Rule #13
- *    (Use mutually exclusive and confusing answers).
- *
- * 3. **Standard Q&A** — the question pattern is matched to the sentence structure
- *    (definition, cause-effect, contrast, example) for a natural recall prompt.
- *    Rule #4 (Omit superfluous information), Rule #6 (Use keyword clues).
+ * Quality rules (aligned with the Gemini prompt):
+ * - Test central definitions, mechanisms, cause/effect, and meaningful contrasts.
+ * - Distractors are drawn from the same sentence so they share the same domain.
+ * - The correct answer must be among the options.
+ * - rule #13 (Use mutually exclusive and confusing answers).
  */
 object LocalRecallCardGenerator {
-
-    /** Definition-signal words are poor cloze targets themselves ("is", "called", …). */
-    private val SIGNAL_WORDS = setOf("is", "are", "was", "were", "means", "called", "named", "refers")
 
     private val STOP_WORDS = setOf(
         "about", "above", "after", "again", "also", "another", "any", "because",
@@ -54,148 +45,58 @@ object LocalRecallCardGenerator {
 
         if (sentences.isEmpty()) return emptyList()
 
-        // Score sentences by how well they support different card types.
+        // Score sentences by how well they support MCQ generation:
+        // prefer definition / cause-effect / contrast sentences over plain ones.
         val scored = sentences.map { it to scoreSentence(it) }
-            .sortedByDescending { it.second.clozeScore }
+            .sortedByDescending { it.second }
 
-        val requested = limit.coerceIn(2, 3)
+        val requested = limit.coerceIn(2, 5)
         val results = mutableListOf<GeneratedLearningCard>()
         val usedSentences = mutableSetOf<String>()
 
-        // Card 1: Cloze — pick the sentence with the best cloze candidate.
-        val bestCloze = scored
-            .firstOrNull { it.first !in usedSentences && it.second.clozeScore > 0 }
-            ?: scored.firstOrNull()
-        if (bestCloze != null) {
-            results += generateCloze(bestCloze.first, context.chapterTitle)
-            usedSentences += bestCloze.first
+        for (cardIndex in 0 until requested) {
+            val best = scored.firstOrNull { it.first !in usedSentences && contentWords(it.first).size >= 3 }
+                ?: break
+            results += generateMcq(best.first, context.chapterTitle)
+            usedSentences += best.first
         }
 
-        // Card 2: Q&A — pick a sentence with a different structure (definition, cause, etc.)
-        if (requested >= 2) {
-            val bestQa = scored
-                .firstOrNull { it.first !in usedSentences && it.second.sentencePattern != Pattern.PLAIN }
-                ?: scored.firstOrNull { it.first !in usedSentences }
-            if (bestQa != null) {
-                results += generateQa(bestQa.first, context.chapterTitle, bestQa.second.sentencePattern)
-                usedSentences += bestQa.first
-            }
-        }
-
-        // Card 3: MCQ — only when there are enough content words for distractors.
-        if (requested >= 3) {
-            val bestMcq = scored
-                .firstOrNull { it.first !in usedSentences && contentWords(it.first).size >= 3 }
-            if (bestMcq != null) {
-                results += generateMcq(bestMcq.first, context.chapterTitle)
-            }
-        }
-
-        return results.take(requested)
+        return results
     }
 
     // ── Sentence scoring ────────────────────────────────────────────────────
 
-    private class SentenceScore(
-        val clozeScore: Double,
-        val sentencePattern: Pattern
-    )
-
-    private enum class Pattern { DEFINITION, CAUSE_EFFECT, CONTRAST, EXAMPLE, LIST, PLAIN }
-
-    private fun scoreSentence(sentence: String): SentenceScore {
+    /**
+     * Returns a simple quality score: higher means the sentence is more likely
+     * to yield a meaningful MCQ question.
+     */
+    private fun scoreSentence(sentence: String): Double {
         val lower = sentence.lowercase()
-        val pattern = detectPattern(lower)
-        val clozeScore = clozeCandidates(sentence).firstOrNull()?.second ?: 0.0
-        return SentenceScore(clozeScore, pattern)
-    }
-
-    private fun detectPattern(lower: String): Pattern {
-        // Definition: "X is/are/was Y", "X means Y", "X is defined as Y"
-        if (Regex("\\b\\w+\\s+(is|are|was|were|means|refers to|is defined as)\\b").containsMatchIn(lower))
-            return Pattern.DEFINITION
-        // Cause-effect: "X causes Y", "X leads to Y", "X results in Y", "because of X"
+        var score = 0.0
+        // Definition sentences are ideal for MCQ.
+        if (Regex("\\b\\w+\\s+(is|are|was|were|means|refers to)\\b").containsMatchIn(lower))
+            score += 4.0
+        // Cause-effect.
         if (Regex("\\b(causes?|leads? to|results? in|produces?|enables?)\\b").containsMatchIn(lower))
-            return Pattern.CAUSE_EFFECT
-        // Contrast: "but", "however", "although", "unlike", "in contrast"
+            score += 3.0
+        // Contrast / meaningful comparison.
         if (Regex("\\b(but|however|although|unlike|in contrast|whereas|yet|despite)\\b").containsMatchIn(lower))
-            return Pattern.CONTRAST
-        // Example: "for example", "for instance", "such as", "e.g."
-        if (Regex("\\b(for example|for instance|such as|e\\.g\\.|including)\\b").containsMatchIn(lower))
-            return Pattern.EXAMPLE
-        // List: has semicolons or "first…second…third"
-        if (lower.contains(';') || Regex("\\b(first|second|third|finally)\\b").containsMatchIn(lower))
-            return Pattern.LIST
-        return Pattern.PLAIN
+            score += 3.0
+        // Longer sentences have richer content words for distractors.
+        score += (contentWords(sentence).size.coerceAtMost(6) * 0.5)
+        return score
     }
 
-    // ── Cloze ───────────────────────────────────────────────────────────────
-
-    private fun clozeCandidates(sentence: String): List<Pair<Int, Double>> {
-        val words = sentence.split(" ")
-        val n = words.size
-        if (n < 4) return emptyList()
-
-        return words.mapIndexedNotNull { index, raw ->
-            val word = raw.trim(',', '.', ';', ':', '!', '?', '"', '\'', '(', ')')
-            if (word.length < 5 || !word.all { it.isLetter() }) return@mapIndexedNotNull null
-            if (word.lowercase() in STOP_WORDS) return@mapIndexedNotNull null
-            if (word.lowercase() in SIGNAL_WORDS) return@mapIndexedNotNull null
-            // Avoid words at the very start or very end of the sentence.
-            if (index < 2 || index >= n - 1) return@mapIndexedNotNull null
-            // Avoid proper nouns mid-sentence (capitalized and not at start).
-            if (index > 0 && word[0].isUpperCase() && words[index - 1].lastOrNull() != '.') return@mapIndexedNotNull null
-            // Score: prefer 6-12 letter words, words after definition signals, middle position.
-            var score = 0.0
-            // Length bonus: 6-12 is the sweet spot.
-            score += when {
-                word.length in 6..12 -> 3.0
-                word.length > 12 -> 2.0
-                else -> 1.0
-            }
-            // Position bonus: middle third.
-            val third = n / 3
-            if (index in third until third * 2) score += 2.0
-            // Definition signal: "X is Y" / "X is the Y" — Y is a good cloze target.
-            if (index >= 2) {
-                val prev = words[index - 1].lowercase().trim(',', '.', ';')
-                val prevPrev = words[index - 2].lowercase().trim(',', '.', ';')
-                if (prev in SIGNAL_WORDS || (prev in setOf("the", "a", "an") && prevPrev in SIGNAL_WORDS)) score += 4.0
-            }
-            index to score
-        }.sortedByDescending { it.second }
-    }
-
-    private fun generateCloze(sentence: String, chapterTitle: String): GeneratedLearningCard {
-        val words = sentence.split(" ")
-        val bestIndex = (clozeCandidates(sentence).firstOrNull()?.first ?: (words.size / 2))
-            .coerceIn(0, words.lastIndex)
-        val answer = words.getOrElse(bestIndex) { "unknown" }
-
-        val clozeText = words.toMutableList().apply {
-            this[bestIndex] = "{{c1::$answer}}"
-        }.joinToString(" ")
-
-        return GeneratedLearningCard(
-            topic = chapterTitle,
-            question = clozeText,
-            answer = answer,
-            explanation = "From the text: $sentence",
-            sourceQuote = sentence,
-            confidence = 0.80f,
-            cardType = "cloze"
-        )
-    }
-
-    // ── MCQ ─────────────────────────────────────────────────────────────────
+    // ── MCQ generation ──────────────────────────────────────────────────────
 
     private fun contentWords(sentence: String): List<String> {
         return sentence.split(" ")
-            .map { it.trim(',', '.', ';', ':', '!', '?', '"', '\'', '(', ')') }
+            .map { it.trim(',', '.', ';', ':', '!', '?', '\'', '"', '(', ')') }
             .filter {
                 it.length in 5..20 &&
                     it.all { c -> c.isLetter() } &&
                     it.lowercase() !in STOP_WORDS &&
+                    // Skip mid-sentence proper nouns (they make poor blanked-out answers).
                     !(it.length > 1 && it[0].isUpperCase() && it.drop(1).all { c -> c.isLowerCase() })
             }
             .distinctBy { it.lowercase() }
@@ -211,13 +112,15 @@ object LocalRecallCardGenerator {
             .sortedBy { kotlin.math.abs(it.length - answer.length) }
             .take(3)
             .ifEmpty {
-                // Fallback: any content words from the sentence.
                 words.filter { !it.equals(answer, ignoreCase = true) }.take(3)
             }
 
-        // If still not enough, pad with generic but plausible-sounding terms.
+        // Fallback fillers if not enough in-sentence distractors.
         val padded = distractors.toMutableList()
-        val fillers = listOf("principle", "mechanism", "process", "factor", "element", "phenomenon")
+        val fillers = listOf(
+            "principle", "mechanism", "process", "factor", "element",
+            "phenomenon", "structure", "hypothesis", "framework", "equilibrium"
+        )
         while (padded.size < 3) {
             val filler = fillers.firstOrNull { f -> padded.none { it.equals(f, ignoreCase = true) } } ?: break
             padded += filler
@@ -225,134 +128,22 @@ object LocalRecallCardGenerator {
 
         val options = (listOf(answer) + padded).shuffled()
 
-        val clozeSentence = sentence.replace(
+        // Blank out the answer term in the sentence.
+        val blanked = sentence.replace(
             Regex("\\b${Regex.escape(answer)}\\b", RegexOption.IGNORE_CASE),
             "______"
         )
 
         return GeneratedLearningCard(
             topic = chapterTitle,
-            question = clozeSentence,
+            question = blanked,
             answer = answer,
             explanation = "From the text: $sentence",
             sourceQuote = sentence,
-            confidence = 0.75f,
+            confidence = 0.72f,
             cardType = "mcq",
             mcqOptions = options
         )
-    }
-
-    // ── Q&A ─────────────────────────────────────────────────────────────────
-
-    private fun generateQa(sentence: String, chapterTitle: String, pattern: Pattern): GeneratedLearningCard {
-        val (question, answer) = when (pattern) {
-            Pattern.DEFINITION -> {
-                val subject = extractDefinitionSubject(sentence)
-                "What is $subject?" to extractDefinitionBody(sentence)
-            }
-            Pattern.CAUSE_EFFECT -> {
-                val subject = extractCauseSubject(sentence)
-                "What effect does $subject have?" to extractCauseBody(sentence)
-            }
-            Pattern.CONTRAST -> {
-                val subject = extractContrastSubject(sentence)
-                "What contrasts with $subject?" to extractContrastBody(sentence)
-            }
-            Pattern.EXAMPLE -> {
-                val subject = extractExampleSubject(sentence)
-                "What is an example of $subject?" to extractExampleBody(sentence)
-            }
-            Pattern.LIST -> {
-                val keyPhrase = extractKeyPhrase(sentence)
-                "What are the elements of $keyPhrase?" to sentence
-            }
-            Pattern.PLAIN -> {
-                val keyPhrase = extractKeyPhrase(sentence)
-                "What is the significance of $keyPhrase?" to sentence
-            }
-        }
-
-        return GeneratedLearningCard(
-            topic = chapterTitle,
-            question = question,
-            answer = answer,
-            explanation = "From the passage: $sentence",
-            sourceQuote = sentence,
-            confidence = 0.72f,
-            cardType = "qa"
-        )
-    }
-
-    private fun extractDefinitionSubject(sentence: String): String {
-        // "X is Y" → take X (words before "is/are/was")
-        val match = Regex("^(.+?)\\s+(?:is|are|was|were|means|refers to)\\b", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)
-            ?.split(" ")?.takeLast(3)?.joinToString(" ")
-            ?.trimEnd(',', '.', ';')
-            ?: extractKeyPhrase(sentence)
-    }
-
-    private fun extractDefinitionBody(sentence: String): String {
-        val match = Regex("\\b(?:is|are|was|were|means|refers to)\\s+(.+?)(?:[.;]|$)", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)?.trim() ?: sentence
-    }
-
-    private fun extractCauseSubject(sentence: String): String {
-        val match = Regex("^(.+?)\\s+(?:causes?|leads? to|results? in|produces?|enables?)\\b", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)
-            ?.split(" ")?.takeLast(3)?.joinToString(" ")
-            ?.trimEnd(',', '.', ';')
-            ?: extractKeyPhrase(sentence)
-    }
-
-    private fun extractCauseBody(sentence: String): String {
-        val match = Regex("\\b(?:causes?|leads? to|results? in|produces?|enables?)\\s+(.+?)(?:[.;]|$)", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)?.trim() ?: sentence
-    }
-
-    private fun extractContrastSubject(sentence: String): String {
-        val match = Regex("^(.+?)\\s+(?:but|however|although|unlike|whereas|yet)\\b", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)
-            ?.split(" ")?.takeLast(3)?.joinToString(" ")
-            ?.trimEnd(',', '.', ';')
-            ?: extractKeyPhrase(sentence)
-    }
-
-    private fun extractContrastBody(sentence: String): String {
-        val match = Regex("\\b(?:but|however|although|unlike|whereas|yet)\\s+(.+?)(?:[.;]|$)", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)?.trim() ?: sentence
-    }
-
-    private fun extractExampleSubject(sentence: String): String {
-        val match = Regex("^(.+?)\\s+(?:for example|for instance|such as|including)\\b", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)
-            ?.split(" ")?.takeLast(3)?.joinToString(" ")
-            ?.trimEnd(',', '.', ';')
-            ?: extractKeyPhrase(sentence)
-    }
-
-    private fun extractExampleBody(sentence: String): String {
-        val match = Regex("\\b(?:for example|for instance|such as|including)\\s+(.+?)(?:[.;]|$)", RegexOption.IGNORE_CASE)
-            .find(sentence)
-        return match?.groupValues?.get(1)?.trim() ?: sentence
-    }
-
-    private fun extractKeyPhrase(sentence: String): String {
-        val clauseBreak = sentence.indexOfFirst { it in ";:—" }
-        val effective = if (clauseBreak > 10) sentence.substring(0, clauseBreak) else sentence
-
-        return effective
-            .split(" ")
-            .take(8)
-            .joinToString(" ")
-            .trimEnd(',', '.', ';', ':', '!', '?')
     }
 
     // ── Utilities ───────────────────────────────────────────────────────────

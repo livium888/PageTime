@@ -20,7 +20,7 @@ class LocalRecallCardGeneratorTest {
     )
 
     @Test
-    fun `creates cloze and MCQ cards from a completed reading window`() {
+    fun `creates MCQ cards from a completed reading window`() {
         val sentence = "The careful navigator crossed the ancient valley before sunrise, carrying supplies for the remote settlement."
         val ctx = context(
             "$sentence Another sentence follows with enough words to preserve the context for review. " +
@@ -30,11 +30,9 @@ class LocalRecallCardGeneratorTest {
         val cards = LocalRecallCardGenerator.generate(ctx)
 
         assertTrue(cards.isNotEmpty())
-        val hasClozeOrMcq = cards.any { card ->
-            card.cardType == "cloze" && card.question.contains("{{c1::") ||
-                card.cardType == "mcq" && card.question.contains("______")
-        }
-        assertTrue("Expected at least one cloze or MCQ card", hasClozeOrMcq)
+        // Every card must be MCQ.
+        assertTrue("All cards must be MCQ", cards.all { it.cardType == "mcq" })
+        assertTrue(cards.all { it.mcqOptions != null && it.mcqOptions!!.size >= 3 })
         assertTrue(cards.all { it.sourceQuote.isNotBlank() })
     }
 
@@ -45,66 +43,38 @@ class LocalRecallCardGeneratorTest {
     }
 
     @Test
-    fun `cloze target is not a stop word`() {
+    fun `every MCQ answer appears in its options`() {
         val ctx = context(
             "The ancient theory of relativity is fundamental to modern physics. " +
                 "Scientists have confirmed that energy and mass are equivalent. " +
                 "This principle explains why nuclear reactions release enormous amounts of energy."
         )
         val cards = LocalRecallCardGenerator.generate(ctx)
-        val cloze = cards.firstOrNull { it.cardType == "cloze" } ?: return
-        val answer = cloze.question
-            .substringAfter("{{c1::")
-            .substringBefore("}}")
-            .trim()
-        assertFalse("Cloze target must not be a stop word: $answer",
-            answer.lowercase() in setOf("the", "a", "an", "is", "are", "was", "were", "and", "or", "but", "for", "that", "this"))
+        cards.forEach { card ->
+            val opts = card.mcqOptions ?: return@forEach
+            assertTrue(
+                "Answer '${card.answer}' must appear in options for: ${card.question}",
+                opts.any { it.equals(card.answer, ignoreCase = true) }
+            )
+        }
     }
 
     @Test
-    fun `cloze prefers words after definition signals`() {
-        val ctx = context(
-            "The mitochondria is the powerhouse of the cell. " +
-                "Energy production occurs through a series of chemical reactions. " +
-                "These reactions sustain life in all organisms through continuous chemical work."
-        )
-        val cards = LocalRecallCardGenerator.generate(ctx)
-        val cloze = cards.firstOrNull { it.cardType == "cloze" } ?: return
-        val answer = cloze.question
-            .substringAfter("{{c1::")
-            .substringBefore("}}")
-            .trim()
-        // The word after "is" should be preferred.
-        assertEquals("powerhouse", answer.lowercase())
-    }
-
-    @Test
-    fun `qa card uses definition pattern when available`() {
-        val ctx = context(
-            "The tiny organelles are called chloroplasts inside the leaf cells. " +
-                "Photosynthesis is the process by which plants convert sunlight into chemical energy. " +
-                "This process powers the growth of nearly all plant life on Earth."
-        )
-        val cards = LocalRecallCardGenerator.generate(ctx)
-        val qa = cards.firstOrNull { it.cardType == "qa" } ?: return
-        assertTrue("Q&A should ask about the definition subject",
-            qa.question.lowercase().contains("photosynthesis") || qa.question.lowercase().contains("process"))
-    }
-
-    @Test
-    fun `mcq options come from the same sentence`() {
+    fun `MCQ options have at least 3 choices`() {
         val ctx = context(
             "The experiment tested whether temperature affects enzyme activity rates. " +
                 "Results showed that higher temperatures increase reaction speed. " +
                 "However, extreme heat denatures the protein structure."
         )
         val cards = LocalRecallCardGenerator.generate(ctx)
-        val mcq = cards.firstOrNull { it.cardType == "mcq" } ?: return
-        assertNotNull("MCQ should have options", mcq.mcqOptions)
-        assertTrue("MCQ should have 3-4 options", mcq.mcqOptions!!.size in 3..4)
-        // The correct answer should be among the options.
-        assertTrue("Correct answer must be in the options",
-            mcq.mcqOptions!!.any { it.equals(mcq.answer, ignoreCase = true) })
+        assertTrue(cards.isNotEmpty())
+        cards.forEach { card ->
+            assertNotNull("MCQ should have options", card.mcqOptions)
+            assertTrue(
+                "MCQ should have 3-4 options, got ${card.mcqOptions!!.size}",
+                card.mcqOptions!!.size in 3..4
+            )
+        }
     }
 
     @Test
@@ -131,5 +101,20 @@ class LocalRecallCardGeneratorTest {
         assertTrue("Limit 3 should produce at most 3 cards", cards3.size <= 3)
         assertTrue("Limit 2 should produce at most 2 cards", cards2.size <= 2)
         assertTrue("Limit 2 should produce fewer or equal cards", cards2.size <= cards3.size)
+    }
+
+    @Test
+    fun `cards target different concepts within the same chapter`() {
+        val ctx = context(
+            "Photosynthesis converts solar energy into chemical energy in plants. " +
+                "The mitochondria is the powerhouse of the cell and generates ATP. " +
+                "Chloroplasts are the organelles where photosynthesis takes place. " +
+                "Cellular respiration breaks down glucose to release energy for the cell."
+        )
+        val cards = LocalRecallCardGenerator.generate(ctx)
+        assertTrue(cards.size >= 2)
+        // Each question should reference different content (different blanked-out terms).
+        val answers = cards.map { it.answer.lowercase() }.toSet()
+        assertTrue("Should have distinct answers", answers.size >= 2)
     }
 }

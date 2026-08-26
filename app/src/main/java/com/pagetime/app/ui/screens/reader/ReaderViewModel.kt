@@ -73,6 +73,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _publication = MutableStateFlow<Publication?>(null)
     val publication = _publication.asStateFlow()
 
+    /** Tracks the last chapter we pre-generated so we fire only once per transition. */
+    private var lastPreGeneratedChapterIndex: Int? = null
+
     /**
      * Saved reading position as a Readium Locator JSON string, restored by the
      * navigator on creation. This is an exact position (resource + offset), not an
@@ -560,11 +563,46 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             onUserScrolled()
         }
 
+        // Pre-generate cards for the new chapter in the background so the first
+        // checkpoint in the new chapter is instant (the cached result is served).
+        val chapterIndex = publication?.readingOrder?.indexOfFirstWithHref(locator.href)
+        if (chapterIndex != null && chapterIndex != lastPreGeneratedChapterIndex) {
+            lastPreGeneratedChapterIndex = chapterIndex
+            preGenerateChapter(chapterIndex)
+        }
+
         // Debounce: coalesce bursts of locator updates into one write.
         locatorSaveJob?.cancel()
         locatorSaveJob = persistenceScope.launch {
             delay(500)
             saveLocator()
+        }
+    }
+
+    /**
+     * Background generation on chapter transition. Runs fire-and-forget so the
+     * user sees no delay; the result is cached in the generation table and
+     * served instantly on the next checkpoint.
+     */
+    private fun preGenerateChapter(chapterIndex: Int) {
+        val b = _book.value ?: return
+        if (b.format != "epub" && chapterIndex < 0) return
+        persistenceScope.launch {
+            try {
+                container.learningRepository.generateCardsForChapter(
+                    bookId = b.id,
+                    chapterIndex = chapterIndex,
+                    locatorJson = null,
+                    textFraction = null
+                )
+                container.conceptMapRepository.generateForReadingWindow(
+                    bookId = b.id,
+                    chapterIndex = chapterIndex
+                )
+            } catch (_: Throwable) {
+                // Transient failure during background pre-generation — not
+                // visible to the user; the normal checkpoint path will retry.
+            }
         }
     }
 

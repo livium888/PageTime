@@ -18,14 +18,17 @@ object FsrsCardCodec {
 
     fun toJson(card: Card): String = JSONObject()
         .put("state", card.state.name)
-        .put("step", card.step)
+        .put("step", card.step ?: JSONObject.NULL)
+        // Pass nullable values as objects explicitly. Passing a nullable Kotlin
+        // number directly to JSONObject.put can select a primitive overload and
+        // unbox null on Android before JSONObject can write JSON null.
         // FSRS uses null stability + null difficulty to identify a never-reviewed
         // card. Do not replace those nulls with zero: that sends NEW cards through
         // the reviewed-card branch and causes getStability() failures.
-        .put("stability", card.stability)
-        .put("difficulty", card.difficulty)
-        .put("due", card.due?.toEpochMilli())
-        .put("lastReview", card.lastReview?.toEpochMilli())
+        .put("stability", card.stability ?: JSONObject.NULL)
+        .put("difficulty", card.difficulty ?: JSONObject.NULL)
+        .put("due", card.due?.toEpochMilli() ?: JSONObject.NULL)
+        .put("lastReview", card.lastReview?.toEpochMilli() ?: JSONObject.NULL)
         .toString()
 
     fun fromJson(json: String): Card {
@@ -69,11 +72,10 @@ object FsrsCardCodec {
     }
 
     private fun readNullableDouble(obj: JSONObject, key: String): Double? =
-        if (obj.has(key) && !obj.isNull(key)) {
-            obj.getDouble(key).takeIf { it.isFinite() }
-        } else {
-            null
-        }
+        obj.optString(key, "")
+            .trim()
+            .toDoubleOrNull()
+            ?.takeIf { it.isFinite() }
 
     private fun readState(obj: JSONObject): State =
         runCatching { State.valueOf(obj.optString("state", State.LEARNING.name)) }

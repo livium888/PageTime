@@ -50,7 +50,7 @@ object FsrsCardCodec {
         }
         val builder = Card.builder()
             .state(state)
-        if (obj.has("step") && !obj.isNull("step") && state == storedState) {
+        if (obj.has("step") && !obj.isNull("step") && state == storedState && isValidScheduledCard) {
             builder.step(obj.getInt("step"))
         }
         if (isValidScheduledCard) {
@@ -62,7 +62,7 @@ object FsrsCardCodec {
             builder.difficulty(difficulty)
         }
         if (obj.has("due") && !obj.isNull("due")) builder.due(Instant.ofEpochMilli(obj.getLong("due")))
-        if (obj.has("lastReview") && !obj.isNull("lastReview") && state == storedState) {
+        if (obj.has("lastReview") && !obj.isNull("lastReview") && state == storedState && isValidScheduledCard) {
             builder.lastReview(Instant.ofEpochMilli(obj.getLong("lastReview")))
         }
         return builder.build()

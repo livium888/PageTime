@@ -66,7 +66,7 @@ class LocalRecallCardGeneratorTest {
         val ctx = context(
             "The mitochondria is the powerhouse of the cell. " +
                 "Energy production occurs through a series of chemical reactions. " +
-                "These reactions are essential for sustaining life in all organisms."
+                "These reactions sustain life in all organisms through continuous chemical work."
         )
         val cards = LocalRecallCardGenerator.generate(ctx)
         val cloze = cards.firstOrNull { it.cardType == "cloze" } ?: return
@@ -81,9 +81,9 @@ class LocalRecallCardGeneratorTest {
     @Test
     fun `qa card uses definition pattern when available`() {
         val ctx = context(
-            "Photosynthesis is the process by which plants convert sunlight into chemical energy. " +
-                "This mechanism depends on chlorophyll molecules in the leaf. " +
-                "The reaction produces glucose and oxygen as byproducts."
+            "The tiny organelles are called chloroplasts inside the leaf cells. " +
+                "Photosynthesis is the process by which plants convert sunlight into chemical energy. " +
+                "This process powers the growth of nearly all plant life on Earth."
         )
         val cards = LocalRecallCardGenerator.generate(ctx)
         val qa = cards.firstOrNull { it.cardType == "qa" } ?: return

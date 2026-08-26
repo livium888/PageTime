@@ -19,6 +19,9 @@ package com.pagetime.app.data.learning
  */
 object LocalRecallCardGenerator {
 
+    /** Definition-signal words are poor cloze targets themselves ("is", "called", …). */
+    private val SIGNAL_WORDS = setOf("is", "are", "was", "were", "means", "called", "named", "refers")
+
     private val STOP_WORDS = setOf(
         "about", "above", "after", "again", "also", "another", "any", "because",
         "before", "being", "between", "both", "came", "come", "could", "does",
@@ -137,6 +140,7 @@ object LocalRecallCardGenerator {
             val word = raw.trim(',', '.', ';', ':', '!', '?', '"', '\'', '(', ')')
             if (word.length < 5 || !word.all { it.isLetter() }) return@mapIndexedNotNull null
             if (word.lowercase() in STOP_WORDS) return@mapIndexedNotNull null
+            if (word.lowercase() in SIGNAL_WORDS) return@mapIndexedNotNull null
             // Avoid words at the very start or very end of the sentence.
             if (index < 2 || index >= n - 1) return@mapIndexedNotNull null
             // Avoid proper nouns mid-sentence (capitalized and not at start).
@@ -152,10 +156,11 @@ object LocalRecallCardGenerator {
             // Position bonus: middle third.
             val third = n / 3
             if (index in third until third * 2) score += 2.0
-            // Definition signal: "X is/are/was Y" — Y is a good cloze target.
+            // Definition signal: "X is Y" / "X is the Y" — Y is a good cloze target.
             if (index >= 2) {
                 val prev = words[index - 1].lowercase().trim(',', '.', ';')
-                if (prev in setOf("is", "are", "was", "were", "means", "called", "named")) score += 4.0
+                val prevPrev = words[index - 2].lowercase().trim(',', '.', ';')
+                if (prev in SIGNAL_WORDS || (prev in setOf("the", "a", "an") && prevPrev in SIGNAL_WORDS)) score += 4.0
             }
             index to score
         }.sortedByDescending { it.second }

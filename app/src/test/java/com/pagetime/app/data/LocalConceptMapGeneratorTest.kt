@@ -35,10 +35,10 @@ class LocalConceptMapGeneratorTest {
     @Test
     fun `concepts have typed relationship signals`() {
         val ctx = context(
-            "The Industrial Revolution caused widespread urbanization across Europe. " +
+            "The Industrial Revolution caused widespread urbanization across the whole of Europe. " +
                 "However, it also led to severe pollution and poor working conditions. " +
-                "For example, London experienced devastating smog events. " +
-                "The economic growth therefore transformed social structures fundamentally."
+                "For example, London experienced devastating smog events that killed thousands. " +
+                "The economic growth therefore transformed social structures in fundamental ways."
         )
         val result = LocalConceptMapGenerator.generate(ctx)
         assertTrue("Should have relationships", result.relationships.isNotEmpty())
@@ -66,7 +66,7 @@ class LocalConceptMapGeneratorTest {
             "Photosynthesis converts solar energy into chemical energy in plants. " +
                 "Animals obtain energy by consuming food derived from plants. " +
                 "The energy cycle sustains all life on Earth through continuous transformation. " +
-                "Solar panels mimic photosynthesis to generate renewable electricity."
+                "Solar panels mimic photosynthesis to generate clean renewable electricity."
         )
         val result = LocalConceptMapGenerator.generate(ctx)
         // Sentence 1 and 4 both mention photosynthesis/energy — they should be linked.

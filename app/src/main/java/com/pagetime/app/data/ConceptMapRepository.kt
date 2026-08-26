@@ -95,7 +95,7 @@ class ConceptMapRepository(
                 description = preferredDescription(old.description, item.description),
                 type = old.type.ifBlank { item.type },
                 lastChapterIndex = chapterIndex,
-                sourceQuote = old.sourceQuote ?: item.sourceQuote,
+                sourceQuote = item.sourceQuote.takeIf { it.isNotBlank() } ?: old.sourceQuote,
                 confidence = maxOf(old.confidence, item.confidence),
                 mentionCount = old.mentionCount + 1,
                 updatedAt = now

@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
+import com.pagetime.app.data.ConceptMap
 import com.pagetime.app.data.learning.AiGenerationState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +90,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
+
+    /** Concepts already discovered for this book; used only by the EPUB hint layer. */
+    val conceptMap = container.conceptMapRepository.observeBookMap(bookId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ConceptMap(emptyList(), emptyList()))
 
     val aiSettings = settingsRepository.aiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())

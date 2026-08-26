@@ -86,6 +86,7 @@ fun ReaderAppearanceSheet(
     var theme by remember(settings.theme) { mutableStateOf(settings.theme) }
     var margin by remember(settings.marginDp) { mutableStateOf(settings.marginDp) }
     var alignment by remember(settings.alignment) { mutableStateOf(settings.alignment) }
+    var conceptHints by remember(settings.conceptHints) { mutableStateOf(settings.conceptHints) }
     var brightness by remember(settings.brightness) { mutableStateOf(settings.brightness ?: 1f) }
     var useSystemBrightness by remember(settings.brightness == null) {
         mutableStateOf(settings.brightness == null)
@@ -100,6 +101,7 @@ fun ReaderAppearanceSheet(
                 theme = theme,
                 marginDp = margin,
                 alignment = alignment,
+                conceptHints = conceptHints,
                 brightness = brightness.takeIf { !useSystemBrightness }
             )
         )
@@ -235,6 +237,32 @@ fun ReaderAppearanceSheet(
                     }
                 )
             }
+
+            AppearanceSectionLabel("Concept hints in EPUBs")
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    "off" to "Off",
+                    "subtle" to "Subtle",
+                    "active" to "Active"
+                ).forEach { (key, label) ->
+                    SelectorPill(
+                        selected = conceptHints == key,
+                        label = label,
+                        onClick = {
+                            conceptHints = key
+                            apply()
+                        }
+                    )
+                }
+            }
+            Text(
+                "Subtle marks a few high-confidence ideas. Active shows more.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             AppearanceSectionLabel("Theme")
             Row(

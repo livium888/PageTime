@@ -34,6 +34,8 @@ data class ReaderSettings(
     val marginDp: Float = 20f,
     /** "justify" or "left" — how both plain-text and EPUB pages align body copy. */
     val alignment: String = "justify",
+    /** "off", "subtle", or "active" EPUB concept markers. */
+    val conceptHints: String = "subtle",
     /** 0.15..1.0 overrides the window brightness; null means use the system setting. */
     val brightness: Float? = null
 )
@@ -45,6 +47,7 @@ private fun ReaderSettings.normalized(): ReaderSettings = copy(
     theme = theme.takeIf { it in setOf("light", "sepia", "dark", "night") } ?: "light",
     marginDp = marginDp.coerceIn(8f, 48f),
     alignment = if (alignment == "justify") "justify" else "left",
+    conceptHints = conceptHints.takeIf { it in setOf("off", "subtle", "active") } ?: "subtle",
     brightness = brightness?.coerceIn(0.15f, 1f)
 )
 
@@ -87,6 +90,7 @@ class SettingsRepository(private val context: Context) {
         val THEME = stringPreferencesKey("reader_theme")
         val MARGIN = floatPreferencesKey("reader_margin")
         val ALIGNMENT = stringPreferencesKey("reader_alignment")
+        val CONCEPT_HINTS = stringPreferencesKey("reader_concept_hints")
         val BRIGHTNESS = floatPreferencesKey("reader_brightness")
 
         /** Id of the book whose position was saved most recently — drives "continue reading". */
@@ -272,6 +276,7 @@ class SettingsRepository(private val context: Context) {
             theme = p[Keys.THEME] ?: "light",
             marginDp = p[Keys.MARGIN] ?: 20f,
             alignment = p[Keys.ALIGNMENT] ?: "justify",
+            conceptHints = p[Keys.CONCEPT_HINTS] ?: "subtle",
             brightness = p[Keys.BRIGHTNESS]
         ).normalized()
     }
@@ -327,6 +332,7 @@ class SettingsRepository(private val context: Context) {
             it[Keys.THEME] = normalized.theme
             it[Keys.MARGIN] = normalized.marginDp
             it[Keys.ALIGNMENT] = normalized.alignment
+            it[Keys.CONCEPT_HINTS] = normalized.conceptHints
             if (normalized.brightness == null) {
                 it.remove(Keys.BRIGHTNESS)
             } else {

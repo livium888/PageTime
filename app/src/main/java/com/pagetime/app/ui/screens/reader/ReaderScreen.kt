@@ -188,6 +188,7 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val aiGenerationState by vm.aiGenerationState.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
+    val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -205,6 +206,9 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
     var currentChapterHref by remember { mutableStateOf<String?>(null) }
+    var currentChapterIndex by remember { mutableStateOf<Int?>(null) }
+    var currentLocator by remember { mutableStateOf<Locator?>(null) }
+    var activeConceptId by remember { mutableStateOf<String?>(null) }
     var sleepDeadline by remember { mutableStateOf<Long?>(null) }
     var txtGoRequest by remember { mutableStateOf<Pair<Float, Long>?>(null) }
     var progressMode by remember { mutableStateOf(ProgressIndicatorMode.PERCENT) }
@@ -321,10 +325,12 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                 initialLocatorJson = initialLocatorJson,
                 settings = settings,
                 onLocatorChanged = { locator ->
+                    currentLocator = locator
                     vm.onLocatorChanged(locator)
                     publication?.let { pub ->
                         currentChapterHref = locator.href.toString()
                         val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
+                        currentChapterIndex = idx
                         val size = pub.readingOrder.size
                         if (idx != null && size > 0) {
                             chapterLabel = "${idx + 1} of $size"
@@ -367,6 +373,17 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                     CircularProgressIndicator()
                 }
             }
+        }
+
+        if (publication != null) {
+            EpubConceptDecorationLayer(
+                navigator = navigator,
+                concepts = conceptMap.concepts,
+                chapterIndex = currentChapterIndex,
+                currentLocator = currentLocator,
+                level = settings.conceptHints,
+                onConceptActivated = { activeConceptId = it }
+            )
         }
 
         // Kobo-style left-edge gesture: drag vertically to dim or brighten the
@@ -477,6 +494,19 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
             )
             AiGenerationState.Disabled, AiGenerationState.Idle -> Unit
         }
+    }
+
+    conceptMap.concepts.firstOrNull { it.id == activeConceptId }?.let { concept ->
+        EpubConceptSheet(
+            concept = concept,
+            relationships = conceptMap.relationships,
+            concepts = conceptMap.concepts,
+            onOpenMap = {
+                activeConceptId = null
+                onOpenConcepts(bookId)
+            },
+            onDismiss = { activeConceptId = null }
+        )
     }
 
     if (showCardSheet) {

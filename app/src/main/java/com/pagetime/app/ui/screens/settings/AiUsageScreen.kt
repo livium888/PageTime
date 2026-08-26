@@ -76,7 +76,7 @@ fun AiUsageScreen(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "Automatic analysis is attempted ${level.description.lowercase()}. Each checkpoint can make one card request and one concept-map request when Gemini is configured.",
+                        "Automatic analysis is attempted ${level.description.lowercase()}. In on-device mode checkpoints build cards and concepts locally; Gemini is only contacted when local results are empty.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

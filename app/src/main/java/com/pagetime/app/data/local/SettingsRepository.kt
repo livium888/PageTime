@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.pagetime.app.data.learning.GenerationMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -83,6 +84,7 @@ class SettingsRepository(private val context: Context) {
         val RATIO = doublePreferencesKey("ratio")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
+        val GENERATION_MODE = stringPreferencesKey("generation_mode")
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -264,8 +266,18 @@ class SettingsRepository(private val context: Context) {
 
     val aiSettings: Flow<AiSettings> = context.dataStore.data.map { p ->
         AiSettings(
-            analysisLevel = AiAnalysisLevel.fromKey(p[Keys.AI_ANALYSIS_LEVEL])
+            analysisLevel = AiAnalysisLevel.fromKey(p[Keys.AI_ANALYSIS_LEVEL]),
+            generationMode = GenerationMode.fromKey(p[Keys.GENERATION_MODE])
         )
+    }
+
+    suspend fun generationMode(): GenerationMode =
+        context.dataStore.data.first()[Keys.GENERATION_MODE]
+            ?.let(GenerationMode::fromKey)
+            ?: GenerationMode.LOCAL_FIRST
+
+    suspend fun setGenerationMode(mode: GenerationMode) {
+        context.dataStore.edit { it[Keys.GENERATION_MODE] = mode.key }
     }
 
     val readerSettings: Flow<ReaderSettings> = context.dataStore.data.map { p ->

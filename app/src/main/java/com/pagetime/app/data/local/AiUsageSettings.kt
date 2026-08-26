@@ -1,5 +1,7 @@
 package com.pagetime.app.data.local
 
+import com.pagetime.app.data.learning.GenerationMode
+
 /**
  * Controls how often automatic comprehension analysis is attempted while reading.
  * The default is deliberately light so PageTime remains a reading app.
@@ -42,5 +44,6 @@ enum class AiAnalysisLevel(
 }
 
 data class AiSettings(
-    val analysisLevel: AiAnalysisLevel = AiAnalysisLevel.LIGHT
+    val analysisLevel: AiAnalysisLevel = AiAnalysisLevel.LIGHT,
+    val generationMode: GenerationMode = GenerationMode.LOCAL_FIRST
 )

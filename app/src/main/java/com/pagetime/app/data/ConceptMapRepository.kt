@@ -4,6 +4,7 @@ import androidx.room.RoomDatabase
 import androidx.room.withTransaction
 import com.pagetime.app.data.learning.ConceptMapGenerationResult
 import com.pagetime.app.data.learning.GeminiLearningClient
+import com.pagetime.app.data.learning.GenerationPolicy
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.learning.LocalConceptMapGenerator
 import com.pagetime.app.data.local.BookDao
@@ -41,7 +42,13 @@ class ConceptMapRepository(
         val book = bookDao.getById(bookId) ?: error("Book not found")
         val context = contextExtractor.extract(book, chapterIndex)
         val existing = conceptDao.getForBook(bookId)
-        val generated = if (geminiClient.isConfigured) {
+        val local = LocalConceptMapGenerator.generate(context)
+        val useGemini = GenerationPolicy.shouldCallGemini(
+            mode = settingsRepository.generationMode(),
+            localItemCount = local.concepts.size,
+            geminiConfigured = geminiClient.isConfigured
+        )
+        val generated = if (useGemini) {
             try {
                 val run = suspend {
                     geminiClient.generateConceptMap(context, existing.map { it.label })
@@ -57,10 +64,10 @@ class ConceptMapRepository(
                 ) ?: run()
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-                LocalConceptMapGenerator.generate(context)
+                local
             }
         } else {
-            LocalConceptMapGenerator.generate(context)
+            local
         }
         database.withTransaction {
             merge(bookId, chapterIndex, generated)

@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.learning.GeminiModel
+import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
@@ -136,6 +137,10 @@ fun SettingsScreen(
                 level = aiSettings.analysisLevel,
                 onSelect = viewModel::setAiAnalysisLevel
             )
+            GenerationModeSettingsCard(
+                mode = aiSettings.generationMode,
+                onSelect = viewModel::setGenerationMode
+            )
             AppSettingsRow(
                 icon = Icons.Outlined.History,
                 label = "AI usage & statistics",
@@ -175,7 +180,7 @@ private fun AiAnalysisSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Automatic AI analysis", style = MaterialTheme.typography.titleMedium)
             Text(
-                "The reader keeps tracking progress locally. Gemini is only called at these checkpoints, and offline cards do not use the API.",
+                "The reader keeps tracking progress locally. Cards and concepts are built on-device first; Gemini is only called when the local pass comes up empty.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -195,6 +200,42 @@ private fun AiAnalysisSettingsCard(
             }
             Text(
                 "${level.label}: ${level.description}. Cards and concept-map analysis each count as one request.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun GenerationModeSettingsCard(
+    mode: GenerationMode,
+    onSelect: (GenerationMode) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("How cards & concepts are built", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "On-device first keeps everything local and uses Gemini only when needed. AI-assisted prefers Gemini for richer results.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                GenerationMode.entries.forEach { option ->
+                    FilterChip(
+                        selected = option == mode,
+                        onClick = { onSelect(option) },
+                        label = { Text(option.label) }
+                    )
+                }
+            }
+            Text(
+                mode.description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary
             )

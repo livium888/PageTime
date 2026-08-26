@@ -13,6 +13,8 @@ import com.pagetime.app.data.local.PendingReaderSource
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.learning.AiGenerationResult
 import com.pagetime.app.data.learning.GeminiLearningClient
+import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.data.learning.GenerationPolicy
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.learning.LocalRecallCardGenerator
 import io.github.openspacedrepetition.Card
@@ -177,7 +179,14 @@ class LearningRepository(
             cardDao.deleteByGenerationKey(bookId, key)
         }
         return try {
-            val aiCards = if (geminiClient.isConfigured) {
+            val localCards = LocalRecallCardGenerator.generate(context)
+            val mode = settingsRepository.generationMode()
+            val useGemini = GenerationPolicy.shouldCallGemini(
+                mode = mode,
+                localItemCount = localCards.size,
+                geminiConfigured = geminiClient.isConfigured
+            )
+            val aiCards = if (useGemini) {
                 // Gemini cards are richer, but a transient API failure or empty
                 // response must not leave the reader with no learning loop.
                 try {
@@ -194,14 +203,17 @@ class LearningRepository(
                     ) ?: run()).cards
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
-                    null
+                    emptyList()
                 }
             } else {
-                null
+                emptyList()
             }
-            val generatedByAi = !aiCards.isNullOrEmpty()
-            val cards = aiCards?.takeIf { it.isNotEmpty() }
-                ?: LocalRecallCardGenerator.generate(context)
+            val generatedByAi = aiCards.isNotEmpty()
+            val cards = if (mode == GenerationMode.GEMINI_FIRST) {
+                aiCards.takeIf { it.isNotEmpty() } ?: localCards
+            } else {
+                localCards.takeIf { it.isNotEmpty() } ?: aiCards
+            }
             cards.forEach { generated ->
                 val card = Card.builder().due(Instant.now()).build()
                 cardDao.upsert(

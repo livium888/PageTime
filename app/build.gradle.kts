@@ -94,6 +94,9 @@ dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
+    // Real org.json for JVM unit tests: the Android framework copies in the
+    // mocked android.jar throw "Method not mocked" at runtime.
+    testImplementation(libs.org.json)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

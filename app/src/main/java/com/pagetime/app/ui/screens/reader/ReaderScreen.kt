@@ -498,7 +498,9 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                     "No card was found in this passage · try Generate cards now"
                 }
             )
-            is AiGenerationState.Failed -> AiGenerationNotice("Automatic cards unavailable")
+            is AiGenerationState.Failed -> AiGenerationNotice(
+                state.message?.takeIf { it.isNotBlank() } ?: "Automatic cards unavailable"
+            )
             AiGenerationState.Disabled, AiGenerationState.Idle -> Unit
         }
     }

@@ -401,9 +401,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     _aiGenerationState.value = AiGenerationState.Idle
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                // A transient failure must not pin an alarming notice to the screen
+                // forever: show the real reason briefly, then clear it so the next
+                // chapter trigger or a manual "Generate cards now" can retry.
                 _aiGenerationState.value = AiGenerationState.Failed(
                     error.message ?: "Could not create a review card"
                 )
+                delay(8_000)
+                if (_aiGenerationState.value is AiGenerationState.Failed) {
+                    _aiGenerationState.value = AiGenerationState.Idle
+                }
             }
         }
     }

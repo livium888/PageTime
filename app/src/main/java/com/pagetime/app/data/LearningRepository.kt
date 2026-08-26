@@ -132,7 +132,15 @@ class LearningRepository(
         force: Boolean = false
     ): AiGenerationResult {
         val book = bookDao.getById(bookId) ?: error("Book not found")
-        val context = contextExtractor.extract(book, chapterIndex)
+        val context = try {
+            contextExtractor.extract(book, chapterIndex)
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            throw IllegalStateException(
+                "Could not read this book's text for card generation: " +
+                    (error.message ?: "unknown error")
+            )
+        }
         val key = generationKey(context)
         val now = System.currentTimeMillis()
         val previous = generationDao.get(bookId, key)

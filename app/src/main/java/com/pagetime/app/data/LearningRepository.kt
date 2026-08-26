@@ -264,6 +264,8 @@ class LearningRepository(
             val previousReview = oldCard.lastReview
             val result = scheduler.reviewCard(oldCard, rating.toFsrs(), now, null)
             val newCard = result.card()
+            val nextDue = newCard.due ?: now.plus(Duration.ofDays(1))
+            val intervalDays = Duration.between(now, nextDue).toDays().coerceAtLeast(0)
             val updated = existing.copy(
                 fsrsCardJson = FsrsCardCodec.toJson(newCard),
                 updatedAt = now.toEpochMilli(),
@@ -277,15 +279,15 @@ class LearningRepository(
                     bookId = existing.bookId,
                     reviewedAt = now.toEpochMilli(),
                     rating = rating.value,
-                    scheduledDays = Duration.between(now, newCard.due).toDays().coerceAtLeast(0),
+                    scheduledDays = intervalDays,
                     elapsedDays = previousReview?.let { Duration.between(it, now).toDays() } ?: 0,
                     wasDue = oldDue == null || !oldDue.isAfter(now)
                 )
             )
             outcome = ReviewOutcome(
                 card = updated,
-                nextDue = newCard.due,
-                intervalDays = Duration.between(now, newCard.due).toDays().coerceAtLeast(0),
+                nextDue = nextDue,
+                intervalDays = intervalDays,
                 rating = rating
             )
         }

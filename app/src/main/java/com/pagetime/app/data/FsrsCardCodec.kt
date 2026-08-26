@@ -19,8 +19,8 @@ object FsrsCardCodec {
     fun toJson(card: Card): String = JSONObject()
         .put("state", card.state.name)
         .put("step", card.step)
-        .put("stability", card.stability)
-        .put("difficulty", card.difficulty)
+        .put("stability", card.stability ?: 0.0)
+        .put("difficulty", card.difficulty ?: 0.0)
         .put("due", card.due?.toEpochMilli())
         .put("lastReview", card.lastReview?.toEpochMilli())
         .toString()
@@ -30,8 +30,11 @@ object FsrsCardCodec {
         val builder = Card.builder()
             .state(readState(obj))
         if (obj.has("step") && !obj.isNull("step")) builder.step(obj.getInt("step"))
-        if (obj.has("stability") && !obj.isNull("stability")) builder.stability(obj.getDouble("stability"))
-        if (obj.has("difficulty") && !obj.isNull("difficulty")) builder.difficulty(obj.getDouble("difficulty"))
+        // Always set stability — the FSRS scheduler requires it to be non-null,
+        // but NEW cards serialize as null. Default to 0.0 so reviewCard() never NPEs.
+        builder.stability(obj.optDouble("stability", 0.0))
+        // Same for difficulty: default to 0.0 when null/missing.
+        builder.difficulty(obj.optDouble("difficulty", 0.0))
         if (obj.has("due") && !obj.isNull("due")) builder.due(Instant.ofEpochMilli(obj.getLong("due")))
         if (obj.has("lastReview") && !obj.isNull("lastReview")) {
             builder.lastReview(Instant.ofEpochMilli(obj.getLong("lastReview")))

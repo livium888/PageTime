@@ -40,6 +40,7 @@ fun AiUsageScreen(
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val settings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val level = settings.analysisLevel
+    val lastCallAt = stats.lastCallAt
 
     Scaffold(
         topBar = {
@@ -121,9 +122,9 @@ fun AiUsageScreen(
                 }
             }
 
-            if (stats.lastCallAt != null) {
+            if (lastCallAt != null) {
                 Text(
-                    "Last analysis: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(stats.lastCallAt))}",
+                    "Last analysis: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(lastCallAt))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

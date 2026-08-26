@@ -7,6 +7,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.ConceptMap
 import com.pagetime.app.data.ConceptMapRepository
 import com.pagetime.app.data.local.BookEntity
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -33,6 +34,8 @@ class ConceptMapViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
 
+    private var mapJob: Job? = null
+
     init {
         viewModelScope.launch {
             container.libraryRepository.observeBooks().collect { books ->
@@ -43,8 +46,12 @@ class ConceptMapViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectBook(bookId: String) {
+        if (_selectedBookId.value == bookId) return
         _selectedBookId.value = bookId
-        viewModelScope.launch {
+        _selectedConceptId.value = null
+        _map.value = ConceptMap(emptyList(), emptyList())
+        mapJob?.cancel()
+        mapJob = viewModelScope.launch {
             repository.observeBookMap(bookId).collect { _map.value = it }
         }
     }

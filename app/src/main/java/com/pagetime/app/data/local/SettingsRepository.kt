@@ -27,15 +27,25 @@ data class Settings(
 data class ReaderSettings(
     val fontSizeSp: Float = 18f,
     val lineHeight: Float = 1.5f,
-    /** "serif", "sans", or "mono" */
+    /** "serif", "sans", "literata", or "mono" */
     val fontFamily: String = "serif",
     /** "light", "sepia", "dark", or "night" */
     val theme: String = "light",
     val marginDp: Float = 20f,
-    /** "justify" or "left" — how plain-text pages align their body copy. */
+    /** "justify" or "left" — how both plain-text and EPUB pages align body copy. */
     val alignment: String = "justify",
     /** 0.15..1.0 overrides the window brightness; null means use the system setting. */
     val brightness: Float? = null
+)
+
+private fun ReaderSettings.normalized(): ReaderSettings = copy(
+    fontSizeSp = fontSizeSp.coerceIn(12f, 32f),
+    lineHeight = lineHeight.coerceIn(1.0f, 2.2f),
+    fontFamily = fontFamily.takeIf { it in setOf("serif", "sans", "literata", "mono") } ?: "serif",
+    theme = theme.takeIf { it in setOf("light", "sepia", "dark", "night") } ?: "light",
+    marginDp = marginDp.coerceIn(8f, 48f),
+    alignment = if (alignment == "justify") "justify" else "left",
+    brightness = brightness?.coerceIn(0.15f, 1f)
 )
 
 data class PendingReaderSource(val locatorJson: String?, val fraction: Float?)
@@ -255,8 +265,8 @@ class SettingsRepository(private val context: Context) {
             theme = p[Keys.THEME] ?: "light",
             marginDp = p[Keys.MARGIN] ?: 20f,
             alignment = p[Keys.ALIGNMENT] ?: "justify",
-            brightness = p[Keys.BRIGHTNESS]?.coerceIn(0.15f, 1f)
-        )
+            brightness = p[Keys.BRIGHTNESS]
+        ).normalized()
     }
 
     suspend fun browseBalanceSeconds(): Long =
@@ -298,17 +308,18 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setReaderSettings(value: ReaderSettings) {
+        val normalized = value.normalized()
         context.dataStore.edit {
-            it[Keys.FONT_SIZE] = value.fontSizeSp.coerceIn(12f, 32f)
-            it[Keys.LINE_HEIGHT] = value.lineHeight.coerceIn(1.0f, 2.2f)
-            it[Keys.FONT_FAMILY] = value.fontFamily
-            it[Keys.THEME] = value.theme
-            it[Keys.MARGIN] = value.marginDp.coerceIn(8f, 48f)
-            it[Keys.ALIGNMENT] = value.alignment
-            if (value.brightness == null) {
+            it[Keys.FONT_SIZE] = normalized.fontSizeSp
+            it[Keys.LINE_HEIGHT] = normalized.lineHeight
+            it[Keys.FONT_FAMILY] = normalized.fontFamily
+            it[Keys.THEME] = normalized.theme
+            it[Keys.MARGIN] = normalized.marginDp
+            it[Keys.ALIGNMENT] = normalized.alignment
+            if (normalized.brightness == null) {
                 it.remove(Keys.BRIGHTNESS)
             } else {
-                it[Keys.BRIGHTNESS] = value.brightness.coerceIn(0.15f, 1f)
+                it[Keys.BRIGHTNESS] = normalized.brightness!!
             }
         }
     }

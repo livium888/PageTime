@@ -113,10 +113,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _mapMoment = MutableStateFlow<com.pagetime.app.data.local.MapMoment?>(null)
     val mapMoment = _mapMoment.asStateFlow()
 
-    private var lastTextGenerationBucket = -1
-    private var lastTextGenerationAttemptAt = 0L
-    private var epubChapterReadingSeconds = 0L
-    private var lastEpubGenerationChapter = -1
+    private var readingSecondsSinceCheckpoint = 0L
+    private var lastCheckpointProgress = -1f
 
     /** No position writes are allowed until the initial restore has completed. */
     @Volatile
@@ -137,10 +135,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _bookmarkPresent.value = false
         locatorRestoreComplete = false
         txtRestoreComplete = false
-        lastTextGenerationBucket = -1
-        lastTextGenerationAttemptAt = 0L
-        epubChapterReadingSeconds = 0L
-        lastEpubGenerationChapter = -1
+        readingSecondsSinceCheckpoint = 0L
+        lastCheckpointProgress = -1f
         _aiGenerationState.value = AiGenerationState.Idle
         loadBook()
     }
@@ -248,12 +244,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
-                    if (_book.value?.format == "epub") {
-                        epubChapterReadingSeconds++
-                        if (epubChapterReadingSeconds % 5L == 0L) {
-                            maybeGenerateCardsForEpubProgress()
-                        }
-                    }
+                    readingSecondsSinceCheckpoint++
+                    maybeGenerateCardsAtReadingCheckpoint()
                 }
                 _sessionSeconds.value++
                 _guardState.value = guard.state
@@ -291,34 +283,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _guardState.value = guard.state
     }
 
-    /** Generates once per completed bounded plain-text window, without blocking scroll. */
-    fun maybeGenerateCardsForTextProgress(fraction: Float) {
-        val b = _book.value ?: return
-        if (b.format == "epub") return
-        val bucket = (fraction.coerceIn(0f, 0.9999f) * 5f).toInt()
-        val now = SystemClock.elapsedRealtime()
-        if (bucket <= 0 || bucket < lastTextGenerationBucket) return
-        if (bucket == lastTextGenerationBucket && now - lastTextGenerationAttemptAt < AI_RETRY_AFTER_MS) return
-        lastTextGenerationBucket = bucket
-        lastTextGenerationAttemptAt = now
-        generateCardsForChapter(
-            chapterIndex = bucket,
-            locatorJson = null,
-            textFraction = fraction
-        )
-    }
-
-    /** Called when Readium reaches the end of a chapter after the initial restore. */
-    fun onChapterCompleted(
-        chapterIndex: Int,
-        locatorJson: String?,
-        textFraction: Float?
-    ) {
-        if (!locatorRestoreComplete) return
-        epubChapterReadingSeconds = 0L
-        generateCardsForChapter(chapterIndex, locatorJson, textFraction)
-    }
-
     /** Allows the reader to recover immediately from a failed or missed automatic run. */
     fun generateCardsNow() {
         val b = _book.value ?: return
@@ -332,15 +296,31 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         )
     }
 
-    private fun maybeGenerateCardsForEpubProgress() {
-        if (!locatorRestoreComplete || _book.value?.format != "epub") return
-        val chapterIndex = currentChapterIndex() ?: return
-        if (chapterIndex == lastEpubGenerationChapter || epubChapterReadingSeconds < EPUB_GENERATION_AFTER_SECONDS) return
-        lastEpubGenerationChapter = chapterIndex
+    /** Starts a small comprehension checkpoint after roughly three minutes of active reading. */
+    private fun maybeGenerateCardsAtReadingCheckpoint() {
+        val book = _book.value ?: return
+        val progress = _progress.value.coerceIn(0f, 1f)
+        val generating = _aiGenerationState.value is AiGenerationState.Generating
+        if (!ReadingCheckpointPolicy.shouldGenerate(
+                creditedSeconds = readingSecondsSinceCheckpoint,
+                progress = progress,
+                lastCheckpointProgress = lastCheckpointProgress,
+                generationInProgress = generating
+            )
+        ) return
+
+        val chapterIndex = if (book.format == "epub") {
+            currentChapterIndex() ?: return
+        } else {
+            (progress.coerceIn(0f, 0.9999f) * 5f).toInt()
+        }
+        readingSecondsSinceCheckpoint = 0L
+        lastCheckpointProgress = progress
         generateCardsForChapter(
             chapterIndex = chapterIndex,
             locatorJson = latestLocator?.toJSON()?.toString(),
-            textFraction = null
+            textFraction = progress,
+            readingProgress = progress
         )
     }
 
@@ -355,6 +335,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         chapterIndex: Int,
         locatorJson: String?,
         textFraction: Float?,
+        readingProgress: Float? = null,
         force: Boolean = false
     ) {
         val b = _book.value ?: return
@@ -368,6 +349,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     chapterIndex = chapterIndex,
                     locatorJson = locatorJson,
                     textFraction = textFraction,
+                    readingProgress = readingProgress,
                     force = force
                 )
                 _aiGenerationState.value = AiGenerationState.Generated(
@@ -452,7 +434,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         persistenceScope.launch {
             settingsRepository.saveTextOffset(bookId, pageStartOffset)
         }
-        maybeGenerateCardsForTextProgress(fraction)
     }
 
     fun createLearningCard(
@@ -537,16 +518,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 val overall = ((index + fraction) / size).coerceIn(0f, 1f)
                 _progress.value = overall
                 showResumeNotice(overall)
-                // A saved position at a chapter boundary still needs its automatic
-                // card generation, but it must pass through the persisted dedupe
-                // ledger so reopening cannot create duplicate cards.
-                if (fraction >= 0.98f) {
-                    onChapterCompleted(
-                        chapterIndex = index,
-                        locatorJson = locator.toJSON().toString(),
-                        textFraction = overall
-                    )
-                }
             }
         }
     }
@@ -628,11 +599,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         persistenceScope.launch {
             settingsRepository.setReaderBrightness(value)
         }
-    }
-
-    companion object {
-        private const val AI_RETRY_AFTER_MS = 15 * 60 * 1000L
-        private const val EPUB_GENERATION_AFTER_SECONDS = 60L
     }
 
     override fun onCleared() {

@@ -134,6 +134,7 @@ class LearningRepository(
         chapterIndex: Int,
         locatorJson: String?,
         textFraction: Float?,
+        readingProgress: Float? = null,
         force: Boolean = false
     ): AiGenerationResult {
         val book = bookDao.getById(bookId) ?: error("Book not found")
@@ -146,7 +147,7 @@ class LearningRepository(
                     (error.message ?: "unknown error")
             )
         }
-        val key = generationKey(context)
+        val key = generationKey(context, readingProgress)
         val now = System.currentTimeMillis()
         val previous = generationDao.get(bookId, key)
         if (previous != null) {
@@ -228,9 +229,15 @@ class LearningRepository(
         }
     }
 
-    private fun generationKey(context: com.pagetime.app.data.learning.LearningContext): String {
+    private fun generationKey(
+        context: com.pagetime.app.data.learning.LearningContext,
+        readingProgress: Float?
+    ): String {
+        // Round to whole-book percentage so reopening at the same checkpoint is
+        // deduplicated while later reading can produce a new bounded window.
+        val progressKey = readingProgress?.coerceIn(0f, 1f)?.times(100)?.toInt()
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest("${context.bookId}:${context.chapterIndex}:${context.recentText}".toByteArray())
+            .digest("${context.bookId}:${context.chapterIndex}:${progressKey ?: -1}:${context.recentText}".toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }
 

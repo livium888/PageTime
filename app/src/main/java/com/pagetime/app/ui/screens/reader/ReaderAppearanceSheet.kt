@@ -3,6 +3,7 @@ package com.pagetime.app.ui.screens.reader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -165,7 +166,10 @@ fun ReaderAppearanceSheet(
             )
 
             AppearanceSectionLabel("Font")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 FONT_OPTIONS.forEach { (key, label) ->
                     SelectorPill(
                         selected = fontFamily == key,
@@ -179,7 +183,10 @@ fun ReaderAppearanceSheet(
             }
 
             AppearanceSectionLabel("Line spacing")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 LINE_SPACING_OPTIONS.forEach { (label, value) ->
                     SelectorPill(
                         selected = lineHeight == value,
@@ -193,7 +200,10 @@ fun ReaderAppearanceSheet(
             }
 
             AppearanceSectionLabel("Margins")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 MARGIN_OPTIONS.forEach { (label, value) ->
                     SelectorPill(
                         selected = margin == value,

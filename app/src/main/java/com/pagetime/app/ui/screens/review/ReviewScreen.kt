@@ -190,23 +190,8 @@ private fun CardHeader(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text("${card.masteryLabel()} · ${card.reviewCount} reviews", style = MaterialTheme.typography.labelMedium)
-        if (card.generatedByAi) {
-            Text(
-                "Topic: ${card.topic ?: "Important idea"}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.secondary
-            )
-        }
-        card.sourceQuote?.let { quote ->
-            Text(
-                "\"$quote\"",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (card.sourceLocator != null || card.sourceFraction != null) {
-            OutlinedButton(onClick = { }) { Text("Open source passage") }
-        }
+        // Keep topic and source context off the front of the card. Both can reveal
+        // the answer before the reader has attempted recall.
     }
 }
 
@@ -270,6 +255,7 @@ private fun ClozeCardContent(
                     Text("Explanation", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
+                SourceDisclosure(card, onOpenSource)
             }
         }
     }
@@ -369,6 +355,7 @@ private fun McqCardContent(
                     Text("Why", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
+                SourceDisclosure(card, onOpenSource)
             }
         }
     }
@@ -393,6 +380,7 @@ private fun QaCardContent(
                     Text("Why", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
+                SourceDisclosure(card, onOpenSource)
             } else {
                 Button(onClick = onReveal, modifier = Modifier.fillMaxWidth()) { Text("Reveal answer") }
             }
@@ -401,6 +389,42 @@ private fun QaCardContent(
 }
 
 // ─── Shared Components ────────────────────────────────────────────────
+
+@Composable
+private fun SourceDisclosure(card: LearningCardEntity, onOpenSource: () -> Unit) {
+    val hasQuote = !card.sourceQuote.isNullOrBlank()
+    val hasLocation = card.sourceLocator != null || card.sourceFraction != null
+    if (!hasQuote && !hasLocation) return
+
+    var expanded by remember(card.id) { mutableStateOf(false) }
+    TextButton(onClick = { expanded = !expanded }) {
+        Text(if (expanded) "Hide context" else "See where this came from")
+    }
+    if (expanded) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "From this passage",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                card.sourceQuote?.takeIf { it.isNotBlank() }?.let {
+                    Text("\"$it\"", style = MaterialTheme.typography.bodySmall)
+                }
+                if (hasLocation) {
+                    OutlinedButton(onClick = onOpenSource, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open source passage")
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun RatingSection(onRate: (LearningRating) -> Unit) {
@@ -474,7 +498,7 @@ private fun EmptyReview(modifier: Modifier) {
         Spacer(Modifier.padding(4.dp))
         Text("No cards are due yet", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Keep reading for about a minute, then use Reader → Options → Generate cards now. New cards appear here immediately.",
+            "Keep reading for about three minutes; a small comprehension checkpoint will appear automatically. You can also use Reader → Options → Generate cards now.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp)
         )

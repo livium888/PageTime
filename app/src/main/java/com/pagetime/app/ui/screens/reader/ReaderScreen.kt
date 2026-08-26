@@ -108,6 +108,7 @@ import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.navigator.preferences.FontFamily as ReadiumFontFamily
 import org.readium.r2.navigator.preferences.Theme
+import org.readium.r2.navigator.preferences.TextAlign as ReadiumTextAlign
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.InternalReadiumApi
 import org.readium.r2.shared.publication.Link
@@ -193,19 +194,16 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
     var showCardSheet by remember { mutableStateOf(false) }
-    var showChapterPrompt by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
-    var lastPromptedChapter by remember { mutableStateOf<Int?>(null) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
     var controlsVisible by remember { mutableStateOf(true) }
     var textPageLabel by remember { mutableStateOf<String?>(null) }
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
-    var epubRestoreFinished by remember { mutableStateOf(false) }
     var currentChapterHref by remember { mutableStateOf<String?>(null) }
     var sleepDeadline by remember { mutableStateOf<Long?>(null) }
     var txtGoRequest by remember { mutableStateOf<Pair<Float, Long>?>(null) }
@@ -330,19 +328,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                         val size = pub.readingOrder.size
                         if (idx != null && size > 0) {
                             chapterLabel = "${idx + 1} of $size"
-                            if (epubRestoreFinished &&
-                                (locator.locations?.progression?.toFloat() ?: 0f) >= 0.98f &&
-                                lastPromptedChapter != idx
-                            ) {
-                                lastPromptedChapter = idx
-                                controlsVisible = true
-                                showChapterPrompt = true
-                                vm.onChapterCompleted(
-                                    chapterIndex = idx,
-                                    locatorJson = locator.toJSON().toString(),
-                                    textFraction = ((idx + 1f) / size).coerceIn(0f, 1f)
-                                )
-                            }
                         }
                     }
                 },
@@ -350,7 +335,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
                 onNavigatorChanged = { navigator = it },
                 onRestoreComplete = {
                     vm.markEpubRestoreComplete()
-                    epubRestoreFinished = true
                 }
             )
 
@@ -437,16 +421,6 @@ fun ReaderScreen(bookId: String, onBack: () -> Unit, onOpenConcepts: (String) ->
             exit = fadeOut()
         ) {
             Column(horizontalAlignment = Alignment.End) {
-                if (showChapterPrompt) {
-                    ChapterReviewPrompt(
-                        chapterLabel = chapterLabel ?: "this chapter",
-                        onCreateCard = {
-                            showChapterPrompt = false
-                            showCardSheet = true
-                        },
-                        onDismiss = { showChapterPrompt = false }
-                    )
-                }
                 ReaderBottomBar(
                     palette = palette,
                     sessionSeconds = sessionSeconds,
@@ -590,7 +564,13 @@ private fun TextReaderHost(
 ) {
     // Pages re-paginate when typography changes so the same fraction of the book
     // stays in view and the text always fits the screen at the new setting.
-    val pages = remember(content, settings.fontSizeSp, settings.lineHeight, settings.marginDp) {
+    val pages = remember(
+        content,
+        settings.fontSizeSp,
+        settings.lineHeight,
+        settings.fontFamily,
+        settings.marginDp
+    ) {
         TextPageLayout.paginate(content, TextPageLayout.targetCharsFor(settings))
     }
     var lastFraction by remember { mutableStateOf(0f) }
@@ -787,8 +767,8 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
     fontFamily = when (s.fontFamily) {
         "sans" -> ReadiumFontFamily.SANS_SERIF
         "mono" -> ReadiumFontFamily.MONOSPACE
-        // Literata is bundled for the plain-text reader; Readium 3.0.0 exposes
-        // no custom-font hook, so EPUBs fall back to its built-in serif stack.
+        // Readium can only use fonts available to the EPUB WebView. Literata is
+        // bundled for plain-text books, so EPUBs use the matching serif family.
         else -> ReadiumFontFamily.SERIF
     },
     theme = when (s.theme) {
@@ -796,7 +776,13 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
         "sepia" -> Theme.SEPIA
         else -> Theme.LIGHT
     },
+    // publisherStyles must be disabled for user alignment, line spacing, and
+    // margins to take effect in Readium.
     publisherStyles = false,
+    textAlign = when (s.alignment) {
+        "justify" -> ReadiumTextAlign.JUSTIFY
+        else -> ReadiumTextAlign.START
+    },
     scroll = false
 )
 

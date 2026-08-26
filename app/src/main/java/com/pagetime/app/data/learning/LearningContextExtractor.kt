@@ -32,8 +32,8 @@ class LearningContextExtractor(
             .map(String::trim)
             .filter { it.isNotBlank() }
         // Plain-text downloads do not carry reliable chapter metadata. Treat the
-        // book as five stable reading windows so the trigger and extractor agree:
-        // at 20/40/60/80/100%, Gemini sees the current window plus two earlier ones.
+        // book as five stable reading windows so each three-minute checkpoint can
+        // select a bounded current window plus two earlier ones.
         val windowCount = 5
         val activeWindow = chapterIndex.coerceIn(0, windowCount - 1)
         val paragraphsPerWindow = ((paragraphs.size + windowCount - 1) / windowCount).coerceAtLeast(1)

@@ -152,6 +152,8 @@ class GeminiLearningClient(
             .put("required", JSONArray(listOf("topic", "question", "answer", "explanation", "sourceQuote", "confidence", "cardType")))
         val cardsSchema = JSONObject()
             .put("type", "ARRAY")
+            .put("minItems", 2)
+            .put("maxItems", 3)
             .put("items", cardItemSchema)
         val schema = JSONObject()
             .put("type", "OBJECT")
@@ -287,7 +289,7 @@ class GeminiLearningClient(
         val cardsJson = JSONObject(text).optJSONArray("cards") ?: JSONArray()
         val cards = mutableListOf<GeneratedLearningCard>()
         val seenTopics = mutableSetOf<String>()
-        for (i in 0 until cardsJson.length().coerceAtMost(6)) {
+        for (i in 0 until cardsJson.length().coerceAtMost(3)) {
             val item = cardsJson.getJSONObject(i)
             val rawCardType = item.optString("cardType", "qa").trim().lowercase()
             val cardType = when (rawCardType) {
@@ -340,29 +342,35 @@ class GeminiLearningClient(
     private fun buildPrompt(context: LearningContext): String = """
         You create comprehension review cards following Wozniak's 20 rules of knowledge formulation.
         Use ONLY the supplied source text. Do not invent facts, plot events, names, or quotes.
-        Return exactly 6 cards using a MIX of THREE card types:
+        Return 2 or 3 cards using a purposeful MIX of these card types. Never create a card just
+        to fill a quota. Before writing a card, ask: "Would forgetting this damage understanding
+        of the chapter?" If not, omit it.
 
-        1. CLOZE (2 cards): The question IS the sentence from the text with one key word blanked
+        1. CLOZE (prefer 1 card): The question IS the sentence from the text with one key word blanked
            out using {{c1::word}} notation. Minimal interpretation burden. Test whether the reader
            remembers the specific word from the passage.
            Example: question = "The mitochondria are the {{c1::powerhouse}} of the cell."
 
-        2. MCQ (2 cards): A sentence from the text with the key term replaced by "______", followed
+        2. MCQ (at most 1 card): Use this only when the passage contains a genuinely meaningful
+           distinction with plausible, mutually exclusive alternatives. A sentence from the text with
+           the key term replaced by "______", followed
            by 3-4 plausible answer choices. Include 2-3 distractors that are related terms from
            the same passage but wrong. The correct answer must be one of the choices.
            Example: question = "Newton's law of universal gravitation states that every mass attracts every other mass with a force proportional to the product of their masses and inversely proportional to the square of the distance between them. This force is called ______."
            mcqOptions = ["gravity", "inertia", "momentum", "friction"]
 
-        3. QA (2 cards): A direct, unambiguous question about an important concept or relationship
+        3. QA (prefer 1 card): A direct, unambiguous question about an important concept or relationship
            in the passage. The answer should be concise and factual — the reader must recall it
            from memory, not recognize it.
            Example: question = "What did Maria Curie discover?" answer = "She discovered radium and polonium."
 
         For ALL card types:
-        - sourceQuote must be copied EXACTLY from the supplied text (20-500 chars)
-        - question must be self-contained — the reader can answer without seeing the source text
-        - answer must be concise and unambiguous
-        - explanation must briefly explain WHY the answer is correct
+        - Test only central arguments, definitions, mechanisms, cause/effect, principles, or meaningful contrasts.
+        - Reject incidental names, dates, examples, terminology lists, and searchable trivia unless essential.
+        - sourceQuote must be copied EXACTLY from the supplied text (20-500 chars).
+        - question must be self-contained — the reader can answer without seeing the source text.
+        - answer must be concise and unambiguous.
+        - explanation must briefly explain WHY the answer is correct without repeating a full source passage.
 
         Book: ${context.bookTitle}
         Current chapter: ${context.chapterTitle}

@@ -16,12 +16,12 @@ package com.pagetime.app.data.learning
  */
 object LocalRecallCardGenerator {
 
-    fun generate(context: LearningContext, limit: Int = 6): List<GeneratedLearningCard> {
+    fun generate(context: LearningContext, limit: Int = 3): List<GeneratedLearningCard> {
         val normalizedText = context.recentText.replace(Regex("\\s+"), " ").trim()
         val sentences = normalizedText
             .split(Regex("(?<=[.!?])\\s+"))
             .map(String::trim)
-            .filter { it.length in 40..400 && it.split(" ").size >= 8 }
+            .filter { it.length in 40..400 && it.split(" ").size >= 8 && !isLikelyTrivial(it) }
             .ifEmpty {
                 normalizedText
                     .chunked(280)
@@ -29,7 +29,7 @@ object LocalRecallCardGenerator {
                     .filter { it.length >= 40 && it.split(" ").size >= 8 }
             }
             .distinctBy { it.lowercase() }
-            .take(limit.coerceAtLeast(2).coerceAtMost(6))
+            .take(8)
 
         if (sentences.isEmpty()) return emptyList()
 
@@ -39,31 +39,31 @@ object LocalRecallCardGenerator {
             .map { it.trim(',', '.', ';', ':', '!', '?', '"', '\'') }
             .filter { it.length >= 5 && it.all { c -> c.isLetter() } }
             .distinctBy { it.lowercase() }
-            .toMutableList()
+            .toList()
 
+        val requested = limit.coerceIn(2, 3)
         val results = mutableListOf<GeneratedLearningCard>()
-
-        // Strategy 1: Cloze deletions (2 cards)
-        sentences.take(2).forEach { sentence ->
-            results.add(generateCloze(sentence, context.chapterTitle))
+        // Keep checkpoints small: one cloze, one direct recall, and an MCQ only
+        // when the passage contains enough meaningful alternatives.
+        results += generateCloze(sentences[0], context.chapterTitle)
+        if (requested >= 2 && sentences.size >= 2) {
+            results += generateQa(sentences[1], context.chapterTitle)
         }
-
-        // Strategy 2: Multiple choice (2 cards)
-        sentences.drop(2).take(2).forEach { sentence ->
-            results.add(generateMcq(sentence, wordPool, context.chapterTitle))
+        if (requested >= 3 && sentences.size >= 3 && wordPool.size >= 4) {
+            results += generateMcq(sentences[2], wordPool, context.chapterTitle)
         }
+        return results.take(requested)
+    }
 
-        // Strategy 3: Q&A (remaining slots)
-        sentences.drop(4).take((limit - results.size).coerceAtLeast(0)).forEach { sentence ->
-            results.add(generateQa(sentence, context.chapterTitle))
-        }
-
-        // If we have fewer than 2 cards, backfill with more cloze/QA from earlier sentences
-        if (results.size < 2 && sentences.isNotEmpty()) {
-            results.add(generateQa(sentences.first(), context.chapterTitle))
-        }
-
-        return results.take(limit)
+    private fun isLikelyTrivial(sentence: String): Boolean {
+        val lower = sentence.lowercase()
+        val meaningfulSignal = listOf(
+            "because", "therefore", "means", "defined", "important", "principle",
+            "causes", "leads", "depends", "however", "rather", "unlike", "must",
+            " is ", " are ", " was ", " were "
+        ).any { lower.contains(it) }
+        val distinctWords = sentence.split(" ").map { it.lowercase() }.distinct().size
+        return !meaningfulSignal && distinctWords < 10
     }
 
     /**

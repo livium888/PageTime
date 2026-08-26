@@ -199,7 +199,7 @@ private fun AiAnalysisSettingsCard(
                 }
             }
             Text(
-                "${level.label}: ${level.description}. Cards and concept-map analysis each count as one request.",
+                "${level.label}: ${level.description}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary
             )

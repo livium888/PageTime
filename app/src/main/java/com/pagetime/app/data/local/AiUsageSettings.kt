@@ -15,25 +15,25 @@ enum class AiAnalysisLevel(
     LIGHT(
         key = "light",
         label = "Light",
-        description = "About 5 checks per hour",
+        description = "Checks every ~12 min — only the first per chapter uses Gemini",
         intervalSeconds = 12 * 60L
     ),
     BALANCED(
         key = "balanced",
         label = "Balanced",
-        description = "About 10 checks per hour",
+        description = "Checks every ~6 min — only the first per chapter uses Gemini",
         intervalSeconds = 6 * 60L
     ),
     FREQUENT(
         key = "frequent",
         label = "Frequent",
-        description = "About 20 checks per hour",
+        description = "Checks every ~3 min — only the first per chapter uses Gemini",
         intervalSeconds = 3 * 60L
     ),
     INTENSIVE(
         key = "intensive",
         label = "Intensive",
-        description = "About 40 checks per hour",
+        description = "Checks every ~90 s — only the first per chapter uses Gemini",
         intervalSeconds = 90L
     );
 

@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagetime.app.data.learning.GenerationMode
 import java.text.DateFormat
 import java.util.Date
 
@@ -76,9 +77,22 @@ fun AiUsageScreen(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "Automatic analysis is attempted ${level.description.lowercase()}. Each chapter is analyzed once and cached, so Gemini is contacted per chapter — not per checkpoint.",
+                        "${level.description}. Each new chapter is sent to Gemini once; later checkpoints in the same chapter are free.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (settings.generationMode == GenerationMode.GEMINI_FIRST) {
+                        Text(
+                            "AI-assisted: Gemini generates cards and concepts. On-device first uses only local generation.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        Text(
+                            "On-device first: cards and concepts are built locally; Gemini is only used when the local pass is empty.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
 

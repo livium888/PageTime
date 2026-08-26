@@ -79,6 +79,7 @@ class SettingsRepository(private val context: Context) {
         val BALANCE = longPreferencesKey("browse_balance_seconds")
         val RATIO = doublePreferencesKey("ratio")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
+        val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -257,6 +258,12 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
+    val aiSettings: Flow<AiSettings> = context.dataStore.data.map { p ->
+        AiSettings(
+            analysisLevel = AiAnalysisLevel.fromKey(p[Keys.AI_ANALYSIS_LEVEL])
+        )
+    }
+
     val readerSettings: Flow<ReaderSettings> = context.dataStore.data.map { p ->
         ReaderSettings(
             fontSizeSp = p[Keys.FONT_SIZE] ?: 18f,
@@ -293,6 +300,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setRatio(value: Double) {
         context.dataStore.edit { it[Keys.RATIO] = value.coerceIn(0.1, 10.0) }
+    }
+
+    suspend fun setAiAnalysisLevel(level: AiAnalysisLevel) {
+        context.dataStore.edit { it[Keys.AI_ANALYSIS_LEVEL] = level.key }
     }
 
     /** Wall-clock time of the last UsageStats reconciliation sweep, or null on first run. */

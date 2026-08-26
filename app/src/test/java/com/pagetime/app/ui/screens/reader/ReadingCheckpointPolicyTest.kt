@@ -18,6 +18,28 @@ class ReadingCheckpointPolicyTest {
     }
 
     @Test
+    fun `custom intensity controls the checkpoint interval`() {
+        assertFalse(
+            ReadingCheckpointPolicy.shouldGenerate(
+                creditedSeconds = 90,
+                progress = 0.2f,
+                lastCheckpointProgress = -1f,
+                generationInProgress = false,
+                intervalSeconds = 180
+            )
+        )
+        assertTrue(
+            ReadingCheckpointPolicy.shouldGenerate(
+                creditedSeconds = 90,
+                progress = 0.2f,
+                lastCheckpointProgress = -1f,
+                generationInProgress = false,
+                intervalSeconds = 90
+            )
+        )
+    }
+
+    @Test
     fun `requires meaningful new reading after a checkpoint`() {
         assertTrue(
             ReadingCheckpointPolicy.shouldGenerate(

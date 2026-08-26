@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.learning.GeminiModel
+import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
 import com.pagetime.app.ui.SectionHeader
@@ -56,11 +59,13 @@ fun SettingsScreen(
     onManageBlockedApps: () -> Unit,
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
+    onAiUsage: () -> Unit,
     viewModel: SettingsViewModel = viewModel()
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
+    val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
     val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
     val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
@@ -127,6 +132,16 @@ fun SettingsScreen(
             SectionHeader("Comprehension")
             Spacer(Modifier.height(4.dp))
 
+            AiAnalysisSettingsCard(
+                level = aiSettings.analysisLevel,
+                onSelect = viewModel::setAiAnalysisLevel
+            )
+            AppSettingsRow(
+                icon = Icons.Outlined.History,
+                label = "AI usage & statistics",
+                onClick = onAiUsage
+            )
+
             GeminiSettingsCard(
                 keyInput = geminiKeyInput,
                 onKeyInputChange = { geminiKeyInput = it },
@@ -146,6 +161,42 @@ fun SettingsScreen(
                     geminiKeyInput = ""
                 },
                 onRefresh = geminiViewModel::refreshModels
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiAnalysisSettingsCard(
+    level: AiAnalysisLevel,
+    onSelect: (AiAnalysisLevel) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Automatic AI analysis", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "The reader keeps tracking progress locally. Gemini is only called at these checkpoints, and offline cards do not use the API.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AiAnalysisLevel.entries.forEach { option ->
+                    FilterChip(
+                        selected = option == level,
+                        onClick = { onSelect(option) },
+                        label = { Text(option.label) }
+                    )
+                }
+            }
+            Text(
+                "${level.label}: ${level.description}. Cards and concept-map analysis each count as one request.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
             )
         }
     }

@@ -52,7 +52,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
-                AppDatabase.MIGRATION_8_9
+                AppDatabase.MIGRATION_8_9,
+                AppDatabase.MIGRATION_9_10
             )
             .build()
 
@@ -64,8 +65,10 @@ class AppContainer(context: Context) {
     private val learningGenerationDao = database.learningGenerationDao()
     private val conceptDao = database.conceptDao()
     private val conceptRelationshipDao = database.conceptRelationshipDao()
+    private val aiUsageDao = database.aiUsageDao()
 
     val settingsRepository = SettingsRepository(appContext)
+    val aiUsageRepository = AiUsageRepository(aiUsageDao)
     val readiumEngine = ReadiumEngine(appContext)
     val gutenbergApi = GutenbergApi()
     val internetArchiveApi = InternetArchiveApi()
@@ -102,7 +105,8 @@ class AppContainer(context: Context) {
         bookDao = bookDao,
         settingsRepository = settingsRepository,
         geminiClient = geminiLearningClient,
-        contextExtractor = learningContextExtractor
+        contextExtractor = learningContextExtractor,
+        aiUsageRepository = aiUsageRepository
     )
 
     val conceptMapRepository = ConceptMapRepository(
@@ -112,7 +116,8 @@ class AppContainer(context: Context) {
         bookDao = bookDao,
         contextExtractor = learningContextExtractor,
         geminiClient = geminiLearningClient,
-        settingsRepository = settingsRepository
+        settingsRepository = settingsRepository,
+        aiUsageRepository = aiUsageRepository
     )
 
     private val powerManager =

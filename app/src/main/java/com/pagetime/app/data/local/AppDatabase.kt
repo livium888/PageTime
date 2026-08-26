@@ -14,9 +14,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LearningReviewLogEntity::class,
         LearningGenerationEntity::class,
         ConceptEntity::class,
-        ConceptRelationshipEntity::class
+        ConceptRelationshipEntity::class,
+        AiUsageEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun learningGenerationDao(): LearningGenerationDao
     abstract fun conceptDao(): ConceptDao
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao
+    abstract fun aiUsageDao(): AiUsageDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -94,6 +96,14 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE learning_cards ADD COLUMN cardType TEXT NOT NULL DEFAULT 'qa'")
                 db.execSQL("ALTER TABLE learning_cards ADD COLUMN mcqOptions TEXT")
+            }
+        }
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS ai_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, bookId TEXT NOT NULL, operation TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, inputCharacters INTEGER NOT NULL, outputItems INTEGER NOT NULL DEFAULT 0, secondaryItems INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, completedAt INTEGER)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_usage_events_createdAt ON ai_usage_events(createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_usage_events_bookId ON ai_usage_events(bookId)")
             }
         }
     }

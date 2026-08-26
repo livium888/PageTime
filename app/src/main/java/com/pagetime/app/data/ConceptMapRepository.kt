@@ -26,7 +26,8 @@ class ConceptMapRepository(
     private val bookDao: BookDao,
     private val contextExtractor: LearningContextExtractor,
     private val geminiClient: GeminiLearningClient,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val aiUsageRepository: AiUsageRepository? = null
 ) {
     fun observeBookMap(bookId: String): Flow<ConceptMap> = combine(
         conceptDao.observeForBook(bookId),
@@ -42,7 +43,18 @@ class ConceptMapRepository(
         val existing = conceptDao.getForBook(bookId)
         val generated = if (geminiClient.isConfigured) {
             try {
-                geminiClient.generateConceptMap(context, existing.map { it.label })
+                val run = suspend {
+                    geminiClient.generateConceptMap(context, existing.map { it.label })
+                }
+                aiUsageRepository?.track(
+                    bookId = context.bookId,
+                    operation = AiUsageRepository.OPERATION_CONCEPTS,
+                    model = geminiClient.currentModel(),
+                    inputCharacters = context.recentText.length,
+                    outputItems = { it.concepts.size },
+                    secondaryItems = { it.relationships.size },
+                    block = run
+                ) ?: run()
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 LocalConceptMapGenerator.generate(context)

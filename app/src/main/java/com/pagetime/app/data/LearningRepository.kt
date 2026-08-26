@@ -68,6 +68,7 @@ class LearningRepository(
     private val settingsRepository: SettingsRepository,
     private val geminiClient: GeminiLearningClient,
     private val contextExtractor: LearningContextExtractor,
+    private val aiUsageRepository: AiUsageRepository? = null,
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
@@ -180,7 +181,17 @@ class LearningRepository(
                 // Gemini cards are richer, but a transient API failure or empty
                 // response must not leave the reader with no learning loop.
                 try {
-                    geminiClient.generate(context).cards
+                    val run = suspend {
+                        geminiClient.generate(context)
+                    }
+                    (aiUsageRepository?.track(
+                        bookId = context.bookId,
+                        operation = AiUsageRepository.OPERATION_CARDS,
+                        model = geminiClient.currentModel(),
+                        inputCharacters = context.recentText.length,
+                        outputItems = { it.cards.size },
+                        block = run
+                    ) ?: run()).cards
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
                     null

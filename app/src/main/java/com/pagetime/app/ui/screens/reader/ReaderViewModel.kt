@@ -90,6 +90,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
 
+    val aiSettings = settingsRepository.aiSettings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
+
     val balanceSeconds = balanceManager.browseBalanceSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
@@ -305,7 +308,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 creditedSeconds = readingSecondsSinceCheckpoint,
                 progress = progress,
                 lastCheckpointProgress = lastCheckpointProgress,
-                generationInProgress = generating
+                generationInProgress = generating,
+                intervalSeconds = aiSettings.value.analysisLevel.intervalSeconds
             )
         ) return
 

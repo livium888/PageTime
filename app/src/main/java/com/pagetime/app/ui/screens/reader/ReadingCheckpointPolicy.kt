@@ -9,9 +9,10 @@ object ReadingCheckpointPolicy {
         creditedSeconds: Long,
         progress: Float,
         lastCheckpointProgress: Float,
-        generationInProgress: Boolean
+        generationInProgress: Boolean,
+        intervalSeconds: Long = DEFAULT_INTERVAL_SECONDS
     ): Boolean {
-        if (generationInProgress || creditedSeconds < DEFAULT_INTERVAL_SECONDS) return false
+        if (generationInProgress || creditedSeconds < intervalSeconds.coerceAtLeast(1L)) return false
         if (progress <= 0f) return false
         return lastCheckpointProgress < 0f || progress - lastCheckpointProgress >= MIN_PROGRESS_DELTA
     }

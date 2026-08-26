@@ -21,7 +21,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val ratio = container.balanceManager.ratio
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1.0)
 
+    val aiSettings = container.settingsRepository.aiSettings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
+
     fun setRatio(value: Double) {
         viewModelScope.launch { container.balanceManager.setRatio(value) }
+    }
+
+    fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {
+        viewModelScope.launch { container.settingsRepository.setAiAnalysisLevel(level) }
     }
 }

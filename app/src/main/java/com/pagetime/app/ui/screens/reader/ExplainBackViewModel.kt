@@ -43,6 +43,11 @@ class ExplainBackViewModel(
     private val _awaitingRestatement = MutableStateFlow(false)
     val awaitingRestatement: StateFlow<Boolean> = _awaitingRestatement.asStateFlow()
 
+    private val _requestsUsed = MutableStateFlow(0)
+    val requestsUsed: StateFlow<Int> = _requestsUsed.asStateFlow()
+
+    private var evaluationsForConcept = 0
+
     private val _explanationHistory = MutableStateFlow<List<ExplanationEntity>>(emptyList())
     val explanationHistory: StateFlow<List<ExplanationEntity>> = _explanationHistory.asStateFlow()
 
@@ -65,7 +70,7 @@ class ExplainBackViewModel(
     }
 
     fun submitExplanation(text: String) {
-        if (text.isBlank() || _isLoading.value) return
+        if (text.isBlank() || _isLoading.value || evaluationsForConcept >= MAX_EVALUATIONS_PER_CONCEPT) return
         val concept = currentConcept
         if (concept.isBlank()) return
 
@@ -87,6 +92,8 @@ class ExplainBackViewModel(
                     userExplanation = text,
                     sourceText = context.recentText
                 )
+                evaluationsForConcept += 1
+                _requestsUsed.value += 1
                 val feedbackText = buildString {
                     append("Accuracy: ${evaluation.accuracy}/5 · Completeness: ${evaluation.completeness}/5 · Clarity: ${evaluation.clarity}/5")
                     append("\n\n${evaluation.whatTheyGotRight}")
@@ -134,13 +141,19 @@ class ExplainBackViewModel(
             _isFinished.value = true
         } else {
             _currentConceptIndex.value = nextIndex
+            evaluationsForConcept = 0
             _messages.value = emptyList()
         }
     }
 
     fun revise() {
+        if (evaluationsForConcept >= MAX_EVALUATIONS_PER_CONCEPT) return
         _awaitingRestatement.value = false
         _messages.value = _messages.value.filterNot { it.isAi }.takeLast(1)
+    }
+
+    companion object {
+        private const val MAX_EVALUATIONS_PER_CONCEPT = 2
     }
 }
 

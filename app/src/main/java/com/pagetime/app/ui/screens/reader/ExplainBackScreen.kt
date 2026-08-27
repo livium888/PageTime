@@ -58,6 +58,7 @@ fun ExplainBackScreen(
     messages: List<ChatMessage>,
     isLoading: Boolean,
     awaitingRestatement: Boolean = false,
+    requestsUsed: Int = 0,
     canRevise: Boolean,
     onSendExplanation: (String) -> Unit,
     onRevise: () -> Unit,
@@ -207,6 +208,13 @@ fun ExplainBackScreen(
                     }
                 }
             }
+
+            Text(
+                "Gemini checks this concept at most twice · $requestsUsed request${if (requestsUsed == 1) "" else "s"} used",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
 
             if (history.isNotEmpty()) {
                 Text(

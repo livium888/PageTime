@@ -67,12 +67,23 @@ data class MapMoment(
 class SettingsRepository(private val context: Context) {
 
     private val securePreferences by lazy {
+        runCatching { createSecurePreferences() }
+            .getOrElse {
+                // Android can invalidate the keystore after restore or a security
+                // update. Recover only the encrypted AI-preferences file; never
+                // touch Room, books, progress, or learning history.
+                context.deleteSharedPreferences(SECURE_PREFERENCES_NAME)
+                createSecurePreferences()
+            }
+    }
+
+    private fun createSecurePreferences(): android.content.SharedPreferences {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-        EncryptedSharedPreferences.create(
+        return EncryptedSharedPreferences.create(
             context,
-            "secure_settings",
+            SECURE_PREFERENCES_NAME,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
@@ -108,6 +119,10 @@ class SettingsRepository(private val context: Context) {
         val MAP_MOMENT_FEATURED_CONCEPT = stringPreferencesKey("map_moment_featured_concept")
         val MAP_MOMENT_FEATURED_RELATIONSHIP = stringPreferencesKey("map_moment_featured_relationship")
         val MAP_MOMENT_CREATED_AT = longPreferencesKey("map_moment_created_at")
+    }
+
+    private companion object {
+        const val SECURE_PREFERENCES_NAME = "secure_settings"
     }
 
     private object SecureKeys {

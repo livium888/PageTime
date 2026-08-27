@@ -18,15 +18,16 @@ sealed interface GeminiSettingsStatus {
 }
 
 class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
-    private val client: GeminiLearningClient = (app as PageTimeApp).container.geminiLearningClient
+    private val client: GeminiLearningClient? =
+        (app as? PageTimeApp)?.container?.geminiLearningClient
 
     private val _models = MutableStateFlow<List<GeminiModel>>(emptyList())
     val models = _models.asStateFlow()
 
-    private val _selectedModel = MutableStateFlow(client.currentModel())
+    private val _selectedModel = MutableStateFlow(client?.currentModel().orEmpty())
     val selectedModel = _selectedModel.asStateFlow()
 
-    private val _hasUserKey = MutableStateFlow(client.hasUserKey())
+    private val _hasUserKey = MutableStateFlow(false)
     val hasUserKey = _hasUserKey.asStateFlow()
 
     private val _status = MutableStateFlow<GeminiSettingsStatus>(GeminiSettingsStatus.Idle)
@@ -38,33 +39,61 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
             _status.value = GeminiSettingsStatus.Error("Enter a Gemini API key first")
             return
         }
-        client.saveUserApiKey(key)
+        val activeClient = client ?: run {
+            _status.value = GeminiSettingsStatus.Error("AI settings are unavailable right now")
+            return
+        }
+        runCatching { activeClient.saveUserApiKey(key) }
+            .onFailure { error ->
+                _status.value = GeminiSettingsStatus.Error(
+                    error.message ?: "Could not securely save the API key"
+                )
+                return
+            }
         _hasUserKey.value = true
         refreshModels()
     }
 
     fun clearKey() {
-        client.clearUserApiKey()
+        val activeClient = client ?: return
+        runCatching { activeClient.clearUserApiKey() }
+            .onFailure { error ->
+                _status.value = GeminiSettingsStatus.Error(
+                    error.message ?: "Could not clear the saved API key"
+                )
+                return
+            }
         _hasUserKey.value = false
         _models.value = emptyList()
-        _selectedModel.value = client.currentModel()
+        _selectedModel.value = activeClient.currentModel()
         _status.value = GeminiSettingsStatus.Ready("User key removed")
     }
 
     fun selectModel(model: GeminiModel) {
-        client.setModel(model.id)
+        val activeClient = client ?: return
+        runCatching { activeClient.setModel(model.id) }
+            .onFailure { error ->
+                _status.value = GeminiSettingsStatus.Error(
+                    error.message ?: "Could not save the model"
+                )
+                return
+            }
         _selectedModel.value = model.id
         _status.value = GeminiSettingsStatus.Ready("Using ${model.displayName}")
     }
 
     fun refreshModels() {
-        if (!client.isConfigured) {
+        val activeClient = client ?: run {
+            _status.value = GeminiSettingsStatus.Error("AI settings are unavailable right now")
+            return
+        }
+        if (!activeClient.isConfigured) {
             _status.value = GeminiSettingsStatus.Error("Add a Gemini API key to load models")
             return
         }
         viewModelScope.launch {
             _status.value = GeminiSettingsStatus.Loading
-            runCatching { client.testConnection() }
+            runCatching { activeClient.testConnection() }
                 .onSuccess { result ->
                     _models.value = result.models
                     _selectedModel.value = result.selectedModel

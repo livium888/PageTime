@@ -1,19 +1,21 @@
 # PageTime
 
 Read to unlock. PageTime lets you download free books from **Standard Ebooks**,
-**Project Gutenberg**, and **Open Library**, read them in-app, and bank "browse minutes"
-that you can spend in apps you'd otherwise waste time in (Chrome, Instagram,
-Facebook, …). While your balance is empty, opening a blocked app bounces you
-straight back to the reader.
+**Project Gutenberg**, **Open Library**, and **YouTube transcripts**, read them
+in-app, and bank "browse minutes" that you can spend in apps you'd otherwise
+waste time in (Chrome, Instagram, Facebook, …). While your balance is empty,
+opening a blocked app bounces you straight back to the reader.
 
 This is a native **Kotlin + Jetpack Compose** Android app.
 
 ## How it works
 
-1. **Discover, download, or import** — search three free ebook sources (Standard
-   Ebooks, Gutenberg via Gutendex, and Open Library + Internet Archive), or use
-   **Library → +** to import an EPUB or plain-text file from your phone. Imported
-   files are copied into PageTime's private storage and remain available offline.
+1. **Discover, download, or import** — search four free ebook sources (Standard
+   Ebooks, Gutenberg via Gutendex, Open Library + Internet Archive, and YouTube
+   transcripts), or use **Library → +** to import an EPUB or plain-text file from
+   your phone. YouTube transcripts are fetched directly in-app from any video URL
+   or share — no API key needed. Imported files are copied into PageTime's
+   private storage and remain available offline.
 2. **Read** — an immersive in-app reader powered by Readium for EPUB pagination
    and exact locators. Plain-text books use stable, swipeable pages with saved
    positions and book-style typography. Reader settings include serif/sans/mono fonts,
@@ -87,6 +89,7 @@ app/src/main/java/com/pagetime/app/
 │   ├── gutenberg/                       # Gutendex client + models
 │   ├── standardebooks/                 # Standard Ebooks Atom feed client
 │   ├── openlibrary/                    # Open Library + Internet Archive client
+│   ├── youtube/                         # YouTube transcript fetcher + search API
 │   ├── download/                        # file downloader
 │   ├── library/                         # EPUB parser/extractor
 │   └── AppContainer.kt, *Repository.kt  # manual DI + repositories

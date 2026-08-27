@@ -56,6 +56,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pagetime.app.data.gutenberg.GutendexBook
+import com.pagetime.app.data.youtube.YouTubeSearchApi
+import androidx.compose.foundation.layout.height
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +71,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val error by viewModel.error.collectAsStateWithLifecycle()
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
+    val youtubeResults by viewModel.youtubeResults.collectAsStateWithLifecycle()
     val searchingAll by viewModel.searchingAll.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
@@ -121,6 +124,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                                 BookSource.OPEN_LIBRARY -> "Open Library…"
                                 BookSource.STANDARD_EBOOKS -> "Standard Ebooks…"
                                 BookSource.INTERNET_ARCHIVE -> "Internet Archive…"
+                                BookSource.YOUTUBE -> "Search YouTube videos…"
                             }
                         )
                     },
@@ -131,7 +135,10 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
                 )
                 OutlinedButton(
-                    onClick = viewModel::searchAllSources,
+                    onClick = {
+                        if (source == BookSource.YOUTUBE) viewModel.searchYouTube()
+                        else viewModel.searchAllSources()
+                    },
                     enabled = query.isNotBlank() && !loading && !searchingAll,
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                     border = androidx.compose.foundation.BorderStroke(
@@ -168,6 +175,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                                     BookSource.OPEN_LIBRARY -> "Open Library"
                                     BookSource.STANDARD_EBOOKS -> "Standard Ebooks"
                                     BookSource.INTERNET_ARCHIVE -> "Internet Archive"
+                                    BookSource.YOUTUBE -> "YouTube"
                                 }
                             )
                         },
@@ -184,7 +192,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     CircularProgressIndicator()
                 }
 
-                error != null && books.isEmpty() -> Box(
+                error != null && (books.isEmpty() && youtubeResults.isEmpty()) -> Box(
                     Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
@@ -195,22 +203,10 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                             modifier = Modifier.padding(24.dp),
                             textAlign = TextAlign.Center
                         )
-                        TextButton(onClick = viewModel::retry) { Text("Retry") }
-                    }
-                }
-
-                error != null && books.isEmpty() -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            error ?: "No results",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(24.dp),
-                            textAlign = TextAlign.Center
-                        )
-                        TextButton(onClick = viewModel::retry) { Text("Try again") }
+                        TextButton(onClick = {
+                            if (source == BookSource.YOUTUBE) viewModel.searchYouTube()
+                            else viewModel.retry()
+                        }) { Text("Retry") }
                     }
                 }
 
@@ -220,13 +216,22 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(books, key = { it.id }) { book ->
-                        BookRow(
-                            book = book,
-                            downloaded = book.id.toString() in downloadedIds,
-                            downloading = book.id.toString() in downloading,
-                            onDownload = { viewModel.download(book) }
-                        )
+                    if (source == BookSource.YOUTUBE) {
+                        items(youtubeResults, key = { it.videoId }) { video ->
+                            YouTubeVideoRow(
+                                video = video,
+                                onImport = { viewModel.importYouTubeVideo(video.videoId) }
+                            )
+                        }
+                    } else {
+                        items(books, key = { it.id }) { book ->
+                            BookRow(
+                                book = book,
+                                downloaded = book.id.toString() in downloadedIds,
+                                downloading = book.id.toString() in downloading,
+                                onDownload = { viewModel.download(book) }
+                            )
+                        }
                     }
                     if (loadingMore) {
                         item {
@@ -344,6 +349,68 @@ private fun BookRow(
                     Spacer(Modifier.width(6.dp))
                     Text("Get", style = MaterialTheme.typography.labelLarge)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouTubeVideoRow(
+    video: YouTubeSearchApi.SearchResult,
+    onImport: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AsyncImage(
+                model = video.thumbnailUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .height(90.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    video.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    video.channelName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (video.duration.isNotBlank()) {
+                    Text(
+                        video.duration,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Button(
+                onClick = onImport,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
+            ) {
+                Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Read", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.gutenberg.GutendexBook
+import com.pagetime.app.data.youtube.YouTubeSearchApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -22,7 +23,8 @@ enum class BookSource {
     STANDARD_EBOOKS,
     GUTENBERG,
     OPEN_LIBRARY,
-    INTERNET_ARCHIVE
+    INTERNET_ARCHIVE,
+    YOUTUBE
 }
 
 class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
@@ -58,6 +60,11 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _downloading = MutableStateFlow<Set<String>>(emptySet())
     val downloading = _downloading.asStateFlow()
+
+    private val youtubeApi = container.youtubeSearchApi
+
+    private val _youtubeResults = MutableStateFlow<List<YouTubeSearchApi.SearchResult>>(emptyList())
+    val youtubeResults = _youtubeResults.asStateFlow()
 
     val downloadedIds = repo.observeBooks()
         .map { books -> books.map { it.id }.toSet() }
@@ -106,6 +113,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         if (value == _source.value) return
         _source.value = value
         _books.value = emptyList()
+        _youtubeResults.value = emptyList()
         reload()
     }
 
@@ -116,9 +124,12 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             delay(400)
             if (value.isBlank()) {
                 _books.value = emptyList()
+                _youtubeResults.value = emptyList()
                 _hasMore.value = false
                 nextPage = null
-                _error.value = "Enter a title or author to search"
+                _error.value = "Enter a search query"
+            } else if (_source.value == BookSource.YOUTUBE) {
+                searchYouTube()
             } else {
                 reload()
             }
@@ -136,6 +147,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun load(reset: Boolean) {
         loadJob?.cancel()
+        // YouTube uses its own search path (searchYouTube) — skip book loading.
+        if (_source.value == BookSource.YOUTUBE) return
         loadJob = viewModelScope.launch {
             val page = if (reset) 1 else (nextPage ?: return@launch)
             if (reset) {
@@ -163,6 +176,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                             if (q.isBlank()) error("Search Internet Archive by title or author")
                             else repo.searchInternetArchive(q, page)
                         }
+                        BookSource.YOUTUBE -> error("unreachable")
                     }
                 }
                     .onSuccess { result ->
@@ -182,6 +196,42 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                 _loading.value = false
                 _loadingMore.value = false
             }
+        }
+    }
+
+    /** Search YouTube for videos matching the current query. */
+    fun searchYouTube() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            val q = _query.value.trim()
+            if (q.isBlank()) return@launch
+            _loading.value = true
+            _error.value = null
+            try {
+                val (results, _) = youtubeApi.search(q)
+                _youtubeResults.value = results
+                _books.value = emptyList()
+                _hasMore.value = false
+                nextPage = null
+                if (results.isEmpty()) {
+                    _error.value = "No YouTube videos found for this query"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = e.message ?: "YouTube search failed"
+            } finally {
+                _loading.value = false
+            }
+        }
+    }
+
+    /** Import a YouTube video transcript as a readable book. */
+    fun importYouTubeVideo(videoId: String) {
+        viewModelScope.launch {
+            val url = "https://www.youtube.com/watch?v=$videoId"
+            repo.importYouTubeTranscript(url)
+                .onFailure { _error.value = it.message ?: "Could not fetch transcript" }
         }
     }
 

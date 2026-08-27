@@ -46,11 +46,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.MapMoment
+import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import com.pagetime.app.ui.AppPrimaryButton
 import com.pagetime.app.ui.Spacing
 import com.pagetime.app.ui.formatMinutes
@@ -77,6 +83,7 @@ fun LibraryScreen(
     val importing by viewModel.importing.collectAsStateWithLifecycle()
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    var showYouTubeDialog by remember { mutableStateOf(false) }
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -85,6 +92,9 @@ fun LibraryScreen(
     }
     val launchImport = {
         filePicker.launch(IMPORT_MIME_TYPES)
+    }
+    val launchYouTubeImport = {
+        showYouTubeDialog = true
     }
 
     LaunchedEffect(importError) {
@@ -217,6 +227,15 @@ fun LibraryScreen(
                         onClick = launchImport
                     )
                 }
+                item {
+                    AppPrimaryButton(
+                        text = if (importing) "Importing…" else "Import YouTube transcript",
+                        icon = Icons.Filled.Add,
+                        enabled = !importing,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = launchYouTubeImport
+                    )
+                }
                 if (lastMapMoment != null) {
                     item {
                         books.firstOrNull { it.id == lastMapMoment?.bookId }?.let { book ->
@@ -237,6 +256,16 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    if (showYouTubeDialog) {
+        YouTubeImportDialog(
+            onImport = { url ->
+                showYouTubeDialog = false
+                viewModel.importYouTubeUrl(url) { imported -> onOpenBook(imported.id) }
+            },
+            onDismiss = { showYouTubeDialog = false }
+        )
     }
 }
 
@@ -362,4 +391,49 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit)
             }
         }
     }
+}
+
+@Composable
+private fun YouTubeImportDialog(
+    onImport: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var url by remember { mutableStateOf("") }
+    val fetcher = remember { YouTubeTranscriptFetcher() }
+    val isValidUrl = remember(url) { fetcher.isYouTubeUrl(url) && fetcher.extractVideoId(url) != null }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import YouTube transcript") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Paste a YouTube video URL to import its transcript as a readable book.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("YouTube URL") },
+                    placeholder = { Text("https://youtube.com/watch?v=...") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = { onImport(url) },
+                enabled = isValidUrl
+            ) {
+                Text("Import")
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

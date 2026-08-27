@@ -74,6 +74,12 @@
                 <data android:mimeType="text/*" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
+            <!-- Receive a YouTube URL shared as plain text (YouTube share → PageTime). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <service

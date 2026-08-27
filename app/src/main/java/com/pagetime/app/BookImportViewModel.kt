@@ -31,6 +31,7 @@ class BookImportViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<State> = _state.asStateFlow()
 
     private var lastHandledUri: Uri? = null
+    private var lastHandledUrl: String? = null
 
     /** Starts importing [uri] unless this exact delivery was already handled. */
     fun onIncomingUri(uri: Uri) {
@@ -42,6 +43,20 @@ class BookImportViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess { _state.value = State.Done(it) }
                 .onFailure { error ->
                     _state.value = State.Failed(error.message ?: "Could not import this book")
+                }
+        }
+    }
+
+    /** Imports a YouTube video transcript from a URL. */
+    fun onYouTubeUrl(url: String) {
+        if (_state.value is State.Importing || url == lastHandledUrl) return
+        lastHandledUrl = url
+        _state.value = State.Importing
+        viewModelScope.launch {
+            container.libraryRepository.importYouTubeTranscript(url)
+                .onSuccess { _state.value = State.Done(it) }
+                .onFailure { error ->
+                    _state.value = State.Failed(error.message ?: "Could not fetch transcript")
                 }
         }
     }

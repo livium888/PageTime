@@ -57,4 +57,18 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     fun clearImportError() {
         _importError.value = null
     }
+
+    fun importYouTubeUrl(url: String, onImported: (BookEntity) -> Unit) {
+        if (_importing.value) return
+        viewModelScope.launch {
+            _importing.value = true
+            _importError.value = null
+            container.libraryRepository.importYouTubeTranscript(url)
+                .onSuccess(onImported)
+                .onFailure { error ->
+                    _importError.value = error.message ?: "Could not fetch YouTube transcript"
+                }
+            _importing.value = false
+        }
+    }
 }

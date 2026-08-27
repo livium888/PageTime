@@ -12,6 +12,7 @@ import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.youtube.YouTubeSearchApi
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.usage.ForegroundParser
@@ -78,6 +79,7 @@ class AppContainer(context: Context) {
     val openLibraryApi = OpenLibraryApi()
     val standardEbooksApi = StandardEbooksApi()
     val epubParser = EpubParser()
+    val youtubeSearchApi = YouTubeSearchApi()
 
     val libraryRepository = LibraryRepository(
         bookDao = bookDao,

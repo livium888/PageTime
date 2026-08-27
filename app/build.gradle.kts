@@ -129,6 +129,9 @@ dependencies {
     implementation(libs.readium.navigator)
     implementation(libs.androidx.fragment.ktx)
 
+    // YouTube transcript fetching (uses YouTube's public caption endpoint).
+    implementation("io.github.thoroldvix:youtube-transcript-api:0.4.0")
+
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     debugImplementation(libs.androidx.ui.tooling)

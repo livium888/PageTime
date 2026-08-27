@@ -14,6 +14,7 @@ import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -209,4 +210,31 @@ class LibraryRepository(
 
     suspend fun addReadingSeconds(id: String, seconds: Long) =
         bookDao.addReadingSeconds(id, seconds)
+
+    /**
+     * Imports a YouTube video transcript as a plain-text book.
+     * The transcript text is saved locally so it works offline.
+     */
+    suspend fun importYouTubeTranscript(url: String): Result<BookEntity> = withContext(Dispatchers.IO) {
+        runCatching {
+            val fetcher = YouTubeTranscriptFetcher()
+            val videoId = fetcher.extractVideoId(url)
+                ?: error("Could not find a YouTube video ID in this URL")
+            val result = fetcher.fetchTranscript(videoId)
+                ?: error("No transcript available for this video. It may not have subtitles.")
+            val id = "yt-${UUID.randomUUID()}"
+            val booksDir = File(context.filesDir, "books").apply { mkdirs() }
+            val destination = File(booksDir, "$id.txt")
+            destination.writeText(result.text)
+            BookEntity(
+                id = id,
+                title = result.title,
+                author = result.author,
+                format = "txt",
+                localPath = destination.absolutePath,
+                coverUrl = null,
+                addedAt = System.currentTimeMillis()
+            ).also { bookDao.upsert(it) }
+        }
+    }
 }

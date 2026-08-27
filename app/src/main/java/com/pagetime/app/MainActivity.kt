@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.core.content.IntentCompat
 import androidx.fragment.app.FragmentActivity
+import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import com.pagetime.app.ui.PageTimeAppUi
 import com.pagetime.app.ui.theme.PageTimeTheme
 
@@ -78,6 +79,15 @@ class MainActivity : FragmentActivity() {
         }
         if (uri != null) {
             importViewModel.onIncomingUri(uri)
+            return
+        }
+        // YouTube share: ACTION_SEND with EXTRA_TEXT containing a YouTube URL.
+        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+            val fetcher = YouTubeTranscriptFetcher()
+            if (fetcher.isYouTubeUrl(text)) {
+                importViewModel.onYouTubeUrl(text)
+            }
         }
     }
 }

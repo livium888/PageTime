@@ -89,6 +89,8 @@ class ExplainBackRepository(
         return evaluation
     }
 
+    suspend fun deleteExplanation(id: String) = explanationDao.deleteById(id)
+
     suspend fun countMastered(bookId: String): Int = explanationDao.countMastered(bookId)
 
     suspend fun countExplained(bookId: String): Int = explanationDao.countConceptsExplained(bookId)

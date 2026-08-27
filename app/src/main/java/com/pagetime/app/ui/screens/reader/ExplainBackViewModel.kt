@@ -14,16 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/**
- * Drives the Feynman explain-back chat flow.
- *
- * Given a book and chapter, this ViewModel:
- *  1. Loads concepts from the concept map for that chapter
- *  2. Shows the current concept
- *  3. Sends the user's explanation to Gemini for evaluation
- *  4. Stores the result
- *  5. Advances to the next concept
- */
+/** Drives the Feynman explain-back flow and keeps its history available locally. */
 class ExplainBackViewModel(
     application: Application,
     private val bookId: String,
@@ -31,7 +22,6 @@ class ExplainBackViewModel(
     private val bookTitle: String,
     private val chapterTitle: String
 ) : AndroidViewModel(application) {
-
     private val container = (application as PageTimeApp).container
     private val repository: ExplainBackRepository = container.explainBackRepository
 
@@ -63,41 +53,28 @@ class ExplainBackViewModel(
         get() = _concepts.value.size
 
     init {
-        // Load concepts for this chapter from the concept map.
         viewModelScope.launch {
-            try {
+            runCatching {
                 _concepts.value = repository.conceptsForChapter(bookId, chapterIndex)
-            } catch (_: Throwable) {
-                // Concept map may not exist yet — user can still type freely.
-                _concepts.value = emptyList()
             }
-            // Load existing explanations for this book.
             _explanationHistory.value = repository.observeExplanations(bookId).first()
         }
     }
 
     fun submitExplanation(text: String) {
         if (text.isBlank() || _isLoading.value) return
-
         val concept = currentConcept
         if (concept.isBlank()) return
 
-        // Add user message.
-        _messages.value = _messages.value + ChatMessage(
-            text = text,
-            isUser = true
-        )
-
+        _messages.value += ChatMessage(text = text, isUser = true)
         _isLoading.value = true
+        _error.value = null
 
         viewModelScope.launch {
             try {
-                // Get the source text for context.
-                val context = container.learningContextExtractor.extract(
-                    container.libraryRepository.getBookById(bookId)!!,
-                    chapterIndex
-                )
-
+                val book = container.libraryRepository.getBook(bookId)
+                    ?: error("Book is no longer available")
+                val context = container.learningContextExtractor.extract(book, chapterIndex)
                 val evaluation = repository.submitExplanation(
                     bookId = bookId,
                     chapterIndex = chapterIndex,
@@ -107,43 +84,37 @@ class ExplainBackViewModel(
                     userExplanation = text,
                     sourceText = context.recentText
                 )
-
-                // Build the AI feedback message.
                 val feedbackText = buildString {
                     append("Accuracy: ${evaluation.accuracy}/5 · Completeness: ${evaluation.completeness}/5 · Clarity: ${evaluation.clarity}/5")
-                    append("\n\n")
-                    append(evaluation.whatTheyGotRight)
-                    if (evaluation.whatTheyMissed.isNotBlank()) {
-                        append("\n\nWhat you missed: ${evaluation.whatTheyMissed}")
-                    }
-                    if (evaluation.suggestedImprovement.isNotBlank()) {
-                        append("\n\n💡 ${evaluation.suggestedImprovement}")
-                    }
-                    if (evaluation.simplerVersion.isNotBlank()) {
-                        append("\n\n📖 A clearer version:\n${evaluation.simplerVersion}")
-                    }
+                    append("\n\n${evaluation.whatTheyGotRight}")
+                    if (evaluation.whatTheyMissed.isNotBlank()) append("\n\nWhat you missed: ${evaluation.whatTheyMissed}")
+                    if (evaluation.suggestedImprovement.isNotBlank()) append("\n\n💡 ${evaluation.suggestedImprovement}")
+                    if (evaluation.simplerVersion.isNotBlank()) append("\n\n📖 A clearer version:\n${evaluation.simplerVersion}")
                 }
-
-                _messages.value = _messages.value + ChatMessage(
+                _messages.value += ChatMessage(
                     text = feedbackText,
                     isUser = false,
                     isAi = true,
                     score = evaluation.overallScore
                 )
-
-                // Reload history.
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
-
-            } catch (error: Throwable) {
-                _messages.value = _messages.value + ChatMessage(
-                    text = "Sorry, I couldn't evaluate that. ${error.message ?: "Try again."}",
+            } catch (throwable: Throwable) {
+                _error.value = throwable.message
+                _messages.value += ChatMessage(
+                    text = "Sorry, I couldn't evaluate that. ${throwable.message ?: "Try again."}",
                     isUser = false,
                     isAi = true
                 )
-                _error.value = error.message
             } finally {
                 _isLoading.value = false
             }
+        }
+    }
+
+    fun deleteHistory(id: String) {
+        viewModelScope.launch {
+            repository.deleteExplanation(id)
+            _explanationHistory.value = repository.observeExplanations(bookId).first()
         }
     }
 
@@ -151,17 +122,13 @@ class ExplainBackViewModel(
         val nextIndex = _currentConceptIndex.value + 1
         if (nextIndex >= _concepts.value.size) {
             _isFinished.value = true
-            return
+        } else {
+            _currentConceptIndex.value = nextIndex
+            _messages.value = emptyList()
         }
-        _currentConceptIndex.value = nextIndex
-        // Clear messages for the new concept.
-        _messages.value = emptyList()
     }
 
-    fun revise() {
-        // Keep existing messages, just allow new input.
-        // The user types a new explanation for the same concept.
-    }
+    fun revise() = Unit
 }
 
 class ExplainBackViewModelFactory(

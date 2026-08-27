@@ -31,6 +31,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +61,8 @@ fun ExplainBackScreen(
     onSendExplanation: (String) -> Unit,
     onRevise: () -> Unit,
     onNextConcept: () -> Unit,
+    history: List<com.pagetime.app.data.local.ExplanationEntity> = emptyList(),
+    onDeleteHistory: (String) -> Unit = {},
     onBack: () -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -192,6 +195,33 @@ fun ExplainBackScreen(
                                     Text("Thinking...", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            if (history.isNotEmpty()) {
+                Text(
+                    "Previous explanations",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                history.take(3).forEach { explanation ->
+                    Surface(
+                        tonalElevation = 1.dp,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "${explanation.conceptLabel} · ${explanation.overallScore?.let { String.format(\"%.1f\", it) } ?: \"Pending\"}/5",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { onDeleteHistory(explanation.id) }) { Text("Delete") }
+                            }
+                            Text(explanation.userExplanation, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                         }
                     }
                 }

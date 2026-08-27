@@ -1,5 +1,6 @@
 package com.pagetime.app.ui
 
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
@@ -210,6 +211,7 @@ fun PageTimeAppUi(openReader: Boolean) {
                 val messages by vm.messages.collectAsStateWithLifecycle()
                 val isLoading by vm.isLoading.collectAsStateWithLifecycle()
                 val isFinished by vm.isFinished.collectAsStateWithLifecycle()
+                val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
 
                 if (isFinished) {
                     navController.popBackStack()
@@ -224,6 +226,8 @@ fun PageTimeAppUi(openReader: Boolean) {
                         onSendExplanation = vm::submitExplanation,
                         onRevise = vm::revise,
                         onNextConcept = vm::nextConcept,
+                        history = explanationHistory,
+                        onDeleteHistory = vm::deleteHistory,
                         onBack = { navController.popBackStack() }
                     )
                 } else {

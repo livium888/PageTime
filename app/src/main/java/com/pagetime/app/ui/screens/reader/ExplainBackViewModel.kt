@@ -8,11 +8,14 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.ExplainBackRepository
 import com.pagetime.app.data.local.ExplanationEntity
+import com.pagetime.app.data.learning.LearningContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Drives the Feynman explain-back flow and keeps its history available locally. */
 class ExplainBackViewModel(
@@ -81,17 +84,38 @@ class ExplainBackViewModel(
         viewModelScope.launch {
             _conceptsLoading.value = true
             try {
-                val concepts = repository.conceptsForChapter(bookId, chapterIndex)
+                val context = extractLearningContext()
+                val concepts = repository.conceptsForRange(bookId, chapterIndex, context.recentText)
                 _concepts.value = concepts
                 _needsConceptGeneration.value = concepts.isEmpty()
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
+                if (throwable is kotlinx.coroutines.CancellationException) throw throwable
                 _error.value = throwable.message ?: "Could not load learning concepts"
             } finally {
                 _conceptsLoading.value = false
             }
         }
     }
+
+    /**
+     * Bounded learning window: checkpoint → current position, falling back to
+     * the start of the chapter when no checkpoint exists. Extraction touches
+     * book files, so it must leave the main dispatcher.
+     */
+    private suspend fun extractLearningContext(): LearningContext =
+        withContext(Dispatchers.IO) {
+            val book = container.libraryRepository.getBook(bookId)
+                ?: error("Book is no longer available")
+            val checkpoint = container.settingsRepository.learningCheckpoint()
+            container.learningContextExtractor.extract(
+                book = book,
+                chapterIndex = chapterIndex,
+                checkpoint = checkpoint,
+                currentLocatorJson = currentLocatorJson,
+                currentTextOffset = currentTextOffset
+            )
+        }
 
     fun createLearningConcept() {
         if (!_needsConceptGeneration.value || _conceptsLoading.value) return
@@ -100,22 +124,28 @@ class ExplainBackViewModel(
             _needsConceptGeneration.value = false
             _error.value = null
             try {
-                val book = container.libraryRepository.getBook(bookId)
-                    ?: error("Book is no longer available")
-                val checkpoint = container.settingsRepository.learningCheckpoint()
-                val context = container.learningContextExtractor.extract(
-                    book = book,
-                    chapterIndex = chapterIndex,
-                    checkpoint = checkpoint,
-                    currentLocatorJson = currentLocatorJson,
-                    currentTextOffset = currentTextOffset
-                )
+                val context = extractLearningContext()
                 if (context.recentText.length < MIN_GENERATION_CHARACTERS) {
                     error("Read a little more before creating a learning concept")
                 }
-                container.conceptMapRepository.generateForReadingWindow(bookId, chapterIndex)
-                _concepts.value = repository.conceptsForChapter(bookId, chapterIndex)
+                val result = container.conceptMapRepository.generateForLearningRange(
+                    bookId = bookId,
+                    chapterIndex = chapterIndex,
+                    checkpoint = container.settingsRepository.learningCheckpoint(),
+                    currentLocatorJson = currentLocatorJson,
+                    currentTextOffset = currentTextOffset
+                )
+                val grounded = repository.conceptsForRange(bookId, chapterIndex, context.recentText)
+                _concepts.value = grounded.ifEmpty {
+                    result.concepts.map { it.label }.filter(String::isNotBlank)
+                }
                 if (_concepts.value.isEmpty()) error("No substantial concept was found in this reading range")
+                // Start fresh on the newly generated concept.
+                _currentConceptIndex.value = 0
+                _messages.value = emptyList()
+                _awaitingRestatement.value = false
+                _isFinished.value = false
+                evaluationsForConcept = 0
             } catch (throwable: Throwable) {
                 if (throwable is kotlinx.coroutines.CancellationException) throw throwable
                 _error.value = throwable.message ?: "Could not create a learning concept"
@@ -137,16 +167,7 @@ class ExplainBackViewModel(
 
         viewModelScope.launch {
             try {
-                val book = container.libraryRepository.getBook(bookId)
-                    ?: error("Book is no longer available")
-                val checkpoint = container.settingsRepository.learningCheckpoint()
-                val context = container.learningContextExtractor.extract(
-                    book = book,
-                    chapterIndex = chapterIndex,
-                    checkpoint = checkpoint,
-                    currentLocatorJson = currentLocatorJson,
-                    currentTextOffset = currentTextOffset
-                )
+                val context = extractLearningContext()
                 if (context.recentText.isBlank()) {
                     error("There is no readable text available for this chapter yet")
                 }

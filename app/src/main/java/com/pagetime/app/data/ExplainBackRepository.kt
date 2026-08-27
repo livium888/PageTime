@@ -3,6 +3,7 @@ package com.pagetime.app.data
 import com.pagetime.app.data.local.ConceptDao
 import com.pagetime.app.data.local.ExplanationDao
 import com.pagetime.app.data.local.ExplanationEntity
+import com.pagetime.app.data.learning.ConceptRangeMatcher
 import com.pagetime.app.data.learning.ExplanationEvaluation
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
@@ -19,9 +20,15 @@ class ExplainBackRepository(
     fun observeExplanations(bookId: String): Flow<List<ExplanationEntity>> =
         explanationDao.observeForBook(bookId)
 
-    suspend fun conceptsForChapter(bookId: String, chapterIndex: Int): List<String> =
+    /**
+     * Concepts that are actually grounded in the given reading-range text.
+     * A chapter-span filter alone would surface concepts from unrelated parts
+     * of the chapter, so every candidate must also appear in the range itself.
+     */
+    suspend fun conceptsForRange(bookId: String, chapterIndex: Int, rangeText: String): List<String> =
         conceptDao.getForBook(bookId)
             .filter { it.firstChapterIndex <= chapterIndex && it.lastChapterIndex >= chapterIndex }
+            .filter { ConceptRangeMatcher.isRelevant(it.label, it.sourceQuote, rangeText) }
             .map { it.label }
             .take(5)
 

@@ -108,6 +108,10 @@ class GeminiLearningClient(
         val prompt = """
             Build a true concept map from the supplied reading, not a hierarchical mind map.
             Return important concepts and meaningful directed relationships between them.
+            Use ONLY the supplied SOURCE TEXT: never introduce ideas, names, or events that
+            do not appear in it, including material from elsewhere in the same book or later
+            in the same chapter. If SOURCE TEXT contains no substantial teachable idea,
+            return an empty concepts array instead of inventing one.
             Relationship labels must explain the meaning: causes, supports, contrasts with,
             depends on, example of, defines, leads to, or related to. Never invent facts.
             Reuse an existing concept label when the new passage refers to the same idea.

@@ -3,9 +3,11 @@ package com.pagetime.app.data
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
 import com.pagetime.app.data.learning.ConceptMapGenerationResult
+import com.pagetime.app.data.learning.ConceptRangeMatcher
 import com.pagetime.app.data.learning.GeneratedConcept
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.GenerationPolicy
+import com.pagetime.app.data.learning.LearningContext
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.learning.LocalConceptMapGenerator
 import com.pagetime.app.data.local.BookDao
@@ -13,6 +15,7 @@ import com.pagetime.app.data.local.ConceptDao
 import com.pagetime.app.data.local.ConceptEntity
 import com.pagetime.app.data.local.ConceptRelationshipDao
 import com.pagetime.app.data.local.ConceptRelationshipEntity
+import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.local.LearningGenerationDao
 import com.pagetime.app.data.local.LearningGenerationEntity
 import com.pagetime.app.data.local.MapMoment
@@ -40,18 +43,59 @@ class ConceptMapRepository(
     ) { concepts, relationships -> ConceptMap(concepts, relationships) }
 
     /**
-     * Generates and merges the concept map for the current reading window.
-     *
-     * Gemini is contacted at most once per chapter: the generation key is stable
-     * for a given chapter, so every later checkpoint (or re-opening the map)
-     * reads the stored result instead of making another API call.
+     * Chapter-level generation used by the concept map screen and the reader's
+     * automatic pre-generation. The context is the full chapter and the cache
+     * key is the chapter text, so each chapter is processed at most once.
      */
     suspend fun generateForReadingWindow(
         bookId: String,
         chapterIndex: Int
     ): ConceptMapGenerationResult {
         val book = bookDao.getById(bookId) ?: error("Book not found")
-        val context = contextExtractor.extract(book, chapterIndex)
+        return generateWithContext(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            context = contextExtractor.extract(book, chapterIndex),
+            rangeScopedCache = false
+        )
+    }
+
+    /**
+     * Range-scoped generation for user-triggered Explain Back: the context is
+     * exactly checkpoint → current position (chapter start when no checkpoint
+     * exists), and the cache key is that bounded range's text. A new reading
+     * range therefore triggers a fresh generation from that range's text
+     * instead of returning concepts cached for a different part of the chapter.
+     */
+    suspend fun generateForLearningRange(
+        bookId: String,
+        chapterIndex: Int,
+        checkpoint: LearningCheckpoint?,
+        currentLocatorJson: String?,
+        currentTextOffset: Int?
+    ): ConceptMapGenerationResult {
+        val book = bookDao.getById(bookId) ?: error("Book not found")
+        val context = contextExtractor.extract(
+            book = book,
+            chapterIndex = chapterIndex,
+            checkpoint = checkpoint,
+            currentLocatorJson = currentLocatorJson,
+            currentTextOffset = currentTextOffset
+        )
+        return generateWithContext(
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            context = context,
+            rangeScopedCache = true
+        )
+    }
+
+    private suspend fun generateWithContext(
+        bookId: String,
+        chapterIndex: Int,
+        context: LearningContext,
+        rangeScopedCache: Boolean
+    ): ConceptMapGenerationResult {
         val key = generationKey(context)
         val now = System.currentTimeMillis()
         val previous = generationDao.get(bookId, key)
@@ -59,8 +103,8 @@ class ConceptMapRepository(
             val isStale = previous.status == STATUS_GENERATING && now - previous.updatedAt >= GENERATION_STALE_AFTER_MS
             val canRetry = previous.status == STATUS_FAILED && now - previous.updatedAt >= GENERATION_RETRY_AFTER_MS
             if (!isStale && !canRetry) {
-                // Chapter already processed (or a run is in flight): no new API call.
-                return cachedResult(bookId)
+                // Chapter/range already processed (or a run is in flight): no new API call.
+                return cachedResultFor(bookId, context, rangeScopedCache)
             }
             generationDao.release(bookId, key)
         }
@@ -76,7 +120,7 @@ class ConceptMapRepository(
             )
         )
         if (claimed == -1L) {
-            return cachedResult(bookId)
+            return cachedResultFor(bookId, context, rangeScopedCache)
         }
         return try {
             val existing = conceptDao.getForBook(bookId)
@@ -138,9 +182,22 @@ class ConceptMapRepository(
         }
     }
 
-    /** Reflects what is already stored for the book so cached runs still report a useful moment. */
-    private suspend fun cachedResult(bookId: String): ConceptMapGenerationResult {
-        val existing = conceptDao.getForBook(bookId)
+    /**
+     * Reflects what is already stored so cached runs still report a useful
+     * moment. Range-scoped runs only report concepts grounded in the range
+     * text; chapter-level runs keep the whole-book view.
+     */
+    private suspend fun cachedResultFor(
+        bookId: String,
+        context: LearningContext,
+        rangeScopedCache: Boolean
+    ): ConceptMapGenerationResult {
+        val all = conceptDao.getForBook(bookId)
+        val existing = if (rangeScopedCache) {
+            all.filter { ConceptRangeMatcher.isRelevant(it.label, it.sourceQuote, context.recentText) }
+        } else {
+            all
+        }
         return ConceptMapGenerationResult(
             concepts = existing.take(12).map {
                 GeneratedConcept(
@@ -155,7 +212,7 @@ class ConceptMapRepository(
         )
     }
 
-    private fun generationKey(context: com.pagetime.app.data.learning.LearningContext): String {
+    private fun generationKey(context: LearningContext): String {
         // Stable per chapter (same text -> same key), namespaced away from the
         // card-generation keys in the shared table.
         val digest = MessageDigest.getInstance("SHA-256")

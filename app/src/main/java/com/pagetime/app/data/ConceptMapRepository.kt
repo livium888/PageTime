@@ -230,14 +230,17 @@ class ConceptMapRepository(
             val normalized = normalize(item.label)
             if (normalized.isBlank()) return@forEach
             val old = conceptsByLabel[normalized]
+            val quote = item.sourceQuote.takeIf { it.isNotBlank() } ?: old?.sourceQuote
+            val newLabel = preferredLabel(old?.label ?: item.label, item.label)
             val merged = old?.copy(
-                label = preferredLabel(old.label, item.label),
+                label = newLabel,
                 description = preferredDescription(old.description, item.description),
                 type = old.type.ifBlank { item.type },
                 lastChapterIndex = chapterIndex,
-                sourceQuote = item.sourceQuote.takeIf { it.isNotBlank() } ?: old.sourceQuote,
+                sourceQuote = quote,
                 confidence = maxOf(old.confidence, item.confidence),
                 mentionCount = old.mentionCount + 1,
+                keywords = extractKeywords(newLabel, quote),
                 updatedAt = now
             ) ?: ConceptEntity(
                 id = UUID.randomUUID().toString(),
@@ -252,7 +255,8 @@ class ConceptMapRepository(
                 confidence = item.confidence,
                 mentionCount = 1,
                 createdAt = now,
-                updatedAt = now
+                updatedAt = now,
+                keywords = extractKeywords(item.label, item.sourceQuote)
             )
             conceptDao.upsert(merged)
             conceptsByLabel[normalized] = merged
@@ -299,12 +303,49 @@ class ConceptMapRepository(
     private fun preferredDescription(old: String, fresh: String): String =
         if (fresh.length > old.length) fresh else old
 
+    /**
+     * Extracts searchable keywords from a concept's label and source quote.
+     * These are persisted on the entity for fast local matching against
+     * visible page text (no API call needed).
+     */
+    private fun extractKeywords(label: String, sourceQuote: String?): String {
+        val stopWords = setOf(
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
+            "been", "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "shall", "can", "this",
+            "that", "these", "those", "it", "its", "not", "no", "so", "if",
+            "than", "too", "very", "just", "about", "above", "after", "again",
+            "all", "also", "any", "because", "before", "between", "both",
+            "each", "few", "more", "most", "other", "some", "such", "into",
+            "only", "own", "same", "then", "there", "when", "where", "which",
+            "while", "who", "whom", "how", "what", "chapter", "concept", "idea"
+        )
+        val words = mutableListOf<String>()
+        // Add label words first (highest priority).
+        for (word in label.lowercase().split(Regex("[^a-z0-9]+"))) {
+            if (word.length >= 3 && word !in stopWords && word !in words) {
+                words += word
+            }
+        }
+        // Add significant words from the source quote.
+        if (sourceQuote != null) {
+            for (word in sourceQuote.lowercase().split(Regex("[^a-z0-9]+"))) {
+                if (word.length >= 4 && word !in stopWords && word !in words) {
+                    words += word
+                }
+            }
+        }
+        return words.take(MAX_KEYWORDS).joinToString(" ")
+    }
+
     companion object {
         private const val STATUS_GENERATING = "generating"
         private const val STATUS_COMPLETE = "complete"
         private const val STATUS_FAILED = "failed"
         private const val GENERATION_STALE_AFTER_MS = 10 * 60 * 1000L
         private const val GENERATION_RETRY_AFTER_MS = 15 * 60 * 1000L
+        private const val MAX_KEYWORDS = 20
     }
 }
 

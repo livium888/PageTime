@@ -26,5 +26,11 @@ data class ConceptEntity(
     val confidence: Float,
     val mentionCount: Int,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /**
+     * Space-separated keywords extracted from label + sourceQuote.
+     * Used by the local highlight matcher to find concept matches in visible
+     * page text without any API call. Populated at concept creation time.
+     */
+    val keywords: String = ""
 )

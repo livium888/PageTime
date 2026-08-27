@@ -354,6 +354,9 @@ fun ReaderScreen(
                 initialOffset = initialTextOffset,
                 settings = settings,
                 palette = palette,
+                concepts = conceptMap.concepts,
+                conceptLevel = settings.conceptHints,
+                activeConceptId = activeConceptId,
                 goRequest = txtGoRequest,
                 onPageChanged = { page, pageCount, pageStartOffset, userInitiated ->
                     textPageLabel = "Page ${page + 1} of $pageCount"
@@ -609,6 +612,9 @@ private fun TextReaderHost(
     initialOffset: Int,
     settings: ReaderSettings,
     palette: ReaderPalette,
+    concepts: List<com.pagetime.app.data.local.ConceptEntity>,
+    conceptLevel: String,
+    activeConceptId: String?,
     goRequest: Pair<Float, Long>?,
     onPageChanged: (page: Int, pageCount: Int, pageStartOffset: Int, userInitiated: Boolean) -> Unit,
     onRestoreComplete: () -> Unit,
@@ -684,8 +690,14 @@ private fun TextReaderHost(
                 .padding(horizontal = settings.marginDp.dp, vertical = 24.dp)
                 .background(palette.background)
         ) {
+            val annotatedText = rememberAnnotatedPage(
+                pageText = pages[pageIndex].text,
+                concepts = concepts,
+                level = conceptLevel,
+                activeConceptId = activeConceptId
+            )
             Text(
-                text = pages[pageIndex].text,
+                text = annotatedText,
                 style = MaterialTheme.typography.bodyLarge.copy(
                     letterSpacing = (settings.fontSizeSp * 0.015f).sp
                 ),

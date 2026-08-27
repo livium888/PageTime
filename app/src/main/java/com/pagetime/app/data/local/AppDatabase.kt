@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AiUsageEntity::class,
         ExplanationEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -135,6 +135,13 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """)
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_explanations_bookId_chapterIndex ON explanations(bookId, chapterIndex)")
+            }
+        }
+
+        /** Adds keywords column for local concept highlight matching. */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE concepts ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
             }
         }
     }

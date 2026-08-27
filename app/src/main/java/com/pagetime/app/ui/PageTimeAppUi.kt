@@ -210,13 +210,36 @@ fun PageTimeAppUi(openReader: Boolean) {
                 val concepts by vm.concepts.collectAsStateWithLifecycle()
                 val messages by vm.messages.collectAsStateWithLifecycle()
                 val isLoading by vm.isLoading.collectAsStateWithLifecycle()
+                val conceptsLoading by vm.conceptsLoading.collectAsStateWithLifecycle()
                 val isFinished by vm.isFinished.collectAsStateWithLifecycle()
+                val explainError by vm.error.collectAsStateWithLifecycle()
                 val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
                 val awaitingRestatement by vm.awaitingRestatement.collectAsStateWithLifecycle()
                 val requestsUsed by vm.requestsUsed.collectAsStateWithLifecycle()
 
                 if (isFinished) {
                     navController.popBackStack()
+                } else if (conceptsLoading) {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    }
+                } else if (explainError != null) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+                    ) {
+                        androidx.compose.material3.Text(
+                            explainError ?: "Could not load this chapter",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        androidx.compose.material3.TextButton(onClick = vm::retryConcepts) {
+                            androidx.compose.material3.Text("Try again")
+                        }
+                    }
                 } else if (concepts.isNotEmpty()) {
                     ExplainBackScreen(
                         conceptLabel = vm.currentConcept,
@@ -235,11 +258,18 @@ fun PageTimeAppUi(openReader: Boolean) {
                         onBack = { navController.popBackStack() }
                     )
                 } else {
-                    androidx.compose.foundation.layout.Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                     ) {
-                        androidx.compose.material3.CircularProgressIndicator()
+                        androidx.compose.material3.Text(
+                            "No learning concepts are available for this chapter yet.",
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        androidx.compose.material3.TextButton(onClick = { navController.popBackStack() }) {
+                            androidx.compose.material3.Text("Back to reading")
+                        }
                     }
                 }
             }

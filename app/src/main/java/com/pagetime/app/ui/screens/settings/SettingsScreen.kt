@@ -161,6 +161,7 @@ fun SettingsScreen(
                 },
                 status = geminiStatus,
                 onSaveKey = { geminiViewModel.saveKey(geminiKeyInput) },
+                onTestSavedKey = geminiViewModel::testSavedKey,
                 onClearKey = {
                     geminiViewModel.clearKey()
                     geminiKeyInput = ""
@@ -255,6 +256,7 @@ private fun GeminiSettingsCard(
     onSelectModel: (GeminiModel) -> Unit,
     status: GeminiSettingsStatus,
     onSaveKey: () -> Unit,
+    onTestSavedKey: () -> Unit,
     onClearKey: () -> Unit,
     onRefresh: () -> Unit
 ) {
@@ -283,8 +285,11 @@ private fun GeminiSettingsCard(
                 }
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSaveKey, modifier = Modifier.weight(1f)) {
-                    Text("Save & test")
+                Button(
+                    onClick = if (hasUserKey && keyInput.isBlank()) onTestSavedKey else onSaveKey,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (hasUserKey && keyInput.isBlank()) "Test saved key" else "Save & test")
                 }
                 if (hasUserKey) {
                     OutlinedButton(onClick = onClearKey, modifier = Modifier.weight(1f)) {

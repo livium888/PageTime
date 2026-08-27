@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.GeminiModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -36,6 +37,8 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _status = MutableStateFlow<GeminiSettingsStatus>(GeminiSettingsStatus.Idle)
     val status = _status.asStateFlow()
 
+    private var testJob: Job? = null
+
     fun saveKey(value: String) {
         val key = value.trim()
         if (key.isBlank()) {
@@ -54,12 +57,13 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
                 return
             }
         _hasUserKey.value = true
-        _status.value = GeminiSettingsStatus.Ready("Key saved securely. Testing connection…")
-        refreshModels()
+        _status.value = GeminiSettingsStatus.Ready("Key saved securely")
+        testSavedKey()
     }
 
     fun clearKey() {
         val activeClient = client ?: return
+        testJob?.cancel()
         runCatching { activeClient.clearUserApiKey() }
             .onFailure { error ->
                 _status.value = GeminiSettingsStatus.Error(
@@ -86,16 +90,18 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = GeminiSettingsStatus.Ready("Using ${model.displayName}")
     }
 
-    fun refreshModels() {
+    /** Tests the encrypted key already stored on this device; no re-entry is needed. */
+    fun testSavedKey() {
         val activeClient = client ?: run {
             _status.value = GeminiSettingsStatus.Error("AI settings are unavailable right now")
             return
         }
-        if (!activeClient.isConfigured) {
-            _status.value = GeminiSettingsStatus.Error("Add a Gemini API key to load models")
+        if (!runCatching { activeClient.hasUserKey() }.getOrDefault(false) && !activeClient.isConfigured) {
+            _status.value = GeminiSettingsStatus.Error("Add a Gemini API key to test the connection")
             return
         }
-        viewModelScope.launch {
+        testJob?.cancel()
+        testJob = viewModelScope.launch {
             _status.value = GeminiSettingsStatus.Loading
             runCatching { activeClient.testConnection() }
                 .onSuccess { result ->
@@ -112,4 +118,6 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
                 }
         }
     }
+
+    fun refreshModels() = testSavedKey()
 }

@@ -500,13 +500,19 @@ fun ReaderScreen(
 
     if (showChapterReviewPrompt) {
         ChapterReviewPrompt(
-            chapterLabel = chapterLabel ?: "this chapter",
+            chapterLabel = chapterLabel ?: "the current chapter",
             onExplain = {
                 showChapterReviewPrompt = false
-                val chIdx = currentChapterIndex ?: book?.currentChapterIndex ?: 0
-                val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
-                val bTitle = book?.title ?: "Book"
-                onExplainBack(bookId, chIdx, chTitle, bTitle)
+                // Explain the chapter currently visible in the navigator. Never
+                // silently fall back to chapter zero: on a fresh EPUB the locator
+                // may not have arrived yet, so ask the reader to retry instead of
+                // opening the wrong chapter.
+                val chIdx = currentChapterIndex ?: book?.currentChapterIndex
+                if (chIdx != null) {
+                    val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
+                    val bTitle = book?.title ?: "Book"
+                    onExplainBack(bookId, chIdx, chTitle, bTitle)
+                }
             },
             onDismiss = { showChapterReviewPrompt = false }
         )

@@ -28,6 +28,9 @@ class ExplainBackViewModel(
     private val _concepts = MutableStateFlow<List<String>>(emptyList())
     val concepts: StateFlow<List<String>> = _concepts.asStateFlow()
 
+    private val _conceptsLoading = MutableStateFlow(true)
+    val conceptsLoading: StateFlow<Boolean> = _conceptsLoading.asStateFlow()
+
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
@@ -61,11 +64,25 @@ class ExplainBackViewModel(
         get() = _concepts.value.size
 
     init {
+        loadConcepts()
+    }
+
+    fun retryConcepts() {
+        _error.value = null
+        loadConcepts()
+    }
+
+    private fun loadConcepts() {
         viewModelScope.launch {
-            runCatching {
+            _conceptsLoading.value = true
+            try {
                 _concepts.value = repository.conceptsForChapter(bookId, chapterIndex)
+                _explanationHistory.value = repository.observeExplanations(bookId).first()
+            } catch (throwable: Throwable) {
+                _error.value = throwable.message ?: "Could not load learning concepts"
+            } finally {
+                _conceptsLoading.value = false
             }
-            _explanationHistory.value = repository.observeExplanations(bookId).first()
         }
     }
 
@@ -83,6 +100,9 @@ class ExplainBackViewModel(
                 val book = container.libraryRepository.getBook(bookId)
                     ?: error("Book is no longer available")
                 val context = container.learningContextExtractor.extract(book, chapterIndex)
+                if (context.recentText.isBlank()) {
+                    error("There is no readable text available for this chapter yet")
+                }
                 val evaluation = repository.submitExplanation(
                     bookId = bookId,
                     chapterIndex = chapterIndex,
@@ -115,7 +135,8 @@ class ExplainBackViewModel(
                 _awaitingRestatement.value = true
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
-                _error.value = throwable.message
+                if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+                _error.value = throwable.message ?: "Gemini could not evaluate this explanation"
                 _messages.value += ChatMessage(
                     text = "Sorry, I couldn't evaluate that. ${throwable.message ?: "Try again."}",
                     isUser = false,

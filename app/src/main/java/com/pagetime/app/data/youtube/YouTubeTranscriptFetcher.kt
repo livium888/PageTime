@@ -61,9 +61,11 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
                 .replace("&fmt=srv3", "")
             if (captionUrl.isBlank()) return@withContext null
 
-            // Step 3: Fetch the timed text and extract plain text.
+            // Step 3: Fetch the timed text and format it into readable paragraphs.
             val rawXml = fetchUrl(captionUrl)
-            val text = extractTextFromTimedText(rawXml)
+            val segments = extractSegments(rawXml)
+            if (segments.isEmpty()) return@withContext null
+            val text = formatTranscript(segments)
             if (text.isBlank()) return@withContext null
 
             // Step 4: Fetch the real title + author from YouTube's oEmbed endpoint.
@@ -174,26 +176,111 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
-     * Extracts plain text from YouTube's timed text XML format.
-     * Each `<text>` element contains a segment of the transcript.
+     * Extracts timed caption segments from YouTube's timed text XML format.
+     * Each `<text>` element carries a `start` attribute (seconds) and a line.
      */
-    private fun extractTextFromTimedText(xml: String): String {
-        val segments = mutableListOf<String>()
-        val pattern = Regex("""<text[^>]*>([^<]*)</text>""")
+    private fun extractSegments(xml: String): List<CaptionSegment> {
+        val segments = mutableListOf<CaptionSegment>()
+        val pattern = Regex("""<text\b([^>]*)>([^<]*)</text>""")
+        val startAttr = Regex("""start="([\d.]+)""")
+        val durAttr = Regex("""dur="([\d.]+)""")
         for (match in pattern.findAll(xml)) {
-            val text = match.groupValues[1]
-                .replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&#39;", "'")
-                .replace("\n", " ")
-                .trim()
+            val attrs = match.groupValues[1]
+            val raw = match.groupValues[2]
+            val start = startAttr.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
+            val dur = durAttr.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: 2.0
+            val text = cleanSegment(raw)
             if (text.isNotBlank()) {
-                segments.add(text)
+                segments += CaptionSegment(start, dur, text)
             }
         }
-        return segments.joinToString("\n\n")
+        return segments
+    }
+
+    /**
+     * Cleans a single caption line: decodes entities, drops YouTube's
+     * bracket sound tags ([Music], [Applause], …), collapses ASR word
+     * repetitions ("I I I" → "I"), and normalizes whitespace.
+     */
+    private fun cleanSegment(raw: String): String {
+        var text = raw
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("\n", " ")
+        // YouTube ASR marks non-speech as [Music], [Applause], [Laughter], …
+        text = SOUND_TAG_PATTERN.replace(text, "")
+        // Auto-captions repeat a word when the speaker emphasizes it.
+        text = REPEATED_WORD_PATTERN.replace(text, "$1")
+        return text.replace(Regex("\\s+"), " ").trim()
+    }
+
+    /**
+     * Turns timed caption segments into a book-like transcript:
+     * flowing paragraphs instead of one block per caption, with a compact
+     * `[m:ss]` timestamp at the start of each paragraph so readers always
+     * know where they are in the video. Paragraphs are joined with blank
+     * lines, which the plain-text reader uses as page boundaries.
+     */
+    private fun formatTranscript(segments: List<CaptionSegment>): String {
+        val paragraphs = mutableListOf<String>()
+        val current = StringBuilder()
+        var paragraphStart = 0.0
+        var wordCount = 0
+        var lastEnd = 0.0
+
+        fun flushParagraph() {
+            if (current.isNotBlank()) {
+                val body = current.toString().trim()
+                paragraphs += "[${formatTimestamp(paragraphStart)}] $body"
+                current.setLength(0)
+                wordCount = 0
+            }
+        }
+
+        for (segment in segments) {
+            val gap = segment.start - lastEnd
+            // New paragraph after a pause (~3s) or once the current one is long enough.
+            if (current.isNotBlank() && (gap > 3.0 || wordCount >= MAX_PARAGRAPH_WORDS)) {
+                flushParagraph()
+            }
+            if (current.isBlank()) paragraphStart = segment.start
+            if (current.isNotBlank()) current.append(' ')
+            current.append(segment.text)
+            wordCount += segment.text.count { it == ' ' } + 1
+            lastEnd = segment.start + segment.duration
+        }
+        flushParagraph()
+        return paragraphs.joinToString("\n\n")
+    }
+
+    /** Converts seconds to a compact `m:ss` (or `h:mm:ss`) timestamp. */
+    private fun formatTimestamp(seconds: Double): String {
+        val total = seconds.toInt().coerceAtLeast(0)
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        return if (h > 0) {
+            "$h:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+        } else {
+            "$m:${s.toString().padStart(2, '0')}"
+        }
+    }
+
+    private data class CaptionSegment(
+        val start: Double,
+        val duration: Double,
+        val text: String
+    )
+
+    private companion object {
+        val SOUND_TAG_PATTERN = Regex(
+            """\[(?i)(music|applause|laughter|cheering|audience|crowd|singing|noise|sound)[^\]]*]"""
+        )
+        val REPEATED_WORD_PATTERN = Regex("""\b(\w+)(?: \1){2,}\b""")
+        const val MAX_PARAGRAPH_WORDS = 45
     }
 
     /**

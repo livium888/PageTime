@@ -286,7 +286,8 @@ fun PageTimeAppUi(openReader: Boolean) {
                         onNextConcept = vm::nextConcept,
                         history = explanationHistory,
                         onDeleteHistory = vm::deleteHistory,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onCreateConcept = vm::createLearningConcept
                     )
                 } else {
                     androidx.compose.foundation.layout.Column(

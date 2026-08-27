@@ -27,16 +27,18 @@ object ConceptRangeMatcher {
     private const val MIN_FUZZY_WORD_LENGTH = 5
 
     fun isRelevant(label: String, sourceQuote: String?, rangeText: String): Boolean {
-        val normalizedRange = normalize(rangeText)
-        if (normalizedRange.isEmpty()) return false
+        // Space-padding turns containment into whole-phrase matching, so a
+        // label like "Republic" cannot match inside "Republican".
+        val paddedRange = " ${normalize(rangeText)} "
+        if (paddedRange.isBlank()) return false
 
         val normalizedQuote = normalize(sourceQuote.orEmpty())
-        if (normalizedQuote.length >= MIN_QUOTE_LENGTH && normalizedRange.contains(normalizedQuote)) {
+        if (normalizedQuote.length >= MIN_QUOTE_LENGTH && paddedRange.contains(" $normalizedQuote ")) {
             return true
         }
 
         val normalizedLabel = normalize(label)
-        if (normalizedLabel.length >= MIN_LABEL_LENGTH && normalizedRange.contains(normalizedLabel)) {
+        if (normalizedLabel.length >= MIN_LABEL_LENGTH && paddedRange.contains(" $normalizedLabel ")) {
             return true
         }
 
@@ -47,7 +49,7 @@ object ConceptRangeMatcher {
                 .filter { it.length >= MIN_FUZZY_WORD_LENGTH }
                 .distinct()
             if (words.isNotEmpty()) {
-                val matched = words.count { normalizedRange.contains(it) }
+                val matched = words.count { paddedRange.contains(" $it ") }
                 if (matched.toFloat() / words.size >= FUZZY_WORD_MATCH_RATIO) return true
             }
         }

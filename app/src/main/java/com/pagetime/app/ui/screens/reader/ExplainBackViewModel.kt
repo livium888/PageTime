@@ -118,7 +118,10 @@ class ExplainBackViewModel(
         }
 
     fun createLearningConcept() {
-        if (!_needsConceptGeneration.value || _conceptsLoading.value) return
+        // Explicit user action: available even when grounded concepts already
+        // exist, so the reader can always ask for a fresh concept from the
+        // current range instead of being stuck with the stored ones.
+        if (_conceptsLoading.value) return
         viewModelScope.launch {
             _conceptsLoading.value = true
             _needsConceptGeneration.value = false

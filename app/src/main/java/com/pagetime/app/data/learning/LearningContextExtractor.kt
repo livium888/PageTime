@@ -1,6 +1,7 @@
 package com.pagetime.app.data.learning
 
 import android.content.Context
+import android.net.Uri
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.library.EpubParser
@@ -110,20 +111,58 @@ class LearningContextExtractor(
 
     private fun checkpointFraction(checkpoint: LearningCheckpoint?, chapterPath: String): Float =
         checkpoint?.locatorJson
-            ?.let { locator ->
-                if (locator.contains(chapterPath.substringBefore('#'))) {
-                    Regex("\\\"progression\\\"\\s*:\\s*([0-9.]+)").find(locator)
-                        ?.groupValues?.getOrNull(1)?.toFloatOrNull()
-                } else null
-            }?.coerceIn(0f, 1f) ?: 0f
+            ?.let { locatorFraction(it, chapterPath) }
+            ?.coerceIn(0f, 1f)
+            ?: 0f
 
     private fun currentFraction(locatorJson: String?, chapterPath: String): Float =
         locatorJson
-            ?.takeIf { it.contains(chapterPath.substringBefore('#')) }
-            ?.let { locator ->
-                Regex("\\\"progression\\\"\\s*:\\s*([0-9.]+)").find(locator)
-                    ?.groupValues?.getOrNull(1)?.toFloatOrNull()
-            }?.coerceIn(0f, 1f) ?: 1f
+            ?.let { locatorFraction(it, chapterPath) }
+            ?.coerceIn(0f, 1f)
+            ?: 1f
+
+    /**
+     * Readium locator hrefs are decoded while EPUB OPF hrefs are usually
+     * percent-encoded ("Chapter%201.xhtml" vs "Chapter 1.xhtml"), so a raw
+     * string contains() check fails for most books and silently expands the
+     * learning range to the whole chapter. Compare aggressively-normalized
+     * resource keys instead, and only trust the progression when the locator
+     * really points at this chapter.
+     */
+    private fun locatorFraction(locatorJson: String, chapterPath: String): Float? {
+        val href = locatorHref(locatorJson) ?: return null
+        val chapterKey = resourceKey(chapterPath)
+        if (chapterKey.isBlank()) return null
+        val hrefKey = resourceKey(href)
+        val matches = hrefKey == chapterKey ||
+            hrefKey.endsWith(chapterKey) ||
+            chapterKey.endsWith(hrefKey)
+        if (!matches) return null
+        return Regex("\\\"progression\\\"\\s*:\\s*([0-9.]+)")
+            .find(locatorJson)
+            ?.groupValues?.getOrNull(1)
+            ?.toFloatOrNull()
+    }
+
+    /** First href value in the locator JSON, with escaped solidi unescaped. */
+    private fun locatorHref(locatorJson: String): String? =
+        Regex("\\\"href\\\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+            .find(locatorJson)
+            ?.groupValues?.getOrNull(1)
+            ?.replace("\\/", "/")
+            ?.replace("\\\"", "\"")
+
+    /**
+     * Decodes, strips fragments, and normalizes separators to "|" (kept, so
+     * suffix matching cannot confuse "intro.xhtml" with "myintro.xhtml").
+     * Both percent-encoded and decoded href forms produce the same key.
+     */
+    private fun resourceKey(value: String): String =
+        "|" + Uri.decode(value)
+            .substringBefore('#')
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), "|")
+            .trim('|') + "|"
 
     private fun extractEpubRaw(book: BookEntity, maxCharacters: Int): LearningContext {
         val content = ZipFile(book.localPath).use { zip ->

@@ -67,4 +67,16 @@ class ConceptRangeMatcherTest {
         val range = "The committee debated tariffs for most of the afternoon session."
         assertFalse(ConceptRangeMatcher.isRelevant("unrelated thing", "zinc", range))
     }
+
+    @Test
+    fun `label matching inside a longer word is rejected`() {
+        val range = "The republican faction debated the tariff schedule all afternoon."
+        assertFalse(ConceptRangeMatcher.isRelevant("Republic", "another place entirely", range))
+    }
+
+    @Test
+    fun `label at word boundary still matches`() {
+        val range = "The republic survived because its institutions balanced competing factions."
+        assertTrue(ConceptRangeMatcher.isRelevant("Republic", "nothing relevant here", range))
+    }
 }

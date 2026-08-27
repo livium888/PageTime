@@ -24,13 +24,27 @@ class ExplainBackRepository(
      * Concepts that are actually grounded in the given reading-range text.
      * A chapter-span filter alone would surface concepts from unrelated parts
      * of the chapter, so every candidate must also appear in the range itself.
+     *
+     * Concepts you have never explained come first, then the ones explained
+     * longest ago — so the flow rotates through the range instead of always
+     * reopening the same concept.
      */
-    suspend fun conceptsForRange(bookId: String, chapterIndex: Int, rangeText: String): List<String> =
-        conceptDao.getForBook(bookId)
+    suspend fun conceptsForRange(bookId: String, chapterIndex: Int, rangeText: String): List<String> {
+        val lastExplainedAt = explanationDao.getAllForBook(bookId)
+            .groupBy { it.conceptLabel.trim().lowercase() }
+            .mapValues { (_, rows) -> rows.maxOf { it.createdAt } }
+        return conceptDao.getForBook(bookId)
             .filter { it.firstChapterIndex <= chapterIndex && it.lastChapterIndex >= chapterIndex }
             .filter { ConceptRangeMatcher.isRelevant(it.label, it.sourceQuote, rangeText) }
+            .sortedWith(
+                compareBy(
+                    { lastExplainedAt.containsKey(it.label.trim().lowercase()) },
+                    { lastExplainedAt[it.label.trim().lowercase()] ?: 0L }
+                )
+            )
             .map { it.label }
             .take(5)
+    }
 
     suspend fun submitExplanation(
         bookId: String,

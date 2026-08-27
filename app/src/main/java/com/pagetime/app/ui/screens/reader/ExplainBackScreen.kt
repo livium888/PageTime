@@ -65,7 +65,9 @@ fun ExplainBackScreen(
     onNextConcept: () -> Unit,
     history: List<com.pagetime.app.data.local.ExplanationEntity> = emptyList(),
     onDeleteHistory: (String) -> Unit = {},
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** Always-available escape hatch: generate a fresh concept for this range. */
+    onCreateConcept: (() -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
@@ -96,6 +98,13 @@ fun ExplainBackScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (onCreateConcept != null) {
+                        androidx.compose.material3.TextButton(onClick = onCreateConcept) {
+                            Text("New concept")
+                        }
                     }
                 }
             )

@@ -428,7 +428,8 @@ fun ReaderScreen(
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
-                onSettings = { showSettings = true }
+                onSettings = { showSettings = true },
+                onExplainBack = { showChapterReviewPrompt = true }
             )
         }
 
@@ -832,7 +833,8 @@ private fun ReaderTopBar(
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onExplainBack: () -> Unit
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
 
@@ -918,7 +920,7 @@ private fun ReaderTopBar(
                         leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
                         onClick = {
                             optionsExpanded = false
-                            showChapterReviewPrompt = true
+                            onExplainBack()
                         }
                     )
                     DropdownMenuItem(

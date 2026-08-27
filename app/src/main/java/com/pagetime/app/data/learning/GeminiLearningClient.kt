@@ -6,6 +6,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -178,7 +179,9 @@ class GeminiLearningClient(
         var lastError: Throwable? = null
         repeat(3) { attempt ->
             try {
-                val response = AppHttp.newClient(callTimeoutSeconds = 60L).newCall(request).execute()
+                val response = withTimeout(65_000L) {
+                    AppHttp.newClient(callTimeoutSeconds = 60L).newCall(request).execute()
+                }
                 response.use {
                     val body = it.body?.string().orEmpty()
                     if (it.isSuccessful) return body

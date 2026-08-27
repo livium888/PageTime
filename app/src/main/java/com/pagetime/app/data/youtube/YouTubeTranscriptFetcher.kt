@@ -57,7 +57,8 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
                 ?: captionTracks.firstOrNull()
                 ?: return@withContext null
 
-            val captionUrl = track.getString("baseUrl")
+            val captionUrl = track.optString("baseUrl", "")
+                .replace("&fmt=srv3", "")
             if (captionUrl.isBlank()) return@withContext null
 
             // Step 3: Fetch the timed text and extract plain text.
@@ -80,25 +81,32 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
 
     /**
      * Uses YouTube's innertube /player endpoint to get the list of available
-     * caption tracks for a video. No authentication needed.
+     * caption tracks for a video.
+     *
+     * This mirrors how the community youtube-transcript-api library works:
+     * 1. Fetch the watch page HTML and extract the INNERTUBE_API_KEY it embeds.
+     * 2. POST to /youtubei/v1/player?key=... with the ANDROID client context
+     *    (the WEB client no longer returns caption tracks reliably).
+     * 3. Read captionTracks from the response.
      */
     private fun getCaptionTracks(videoId: String): List<JSONObject> {
+        val apiKey = extractInnertubeApiKey(videoId)
         val body = JSONObject()
             .put("context", JSONObject()
                 .put("client", JSONObject()
-                    .put("clientName", "WEB")
-                    .put("clientVersion", "2.20240101.00.00")
+                    .put("clientName", "ANDROID")
+                    .put("clientVersion", "20.10.38")
                 )
             )
             .put("videoId", videoId)
             .toString()
 
-        val request = okhttp3.Request.Builder()
-            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val responseBody = fetchUrl(request.url.toString(), body)
+        val url = if (apiKey.isBlank()) {
+            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        } else {
+            "https://www.youtube.com/youtubei/v1/player?key=$apiKey&prettyPrint=false"
+        }
+        val responseBody = fetchUrl(url, body)
         val json = JSONObject(responseBody)
 
         val captions = json.optJSONObject("captions")
@@ -110,10 +118,26 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
-     * Fetches raw text from a URL via GET.
+     * Fetches the video's watch page and extracts the INNERTUBE_API_KEY that
+     * YouTube embeds in the page. Used as the `key` param on innertube calls.
+     */
+    private fun extractInnertubeApiKey(videoId: String): String {
+        return try {
+            val html = fetchUrl("https://www.youtube.com/watch?v=$videoId")
+            val pattern = Regex("\"INNERTUBE_API_KEY\":\\s*\"([a-zA-Z0-9_-]+)\"")
+            pattern.find(html)?.groupValues?.get(1) ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * Fetches raw text from a URL via GET (or POST when [postBody] is set).
      */
     private fun fetchUrl(url: String, postBody: String? = null): String {
-        val requestBuilder = okhttp3.Request.Builder().url(url)
+        val requestBuilder = okhttp3.Request.Builder()
+            .url(url)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
         if (postBody != null) {
             requestBuilder
                 .post(postBody.toRequestBody("application/json".toMediaType()))

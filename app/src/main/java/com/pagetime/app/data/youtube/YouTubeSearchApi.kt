@@ -2,21 +2,19 @@ package com.pagetime.app.data.youtube
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import org.jsoup.Jsoup
 import java.util.concurrent.TimeUnit
 
 /**
  * Searches YouTube for videos.
  *
- * Uses the YouTube Data API v3 when a key is available, falling back to
- * parsing YouTube's public search results page with JSoup. Both approaches
- * are key-free for basic usage — the Data API key is optional and gives
- * higher-quality structured results.
- *
- * No API key is strictly required: the JSoup fallback always works.
+ * Uses the innertube search endpoint (the same JSON API the YouTube website
+ * calls) — no API key required. When a YouTube Data API v3 key is available,
+ * that is preferred because it can filter to videos with closed captions.
  */
 class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
 
@@ -43,8 +41,9 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
      * Search YouTube for videos matching [query].
      *
      * @param query The search query.
-     * @param pageToken For API mode, the token for the next page (unused for HTML scraping).
-     * @param apiKey Optional YouTube Data API v3 key. If null, falls back to HTML scraping.
+     * @param pageToken For Data API mode, the token for the next page.
+     * @param apiKey Optional YouTube Data API v3 key. If null, uses the
+     *   key-free innertube search endpoint.
      * @return A pair of (results list, nextPageToken or null).
      */
     suspend fun search(
@@ -55,7 +54,7 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
         if (!apiKey.isNullOrBlank()) {
             searchViaApi(query, apiKey, pageToken)
         } else {
-            searchViaHtml(query)
+            searchViaInnertube(query)
         }
     }
 
@@ -111,41 +110,44 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
-     * Search by scraping YouTube's public search results page.
-     * No API key needed. Parses the HTML with JSoup.
+     * Search using YouTube's innertube /search endpoint — the same JSON API
+     * the YouTube website itself calls. No API key needed.
      */
-    private fun searchViaHtml(query: String): Pair<List<SearchResult>, String?> {
-        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = "https://www.youtube.com/results?search_query=$encodedQuery"
+    private fun searchViaInnertube(query: String): Pair<List<SearchResult>, String?> {
+        val body = JSONObject()
+            .put("context", JSONObject()
+                .put("client", JSONObject()
+                    .put("clientName", "WEB")
+                    .put("clientVersion", "2.20240726.01.00")
+                )
+            )
+            .put("query", query)
+            .toString()
 
-        val request = Request.Builder().url(url)
+        val request = Request.Builder()
+            .url("https://www.youtube.com/youtubei/v1/search?prettyPrint=false")
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .get().build()
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
 
-        val html = client.newCall(request).execute().use { response ->
+        val jsonBody = client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw RuntimeException("YouTube search failed (${response.code})")
             response.body?.string() ?: throw RuntimeException("Empty response from YouTube")
         }
 
-        val results = parseSearchResults(html)
+        val results = parseSearchResults(jsonBody)
         return Pair(results, null)
     }
 
     /**
-     * Parse YouTube search results from HTML.
-     * YouTube embeds video data in a JSON blob inside a <script> tag as
-     * ytInitialData. We extract it and parse the relevant fields.
+     * Parse video results from a YouTube innertube search JSON response.
+     * The response mirrors the shape of the old ytInitialData blob:
+     * contents.twoColumnSearchResultsRenderer.primaryContents.
+     *   sectionListRenderer.contents[].itemSectionRenderer.contents[].
+     *   videoRenderer
      */
-    private fun parseSearchResults(html: String): List<SearchResult> {
+    private fun parseSearchResults(jsonStr: String): List<SearchResult> {
         val results = mutableListOf<SearchResult>()
-
-        // YouTube embeds results in a JSON blob inside a <script> tag
-        // as ytInitialData. Extract it.
-        val jsonPattern = Regex("var ytInitialData\\s*=\\s*(\\{.+?\\});")
-        val match = jsonPattern.find(html) ?: return results
-        val jsonStr = match.groupValues[1]
-
         try {
             val json = JSONObject(jsonStr)
             val contents = json
@@ -216,59 +218,7 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
                 }
             }
         } catch (_: Exception) {
-            // Fallback: try regex-based extraction from the raw HTML
-            return parseSearchResultsFallback(html)
-        }
-
-        return results
-    }
-
-    /**
-     * Fallback parser using regex when the JSON structure doesn't match.
-     * Extracts video IDs and titles from href attributes and overlay text.
-     */
-    private fun parseSearchResultsFallback(html: String): List<SearchResult> {
-        val results = mutableListOf<SearchResult>()
-        val seen = mutableSetOf<String>()
-
-        // Match video renderer blocks: videoId, title text, channel
-        val videoBlockPattern = Regex(
-            "\"videoId\":\"([a-zA-Z0-9_-]{11})\""
-        )
-        val titlePattern = Regex(
-            "\"title\":\\{\"runs\":\\[\\{\"text\":\"([^\"]+)\""
-        )
-        val channelPattern = Regex(
-            "\"ownerText\":\\{\"runs\":\\[\\{\"text\":\"([^\"]+)\""
-        )
-        val lengthPattern = Regex(
-            "\"lengthText\":\\{\"simpleText\":\"([^\"]+)\""
-        )
-
-        // Split by video blocks
-        val videoBlocks = html.split("\"videoRenderer\"")
-
-        for (block in videoBlocks.drop(1)) { // skip first (before any videoRenderer)
-            val videoId = videoBlockPattern.find(block)?.groupValues?.get(1) ?: continue
-            if (videoId in seen) continue
-            seen.add(videoId)
-
-            val title = titlePattern.find(block)?.groupValues?.get(1) ?: ""
-            val channel = channelPattern.find(block)?.groupValues?.get(1) ?: ""
-            val duration = lengthPattern.find(block)?.groupValues?.get(1) ?: ""
-
-            if (title.isNotBlank()) {
-                results.add(
-                    SearchResult(
-                        videoId = videoId,
-                        title = title,
-                        channelName = channel,
-                        thumbnailUrl = "https://img.youtube.com/vi/$videoId/hqdefault.jpg",
-                        duration = duration,
-                        description = ""
-                    )
-                )
-            }
+            // Malformed or unexpected response — return what we have so far.
         }
 
         return results

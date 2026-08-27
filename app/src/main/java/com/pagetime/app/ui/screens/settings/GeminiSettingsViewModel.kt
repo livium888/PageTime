@@ -27,8 +27,11 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedModel = MutableStateFlow(client?.currentModel().orEmpty())
     val selectedModel = _selectedModel.asStateFlow()
 
-    private val _hasUserKey = MutableStateFlow(false)
+    private val _hasUserKey = MutableStateFlow(readHasUserKey())
     val hasUserKey = _hasUserKey.asStateFlow()
+
+    private fun readHasUserKey(): Boolean =
+        runCatching { client?.hasUserKey() == true }.getOrDefault(false)
 
     private val _status = MutableStateFlow<GeminiSettingsStatus>(GeminiSettingsStatus.Idle)
     val status = _status.asStateFlow()

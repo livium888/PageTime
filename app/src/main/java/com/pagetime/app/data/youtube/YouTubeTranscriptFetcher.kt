@@ -276,26 +276,30 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         text = MUSIC_TAG_PATTERN.replace(text, " ")
         // Music-note glyphs (♪ ♫) wrap song lyrics; strip them, keep the words.
         text = MUSIC_GLYPH_PATTERN.replace(text, " ")
-        // Auto-captions repeat a word when the speaker emphasizes it.
+        // Auto-captions repeat a word when the speaker emphasizes or stumbles
+        // ("I I I", "the the", "from from"). Collapse any 2+ run to one.
         text = REPEATED_WORD_PATTERN.replace(text, "$1")
+        // ASR glues a short number to the preceding word ("spending8" → "spending 8").
+        text = WORD_DIGIT_PATTERN.replace(text, "$1 $2")
         return text.replace(Regex("\\s+"), " ").trim()
     }
 
     /**
      * Turns timed caption segments into a book-like transcript.
      *
-     * Captions are joined into flowing paragraphs (a pause of ~3s or ~45 words
-     * starts a new one), with a `Chapter N — m:ss` marker every ~15 minutes so
-     * the transcript reads like a book with chapters rather than a wall of
-     * timestamps. No per-paragraph timestamps: they made the text look like it
-     * was skipping minutes when nothing was missing.
+     * Captions are joined into one continuous flow of prose. The ONLY paragraph
+     * break is a new speaker turn (`>>` marker). No word-count or pause-based
+     * breaks: ASR text has no sentence punctuation, so any timed break lands
+     * mid-sentence and makes the next page start with a stray fragment — which
+     * reads as "missing pages". With no artificial breaks, the reader simply
+     * paginates the flow and sentences continue across page turns like a real
+     * book. A `Chapter N — m:ss` heading is emitted only at speaker-turn breaks
+     * roughly every 15 minutes.
      */
     private fun formatTranscript(segments: List<CaptionSegment>): String {
         val paragraphs = mutableListOf<String>()
         val current = StringBuilder()
         var paragraphStart = 0.0
-        var wordCount = 0
-        var lastEnd = 0.0
         var chapterIndex = 0
         var nextChapterAt = 0.0
 
@@ -303,7 +307,6 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             if (current.isNotBlank()) {
                 val body = current.toString().trim()
                 if (paragraphStart >= nextChapterAt) {
-                    // A fresh "chapter" marker, separated like a heading.
                     paragraphs += "Chapter ${chapterIndex + 1} — ${formatTimestamp(paragraphStart)}"
                     paragraphs += body
                     chapterIndex++
@@ -312,21 +315,17 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
                     paragraphs += body
                 }
                 current.setLength(0)
-                wordCount = 0
             }
         }
 
         for (segment in segments) {
-            val gap = segment.start - lastEnd
-            // New paragraph after a pause (~3s) or once the current one is long enough.
-            if (current.isNotBlank() && (gap > 3.0 || wordCount >= MAX_PARAGRAPH_WORDS)) {
+            val isSpeakerTurn = segment.text.startsWith(">>")
+            if (current.isNotBlank() && isSpeakerTurn) {
                 flushParagraph()
             }
             if (current.isBlank()) paragraphStart = segment.start
-            if (current.isNotBlank()) current.append(' ')
+            if (current.isNotBlank() && !isSpeakerTurn) current.append(' ')
             current.append(segment.text)
-            wordCount += segment.text.count { it == ' ' } + 1
-            lastEnd = segment.start + segment.duration
         }
         flushParagraph()
         return paragraphs.joinToString("\n\n")
@@ -357,9 +356,9 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         )
         val MUSIC_TAG_PATTERN = Regex("""\[[♪♫][^\]]*]""")
         val MUSIC_GLYPH_PATTERN = Regex("[♪♫]")
-        val REPEATED_WORD_PATTERN = Regex("""\b(\w+)(?: \1){2,}\b""")
-        const val MAX_PARAGRAPH_WORDS = 45
-        /** A chapter marker is emitted roughly every 15 minutes of audio. */
+        val REPEATED_WORD_PATTERN = Regex("""\b(\w+)(?: \1)+\b""")
+        val WORD_DIGIT_PATTERN = Regex("""([a-zA-Z])(\d)""")
+        /** A chapter marker is emitted only at speaker-turn breaks, ~15 min apart. */
         const val CHAPTER_INTERVAL_SECONDS = 900.0
     }
 

@@ -20,9 +20,9 @@ import io.github.openspacedrepetition.Scheduler
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import org.json.JSONArray
 
 /** Review ratings exposed by the UI without leaking the Java library into Compose. */
 enum class LearningRating(val value: Int, val label: String) {

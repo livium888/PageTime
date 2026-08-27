@@ -76,7 +76,14 @@ class ExplainBackViewModel(
         viewModelScope.launch {
             _conceptsLoading.value = true
             try {
-                _concepts.value = repository.conceptsForChapter(bookId, chapterIndex)
+                var concepts = repository.conceptsForChapter(bookId, chapterIndex)
+                if (concepts.isEmpty()) {
+                    // User-triggered learning must work even when no automatic
+                    // checkpoint has generated concepts for this chapter yet.
+                    container.conceptMapRepository.generateForReadingWindow(bookId, chapterIndex)
+                    concepts = repository.conceptsForChapter(bookId, chapterIndex)
+                }
+                _concepts.value = concepts
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
                 _error.value = throwable.message ?: "Could not load learning concepts"

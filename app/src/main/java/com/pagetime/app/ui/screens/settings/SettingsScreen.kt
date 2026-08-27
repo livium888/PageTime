@@ -263,10 +263,10 @@ private fun GeminiSettingsCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Key, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Gemini cards", style = MaterialTheme.typography.titleMedium)
+                Text("Explain Back with Gemini", style = MaterialTheme.typography.titleMedium)
             }
             Text(
-                "Add your Gemini API key to generate comprehension cards. It is stored only on this device.",
+                "Add your Gemini API key for concept explanations and feedback. It is stored only on this device.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )

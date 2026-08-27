@@ -501,7 +501,7 @@ fun ReaderScreen(
     if (showChapterReviewPrompt) {
         ChapterReviewPrompt(
             chapterLabel = chapterLabel ?: "this chapter",
-            onCreateCard = {
+            onExplain = {
                 showChapterReviewPrompt = false
                 val chIdx = currentChapterIndex ?: book?.currentChapterIndex ?: 0
                 val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"

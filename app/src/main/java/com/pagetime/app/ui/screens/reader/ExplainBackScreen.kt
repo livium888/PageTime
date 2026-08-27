@@ -215,7 +215,12 @@ fun ExplainBackScreen(
                         Column(Modifier.padding(12.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "${explanation.conceptLabel} · ${explanation.overallScore?.let { String.format(\"%.1f\", it) } ?: \"Pending\"}/5",
+                                    buildString {
+                                        append(explanation.conceptLabel)
+                                        append(" · ")
+                                        append(explanation.overallScore?.let { String.format("%.1f", it) } ?: "Pending")
+                                        append("/5")
+                                    },
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.weight(1f)
                                 )

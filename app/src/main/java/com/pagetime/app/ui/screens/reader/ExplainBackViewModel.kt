@@ -128,7 +128,9 @@ class ExplainBackViewModel(
         }
     }
 
-    fun revise() = Unit
+    fun revise() {
+        _messages.value = _messages.value.filterNot { it.isAi }.takeLast(1)
+    }
 }
 
 class ExplainBackViewModelFactory(

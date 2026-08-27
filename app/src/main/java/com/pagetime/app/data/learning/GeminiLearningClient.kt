@@ -301,11 +301,11 @@ class GeminiLearningClient(
             |Concept: $conceptLabel
             |Key aspects the reader should cover: ${keyPoints.joinToString(", ")}
             |
-            |Source text excerpt:
-            |$sourceExcerpt
+            |Compact source grounding (use only to resolve ambiguity):
+            |${sourceExcerpt.take(6_000)}
             |
             |Reader's explanation:
-            |$userExplanation
+            |${userExplanation.take(4_000)}
             |
             |Evaluate on three dimensions (1–5 scale each):
             |1. ACCURACY: Are the facts correct?

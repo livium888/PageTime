@@ -33,6 +33,9 @@ class ExplainBackViewModel(
     private val _conceptsLoading = MutableStateFlow(true)
     val conceptsLoading: StateFlow<Boolean> = _conceptsLoading.asStateFlow()
 
+    private val _needsConceptGeneration = MutableStateFlow(false)
+    val needsConceptGeneration: StateFlow<Boolean> = _needsConceptGeneration.asStateFlow()
+
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
@@ -78,17 +81,45 @@ class ExplainBackViewModel(
         viewModelScope.launch {
             _conceptsLoading.value = true
             try {
-                var concepts = repository.conceptsForChapter(bookId, chapterIndex)
-                if (concepts.isEmpty()) {
-                    // User-triggered learning must work even when no automatic
-                    // checkpoint has generated concepts for this chapter yet.
-                    container.conceptMapRepository.generateForReadingWindow(bookId, chapterIndex)
-                    concepts = repository.conceptsForChapter(bookId, chapterIndex)
-                }
+                val concepts = repository.conceptsForChapter(bookId, chapterIndex)
                 _concepts.value = concepts
+                _needsConceptGeneration.value = concepts.isEmpty()
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
                 _error.value = throwable.message ?: "Could not load learning concepts"
+            } finally {
+                _conceptsLoading.value = false
+            }
+        }
+    }
+
+    fun createLearningConcept() {
+        if (!_needsConceptGeneration.value || _conceptsLoading.value) return
+        viewModelScope.launch {
+            _conceptsLoading.value = true
+            _needsConceptGeneration.value = false
+            _error.value = null
+            try {
+                val book = container.libraryRepository.getBook(bookId)
+                    ?: error("Book is no longer available")
+                val checkpoint = container.settingsRepository.learningCheckpoint()
+                val context = container.learningContextExtractor.extract(
+                    book = book,
+                    chapterIndex = chapterIndex,
+                    checkpoint = checkpoint,
+                    currentLocatorJson = currentLocatorJson,
+                    currentTextOffset = currentTextOffset
+                )
+                if (context.recentText.length < MIN_GENERATION_CHARACTERS) {
+                    error("Read a little more before creating a learning concept")
+                }
+                container.conceptMapRepository.generateForReadingWindow(bookId, chapterIndex)
+                _concepts.value = repository.conceptsForChapter(bookId, chapterIndex)
+                if (_concepts.value.isEmpty()) error("No substantial concept was found in this reading range")
+            } catch (throwable: Throwable) {
+                if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+                _error.value = throwable.message ?: "Could not create a learning concept"
+                _needsConceptGeneration.value = true
             } finally {
                 _conceptsLoading.value = false
             }
@@ -191,6 +222,7 @@ class ExplainBackViewModel(
 
     companion object {
         private const val MAX_EVALUATIONS_PER_CONCEPT = 2
+        private const val MIN_GENERATION_CHARACTERS = 240
     }
 }
 

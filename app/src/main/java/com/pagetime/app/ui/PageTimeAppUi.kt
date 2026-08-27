@@ -224,6 +224,7 @@ fun PageTimeAppUi(openReader: Boolean) {
                 val messages by vm.messages.collectAsStateWithLifecycle()
                 val isLoading by vm.isLoading.collectAsStateWithLifecycle()
                 val conceptsLoading by vm.conceptsLoading.collectAsStateWithLifecycle()
+                val needsConceptGeneration by vm.needsConceptGeneration.collectAsStateWithLifecycle()
                 val isFinished by vm.isFinished.collectAsStateWithLifecycle()
                 val explainError by vm.error.collectAsStateWithLifecycle()
                 val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
@@ -253,6 +254,23 @@ fun PageTimeAppUi(openReader: Boolean) {
                             androidx.compose.material3.Text("Try again")
                         }
                     }
+                } else if (needsConceptGeneration) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+                    ) {
+                        androidx.compose.material3.Text(
+                            "No saved concept covers this reading range yet.",
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        androidx.compose.material3.TextButton(onClick = vm::createLearningConcept) {
+                            androidx.compose.material3.Text("Create learning concept")
+                        }
+                        androidx.compose.material3.TextButton(onClick = { navController.popBackStack() }) {
+                            androidx.compose.material3.Text("Back to reading")
+                        }
+                    }
                 } else if (concepts.isNotEmpty()) {
                     ExplainBackScreen(
                         conceptLabel = vm.currentConcept,
@@ -276,12 +294,9 @@ fun PageTimeAppUi(openReader: Boolean) {
                         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
                     ) {
-                        androidx.compose.material3.Text(
-                            "No learning concepts are available for this chapter yet.",
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        androidx.compose.material3.TextButton(onClick = { navController.popBackStack() }) {
-                            androidx.compose.material3.Text("Back to reading")
+                        androidx.compose.material3.Text("No learning concept is available yet.", textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        androidx.compose.material3.TextButton(onClick = vm::createLearningConcept) {
+                            androidx.compose.material3.Text("Create learning concept")
                         }
                     }
                 }

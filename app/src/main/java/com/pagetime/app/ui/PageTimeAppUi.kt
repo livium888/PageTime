@@ -212,6 +212,7 @@ fun PageTimeAppUi(openReader: Boolean) {
                 val isLoading by vm.isLoading.collectAsStateWithLifecycle()
                 val isFinished by vm.isFinished.collectAsStateWithLifecycle()
                 val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
+                val awaitingRestatement by vm.awaitingRestatement.collectAsStateWithLifecycle()
 
                 if (isFinished) {
                     navController.popBackStack()
@@ -222,6 +223,7 @@ fun PageTimeAppUi(openReader: Boolean) {
                         chapterTitle = chapterTitle,
                         messages = messages,
                         isLoading = isLoading,
+                        awaitingRestatement = awaitingRestatement,
                         canRevise = messages.any { it.isAi },
                         onSendExplanation = vm::submitExplanation,
                         onRevise = vm::revise,

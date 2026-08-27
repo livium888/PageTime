@@ -40,6 +40,9 @@ class ExplainBackViewModel(
     private val _isFinished = MutableStateFlow(false)
     val isFinished: StateFlow<Boolean> = _isFinished.asStateFlow()
 
+    private val _awaitingRestatement = MutableStateFlow(false)
+    val awaitingRestatement: StateFlow<Boolean> = _awaitingRestatement.asStateFlow()
+
     private val _explanationHistory = MutableStateFlow<List<ExplanationEntity>>(emptyList())
     val explanationHistory: StateFlow<List<ExplanationEntity>> = _explanationHistory.asStateFlow()
 
@@ -91,12 +94,18 @@ class ExplainBackViewModel(
                     if (evaluation.suggestedImprovement.isNotBlank()) append("\n\n💡 ${evaluation.suggestedImprovement}")
                     if (evaluation.simplerVersion.isNotBlank()) append("\n\n📖 A clearer version:\n${evaluation.simplerVersion}")
                 }
+                val followUp = if (evaluation.overallScore < 4.0f) {
+                    "Now restate the idea in your own words, focusing on this one improvement: ${evaluation.suggestedImprovement.ifBlank { "include the central cause-and-effect relationship" }}"
+                } else {
+                    "You have a solid explanation. In one sentence, restate the core idea as simply as possible."
+                }
                 _messages.value += ChatMessage(
-                    text = feedbackText,
+                    text = "$feedbackText\n\n$followUp",
                     isUser = false,
                     isAi = true,
                     score = evaluation.overallScore
                 )
+                _awaitingRestatement.value = true
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
                 _error.value = throwable.message
@@ -119,6 +128,7 @@ class ExplainBackViewModel(
     }
 
     fun nextConcept() {
+        _awaitingRestatement.value = false
         val nextIndex = _currentConceptIndex.value + 1
         if (nextIndex >= _concepts.value.size) {
             _isFinished.value = true
@@ -129,6 +139,7 @@ class ExplainBackViewModel(
     }
 
     fun revise() {
+        _awaitingRestatement.value = false
         _messages.value = _messages.value.filterNot { it.isAi }.takeLast(1)
     }
 }

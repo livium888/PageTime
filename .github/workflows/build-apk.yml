@@ -33,15 +33,31 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Build debug APK
+      - name: Check release signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "Missing KEYSTORE_BASE64; refusing to build an APK that may not update the installed app."; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "Missing KEYSTORE_PASSWORD."; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Missing KEY_ALIAS."; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Missing KEY_PASSWORD."; exit 1; }
+
+      - name: Build signed release APK
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: ./gradlew assembleDebug --stacktrace
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
 
-      - name: Upload debug APK
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: pagetime-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: pagetime-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14

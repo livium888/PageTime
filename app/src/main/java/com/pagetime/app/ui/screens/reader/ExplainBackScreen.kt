@@ -57,6 +57,7 @@ fun ExplainBackScreen(
     chapterTitle: String?,
     messages: List<ChatMessage>,
     isLoading: Boolean,
+    awaitingRestatement: Boolean = false,
     canRevise: Boolean,
     onSendExplanation: (String) -> Unit,
     onRevise: () -> Unit,
@@ -114,8 +115,11 @@ fun ExplainBackScreen(
                         modifier = Modifier.weight(1f),
                         placeholder = {
                             Text(
-                                if (canRevise) "Revise your explanation..."
-                                else "Explain in your own words..."
+                                when {
+                                    awaitingRestatement -> "Restate the idea simply..."
+                                    canRevise -> "Revise your explanation..."
+                                    else -> "Explain in your own words..."
+                                }
                             )
                         },
                         minLines = 1,
@@ -159,7 +163,11 @@ fun ExplainBackScreen(
                 // Header hint.
                 item {
                     Text(
-                        "Think about what you just read. Explain this concept as if you're teaching it to someone who knows nothing about the topic.",
+                        if (awaitingRestatement) {
+                            "One focused restatement is enough. Say the idea simply, then continue to the next concept."
+                        } else {
+                            "Think about what you just read. Explain this concept as if you're teaching it to someone who knows nothing about the topic."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp)

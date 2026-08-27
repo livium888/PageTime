@@ -272,17 +272,23 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             .replace("\n", " ")
         // YouTube ASR marks non-speech as [Music], [Applause], [Laughter], …
         text = SOUND_TAG_PATTERN.replace(text, "")
+        // Instrumental cues like [♪♪♪] carry no words — drop the whole tag.
+        text = MUSIC_TAG_PATTERN.replace(text, " ")
+        // Music-note glyphs (♪ ♫) wrap song lyrics; strip them, keep the words.
+        text = MUSIC_GLYPH_PATTERN.replace(text, " ")
         // Auto-captions repeat a word when the speaker emphasizes it.
         text = REPEATED_WORD_PATTERN.replace(text, "$1")
         return text.replace(Regex("\\s+"), " ").trim()
     }
 
     /**
-     * Turns timed caption segments into a book-like transcript:
-     * flowing paragraphs instead of one block per caption, with a compact
-     * `[m:ss]` timestamp at the start of each paragraph so readers always
-     * know where they are in the video. Paragraphs are joined with blank
-     * lines, which the plain-text reader uses as page boundaries.
+     * Turns timed caption segments into a book-like transcript.
+     *
+     * Captions are joined into flowing paragraphs (a pause of ~3s or ~45 words
+     * starts a new one), with a `Chapter N — m:ss` marker every ~15 minutes so
+     * the transcript reads like a book with chapters rather than a wall of
+     * timestamps. No per-paragraph timestamps: they made the text look like it
+     * was skipping minutes when nothing was missing.
      */
     private fun formatTranscript(segments: List<CaptionSegment>): String {
         val paragraphs = mutableListOf<String>()
@@ -290,11 +296,21 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         var paragraphStart = 0.0
         var wordCount = 0
         var lastEnd = 0.0
+        var chapterIndex = 0
+        var nextChapterAt = 0.0
 
         fun flushParagraph() {
             if (current.isNotBlank()) {
                 val body = current.toString().trim()
-                paragraphs += "[${formatTimestamp(paragraphStart)}] $body"
+                if (paragraphStart >= nextChapterAt) {
+                    // A fresh "chapter" marker, separated like a heading.
+                    paragraphs += "Chapter ${chapterIndex + 1} — ${formatTimestamp(paragraphStart)}"
+                    paragraphs += body
+                    chapterIndex++
+                    nextChapterAt = paragraphStart + CHAPTER_INTERVAL_SECONDS
+                } else {
+                    paragraphs += body
+                }
                 current.setLength(0)
                 wordCount = 0
             }
@@ -339,8 +355,12 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         val SOUND_TAG_PATTERN = Regex(
             """\[(?i)(music|applause|laughter|cheering|audience|crowd|singing|noise|sound)[^\]]*]"""
         )
+        val MUSIC_TAG_PATTERN = Regex("""\[[♪♫][^\]]*]""")
+        val MUSIC_GLYPH_PATTERN = Regex("[♪♫]")
         val REPEATED_WORD_PATTERN = Regex("""\b(\w+)(?: \1){2,}\b""")
         const val MAX_PARAGRAPH_WORDS = 45
+        /** A chapter marker is emitted roughly every 15 minutes of audio. */
+        const val CHAPTER_INTERVAL_SECONDS = 900.0
     }
 
     /**

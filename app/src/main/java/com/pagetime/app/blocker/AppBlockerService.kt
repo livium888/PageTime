@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
 import com.pagetime.app.MainActivity
 import com.pagetime.app.PageTimeApp
@@ -62,8 +64,22 @@ class AppBlockerService : AccessibilityService() {
     /** Shows the block screen. Returns false if no overlay window could be added. */
     fun showTimeUp(): Boolean {
         if (Looper.myLooper() == Looper.getMainLooper()) return showTimeUpNow()
-        mainHandler.post { showTimeUpNow() }
-        return overlay?.isShowing() ?: false
+        val result = BooleanArray(1)
+        val latch = CountDownLatch(1)
+        mainHandler.post {
+            result[0] = showTimeUpNow()
+            latch.countDown()
+        }
+        // BlockController calls this from its background scope. Wait briefly for
+        // the actual main-thread window operation so a not-yet-created overlay is
+        // not mistaken for a permission failure.
+        return try {
+            latch.await(500, TimeUnit.MILLISECONDS)
+            result[0]
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
     }
 
     private fun showTimeUpNow(): Boolean {

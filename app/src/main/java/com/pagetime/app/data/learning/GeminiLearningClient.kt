@@ -3,6 +3,7 @@ package com.pagetime.app.data.learning
 import com.pagetime.app.BuildConfig
 import com.pagetime.app.data.AppHttp
 import com.pagetime.app.data.local.SettingsRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -191,6 +192,7 @@ class GeminiLearningClient(
                     lastError = IllegalStateException("Gemini temporarily unavailable: HTTP ${it.code}")
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
                 lastError = error
             }
             if (attempt < 2) delay(700L * (attempt + 1))

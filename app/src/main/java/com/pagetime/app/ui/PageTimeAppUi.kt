@@ -184,16 +184,17 @@ fun PageTimeAppUi(openReader: Boolean) {
                     bookId = bookId,
                     onBack = { navController.popBackStack() },
                     onOpenConcepts = { conceptBookId -> navController.navigate("concepts?bookId=$conceptBookId") },
-                    onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle ->
+                    onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
                         val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
                         val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
+                        val encodedLocator = URLEncoder.encode(locatorJson.orEmpty(), "UTF-8")
                         navController.navigate(
-                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle"
+                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=$encodedLocator&offset=${textOffset ?: -1}"
                         )
                     }
                 )
             }
-            composable("explain-back/{bookId}/{chapterIndex}/{chapterTitle}/{bookTitle}") { entry ->
+            composable("explain-back/{bookId}/{chapterIndex}/{chapterTitle}/{bookTitle}?locator={locator}&offset={offset}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: ""
                 val chapterIndex = entry.arguments?.getString("chapterIndex")?.toIntOrNull() ?: 0
                 val chapterTitle = URLDecoder.decode(
@@ -202,10 +203,22 @@ fun PageTimeAppUi(openReader: Boolean) {
                 val bookTitle = URLDecoder.decode(
                     entry.arguments?.getString("bookTitle") ?: "", "UTF-8"
                 )
+                val locatorJson = entry.arguments?.getString("locator")
+                    ?.let { URLDecoder.decode(it, "UTF-8") }
+                    ?.takeIf { it.isNotBlank() }
+                val textOffset = entry.arguments?.getString("offset")?.toIntOrNull()?.takeIf { it >= 0 }
                 val context = androidx.compose.ui.platform.LocalContext.current
                 val app = context.applicationContext as com.pagetime.app.PageTimeApp
                 val vm: ExplainBackViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
-                    factory = ExplainBackViewModelFactory(app, bookId, chapterIndex, bookTitle, chapterTitle)
+                    factory = ExplainBackViewModelFactory(
+                        app,
+                        bookId,
+                        chapterIndex,
+                        bookTitle,
+                        chapterTitle,
+                        locatorJson,
+                        textOffset
+                    )
                 )
                 val concepts by vm.concepts.collectAsStateWithLifecycle()
                 val messages by vm.messages.collectAsStateWithLifecycle()

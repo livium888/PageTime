@@ -354,6 +354,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
+    fun currentLearningPosition(): Pair<String?, Int?> =
+        if (_book.value?.format == "epub") {
+            latestLocator?.toJSON()?.toString() to null
+        } else {
+            null to latestTxtOffset()
+        }
+
     fun setLearningCheckpoint() {
         val b = _book.value ?: return
         persistenceScope.launch {

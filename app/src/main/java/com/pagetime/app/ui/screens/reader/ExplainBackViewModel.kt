@@ -20,7 +20,9 @@ class ExplainBackViewModel(
     private val bookId: String,
     private val chapterIndex: Int,
     private val bookTitle: String,
-    private val chapterTitle: String
+    private val chapterTitle: String,
+    private val currentLocatorJson: String? = null,
+    private val currentTextOffset: Int? = null
 ) : AndroidViewModel(application) {
     private val container = (application as PageTimeApp).container
     private val repository: ExplainBackRepository = container.explainBackRepository
@@ -106,7 +108,14 @@ class ExplainBackViewModel(
             try {
                 val book = container.libraryRepository.getBook(bookId)
                     ?: error("Book is no longer available")
-                val context = container.learningContextExtractor.extract(book, chapterIndex)
+                val checkpoint = container.settingsRepository.learningCheckpoint()
+                val context = container.learningContextExtractor.extract(
+                    book = book,
+                    chapterIndex = chapterIndex,
+                    checkpoint = checkpoint,
+                    currentLocatorJson = currentLocatorJson,
+                    currentTextOffset = currentTextOffset
+                )
                 if (context.recentText.isBlank()) {
                     error("There is no readable text available for this chapter yet")
                 }
@@ -190,9 +199,19 @@ class ExplainBackViewModelFactory(
     private val bookId: String,
     private val chapterIndex: Int,
     private val bookTitle: String,
-    private val chapterTitle: String
+    private val chapterTitle: String,
+    private val currentLocatorJson: String? = null,
+    private val currentTextOffset: Int? = null
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        ExplainBackViewModel(app, bookId, chapterIndex, bookTitle, chapterTitle) as T
+        ExplainBackViewModel(
+            app,
+            bookId,
+            chapterIndex,
+            bookTitle,
+            chapterTitle,
+            currentLocatorJson,
+            currentTextOffset
+        ) as T
 }

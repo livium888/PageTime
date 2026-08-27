@@ -2,60 +2,76 @@ package com.pagetime.app.data.learning
 
 import android.content.Context
 import com.pagetime.app.data.local.BookEntity
+import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.library.EpubParser
 import java.io.File
 import java.util.zip.ZipFile
 import kotlinx.coroutines.CancellationException
 import org.jsoup.Jsoup
 
-/**
- * Builds the text window Gemini sees. Each chapter is processed at most once and
- * the result is cached, so the extractor sends the *full* current chapter — no
- * windowing across earlier chapters. This maximises question quality because the
- * AI can reference any part of the chapter in a single call.
- */
+/** Builds bounded, source-grounded text windows for learning requests. */
 class LearningContextExtractor(
     private val context: Context,
     private val epubParser: EpubParser
 ) {
+    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 40_000): LearningContext =
+        extract(
+            book,
+            chapterIndex,
+            checkpoint = null,
+            currentLocatorJson = null,
+            currentTextOffset = null,
+            maxCharacters = maxCharacters
+        )
+
     /**
-     * Returns the full text of [chapterIndex].  A generous safety cap (40k chars)
-     * prevents accidental uploads of abnormally long chapters while still
-     * covering most real EPUB chapters in one pass.
+     * Uses the checkpoint as a content boundary. No checkpoint means chapter start.
+     * This method never navigates the reader; it only changes the text sent to AI.
      */
-    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 40_000): LearningContext {
+    fun extract(
+        book: BookEntity,
+        chapterIndex: Int,
+        checkpoint: LearningCheckpoint?,
+        currentLocatorJson: String?,
+        currentTextOffset: Int?,
+        maxCharacters: Int = 40_000
+    ): LearningContext {
         require(maxCharacters in 2_000..80_000)
         return if (book.format == "epub") {
-            extractEpub(book, chapterIndex, maxCharacters)
+            extractEpub(book, chapterIndex, checkpoint, currentLocatorJson, maxCharacters)
         } else {
-            extractText(book, chapterIndex, maxCharacters)
+            extractText(book, chapterIndex, checkpoint, currentTextOffset, maxCharacters)
         }
     }
 
-    private fun extractText(book: BookEntity, chapterIndex: Int, maxCharacters: Int): LearningContext {
+    private fun extractText(
+        book: BookEntity,
+        chapterIndex: Int,
+        checkpoint: LearningCheckpoint?,
+        currentTextOffset: Int?,
+        maxCharacters: Int
+    ): LearningContext {
         val full = File(book.localPath).readText()
-        val paragraphs = full.split(Regex("\\n\\s*\\n"))
-            .map(String::trim)
-            .filter { it.isNotBlank() }
-        // Plain-text downloads do not carry reliable chapter metadata. Treat the
-        // book as five stable windows and return the active one in full.
-        val windowCount = 5
-        val activeWindow = chapterIndex.coerceIn(0, windowCount - 1)
-        val paragraphsPerWindow = ((paragraphs.size + windowCount - 1) / windowCount).coerceAtLeast(1)
-        val startParagraph = (activeWindow * paragraphsPerWindow).coerceAtMost(paragraphs.size)
-        val endParagraph = ((activeWindow + 1) * paragraphsPerWindow).coerceAtMost(paragraphs.size)
-        val selected = paragraphs.subList(startParagraph, endParagraph).joinToString("\n\n")
+        val start = checkpoint?.textOffset?.coerceIn(0, full.length) ?: 0
+        val end = (currentTextOffset ?: full.length).coerceIn(start, full.length)
+        val bounded = full.substring(start, end).take(maxCharacters)
         return LearningContext(
             bookId = book.id,
             bookTitle = book.title,
-            chapterIndex = activeWindow,
-            chapterTitle = "Reading window ${activeWindow + 1} of $windowCount",
-            recentText = selected.take(maxCharacters),
+            chapterIndex = chapterIndex,
+            chapterTitle = "Reading window",
+            recentText = bounded,
             sourceFormat = "txt"
         )
     }
 
-    private fun extractEpub(book: BookEntity, chapterIndex: Int, maxCharacters: Int): LearningContext {
+    private fun extractEpub(
+        book: BookEntity,
+        chapterIndex: Int,
+        checkpoint: LearningCheckpoint?,
+        currentLocatorJson: String?,
+        maxCharacters: Int
+    ): LearningContext {
         val extracted = File(context.cacheDir, "epub/${book.id}")
         val parsed = try {
             epubParser.parse(File(book.localPath), extracted, extractAssets = false)
@@ -64,9 +80,8 @@ class LearningContextExtractor(
             return extractEpubRaw(book, maxCharacters)
         }
         val active = chapterIndex.coerceIn(0, (parsed.chapters.size - 1).coerceAtLeast(0))
-        // Send the full active chapter — no windowing across prior chapters.
+        val chapter = parsed.chapters[active]
         val text = ZipFile(book.localPath).use { zip ->
-            val chapter = parsed.chapters[active]
             val entry = zip.getEntry(chapter.filePath)
                 ?: zip.getEntry(chapter.filePath.substringBefore('#'))
             val plain = entry?.let { item ->
@@ -76,23 +91,40 @@ class LearningContextExtractor(
                     }
                 }.getOrNull().orEmpty()
             }.orEmpty()
-            "${chapter.title}\n$plain"
+            val raw = "${chapter.title}\n$plain"
+            val startFraction = checkpointFraction(checkpoint, chapter.filePath)
+            val endFraction = currentFraction(currentLocatorJson, chapter.filePath)
+            val start = (raw.length * startFraction).toInt().coerceIn(0, raw.length)
+            val end = (raw.length * endFraction.coerceAtLeast(startFraction)).toInt().coerceIn(start, raw.length)
+            raw.substring(start, end).ifBlank { raw }
         }
         return LearningContext(
             bookId = book.id,
             bookTitle = book.title,
             chapterIndex = active,
-            chapterTitle = parsed.chapters[active].title,
+            chapterTitle = chapter.title,
             recentText = text.take(maxCharacters),
             sourceFormat = "epub"
         )
     }
 
-    /**
-     * Last-resort EPUB extraction when the strict parser rejects the file: read the
-     * most recent XHTML content entries directly from the archive. Not chapter-aware,
-     * but it guarantees cards still have real source text to work from.
-     */
+    private fun checkpointFraction(checkpoint: LearningCheckpoint?, chapterPath: String): Float =
+        checkpoint?.locatorJson
+            ?.let { locator ->
+                if (locator.contains(chapterPath.substringBefore('#'))) {
+                    Regex("\\\"progression\\\"\\s*:\\s*([0-9.]+)").find(locator)
+                        ?.groupValues?.getOrNull(1)?.toFloatOrNull()
+                } else null
+            }?.coerceIn(0f, 1f) ?: 0f
+
+    private fun currentFraction(locatorJson: String?, chapterPath: String): Float =
+        locatorJson
+            ?.takeIf { it.contains(chapterPath.substringBefore('#')) }
+            ?.let { locator ->
+                Regex("\\\"progression\\\"\\s*:\\s*([0-9.]+)").find(locator)
+                    ?.groupValues?.getOrNull(1)?.toFloatOrNull()
+            }?.coerceIn(0f, 1f) ?: 1f
+
     private fun extractEpubRaw(book: BookEntity, maxCharacters: Int): LearningContext {
         val content = ZipFile(book.localPath).use { zip ->
             zip.entries().asSequence()
@@ -105,27 +137,17 @@ class LearningContextExtractor(
                 }
                 .filter { entry ->
                     val lower = entry.name.lowercase()
-                    !(lower.contains("nav") || lower.contains("toc") ||
-                        lower.contains("cover") || lower.contains("titlepage"))
+                    !(lower.contains("nav") || lower.contains("toc") || lower.contains("cover") || lower.contains("titlepage"))
                 }
                 .sortedBy { it.name }
                 .toList()
                 .takeLast(3)
                 .joinToString("\n\n") { entry ->
                     runCatching {
-                        zip.getInputStream(entry).use { input ->
-                            Jsoup.parse(input, Charsets.UTF_8.name(), "").text()
-                        }
+                        zip.getInputStream(entry).use { input -> Jsoup.parse(input, Charsets.UTF_8.name(), "").text() }
                     }.getOrNull().orEmpty()
                 }
         }
-        return LearningContext(
-            bookId = book.id,
-            bookTitle = book.title,
-            chapterIndex = 0,
-            chapterTitle = "Reading window",
-            recentText = content.takeLast(maxCharacters),
-            sourceFormat = "epub"
-        )
+        return LearningContext(book.id, book.title, 0, "Reading window", content.takeLast(maxCharacters), "epub")
     }
 }

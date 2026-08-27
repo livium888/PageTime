@@ -168,7 +168,7 @@ fun ReaderScreen(
     bookId: String,
     onBack: () -> Unit,
     onOpenConcepts: (String) -> Unit = {},
-    onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String) -> Unit = { _, _, _, _ -> }
+    onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String, locatorJson: String?, textOffset: Int?) -> Unit = { _, _, _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -438,7 +438,14 @@ fun ReaderScreen(
                     val chIdx = currentChapterIndex ?: book?.currentChapterIndex
                     if (chIdx != null) {
                         val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
-                        onExplainBack(bookId, chIdx, chTitle, book?.title ?: "Book")
+                        onExplainBack(
+                            bookId,
+                            chIdx,
+                            chTitle,
+                            book?.title ?: "Book",
+                            currentLocator?.toJSON()?.toString(),
+                            vm.currentLearningPosition().second
+                        )
                     }
                 }
             )
@@ -522,7 +529,14 @@ fun ReaderScreen(
                 if (chIdx != null) {
                     val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
                     val bTitle = book?.title ?: "Book"
-                    onExplainBack(bookId, chIdx, chTitle, bTitle)
+                    onExplainBack(
+                        bookId,
+                        chIdx,
+                        chTitle,
+                        bTitle,
+                        currentLocator?.toJSON()?.toString(),
+                        null
+                    )
                 }
             },
             onDismiss = { showChapterReviewPrompt = false }

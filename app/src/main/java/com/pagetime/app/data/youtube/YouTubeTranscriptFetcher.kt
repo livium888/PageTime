@@ -52,20 +52,19 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             val captionTracks = getCaptionTracks(videoId)
             if (captionTracks.isEmpty()) return@withContext null
 
-            // Step 2: Pick the best matching caption track.
-            val track = pickTrack(captionTracks, language)
-                ?: captionTracks.firstOrNull()
-                ?: return@withContext null
-
-            val captionUrl = track.optString("baseUrl", "")
-                .replace("&fmt=srv3", "")
-            if (captionUrl.isBlank()) return@withContext null
-
-            // Step 3: Fetch the timed text and format it into readable paragraphs.
-            val rawXml = fetchUrl(captionUrl)
-            val segments = extractSegments(rawXml)
-            if (segments.isEmpty()) return@withContext null
-            val text = formatTranscript(segments)
+            // Step 2: Fetch the timed text for EVERY track that matches the
+            // preferred language and merge them. YouTube sometimes splits long
+            // transcripts across several tracks with the same language code, or
+            // pairs a short preview track with the full one — fetching only a
+            // single track would silently drop large stretches of content.
+            val tracks = selectTracks(captionTracks, language)
+            if (tracks.isEmpty()) return@withContext null
+            val segments = tracks.flatMap { track ->
+                runCatching { fetchTrackSegments(track) }.getOrDefault(emptyList())
+            }
+            val merged = mergeSegments(segments)
+            if (merged.isEmpty()) return@withContext null
+            val text = formatTranscript(merged)
             if (text.isBlank()) return@withContext null
 
             // Step 4: Fetch the real title + author from YouTube's oEmbed endpoint.
@@ -153,48 +152,109 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
-     * Picks the best caption track for the desired language.
-     * Prefers an exact language match, then falls back to any track.
+     * Selects every caption track that matches the preferred language.
+     * Exact language matches first, then prefix matches ("en" matches
+     * "en-US"), then any manual (non-auto-generated) track, then all tracks.
+     * All selected tracks are fetched and merged so nothing is lost.
      */
-    private fun pickTrack(tracks: List<JSONObject>, language: String): JSONObject? {
-        // Exact match (e.g. "en")
-        tracks.firstOrNull {
-            it.optString("languageCode") == language
-        }?.let { return it }
-
-        // Prefix match (e.g. "en" matches "en-US")
-        tracks.firstOrNull {
-            it.optString("languageCode").startsWith(language)
-        }?.let { return it }
-
-        // Prefer manual over auto-generated
-        tracks.firstOrNull {
-            it.optString("kind") != "asr"
-        }?.let { return it }
-
-        return null
+    private fun selectTracks(tracks: List<JSONObject>, language: String): List<JSONObject> {
+        val exact = tracks.filter { it.optString("languageCode") == language }
+        if (exact.isNotEmpty()) return exact
+        val prefix = tracks.filter { it.optString("languageCode").startsWith(language) }
+        if (prefix.isNotEmpty()) return prefix
+        val manual = tracks.filter { it.optString("kind") != "asr" }
+        if (manual.isNotEmpty()) return manual
+        return tracks
     }
 
     /**
-     * Extracts timed caption segments from YouTube's timed text XML format.
-     * Each `<text>` element carries a `start` attribute (seconds) and a line.
+     * Fetches the timed text for a single caption track and parses it into
+     * timed segments. Handles both the XML format and YouTube's srv3 JSON.
      */
-    private fun extractSegments(xml: String): List<CaptionSegment> {
+    private fun fetchTrackSegments(track: JSONObject): List<CaptionSegment> {
+        // Strip fmt=srv3 when it appears anywhere in the query string so the
+        // default XML format is returned (srv3 JSON is still parsed as a
+        // fallback if the URL cannot be rewritten).
+        val captionUrl = track.optString("baseUrl", "")
+            .replace("?fmt=srv3", "?")
+            .replace("&fmt=srv3", "")
+        if (captionUrl.isBlank()) return emptyList()
+        val raw = fetchUrl(captionUrl)
+        return extractSegments(raw)
+    }
+
+    /**
+     * Extracts timed caption segments from a caption track response.
+     * Handles both YouTube's XML format (`<text start=...>`) and the srv3
+     * JSON format (events with tStartMs + segs).
+     */
+    private fun extractSegments(raw: String): List<CaptionSegment> {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("{")) {
+            return extractSrv3Json(trimmed)
+        }
+        // Normalize stray line breaks inside captions so the element regex
+        // never splits a caption in half.
+        val xml = trimmed.replace("<br>", " ").replace("<br/>", " ")
         val segments = mutableListOf<CaptionSegment>()
         val pattern = Regex("""<text\b([^>]*)>([^<]*)</text>""")
         val startAttr = Regex("""start="([\d.]+)""")
         val durAttr = Regex("""dur="([\d.]+)""")
         for (match in pattern.findAll(xml)) {
             val attrs = match.groupValues[1]
-            val raw = match.groupValues[2]
+            val rawText = match.groupValues[2]
             val start = startAttr.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
             val dur = durAttr.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: 2.0
-            val text = cleanSegment(raw)
+            val text = cleanSegment(rawText)
             if (text.isNotBlank()) {
                 segments += CaptionSegment(start, dur, text)
             }
         }
         return segments
+    }
+
+    /** Parses YouTube's srv3 JSON transcript format. */
+    private fun extractSrv3Json(json: String): List<CaptionSegment> {
+        return try {
+            val root = JSONObject(json)
+            val events = root.optJSONArray("events") ?: return emptyList()
+            val segments = mutableListOf<CaptionSegment>()
+            for (i in 0 until events.length()) {
+                val event = events.getJSONObject(i)
+                val startMs = event.optLong("tStartMs", -1)
+                if (startMs < 0) continue
+                val segs = event.optJSONArray("segs") ?: continue
+                val rawText = (0 until segs.length()).joinToString("") { idx ->
+                    segs.getJSONObject(idx).optString("utf8", "")
+                }
+                val text = cleanSegment(rawText)
+                if (text.isNotBlank()) {
+                    segments += CaptionSegment(startMs / 1000.0, 2.0, text)
+                }
+            }
+            segments
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Merges segments fetched from multiple caption tracks: sorts by start
+     * time and drops true duplicates (same start instant) — preview tracks
+     * repeat the same lines as the full track. Distinct lines are all kept,
+     * so content from split tracks is reassembled in the right order.
+     */
+    private fun mergeSegments(all: List<CaptionSegment>): List<CaptionSegment> {
+        if (all.size <= 1) return all
+        val sorted = all.sortedWith(compareBy({ it.start }, { -it.text.length }))
+        val merged = mutableListOf<CaptionSegment>()
+        var lastStart = Double.NEGATIVE_INFINITY
+        for (segment in sorted) {
+            if (segment.start - lastStart < 0.1) continue
+            merged += segment
+            lastStart = segment.start
+        }
+        return merged
     }
 
     /**

@@ -187,7 +187,8 @@ class GeminiLearningClient(
                     val body = it.body?.string().orEmpty()
                     if (it.isSuccessful) return body
                     if (it.code !in RETRYABLE_CODES) {
-                        error("Gemini request failed: HTTP ${it.code}")
+                        val detail = body.take(240).replace(Regex("\\s+"), " ").trim()
+                        error("Gemini request failed: HTTP ${it.code}${detail.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}")
                     }
                     lastError = IllegalStateException("Gemini temporarily unavailable: HTTP ${it.code}")
                 }

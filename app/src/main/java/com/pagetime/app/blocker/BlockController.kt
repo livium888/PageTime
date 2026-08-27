@@ -56,6 +56,7 @@ class BlockController(
 
         /** How often the block screen is re-asserted while it should be up. */
         private const val ENFORCE_INTERVAL_MS = 1_000L
+
     }
 
     @Volatile

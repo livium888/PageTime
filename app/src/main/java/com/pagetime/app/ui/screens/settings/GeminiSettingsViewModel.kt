@@ -54,6 +54,7 @@ class GeminiSettingsViewModel(app: Application) : AndroidViewModel(app) {
                 return
             }
         _hasUserKey.value = true
+        _status.value = GeminiSettingsStatus.Ready("Key saved securely. Testing connection…")
         refreshModels()
     }
 

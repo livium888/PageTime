@@ -13,6 +13,12 @@ import com.pagetime.app.PageTimeApp
 class AppBlockerService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val foregroundRefresh = object : Runnable {
+        override fun run() {
+            rootInActiveWindow?.packageName?.toString()?.let { controller?.onForegroundPackage(it) }
+            mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
+        }
+    }
     private var overlay: TimeUpOverlay? = null
 
     private val controller: BlockController?
@@ -28,6 +34,8 @@ class AppBlockerService : AccessibilityService() {
         // that app happens to emit another window event — which it never does while
         // it stays foreground.
         rootInActiveWindow?.packageName?.toString()?.let { controller?.onForegroundPackage(it) }
+        mainHandler.removeCallbacks(foregroundRefresh)
+        mainHandler.post(foregroundRefresh)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -56,9 +64,14 @@ class AppBlockerService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(foregroundRefresh)
         dismissTimeUp()
         controller?.service = null
         super.onDestroy()
+    }
+
+    companion object {
+        private const val FOREGROUND_REFRESH_MS = 2_000L
     }
 
     /** Shows the block screen. Returns false if no overlay window could be added. */

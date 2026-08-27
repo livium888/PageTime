@@ -207,14 +207,20 @@ fun ExplainBackScreen(
                         }
                     }
                 }
-            }
-
-            Text(
-                "Gemini checks this concept at most twice · $requestsUsed request${if (requestsUsed == 1) "" else "s"} used",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
+            }                Text(
+                    "Gemini checks this concept at most twice · $requestsUsed request${if (requestsUsed == 1) "" else "s"} used",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+                if (history.any { it.conceptLabel == conceptLabel && (it.overallScore ?: 0f) < 3.5f }) {
+                    Text(
+                        "This concept may be worth revisiting after you finish the chapter.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                    )
+                }
 
             if (history.isNotEmpty()) {
                 Text(

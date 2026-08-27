@@ -44,7 +44,9 @@ class ExplainBackRepository(
         userExplanation: String,
         sourceText: String
     ): ExplanationEvaluation {
-        // Build key-points hint from the concept description if available.
+        // Keep the quality-bearing source excerpt, but add only compact memory from
+        // the concept and the reader's best prior attempt. This avoids replaying a
+        // conversation or sending unbounded history on later reviews.
         val concept = conceptDao.getForBook(bookId)
             .firstOrNull { it.label == conceptLabel }
         val keyPoints = concept?.description
@@ -53,10 +55,20 @@ class ExplainBackRepository(
             ?.filter { it.length in 5..80 }
             ?.take(3)
             ?: emptyList()
+        val bestPrior = explanationDao.bestForConcept(bookId, conceptLabel)
+        val memoryHint = bestPrior?.let {
+            buildString {
+                append("Previous best score: ${it.overallScore?.let { score -> String.format(\"%.1f\", score) } ?: \"pending\"}/5. ")
+                it.whatTheyMissed?.takeIf(String::isNotBlank)?.let { missed ->
+                    append("Previous gap: ${missed.take(240)}")
+                }
+            }
+        }.orEmpty()
+        val compactKeyPoints = (keyPoints + memoryHint).filter { it.isNotBlank() }.take(4)
 
         val evaluation = geminiClient.evaluateExplanation(
             conceptLabel = conceptLabel,
-            keyPoints = keyPoints,
+            keyPoints = compactKeyPoints,
             sourceExcerpt = sourceText.take(12_000),
             userExplanation = userExplanation,
             bookTitle = bookTitle,

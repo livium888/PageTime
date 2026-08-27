@@ -2,21 +2,17 @@ package com.pagetime.app.data.youtube
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import org.thoroldvix.api.TranscriptApiFactory
-import org.thoroldvix.api.YoutubeClient
-import org.thoroldvix.api.YoutubeTranscriptApi
-import org.thoroldvix.api.formatter.TranscriptFormatters
 import java.util.concurrent.TimeUnit
 
 /**
- * Fetches YouTube video transcripts using the public caption endpoint.
+ * Fetches YouTube video transcripts using YouTube's innertube API.
  *
- * Uses the `youtube-transcript-api` Java library with a custom OkHttp client
- * (Android doesn't include Java 11 HttpClient). No API key is needed —
- * YouTube's caption tracks are publicly accessible for any video that has
- * subtitles (manual or auto-generated).
+ * No API key is needed — YouTube's innertube endpoint is publicly accessible
+ * for any video that has subtitles (manual or auto-generated).
  *
  * The fetched transcript is converted to clean, readable text and saved
  * as a plain-text book in PageTime's library.
@@ -28,10 +24,6 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
-    }
-
-    private val api: YoutubeTranscriptApi by lazy {
-        TranscriptApiFactory.createWithClient(OkHttpYoutubeClient(client))
     }
 
     /**
@@ -56,10 +48,24 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         language: String = "en"
     ): TranscriptResult? = withContext(Dispatchers.IO) {
         try {
-            val content = api.getTranscript(videoId, language)
-            val text = TranscriptFormatters.textFormatter().format(content)
+            // Step 1: Get available caption tracks via innertube player endpoint.
+            val captionTracks = getCaptionTracks(videoId)
+            if (captionTracks.isEmpty()) return@withContext null
+
+            // Step 2: Pick the best matching caption track.
+            val track = pickTrack(captionTracks, language)
+                ?: captionTracks.firstOrNull()
+                ?: return@withContext null
+
+            val captionUrl = track.getString("baseUrl")
+            if (captionUrl.isBlank()) return@withContext null
+
+            // Step 3: Fetch the timed text and extract plain text.
+            val rawXml = fetchUrl(captionUrl)
+            val text = extractTextFromTimedText(rawXml)
             if (text.isBlank()) return@withContext null
-            // Fetch the real title + author from YouTube's public oEmbed endpoint.
+
+            // Step 4: Fetch the real title + author from YouTube's oEmbed endpoint.
             val (title, author) = fetchVideoMetadata(videoId)
             TranscriptResult(
                 title = title,
@@ -70,6 +76,100 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             e.printStackTrace()
             null
         }
+    }
+
+    /**
+     * Uses YouTube's innertube /player endpoint to get the list of available
+     * caption tracks for a video. No authentication needed.
+     */
+    private fun getCaptionTracks(videoId: String): List<JSONObject> {
+        val body = JSONObject()
+            .put("context", JSONObject()
+                .put("client", JSONObject()
+                    .put("clientName", "WEB")
+                    .put("clientVersion", "2.20240101.00.00")
+                )
+            )
+            .put("videoId", videoId)
+            .toString()
+
+        val request = okhttp3.Request.Builder()
+            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val responseBody = fetchUrl(request.url.toString(), body)
+        val json = JSONObject(responseBody)
+
+        val captions = json.optJSONObject("captions")
+            ?.optJSONObject("playerCaptionsTracklistRenderer")
+            ?.optJSONArray("captionTracks")
+            ?: return emptyList()
+
+        return (0 until captions.length()).map { captions.getJSONObject(it) }
+    }
+
+    /**
+     * Fetches raw text from a URL via GET.
+     */
+    private fun fetchUrl(url: String, postBody: String? = null): String {
+        val requestBuilder = okhttp3.Request.Builder().url(url)
+        if (postBody != null) {
+            requestBuilder
+                .post(postBody.toRequestBody("application/json".toMediaType()))
+        }
+        client.newCall(requestBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw RuntimeException("HTTP ${response.code}: $url")
+            }
+            return response.body?.string() ?: throw RuntimeException("Empty response from $url")
+        }
+    }
+
+    /**
+     * Picks the best caption track for the desired language.
+     * Prefers an exact language match, then falls back to any track.
+     */
+    private fun pickTrack(tracks: List<JSONObject>, language: String): JSONObject? {
+        // Exact match (e.g. "en")
+        tracks.firstOrNull {
+            it.optString("languageCode") == language
+        }?.let { return it }
+
+        // Prefix match (e.g. "en" matches "en-US")
+        tracks.firstOrNull {
+            it.optString("languageCode").startsWith(language)
+        }?.let { return it }
+
+        // Prefer manual over auto-generated
+        tracks.firstOrNull {
+            it.optString("kind") != "asr"
+        }?.let { return it }
+
+        return null
+    }
+
+    /**
+     * Extracts plain text from YouTube's timed text XML format.
+     * Each `<text>` element contains a segment of the transcript.
+     */
+    private fun extractTextFromTimedText(xml: String): String {
+        val segments = mutableListOf<String>()
+        val pattern = Regex("""<text[^>]*>([^<]*)</text>""")
+        for (match in pattern.findAll(xml)) {
+            val text = match.groupValues[1]
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("\n", " ")
+                .trim()
+            if (text.isNotBlank()) {
+                segments.add(text)
+            }
+        }
+        return segments.joinToString("\n\n")
     }
 
     /**
@@ -124,36 +224,5 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
     fun isYouTubeUrl(url: String): Boolean {
         val lower = url.trim().lowercase()
         return lower.contains("youtube.com") || lower.contains("youtu.be")
-    }
-
-    /**
-     * OkHttp-based implementation of the library's YoutubeClient interface.
-     * Required because Android doesn't include Java 11 HttpClient.
-     */
-    private class OkHttpYoutubeClient(private val client: OkHttpClient) : YoutubeClient {
-        override fun get(url: String, headers: Map<String, String>): String {
-            val requestBuilder = okhttp3.Request.Builder().url(url)
-            headers.forEach { (key, value) -> requestBuilder.addHeader(key, value) }
-            client.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw RuntimeException("HTTP ${response.code}: $url")
-                }
-                return response.body?.string() ?: throw RuntimeException("Empty response from $url")
-            }
-        }
-
-        override fun post(url: String, json: String): String {
-            val body = okhttp3.RequestBody.create(
-                okhttp3.MediaType.parse("application/json; charset=utf-8"),
-                json
-            )
-            val request = okhttp3.Request.Builder().url(url).post(body).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw RuntimeException("HTTP ${response.code}: $url")
-                }
-                return response.body?.string() ?: throw RuntimeException("Empty response from $url")
-            }
-        }
     }
 }

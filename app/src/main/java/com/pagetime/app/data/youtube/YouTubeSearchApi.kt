@@ -193,7 +193,7 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
                         ?.optString("simpleText", "") ?: ""
 
                     val descRuns = video
-                        .optJSONObject("detailedMetadataSnippets")
+                        .optJSONArray("detailedMetadataSnippets")
                         ?.optJSONObject(0)
                         ?.optJSONObject("snippetText")
                         ?.optJSONArray("runs")

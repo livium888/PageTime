@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
+import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.ConceptMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -88,6 +89,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _bookmarkPresent = MutableStateFlow(false)
     val bookmarkPresent = _bookmarkPresent.asStateFlow()
 
+    private val _checkpointPresent = MutableStateFlow(false)
+    val checkpointPresent = _checkpointPresent.asStateFlow()
+
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
 
@@ -156,6 +160,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             } else {
                 settingsRepository.savedBookmarkScroll(loaded.id) != null
             }
+            _checkpointPresent.value = settingsRepository.learningCheckpoint() != null
 
             val pendingSource = settingsRepository.consumePendingReaderSource(loaded.id)
             if (loaded.format == "epub") {
@@ -346,6 +351,38 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         updateScrollProgress(fraction)
         persistenceScope.launch {
             settingsRepository.saveTextOffset(bookId, pageStartOffset)
+        }
+    }
+
+    fun setLearningCheckpoint() {
+        val b = _book.value ?: return
+        persistenceScope.launch {
+            when (b.format) {
+                "epub" -> {
+                    val locator = latestLocator ?: return@launch
+                    if (!locatorRestoreComplete) return@launch
+                    settingsRepository.saveLearningCheckpoint(
+                        LearningCheckpoint(locator.toJSON().toString(), null, null)
+                    )
+                }
+                else -> {
+                    if (!txtRestoreComplete) return@launch
+                    settingsRepository.saveLearningCheckpoint(
+                        LearningCheckpoint(null, latestTxtOffset(), latestTxtFraction)
+                    )
+                }
+            }
+            _checkpointPresent.value = true
+        }
+    }
+
+    private fun latestTxtOffset(): Int =
+        ((latestTxtFraction.coerceIn(0f, 1f)) * (_textContent.value?.length ?: 0)).toInt()
+
+    fun clearLearningCheckpoint() {
+        persistenceScope.launch {
+            settingsRepository.clearLearningCheckpoint()
+            _checkpointPresent.value = false
         }
     }
 

@@ -189,6 +189,7 @@ fun ReaderScreen(
     val initialLocatorJson by vm.initialLocatorJson.collectAsStateWithLifecycle()
     val initialLocatorReady by vm.initialLocatorReady.collectAsStateWithLifecycle()
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
+    val checkpointPresent by vm.checkpointPresent.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
@@ -420,6 +421,7 @@ fun ReaderScreen(
                 hasGoTo = book?.format == "txt" && textContent != null,
                 balanceSeconds = balanceSeconds,
                 bookmarkPresent = bookmarkPresent,
+                checkpointPresent = checkpointPresent,
                 sleepRemainingSeconds = sleepRemainingMs?.let { (it / 1000).toInt().coerceAtLeast(0) },
                 palette = palette,
                 onBack = onBack,
@@ -429,6 +431,7 @@ fun ReaderScreen(
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
                 onSettings = { showSettings = true },
+                onSetCheckpoint = vm::setLearningCheckpoint,
                 // This is an explicit reader action, so it must work mid-chapter;
                 // the chapter-completion prompt is reserved for automatic reminders.
                 onExplainBack = {
@@ -839,6 +842,7 @@ private fun ReaderTopBar(
     hasGoTo: Boolean,
     balanceSeconds: Long,
     bookmarkPresent: Boolean,
+    checkpointPresent: Boolean,
     sleepRemainingSeconds: Int?,
     palette: ReaderPalette,
     onBack: () -> Unit,
@@ -848,6 +852,7 @@ private fun ReaderTopBar(
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
     onSettings: () -> Unit,
+    onSetCheckpoint: () -> Unit = {},
     onExplainBack: () -> Unit
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
@@ -927,6 +932,14 @@ private fun ReaderTopBar(
                         onClick = {
                             optionsExpanded = false
                             onBookmark()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (checkpointPresent) "Update learning checkpoint" else "Set learning checkpoint") },
+                        leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onSetCheckpoint()
                         }
                     )
                     DropdownMenuItem(

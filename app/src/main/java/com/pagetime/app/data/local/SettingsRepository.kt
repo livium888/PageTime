@@ -54,6 +54,8 @@ private fun ReaderSettings.normalized(): ReaderSettings = copy(
 
 data class PendingReaderSource(val locatorJson: String?, val fraction: Float?)
 
+data class LearningCheckpoint(val locatorJson: String?, val textOffset: Int?, val fraction: Float?)
+
 data class MapMoment(
     val bookId: String,
     val chapterIndex: Int,
@@ -108,6 +110,9 @@ class SettingsRepository(private val context: Context) {
 
         /** Id of the book whose position was saved most recently — drives "continue reading". */
         val LAST_READ_BOOK = stringPreferencesKey("last_read_book_id")
+        val CHECKPOINT_LOCATOR = stringPreferencesKey("learning_checkpoint_locator")
+        val CHECKPOINT_OFFSET = intPreferencesKey("learning_checkpoint_offset")
+        val CHECKPOINT_FRACTION = floatPreferencesKey("learning_checkpoint_fraction")
 
         /** Wall-clock time of the last UsageStats reconciliation sweep (0 = never). */
         val LAST_USAGE_RECONCILE = longPreferencesKey("last_usage_reconcile_at")
@@ -248,6 +253,35 @@ class SettingsRepository(private val context: Context) {
             preferences.remove(pendingFractionKey(bookId))
         }
         return source
+    }
+
+    suspend fun learningCheckpoint(): LearningCheckpoint? {
+        val values = context.dataStore.data.first()
+        val locator = values[Keys.CHECKPOINT_LOCATOR]
+        val offset = values[Keys.CHECKPOINT_OFFSET]
+        val fraction = values[Keys.CHECKPOINT_FRACTION]
+        return if (locator != null || offset != null || fraction != null) {
+            LearningCheckpoint(locator, offset, fraction)
+        } else null
+    }
+
+    suspend fun saveLearningCheckpoint(checkpoint: LearningCheckpoint) {
+        context.dataStore.edit {
+            it.remove(Keys.CHECKPOINT_LOCATOR)
+            it.remove(Keys.CHECKPOINT_OFFSET)
+            it.remove(Keys.CHECKPOINT_FRACTION)
+            checkpoint.locatorJson?.let { value -> it[Keys.CHECKPOINT_LOCATOR] = value }
+            checkpoint.textOffset?.let { value -> it[Keys.CHECKPOINT_OFFSET] = value.coerceAtLeast(0) }
+            checkpoint.fraction?.let { value -> it[Keys.CHECKPOINT_FRACTION] = value.coerceIn(0f, 1f) }
+        }
+    }
+
+    suspend fun clearLearningCheckpoint() {
+        context.dataStore.edit {
+            it.remove(Keys.CHECKPOINT_LOCATOR)
+            it.remove(Keys.CHECKPOINT_OFFSET)
+            it.remove(Keys.CHECKPOINT_FRACTION)
+        }
     }
 
     suspend fun savedBookmarkLocator(bookId: String): String? =

@@ -22,9 +22,13 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -33,6 +37,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.pagetime.app.BookImportViewModel
 import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.review.ReviewScreen
@@ -72,6 +77,9 @@ fun PageTimeAppUi(openReader: Boolean) {
     val learningBadgeViewModel: LearningBadgeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val dueCount by learningBadgeViewModel.dueCount.collectAsStateWithLifecycle()
     val showBottomBar = currentRoute in setOf("library", "review", "concepts", "search", "settings")
+    val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val importState by importViewModel.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(openReader) {
         if (openReader) {
@@ -79,8 +87,28 @@ fun PageTimeAppUi(openReader: Boolean) {
         }
     }
 
+    // A book opened or shared from outside the app is imported by the shared
+    // BookImportViewModel and then opened in the reader; failures are surfaced
+    // with the same snackbar used for picker import errors.
+    LaunchedEffect(importState) {
+        when (val result = importState) {
+            BookImportViewModel.State.Idle -> Unit
+            BookImportViewModel.State.Importing ->
+                snackbarHostState.showSnackbar("Importing book…", duration = SnackbarDuration.Indefinite)
+            is BookImportViewModel.State.Done -> {
+                navController.navigate("reader/${result.book.id}") { launchSingleTop = true }
+                importViewModel.consume()
+            }
+            is BookImportViewModel.State.Failed -> {
+                snackbarHostState.showSnackbar(result.message)
+                importViewModel.consume()
+            }
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (showBottomBar) {
                 NavigationBar(

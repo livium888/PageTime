@@ -1,15 +1,18 @@
 package com.pagetime.app
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.core.content.IntentCompat
 import androidx.fragment.app.FragmentActivity
 import com.pagetime.app.ui.PageTimeAppUi
 import com.pagetime.app.ui.theme.PageTimeTheme
@@ -24,12 +27,13 @@ class MainActivity : FragmentActivity() {
         const val EXTRA_OPEN_READER = "open_reader"
     }
 
+    private val importViewModel: BookImportViewModel by viewModels()
     private val openReaderState = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        openReaderState.value = intent.getBooleanExtra(EXTRA_OPEN_READER, false)
+        handleIntent(intent)
         setContent {
             PageTimeTheme {
                 val openReader by openReaderState
@@ -58,6 +62,22 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        openReaderState.value = intent.getBooleanExtra(EXTRA_OPEN_READER, false)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        openReaderState.value = intent?.getBooleanExtra(EXTRA_OPEN_READER, false) ?: false
+        // A book handed over from outside the app: "Open with PageTime" from a
+        // file manager/browser (ACTION_VIEW) or a share-sheet file (ACTION_SEND
+        // carrying a content stream). Raw shared text without a stream is ignored.
+        val uri = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND ->
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            else -> null
+        }
+        if (uri != null) {
+            importViewModel.onIncomingUri(uri)
+        }
     }
 }

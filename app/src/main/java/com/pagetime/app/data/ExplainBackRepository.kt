@@ -9,32 +9,22 @@ import com.pagetime.app.data.learning.LearningContextExtractor
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
-/**
- * Drives the Feynman explain-back flow: pick concepts from the concept map,
- * evaluate the reader's explanation via Gemini, and persist the result.
- */
+/** Drives the Feynman explain-back flow and persists source-grounded evaluations. */
 class ExplainBackRepository(
     private val conceptDao: ConceptDao,
     private val explanationDao: ExplanationDao,
     private val geminiClient: GeminiLearningClient,
     private val contextExtractor: LearningContextExtractor
 ) {
-    /** Observable list of all explanations for a book. */
     fun observeExplanations(bookId: String): Flow<List<ExplanationEntity>> =
         explanationDao.observeForBook(bookId)
 
-    /** Returns the concept-map labels available for [bookId] at [chapterIndex]. */
-    suspend fun conceptsForChapter(bookId: String, chapterIndex: Int): List<String> {
-        return conceptDao.getForBook(bookId)
+    suspend fun conceptsForChapter(bookId: String, chapterIndex: Int): List<String> =
+        conceptDao.getForBook(bookId)
             .filter { it.firstChapterIndex <= chapterIndex && it.lastChapterIndex >= chapterIndex }
             .map { it.label }
             .take(5)
-    }
 
-    /**
-     * Evaluates the reader's explanation, persists it, and returns the evaluation.
-     * The source excerpt is the full chapter text sent to Gemini for context.
-     */
     suspend fun submitExplanation(
         bookId: String,
         chapterIndex: Int,
@@ -44,23 +34,22 @@ class ExplainBackRepository(
         userExplanation: String,
         sourceText: String
     ): ExplanationEvaluation {
-        // Keep the quality-bearing source excerpt, but add only compact memory from
-        // the concept and the reader's best prior attempt. This avoids replaying a
-        // conversation or sending unbounded history on later reviews.
-        val concept = conceptDao.getForBook(bookId)
-            .firstOrNull { it.label == conceptLabel }
+        val concept = conceptDao.getForBook(bookId).firstOrNull { it.label == conceptLabel }
         val keyPoints = concept?.description
             ?.split(".", ",", ";")
-            ?.map { it.trim() }
+            ?.map(String::trim)
             ?.filter { it.length in 5..80 }
             ?.take(3)
             ?: emptyList()
         val bestPrior = explanationDao.bestForConcept(bookId, conceptLabel)
         val memoryHint = bestPrior?.let {
             buildString {
-                append("Previous best score: ${it.overallScore?.let { score -> String.format(\"%.1f\", score) } ?: \"pending\"}/5. ")
+                append("Previous best score: ")
+                append(it.overallScore?.let { score -> String.format("%.1f", score) } ?: "pending")
+                append("/5. ")
                 it.whatTheyMissed?.takeIf(String::isNotBlank)?.let { missed ->
-                    append("Previous gap: ${missed.take(240)}")
+                    append("Previous gap: ")
+                    append(missed.take(240))
                 }
             }
         }.orEmpty()
@@ -83,7 +72,7 @@ class ExplainBackRepository(
                 chapterIndex = chapterIndex,
                 chapterTitle = chapterTitle,
                 conceptLabel = conceptLabel,
-                conceptKeyPoints = keyPoints.joinToString("||"),
+                conceptKeyPoints = compactKeyPoints.joinToString("||"),
                 userExplanation = userExplanation,
                 aiFeedback = buildFeedbackText(evaluation),
                 accuracyScore = evaluation.accuracy,

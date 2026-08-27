@@ -429,7 +429,15 @@ fun ReaderScreen(
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
                 onSettings = { showSettings = true },
-                onExplainBack = { showChapterReviewPrompt = true }
+                // This is an explicit reader action, so it must work mid-chapter;
+                // the chapter-completion prompt is reserved for automatic reminders.
+                onExplainBack = {
+                    val chIdx = currentChapterIndex ?: book?.currentChapterIndex
+                    if (chIdx != null) {
+                        val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
+                        onExplainBack(bookId, chIdx, chTitle, book?.title ?: "Book")
+                    }
+                }
             )
         }
 

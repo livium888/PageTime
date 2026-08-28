@@ -14,8 +14,8 @@ data class TextPage(
  * a book does not cause content to jump while layout is still settling.
  */
 object TextPageLayout {
-    private const val TARGET_CHARS_PER_PAGE = 2_400
-    private const val MIN_CHARS_PER_PAGE = 1_600
+    private const val TARGET_CHARS_PER_PAGE = 900
+    private const val MIN_CHARS_PER_PAGE = 600
 
     /**
      * Page size adapts to the active typography: bigger text or looser spacing
@@ -25,9 +25,11 @@ object TextPageLayout {
     fun targetCharsFor(settings: com.pagetime.app.data.local.ReaderSettings): Int {
         val fontFactor = 16f / settings.fontSizeSp.coerceIn(12f, 32f)
         val lineFactor = 1.5f / settings.lineHeight.coerceIn(1.0f, 2.2f)
-        return (TARGET_CHARS_PER_PAGE * fontFactor * lineFactor)
+        // Account for margins: wider margins reduce the text width, fewer chars fit.
+        val marginFactor = (320f - settings.marginDp.coerceIn(8f, 80f)) / 320f
+        return (TARGET_CHARS_PER_PAGE * fontFactor * lineFactor * marginFactor)
             .toInt()
-            .coerceIn(900, 4_200)
+            .coerceIn(400, 3_000)
     }
 
     fun paginate(content: String, targetChars: Int = TARGET_CHARS_PER_PAGE): List<TextPage> {

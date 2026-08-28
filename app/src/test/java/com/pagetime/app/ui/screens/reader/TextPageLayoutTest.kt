@@ -22,7 +22,7 @@ class TextPageLayoutTest {
             content.filterNot(Char::isWhitespace),
             pages.joinToString(separator = "") { it.text }.filterNot(Char::isWhitespace)
         )
-        assertTrue(pages.dropLast(1).all { it.text.length >= 1_600 - 2 })
+        assertTrue(pages.dropLast(1).all { it.text.length >= 600 - 2 })
     }
 
     @Test

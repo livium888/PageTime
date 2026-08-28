@@ -66,6 +66,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         context.startActivity(intent)
     }
 
+    fun replaceTranscript(bookId: String, editedText: String, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            container.libraryRepository.replaceTextTranscript(bookId, editedText)
+                .onSuccess { onComplete() }
+                .onFailure { _importError.value = it.message ?: "Could not replace transcript" }
+        }
+    }
+
     fun replaceTranscript(bookId: String, uri: Uri, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             container.libraryRepository.replaceTextTranscript(bookId, uri)

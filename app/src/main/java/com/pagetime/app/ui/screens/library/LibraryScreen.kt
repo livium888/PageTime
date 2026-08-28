@@ -93,6 +93,7 @@ fun LibraryScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showYouTubeDialog by remember { mutableStateOf(false) }
     var replaceBook by remember { mutableStateOf<BookEntity?>(null) }
+    var pasteBook by remember { mutableStateOf<BookEntity?>(null) }
     val replacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val book = replaceBook
         replaceBook = null
@@ -269,6 +270,7 @@ fun LibraryScreen(
                         onDelete = { viewModel.delete(book) },
                         onReformat = { viewModel.reformatWithAI(book.id) },
                         onReplace = { replaceBook = book; replacePicker.launch(arrayOf("text/plain", "text/*")) },
+                        onPaste = { pasteBook = book },
                         onRestore = { viewModel.restoreTranscript(book.id) },
                         hasRawBackup = viewModel.hasRawBackup(book),
                         isReformatting = book.id in isReformatting,
@@ -283,6 +285,17 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    pasteBook?.let { book ->
+        PasteTranscriptDialog(
+            book = book,
+            onPaste = { text ->
+                pasteBook = null
+                viewModel.replaceTranscript(book.id, text)
+            },
+            onDismiss = { pasteBook = null }
+        )
     }
 
     if (showYouTubeDialog) {
@@ -332,6 +345,7 @@ private fun BookRow(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onReplace: (() -> Unit)? = null,
+    onPaste: (() -> Unit)? = null,
     onRestore: (() -> Unit)? = null,
     hasRawBackup: Boolean = false,
     onReformat: (() -> Unit)? = null,
@@ -438,6 +452,10 @@ private fun BookRow(
                         text = { Text("Share transcript") },
                         onClick = { actionsExpanded = false; onShare() }
                     )
+                    if (onPaste != null && book.format == "txt") DropdownMenuItem(
+                        text = { Text("Paste edited transcript") },
+                        onClick = { actionsExpanded = false; onPaste() }
+                    )
                     if (onReplace != null && book.format == "txt") DropdownMenuItem(
                         text = { Text("Upload edited transcript") },
                         onClick = { actionsExpanded = false; onReplace() }
@@ -489,6 +507,43 @@ private fun BookRow(
             }
         }
     }
+}
+
+@Composable
+private fun PasteTranscriptDialog(
+    book: BookEntity,
+    onPaste: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Paste edited transcript") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Paste your edited text below. It will replace the transcript in this book; the original stays backed up.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(280.dp),
+                    placeholder = { Text("Paste transcript here…") },
+                    minLines = 10,
+                    maxLines = 14
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onPaste(text) }, enabled = text.isNotBlank()) {
+                Text("Replace transcript")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable

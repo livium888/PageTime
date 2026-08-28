@@ -197,6 +197,20 @@ class LibraryRepository(
         }
     }
 
+    suspend fun replaceTextTranscript(bookId: String, editedText: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val book = bookDao.getById(bookId) ?: error("Book not found")
+            require(book.format == "txt") { "Only text transcripts can be replaced" }
+            val edited = editedText.trim()
+            require(edited.isNotBlank()) { "The pasted transcript is empty" }
+            val original = File(book.localPath)
+            val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
+            if (!backup.exists()) backup.writeText(original.readText())
+            original.writeText(edited)
+            edited
+        }
+    }
+
     suspend fun replaceTextTranscript(bookId: String, uri: Uri): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val book = bookDao.getById(bookId) ?: error("Book not found")

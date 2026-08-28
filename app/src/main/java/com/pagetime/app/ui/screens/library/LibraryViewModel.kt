@@ -36,8 +36,29 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         .map { it.totalReadingSeconds }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    private val _reformatting = MutableStateFlow<Set<String>>(emptySet())
+    val reformatting = _reformatting.asStateFlow()
+
     fun delete(book: BookEntity) {
         viewModelScope.launch { container.libraryRepository.deleteBook(book) }
+    }
+
+    fun reformatWithAI(bookId: String) {
+        if (bookId in _reformatting.value) return
+        val gemini = container.geminiLearningClient
+        if (!gemini.isConfigured) {
+            _importError.value = "Set up a Gemini API key in Settings to use AI formatting"
+            return
+        }
+        viewModelScope.launch {
+            _reformatting.value += bookId
+            _importError.value = null
+            container.libraryRepository.reformatTranscriptWithAI(bookId, gemini)
+                .onFailure { error ->
+                    _importError.value = error.message ?: "AI formatting failed"
+                }
+            _reformatting.value -= bookId
+        }
     }
 
     fun importBook(uri: Uri, onImported: (BookEntity) -> Unit) {

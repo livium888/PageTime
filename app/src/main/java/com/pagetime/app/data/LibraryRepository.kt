@@ -14,6 +14,7 @@ import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -235,6 +236,26 @@ class LibraryRepository(
                 coverUrl = null,
                 addedAt = System.currentTimeMillis()
             ).also { bookDao.upsert(it) }
+        }
+    }
+
+    /**
+     * Sends the book's transcript to Gemini for AI-powered reformatting.
+     * Replaces the local file with the cleaned-up version.
+     * Returns the formatted text, or throws on failure.
+     */
+    suspend fun reformatTranscriptWithAI(
+        bookId: String,
+        geminiClient: GeminiLearningClient
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val book = bookDao.getById(bookId) ?: error("Book not found")
+            val rawText = File(book.localPath).readText()
+            if (rawText.isBlank()) error("Book has no text content")
+
+            val formatted = geminiClient.formatTranscriptWithAI(rawText, book.title)
+            File(book.localPath).writeText(formatted)
+            formatted
         }
     }
 }

@@ -378,6 +378,90 @@ class GeminiLearningClient(
         )
     }
 
+    /**
+     * Reformats a raw YouTube transcript into a clean, book-like document using Gemini.
+     * Fixes ASR artifacts, identifies speakers, adds paragraph structure and topic headings.
+     * Returns the formatted text, or throws on failure.
+     */
+    suspend fun formatTranscriptWithAI(rawTranscript: String, videoTitle: String): String = withContext(Dispatchers.IO) {
+        check(currentApiKey().isNotBlank()) { "Gemini API key is not configured" }
+
+        // Gemini has a context limit; send the transcript in manageable chunks if needed.
+        // For very long transcripts (>100K chars), we process the first 80K to keep quality high.
+        val chunk = if (rawTranscript.length > 100_000) {
+            rawTranscript.take(80_000) + "\n\n[Transcript continues but was truncated for processing]"
+        } else {
+            rawTranscript
+        }
+
+        val prompt = """
+            |You are a professional editor formatting a raw YouTube transcript into a
+            |clean, readable book-like document.
+            |
+            |Video title: $videoTitle
+            |
+            |RULES:
+            |1. Fix all ASR (auto-generated caption) artifacts: repeated words, missing
+            |   punctuation, broken sentences. Add proper sentence-ending periods.
+            |2. Identify speakers: the video is a conversation/interview. Label speaker
+            |   turns with "Host:" and "Guest:" (or infer names from context if mentioned).
+            |   If you cannot determine who is who, use "Speaker A:" and "Speaker B:".
+            |3. Organize into clear paragraphs at natural topic transitions.
+            |4. Add topic headings (like chapter titles) when the conversation shifts to a
+            |   new subject. Use a single # heading line.
+            |5. Remove filler words (um, uh, like, you know) when they add no meaning.
+            |6. Keep the conversational tone — do NOT make it formal or academic.
+            |7. Preserve ALL content and meaning. Do not summarize or skip anything.
+            |8. Remove [Music], [Applause], and other bracket tags.
+            |9. Output ONLY the formatted text. No preamble, no commentary.
+            |
+            |EXAMPLE FORMAT:
+            |
+            |# The Science of Sleep
+            |
+            |**Host:** Welcome to the show. Today we're talking about sleep science.
+            |
+            |**Guest:** Thanks for having me. Sleep is one of the most important things
+            |for health, and most people don't get enough of it.
+            |
+            |**Host:** Why do you think sleep is so undervalued?
+            |
+            |# Understanding Brain Plasticity
+            |
+            |**Guest:** The key insight is that your brain physically changes based on
+            |what you do. It's not fixed — it adapts.
+            |
+            |---
+            |
+            |Here is the raw transcript to format:
+            |
+            |$chunk
+            |
+            |Return ONLY the formatted text, starting with a title heading.
+        """.trimMargin()
+
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject()
+                .put("temperature", 0.3)
+                .put("maxOutputTokens", 8192))
+            .toString()
+
+        val request = Request.Builder()
+            .url("$endpointBase/models/${currentModel()}:generateContent")
+            .header("x-goog-api-key", currentApiKey())
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val raw = executeWithRetry(request)
+        JSONObject(raw).getJSONArray("candidates")
+            .getJSONObject(0).getJSONObject("content")
+            .getJSONArray("parts").getJSONObject(0)
+            .getString("text")
+            .trim()
+    }
+
     private fun parseResponse(raw: String, context: LearningContext): AiGenerationResult {
         val root = JSONObject(raw)
         val text = root.getJSONArray("candidates")

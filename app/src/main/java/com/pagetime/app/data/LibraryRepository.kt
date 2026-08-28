@@ -269,7 +269,13 @@ class LibraryRepository(
             } else {
                 call()
             }
-            File(book.localPath).writeText(formatted)
+            require(formatted.isNotBlank()) { "AI formatting returned empty text" }
+            val original = File(book.localPath)
+            val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
+            if (!backup.exists()) {
+                backup.writeText(rawText)
+            }
+            original.writeText(formatted)
             formatted
         }
     }

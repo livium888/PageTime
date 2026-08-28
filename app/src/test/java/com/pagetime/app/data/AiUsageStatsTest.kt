@@ -48,6 +48,15 @@ class AiUsageStatsTest {
                 ),
                 AiUsageEntity(
                     bookId = "book",
+                    operation = AiUsageRepository.OPERATION_REFORMAT,
+                    model = "flash",
+                    status = AiUsageRepository.STATUS_SUCCESS,
+                    inputCharacters = 8_000,
+                    outputItems = 7_500,
+                    createdAt = today
+                ),
+                AiUsageEntity(
+                    bookId = "book",
                     operation = AiUsageRepository.OPERATION_CARDS,
                     model = "flash",
                     status = AiUsageRepository.STATUS_FAILED,
@@ -58,17 +67,18 @@ class AiUsageStatsTest {
             now = now
         )
 
-        assertEquals(3, stats.totalCalls)
-        assertEquals(2, stats.successfulCalls)
+        assertEquals(4, stats.totalCalls)
+        assertEquals(3, stats.successfulCalls)
         assertEquals(1, stats.failedCalls)
         assertEquals(2, stats.cardCalls)
         assertEquals(1, stats.conceptCalls)
+        assertEquals(1, stats.reformatCalls)
         assertEquals(3, stats.cardsGenerated)
         assertEquals(5, stats.conceptsFound)
         assertEquals(4, stats.relationshipsFound)
-        assertEquals(7_000L, stats.inputCharacters)
-        assertEquals(2, stats.todayCalls)
-        assertEquals(6_000L, stats.todayInputCharacters)
+        assertEquals(15_000L, stats.inputCharacters)
+        assertEquals(3, stats.todayCalls)
+        assertEquals(14_000L, stats.todayInputCharacters)
         assertEquals(3, stats.todayCardsGenerated)
     }
 }

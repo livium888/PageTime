@@ -385,20 +385,40 @@ class GeminiLearningClient(
      */
     suspend fun formatTranscriptWithAI(rawTranscript: String, videoTitle: String): String = withContext(Dispatchers.IO) {
         check(currentApiKey().isNotBlank()) { "Gemini API key is not configured" }
+        require(rawTranscript.isNotBlank()) { "Transcript is empty" }
 
-        // Gemini has a context limit; send the transcript in manageable chunks if needed.
-        // For very long transcripts (>100K chars), we process the first 80K to keep quality high.
-        val chunk = if (rawTranscript.length > 100_000) {
-            rawTranscript.take(80_000) + "\n\n[Transcript continues but was truncated for processing]"
-        } else {
-            rawTranscript
+        val chunks = splitTranscriptForFormatting(rawTranscript)
+        val formattedChunks = chunks.mapIndexed { index, chunk ->
+            formatTranscriptChunk(
+                chunk = chunk,
+                videoTitle = videoTitle,
+                chunkNumber = index + 1,
+                totalChunks = chunks.size
+            )
         }
+        formattedChunks.joinToString("\n\n")
+            .trim()
+            .also { formatted ->
+                // A model response that is dramatically shorter is almost certainly
+                // truncated or summarized; never present that as a complete book.
+                require(formatted.length >= (rawTranscript.length * 0.35).toInt()) {
+                    "AI formatting returned incomplete text; the original transcript was kept"
+                }
+            }
+    }
 
+    private suspend fun formatTranscriptChunk(
+        chunk: String,
+        videoTitle: String,
+        chunkNumber: Int,
+        totalChunks: Int
+    ): String {
         val prompt = """
             |You are a professional editor formatting a raw YouTube transcript into a
             |clean, readable book-like document.
             |
             |Video title: $videoTitle
+            |This is formatting chunk $chunkNumber of $totalChunks. It is part of one continuous transcript.
             |
             |RULES:
             |1. Fix all ASR (auto-generated caption) artifacts: repeated words, missing
@@ -437,7 +457,8 @@ class GeminiLearningClient(
             |
             |$chunk
             |
-            |Return ONLY the formatted text, starting with a title heading.
+            |Return ONLY the formatted text. Do not summarize, omit, reorder, or invent content.
+            |Do not add a title heading unless this is chunk 1.
         """.trimMargin()
 
         val body = JSONObject()
@@ -455,11 +476,39 @@ class GeminiLearningClient(
             .build()
 
         val raw = executeWithRetry(request)
-        JSONObject(raw).getJSONArray("candidates")
+        return JSONObject(raw).getJSONArray("candidates")
             .getJSONObject(0).getJSONObject("content")
             .getJSONArray("parts").getJSONObject(0)
             .getString("text")
             .trim()
+    }
+
+    companion object {
+        private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)
+        private const val MAX_MODEL_PAGES = 20
+
+        internal fun splitTranscriptForFormatting(rawTranscript: String): List<String> {
+        val targetCharacters = 24_000
+        val paragraphs = rawTranscript
+            .replace("\r\n", "\n")
+            .split(Regex("\\n\\s*\\n"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (paragraphs.isEmpty()) return listOf(rawTranscript)
+
+        val chunks = mutableListOf<String>()
+        var current = StringBuilder()
+        paragraphs.forEach { paragraph ->
+            if (current.isNotEmpty() && current.length + paragraph.length + 2 > targetCharacters) {
+                chunks += current.toString().trim()
+                current = StringBuilder()
+            }
+            if (current.isNotEmpty()) current.append("\\n\\n")
+            current.append(paragraph)
+        }
+        if (current.isNotEmpty()) chunks += current.toString().trim()
+        return chunks
+        }
     }
 
     private fun parseResponse(raw: String, context: LearningContext): AiGenerationResult {
@@ -564,8 +613,5 @@ class GeminiLearningClient(
         """.trimMargin()
     }
 
-    companion object {
-        private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)
-        private const val MAX_MODEL_PAGES = 20
-    }
+
 }

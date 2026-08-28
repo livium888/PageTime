@@ -90,7 +90,8 @@ class AppContainer(context: Context) {
         standardEbooksApi = standardEbooksApi,
         epubParser = epubParser,
         settingsRepository = settingsRepository,
-        context = appContext
+        context = appContext,
+        aiUsageRepository = aiUsageRepository
     )
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)

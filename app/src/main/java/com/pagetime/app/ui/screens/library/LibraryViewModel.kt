@@ -1,6 +1,9 @@
 package com.pagetime.app.ui.screens.library
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -43,6 +46,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val reformatProgress = _reformatProgress.asStateFlow()
 
     fun hasRawBackup(book: BookEntity): Boolean = container.libraryRepository.rawBackupFile(book).exists()
+
+    fun copyTranscript(book: BookEntity) {
+        runCatching {
+            val text = java.io.File(book.localPath).readText()
+            val clipboard = getApplication<Application>().getSystemService(ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(ClipData.newPlainText(book.title, text))
+        }
+    }
+
+    fun shareTranscript(book: BookEntity) {
+        val context = getApplication<Application>()
+        val intent = Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, book.title)
+            putExtra(Intent.EXTRA_TEXT, runCatching { java.io.File(book.localPath).readText() }.getOrDefault(""))
+        }, "Share transcript")
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
 
     fun replaceTranscript(bookId: String, uri: Uri, onComplete: () -> Unit = {}) {
         viewModelScope.launch {

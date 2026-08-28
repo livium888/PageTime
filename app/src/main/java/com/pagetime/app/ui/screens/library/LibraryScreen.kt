@@ -24,10 +24,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -269,7 +272,13 @@ fun LibraryScreen(
                         onRestore = { viewModel.restoreTranscript(book.id) },
                         hasRawBackup = viewModel.hasRawBackup(book),
                         isReformatting = book.id in isReformatting,
-                        reformatProgress = reformatProgress[book.id]
+                        reformatProgress = reformatProgress[book.id],
+                        onCopy = if (book.format == "txt") {
+                            { viewModel.copyTranscript(book) }
+                        } else null,
+                        onShare = if (book.format == "txt") {
+                            { viewModel.shareTranscript(book) }
+                        } else null
                     )
                 }
             }
@@ -327,7 +336,9 @@ private fun BookRow(
     hasRawBackup: Boolean = false,
     onReformat: (() -> Unit)? = null,
     isReformatting: Boolean = false,
-    reformatProgress: Pair<Int, Int>? = null
+    reformatProgress: Pair<Int, Int>? = null,
+    onCopy: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null
 ) {
     Surface(
         onClick = onClick,
@@ -410,8 +421,44 @@ private fun BookRow(
                     }
                 }
             }
+            var actionsExpanded by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { actionsExpanded = true }) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "Book actions")
+                }
+                DropdownMenu(
+                    expanded = actionsExpanded,
+                    onDismissRequest = { actionsExpanded = false }
+                ) {
+                    if (onCopy != null) DropdownMenuItem(
+                        text = { Text("Copy transcript") },
+                        onClick = { actionsExpanded = false; onCopy() }
+                    )
+                    if (onShare != null) DropdownMenuItem(
+                        text = { Text("Share transcript") },
+                        onClick = { actionsExpanded = false; onShare() }
+                    )
+                    if (onReplace != null && book.format == "txt") DropdownMenuItem(
+                        text = { Text("Upload edited transcript") },
+                        onClick = { actionsExpanded = false; onReplace() }
+                    )
+                    if (onRestore != null && hasRawBackup) DropdownMenuItem(
+                        text = { Text("Restore original transcript") },
+                        onClick = { actionsExpanded = false; onRestore() }
+                    )
+                    if (onReformat != null && book.format == "txt") DropdownMenuItem(
+                        text = { Text(if (isReformatting) "Formatting…" else "Enhance with AI") },
+                        onClick = { if (!isReformatting) { actionsExpanded = false; onReformat() } },
+                        enabled = !isReformatting
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete book") },
+                        onClick = { actionsExpanded = false; onDelete() }
+                    )
+                }
+            }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (onReformat != null && book.format == "txt") {
+                if (false && onReformat != null && book.format == "txt") {
                     IconButton(
                         onClick = onReformat,
                         enabled = !isReformatting
@@ -438,25 +485,7 @@ private fun BookRow(
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (onReplace != null && book.format == "txt") {
-                        TextButton(onClick = onReplace, contentPadding = PaddingValues(horizontal = 4.dp)) {
-                            Text("Edit", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                    if (onRestore != null && hasRawBackup) {
-                        TextButton(onClick = onRestore, contentPadding = PaddingValues(horizontal = 4.dp)) {
-                            Text("Restore", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            Icons.Filled.Delete,
-                            contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                // Book actions are consolidated in the overflow menu above.
             }
         }
     }

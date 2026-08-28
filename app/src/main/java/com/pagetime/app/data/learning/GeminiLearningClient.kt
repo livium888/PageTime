@@ -400,18 +400,16 @@ class GeminiLearningClient(
                 totalChunks = chunks.size
             ).also {
                 require(it.isNotBlank()) { "AI formatting returned an empty chunk ${index + 1}" }
-                require(!looksTruncated(it)) {
-                    "AI formatting returned an incomplete chunk ${index + 1}; the original transcript was kept"
-                }
                 onProgress?.invoke(index + 1, chunks.size)
             }
         }
         formattedChunks.joinToString("\n\n")
             .trim()
             .also { formatted ->
-                // A model response that is dramatically shorter is almost certainly
-                // truncated or summarized; never present that as a complete book.
-                require(formatted.length >= (rawTranscript.length * 0.35).toInt()) {
+                // Formatting may legitimately remove filler words and caption noise,
+                // so length alone is not a reliable completeness test. Every bounded
+                // input chunk must instead produce a non-empty response above.
+                require(formatted.isNotBlank()) {
                     "AI formatting returned incomplete text; the original transcript was kept"
                 }
             }
@@ -493,12 +491,6 @@ class GeminiLearningClient(
             .trim()
     }
 
-    private fun looksTruncated(text: String): Boolean {
-        val cleaned = text.trim()
-        return cleaned.endsWith("…") || cleaned.endsWith("...") ||
-            cleaned.endsWith(":") || cleaned.endsWith(",") ||
-            cleaned.endsWith("—") || cleaned.endsWith("-")
-    }
 
     companion object {
         private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)

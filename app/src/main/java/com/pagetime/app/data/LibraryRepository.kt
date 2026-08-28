@@ -31,7 +31,8 @@ class LibraryRepository(
     private val standardEbooksApi: StandardEbooksApi,
     private val epubParser: EpubParser,
     private val settingsRepository: SettingsRepository,
-    private val context: Context
+    private val context: Context,
+    private val aiUsageRepository: AiUsageRepository? = null
 ) {
 
     fun observeBooks(): Flow<List<BookEntity>> = bookDao.observeAll()
@@ -253,7 +254,21 @@ class LibraryRepository(
             val rawText = File(book.localPath).readText()
             if (rawText.isBlank()) error("Book has no text content")
 
-            val formatted = geminiClient.formatTranscriptWithAI(rawText, book.title)
+            val call: suspend () -> String = {
+                geminiClient.formatTranscriptWithAI(rawText, book.title)
+            }
+            val formatted = if (aiUsageRepository != null) {
+                aiUsageRepository.track(
+                    bookId = bookId,
+                    operation = AiUsageRepository.OPERATION_REFORMAT,
+                    model = geminiClient.currentModel(),
+                    inputCharacters = rawText.length,
+                    outputItems = { it.length },
+                    block = call
+                )
+            } else {
+                call()
+            }
             File(book.localPath).writeText(formatted)
             formatted
         }

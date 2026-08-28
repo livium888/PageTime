@@ -116,6 +116,7 @@ fun AiUsageScreen(
                     UsageRow("Failed requests", stats.failedCalls.toString())
                     UsageRow("Card analyses", stats.cardCalls.toString())
                     UsageRow("Concept-map analyses", stats.conceptCalls.toString())
+                    UsageRow("Transcript reformats", stats.reformatCalls.toString())
                     UsageRow("Cards generated", stats.cardsGenerated.toString())
                     UsageRow("Concepts found", stats.conceptsFound.toString())
                     UsageRow("Relationships found", stats.relationshipsFound.toString())

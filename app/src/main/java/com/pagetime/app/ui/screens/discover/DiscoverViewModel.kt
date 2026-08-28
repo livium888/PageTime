@@ -120,7 +120,12 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         _source.value = value
         _books.value = emptyList()
         _youtubeResults.value = emptyList()
-        reload()
+        _categoryShelves.value = emptyList()
+        if (value == BookSource.YOUTUBE && _query.value.isBlank()) {
+            loadYouTubeBrowse()
+        } else {
+            reload()
+        }
     }
 
     fun onQueryChange(value: String) {

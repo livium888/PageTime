@@ -59,6 +59,7 @@ class AiUsageRepository(private val dao: AiUsageDao) {
     companion object {
         const val OPERATION_CARDS = "cards"
         const val OPERATION_CONCEPTS = "concepts"
+        const val OPERATION_REFORMAT = "reformat"
         const val STATUS_PENDING = "pending"
         const val STATUS_SUCCESS = "success"
         const val STATUS_FAILED = "failed"
@@ -71,6 +72,7 @@ data class AiUsageStats(
     val failedCalls: Int = 0,
     val cardCalls: Int = 0,
     val conceptCalls: Int = 0,
+    val reformatCalls: Int = 0,
     val cardsGenerated: Int = 0,
     val conceptsFound: Int = 0,
     val relationshipsFound: Int = 0,
@@ -93,8 +95,12 @@ data class AiUsageStats(
                 .atStartOfDay(ZoneId.systemDefault())
                 .toInstant()
                 .toEpochMilli()
-            val analyzed = events.filter { it.operation == AiUsageRepository.OPERATION_CARDS ||
-                it.operation == AiUsageRepository.OPERATION_CONCEPTS }
+            val trackedOps = setOf(
+                AiUsageRepository.OPERATION_CARDS,
+                AiUsageRepository.OPERATION_CONCEPTS,
+                AiUsageRepository.OPERATION_REFORMAT
+            )
+            val analyzed = events.filter { it.operation in trackedOps }
             val today = analyzed.filter { it.createdAt >= todayStart }
             return AiUsageStats(
                 totalCalls = analyzed.size,
@@ -102,6 +108,7 @@ data class AiUsageStats(
                 failedCalls = analyzed.count { it.status == AiUsageRepository.STATUS_FAILED },
                 cardCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_CARDS },
                 conceptCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_CONCEPTS },
+                reformatCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_REFORMAT },
                 cardsGenerated = analyzed
                     .filter { it.operation == AiUsageRepository.OPERATION_CARDS }
                     .sumOf { it.outputItems },

@@ -34,6 +34,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
@@ -190,6 +191,7 @@ fun ReaderScreen(
     val initialLocatorReady by vm.initialLocatorReady.collectAsStateWithLifecycle()
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
     val checkpointPresent by vm.checkpointPresent.collectAsStateWithLifecycle()
+    val enhancing by vm.enhancing.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
@@ -450,7 +452,10 @@ fun ReaderScreen(
                             vm.currentLearningPosition().second
                         )
                     }
-                }
+                },
+                isTextBook = book?.format == "txt" && textContent != null,
+                enhancing = enhancing,
+                onEnhance = vm::enhanceWithAI
             )
         }
 
@@ -879,7 +884,10 @@ private fun ReaderTopBar(
     onBookmark: () -> Unit,
     onSettings: () -> Unit,
     onSetCheckpoint: () -> Unit = {},
-    onExplainBack: () -> Unit
+    onExplainBack: () -> Unit,
+    isTextBook: Boolean = false,
+    enhancing: Boolean = false,
+    onEnhance: () -> Unit = {}
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
 
@@ -992,6 +1000,29 @@ private fun ReaderTopBar(
                             onSettings()
                         }
                     )
+                    if (isTextBook) {
+                        DropdownMenuItem(
+                            text = {
+                                if (enhancing) Text("Enhancing…")
+                                else Text("\u2728 Enhance with AI")
+                            },
+                            leadingIcon = {
+                                if (enhancing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                                }
+                            },
+                            onClick = {
+                                optionsExpanded = false
+                                onEnhance()
+                            },
+                            enabled = !enhancing
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Sleep timer") },
                         leadingIcon = { Icon(Icons.Outlined.NightsStay, contentDescription = null) },

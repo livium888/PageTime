@@ -92,6 +92,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _checkpointPresent = MutableStateFlow(false)
     val checkpointPresent = _checkpointPresent.asStateFlow()
 
+    private val _enhancing = MutableStateFlow(false)
+    val enhancing = _enhancing.asStateFlow()
+
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
 
@@ -413,6 +416,34 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 }
             }
             _bookmarkPresent.value = true
+        }
+    }
+
+    /** Enhance the transcript with AI formatting (speaker labels, paragraphs, etc.). */
+    fun enhanceWithAI() {
+        val b = _book.value ?: return
+        if (b.format != "txt") return
+        if (_enhancing.value) return
+        val gemini = container.geminiLearningClient
+        if (!gemini.isConfigured) {
+            _error.value = "Set a Gemini API key in Settings to use AI formatting"
+            return
+        }
+        viewModelScope.launch {
+            _enhancing.value = true
+            try {
+                repo.reformatTranscriptWithAI(b.id, gemini)
+                    .onSuccess { formatted ->
+                        _textContent.value = formatted
+                        _initialTextFraction.value = 0f
+                        _initialTextOffset.value = 0
+                    }
+                    .onFailure { t ->
+                        _error.value = t.message ?: "AI formatting failed"
+                    }
+            } finally {
+                _enhancing.value = false
+            }
         }
     }
 

@@ -307,14 +307,12 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
     /**
      * Turns timed caption segments into a book-like transcript.
      *
-     * Captions are joined into one continuous flow of prose. The ONLY paragraph
-     * break is a new speaker turn (`>>` marker). No word-count or pause-based
-     * breaks: ASR text has no sentence punctuation, so any timed break lands
-     * mid-sentence and makes the next page start with a stray fragment — which
-     * reads as "missing pages". With no artificial breaks, the reader simply
-     * paginates the flow and sentences continue across page turns like a real
-     * book. A `Chapter N — m:ss` heading is emitted only at speaker-turn breaks
-     * roughly every 15 minutes.
+     * Transforms raw caption segments into a clean, book-like transcript.
+     *
+     * Speaker turns (marked with `>>` in YouTube's ASR) are formatted as
+     * distinct paragraphs with a small separator. The `>>` prefix is stripped
+     * so the text reads naturally. Chapter headings are inserted at ~15-minute
+     * intervals to aid navigation in long transcripts.
      */
     internal fun formatTranscript(segments: List<CaptionSegment>): String {
         val paragraphs = mutableListOf<String>()
@@ -322,6 +320,7 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         var paragraphStart = 0.0
         var chapterIndex = 0
         var nextChapterAt = 0.0
+        var speakerCount = 0
 
         fun flushParagraph() {
             if (current.isNotBlank()) {
@@ -342,10 +341,19 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             val isSpeakerTurn = segment.text.startsWith(">>")
             if (current.isNotBlank() && isSpeakerTurn) {
                 flushParagraph()
+                speakerCount++
             }
             if (current.isBlank()) paragraphStart = segment.start
-            if (current.isNotBlank() && !isSpeakerTurn) current.append(' ')
-            current.append(segment.text)
+            if (current.isNotBlank() && !isSpeakerTurn) {
+                current.append(' ')
+            }
+            // Strip the ">> " speaker-turn prefix so it reads as clean prose.
+            val cleanedText = if (isSpeakerTurn) {
+                segment.text.removePrefix(">>").trimStart()
+            } else {
+                segment.text
+            }
+            current.append(cleanedText)
         }
         flushParagraph()
         return paragraphs.joinToString("\n\n")

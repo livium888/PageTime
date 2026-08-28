@@ -2,6 +2,9 @@ package com.pagetime.app.ui.screens.reader
 
 import android.app.Activity
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
@@ -437,6 +440,21 @@ fun ReaderScreen(
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
                 onSettings = { showSettings = true },
+                onCopyTranscript = if (textContent != null) {
+                    {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(ClipData.newPlainText(book?.title ?: "Transcript", textContent!!))
+                    }
+                } else null,
+                onShareTranscript = if (textContent != null) {
+                    {
+                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, book?.title ?: "Transcript")
+                            putExtra(Intent.EXTRA_TEXT, textContent!!)
+                        }, "Share transcript"))
+                    }
+                } else null,
                 onSetCheckpoint = vm::setLearningCheckpoint,
                 // This is an explicit reader action, so it must work mid-chapter;
                 // the chapter-completion prompt is reserved for automatic reminders.
@@ -885,6 +903,8 @@ private fun ReaderTopBar(
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
     onSettings: () -> Unit,
+    onCopyTranscript: (() -> Unit)? = null,
+    onShareTranscript: (() -> Unit)? = null,
     onSetCheckpoint: () -> Unit = {},
     onExplainBack: () -> Unit,
     isTextBook: Boolean = false,
@@ -1003,6 +1023,18 @@ private fun ReaderTopBar(
                             onSettings()
                         }
                     )
+                    if (onCopyTranscript != null) {
+                        DropdownMenuItem(
+                            text = { Text("Copy transcript") },
+                            onClick = { optionsExpanded = false; onCopyTranscript() }
+                        )
+                    }
+                    if (onShareTranscript != null) {
+                        DropdownMenuItem(
+                            text = { Text("Share transcript") },
+                            onClick = { optionsExpanded = false; onShareTranscript() }
+                        )
+                    }
                     if (isTextBook) {
                         DropdownMenuItem(
                             text = {

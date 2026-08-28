@@ -197,6 +197,37 @@ class LibraryRepository(
         }
     }
 
+    suspend fun replaceTextTranscript(bookId: String, uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val book = bookDao.getById(bookId) ?: error("Book not found")
+            require(book.format == "txt") { "Only text transcripts can be replaced" }
+            val input = context.contentResolver.openInputStream(uri) ?: error("Could not open the selected file")
+            val edited = input.bufferedReader().use { it.readText() }.trim()
+            require(edited.isNotBlank()) { "The selected text file is empty" }
+            val original = File(book.localPath)
+            val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
+            if (!backup.exists()) backup.writeText(original.readText())
+            original.writeText(edited)
+            edited
+        }
+    }
+
+    suspend fun restoreRawTranscript(bookId: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val book = bookDao.getById(bookId) ?: error("Book not found")
+            val original = File(book.localPath)
+            val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
+            require(backup.exists()) { "No original transcript backup exists" }
+            val raw = backup.readText().trim()
+            require(raw.isNotBlank()) { "The original transcript backup is empty" }
+            original.writeText(raw)
+            raw
+        }
+    }
+
+    fun rawBackupFile(book: BookEntity): File =
+        File(File(book.localPath).parentFile, "${File(book.localPath).nameWithoutExtension}.raw.txt")
+
     suspend fun deleteBook(book: BookEntity) = withContext(Dispatchers.IO) {
         bookDao.deleteById(book.id)
         runCatching { File(book.localPath).delete() }

@@ -42,6 +42,23 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _reformatProgress = MutableStateFlow<Map<String, Pair<Int, Int>>>(emptyMap())
     val reformatProgress = _reformatProgress.asStateFlow()
 
+    fun hasRawBackup(book: BookEntity): Boolean = container.libraryRepository.rawBackupFile(book).exists()
+
+    fun replaceTranscript(bookId: String, uri: Uri, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            container.libraryRepository.replaceTextTranscript(bookId, uri)
+                .onSuccess { onComplete() }
+                .onFailure { _importError.value = it.message ?: "Could not replace transcript" }
+        }
+    }
+
+    fun restoreTranscript(bookId: String) {
+        viewModelScope.launch {
+            container.libraryRepository.restoreRawTranscript(bookId)
+                .onFailure { _importError.value = it.message ?: "Could not restore original transcript" }
+        }
+    }
+
     fun delete(book: BookEntity) {
         viewModelScope.launch { container.libraryRepository.deleteBook(book) }
     }

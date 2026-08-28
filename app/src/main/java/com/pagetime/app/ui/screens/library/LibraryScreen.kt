@@ -88,6 +88,12 @@ fun LibraryScreen(
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showYouTubeDialog by remember { mutableStateOf(false) }
+    var replaceBook by remember { mutableStateOf<BookEntity?>(null) }
+    val replacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val book = replaceBook
+        replaceBook = null
+        if (uri != null && book != null) viewModel.replaceTranscript(book.id, uri)
+    }
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -258,6 +264,9 @@ fun LibraryScreen(
                         onClick = { onOpenBook(book.id) },
                         onDelete = { viewModel.delete(book) },
                         onReformat = { viewModel.reformatWithAI(book.id) },
+                        onReplace = { replaceBook = book; replacePicker.launch(arrayOf("text/plain", "text/*")) },
+                        onRestore = { viewModel.restoreTranscript(book.id) },
+                        hasRawBackup = viewModel.hasRawBackup(book),
                         isReformatting = book.id in isReformatting,
                         reformatProgress = reformatProgress[book.id]
                     )
@@ -312,6 +321,9 @@ private fun BookRow(
     book: BookEntity,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onReplace: (() -> Unit)? = null,
+    onRestore: (() -> Unit)? = null,
+    hasRawBackup: Boolean = false,
     onReformat: (() -> Unit)? = null,
     isReformatting: Boolean = false,
     reformatProgress: Pair<Int, Int>? = null
@@ -424,6 +436,28 @@ private fun BookRow(
                             )
                         }
                     }
+                }
+                if (onReplace != null && book.format == "txt") {
+                    IconButton(onClick = onReplace) {
+                        Text("↺", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+                if (onRestore != null && hasRawBackup) {
+                    IconButton(onClick = onRestore) {
+                        Text("⟲", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+                if (onReplace != null && book.format == "txt") {
+                    IconButton(onClick = onReplace) { Text("↺", style = MaterialTheme.typography.titleLarge) }
+                }
+                if (onRestore != null && hasRawBackup) {
+                    IconButton(onClick = onRestore) { Text("⟲", style = MaterialTheme.typography.titleLarge) }
+                }
+                if (onReplace != null && book.format == "txt") {
+                    IconButton(onClick = onReplace) { Text("↺", style = MaterialTheme.typography.titleLarge) }
+                }
+                if (onRestore != null && hasRawBackup) {
+                    IconButton(onClick = onRestore) { Text("⟲", style = MaterialTheme.typography.titleLarge) }
                 }
                 IconButton(onClick = onDelete) {
                     Icon(

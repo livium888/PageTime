@@ -52,11 +52,13 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
             val captionTracks = getCaptionTracks(videoId)
             if (captionTracks.isEmpty()) return@withContext null
 
-            // Step 2: Fetch the timed text for EVERY track that matches the
-            // preferred language and merge them. YouTube sometimes splits long
-            // transcripts across several tracks with the same language code, or
-            // pairs a short preview track with the full one — fetching only a
-            // single track would silently drop large stretches of content.
+            // Step 2: Pick the tracks to fetch. When a curated manual track exists
+            // it is used ALONE: mixing it with its auto-generated twin interleaves
+            // every sentence twice, because the two are not time-aligned (different
+            // segment boundaries), which reads as garbled or "missing" text. The
+            // auto-generated (asr) set is only merged when no manual track exists —
+            // YouTube can split long ASR transcripts across several tracks with the
+            // same language code, so merging those recovers content.
             val tracks = selectTracks(captionTracks, language)
             if (tracks.isEmpty()) return@withContext null
             val segments = tracks.flatMap { track ->
@@ -152,18 +154,34 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
-     * Selects every caption track that matches the preferred language.
-     * Exact language matches first, then prefix matches ("en" matches
-     * "en-US"), then any manual (non-auto-generated) track, then all tracks.
-     * All selected tracks are fetched and merged so nothing is lost.
+     * Selects which caption tracks to fetch for the preferred language.
+     *
+     * Exact language matches first, then prefix matches ("en" matches "en-US").
+     * A curated manual track (kind != "asr") is always preferred on its own: it is
+     * the complete, readable script YouTube shows under "Show transcript". Its
+     * auto-generated twin shares the language code but NOT its segment boundaries,
+     * so merging the two interleaves every sentence twice and the transcript reads
+     * as garbled or missing text. Only when no manual track exists are the asr
+     * tracks used — all of them, so a long transcript split across several
+     * auto-generated tracks is reassembled without loss.
      */
-    private fun selectTracks(tracks: List<JSONObject>, language: String): List<JSONObject> {
-        val exact = tracks.filter { it.optString("languageCode") == language }
-        if (exact.isNotEmpty()) return exact
-        val prefix = tracks.filter { it.optString("languageCode").startsWith(language) }
-        if (prefix.isNotEmpty()) return prefix
+    internal fun selectTracks(tracks: List<JSONObject>, language: String): List<JSONObject> {
+        // Every track for this language (exact code or a regional variant like
+        // "en-US"): a long transcript split across several auto-generated tracks
+        // can use the same language family, so all of them must be considered.
+        val languageMatches = tracks.filter {
+            val code = it.optString("languageCode")
+            code == language || code.startsWith(language)
+        }
+        if (languageMatches.isNotEmpty()) {
+            val manual = languageMatches.filter { it.optString("kind") != "asr" }
+            if (manual.isNotEmpty()) return manual
+            return languageMatches
+        }
+        // Nothing matches the requested language: fall back to a single curated
+        // manual track rather than merging tracks from different languages.
         val manual = tracks.filter { it.optString("kind") != "asr" }
-        if (manual.isNotEmpty()) return manual
+        if (manual.isNotEmpty()) return listOf(manual.first())
         return tracks
     }
 
@@ -188,7 +206,7 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
      * Handles both YouTube's XML format (`<text start=...>`) and the srv3
      * JSON format (events with tStartMs + segs).
      */
-    private fun extractSegments(raw: String): List<CaptionSegment> {
+    internal fun extractSegments(raw: String): List<CaptionSegment> {
         val trimmed = raw.trim()
         if (trimmed.startsWith("{")) {
             return extractSrv3Json(trimmed)
@@ -240,11 +258,13 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
 
     /**
      * Merges segments fetched from multiple caption tracks: sorts by start
-     * time and drops true duplicates (same start instant) — preview tracks
-     * repeat the same lines as the full track. Distinct lines are all kept,
-     * so content from split tracks is reassembled in the right order.
+     * time and drops true duplicates (same start instant). Distinct lines are
+     * all kept, so content from split ASR tracks is reassembled in the right
+     * order. Callers must not feed it a manual track together with its asr twin:
+     * those are not time-aligned and would interleave instead of dedupe — track
+     * selection (see [selectTracks]) guarantees that.
      */
-    private fun mergeSegments(all: List<CaptionSegment>): List<CaptionSegment> {
+    internal fun mergeSegments(all: List<CaptionSegment>): List<CaptionSegment> {
         if (all.size <= 1) return all
         val sorted = all.sortedWith(compareBy({ it.start }, { -it.text.length }))
         val merged = mutableListOf<CaptionSegment>()
@@ -296,7 +316,7 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
      * book. A `Chapter N — m:ss` heading is emitted only at speaker-turn breaks
      * roughly every 15 minutes.
      */
-    private fun formatTranscript(segments: List<CaptionSegment>): String {
+    internal fun formatTranscript(segments: List<CaptionSegment>): String {
         val paragraphs = mutableListOf<String>()
         val current = StringBuilder()
         var paragraphStart = 0.0
@@ -344,7 +364,7 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
         }
     }
 
-    private data class CaptionSegment(
+    internal data class CaptionSegment(
         val start: Double,
         val duration: Double,
         val text: String

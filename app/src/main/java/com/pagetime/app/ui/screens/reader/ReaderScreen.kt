@@ -82,12 +82,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -645,16 +649,73 @@ private fun TextReaderHost(
     onRestoreComplete: () -> Unit,
     onToggleChrome: () -> Unit
 ) {
-    // Pages re-paginate when typography changes so the same fraction of the book
-    // stays in view and the text always fits the screen at the new setting.
-    val pages = remember(
+    // Pages are laid out from the device's REAL screen size and the reader's
+    // exact typography: a page is whatever measured text actually fits the
+    // visible area on this phone. Nothing is counted or guessed, so changing
+    // the font, the device, or the system text scale re-flows the full text
+    // with nothing clipped and no missing pages.
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val screenW = configuration.screenWidthDp.dp
+    val screenH = configuration.screenHeightDp.dp
+    val textMeasurer = rememberTextMeasurer()
+    val baseStyle = MaterialTheme.typography.bodyLarge
+
+    var pagesState by remember { mutableStateOf<List<TextPage>?>(null) }
+
+    LaunchedEffect(
         content,
         settings.fontSizeSp,
         settings.lineHeight,
         settings.fontFamily,
-        settings.marginDp
+        settings.marginDp,
+        settings.alignment,
+        screenW,
+        screenH,
+        density
     ) {
-        TextPageLayout.paginate(content, TextPageLayout.targetCharsFor(settings))
+        val widthPx = with(density) {
+            (screenW - (settings.marginDp.dp * 2)).coerceAtLeast(48.dp).roundToPx()
+        }
+        val heightPx = with(density) {
+            (screenH - 48.dp).coerceAtLeast(96.dp).roundToPx()
+        }
+        val family = readerFontFamily(settings.fontFamily)
+        val renderStyle = baseStyle.copy(
+            letterSpacing = (settings.fontSizeSp * 0.015f).sp,
+            fontFamily = family,
+            fontSize = settings.fontSizeSp.sp,
+            lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
+            textAlign = if (settings.alignment == "justify") TextAlign.Justify else TextAlign.Start
+        )
+        pagesState = runCatching {
+            TextPageLayout.paginateMeasured(
+                content = content,
+                maxHeightPx = heightPx,
+                measureHeightPx = { snippet ->
+                    textMeasurer.measure(
+                        text = snippet,
+                        style = renderStyle,
+                        constraints = Constraints(maxWidth = widthPx)
+                    ).size.height
+                }
+            )
+        }.getOrElse {
+            // Measurement should never fail; fall back to the heuristic layout
+            // so the reader always shows the full book rather than nothing.
+            TextPageLayout.paginate(content, TextPageLayout.targetCharsFor(settings))
+        }
+    }
+
+    val pages = pagesState
+    if (pages == null) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(palette.background),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(color = palette.text)
+        }
+        return
     }
     var lastFraction by remember { mutableStateOf(0f) }
     val initialPage = remember(pages, initialFraction, initialOffset) {

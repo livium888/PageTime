@@ -95,6 +95,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _enhancing = MutableStateFlow(false)
     val enhancing = _enhancing.asStateFlow()
 
+    private val _enhancementProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val enhancementProgress = _enhancementProgress.asStateFlow()
+
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
 
@@ -431,8 +434,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
         viewModelScope.launch {
             _enhancing.value = true
+            _enhancementProgress.value = null
             try {
-                repo.reformatTranscriptWithAI(b.id, gemini)
+                repo.reformatTranscriptWithAI(b.id, gemini) { completed, total ->
+                    _enhancementProgress.value = completed to total
+                }
                     .onSuccess { formatted ->
                         _textContent.value = formatted
                         _initialTextFraction.value = 0f
@@ -443,6 +449,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     }
             } finally {
                 _enhancing.value = false
+                _enhancementProgress.value = null
             }
         }
     }

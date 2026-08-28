@@ -192,6 +192,7 @@ fun ReaderScreen(
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
     val checkpointPresent by vm.checkpointPresent.collectAsStateWithLifecycle()
     val enhancing by vm.enhancing.collectAsStateWithLifecycle()
+    val enhancementProgress by vm.enhancementProgress.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
@@ -455,7 +456,8 @@ fun ReaderScreen(
                 },
                 isTextBook = book?.format == "txt" && textContent != null,
                 enhancing = enhancing,
-                onEnhance = vm::enhanceWithAI
+                onEnhance = vm::enhanceWithAI,
+                enhancementProgress = enhancementProgress
             )
         }
 
@@ -887,7 +889,8 @@ private fun ReaderTopBar(
     onExplainBack: () -> Unit,
     isTextBook: Boolean = false,
     enhancing: Boolean = false,
-    onEnhance: () -> Unit = {}
+    onEnhance: () -> Unit = {},
+    enhancementProgress: Pair<Int, Int>? = null
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
 
@@ -1003,8 +1006,16 @@ private fun ReaderTopBar(
                     if (isTextBook) {
                         DropdownMenuItem(
                             text = {
-                                if (enhancing) Text("Enhancing…")
-                                else Text("\u2728 Enhance with AI")
+                                if (enhancing) {
+                                    val progress = enhancementProgress
+                                    Text(
+                                        if (progress != null) {
+                                            "Formatting ${progress.first}/${progress.second}"
+                                        } else {
+                                            "Preparing…"
+                                        }
+                                    )
+                                } else Text("\u2728 Enhance with AI")
                             },
                             leadingIcon = {
                                 if (enhancing) {

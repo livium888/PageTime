@@ -383,7 +383,11 @@ class GeminiLearningClient(
      * Fixes ASR artifacts, identifies speakers, adds paragraph structure and topic headings.
      * Returns the formatted text, or throws on failure.
      */
-    suspend fun formatTranscriptWithAI(rawTranscript: String, videoTitle: String): String = withContext(Dispatchers.IO) {
+    suspend fun formatTranscriptWithAI(
+        rawTranscript: String,
+        videoTitle: String,
+        onProgress: (suspend (completed: Int, total: Int) -> Unit)? = null
+    ): String = withContext(Dispatchers.IO) {
         check(currentApiKey().isNotBlank()) { "Gemini API key is not configured" }
         require(rawTranscript.isNotBlank()) { "Transcript is empty" }
 
@@ -394,7 +398,13 @@ class GeminiLearningClient(
                 videoTitle = videoTitle,
                 chunkNumber = index + 1,
                 totalChunks = chunks.size
-            )
+            ).also {
+                require(it.isNotBlank()) { "AI formatting returned an empty chunk ${index + 1}" }
+                require(!looksTruncated(it)) {
+                    "AI formatting returned an incomplete chunk ${index + 1}; the original transcript was kept"
+                }
+                onProgress?.invoke(index + 1, chunks.size)
+            }
         }
         formattedChunks.joinToString("\n\n")
             .trim()
@@ -483,31 +493,54 @@ class GeminiLearningClient(
             .trim()
     }
 
+    private fun looksTruncated(text: String): Boolean {
+        val cleaned = text.trim()
+        return cleaned.endsWith("…") || cleaned.endsWith("...") ||
+            cleaned.endsWith(":") || cleaned.endsWith(",") ||
+            cleaned.endsWith("—") || cleaned.endsWith("-")
+    }
+
     companion object {
         private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)
         private const val MAX_MODEL_PAGES = 20
+        private const val FORMAT_CHUNK_CHARACTERS = 16_000
 
         internal fun splitTranscriptForFormatting(rawTranscript: String): List<String> {
-        val targetCharacters = 24_000
-        val paragraphs = rawTranscript
-            .replace("\r\n", "\n")
-            .split(Regex("\\n\\s*\\n"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-        if (paragraphs.isEmpty()) return listOf(rawTranscript)
+            val normalized = rawTranscript.replace("\r\n", "\n").trim()
+            if (normalized.isBlank()) return emptyList()
 
-        val chunks = mutableListOf<String>()
-        var current = StringBuilder()
-        paragraphs.forEach { paragraph ->
-            if (current.isNotEmpty() && current.length + paragraph.length + 2 > targetCharacters) {
-                chunks += current.toString().trim()
-                current = StringBuilder()
+            val units = normalized
+                .split(Regex("(?<=[.!?])\\s+|\\n+"))
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            val chunks = mutableListOf<String>()
+            var current = StringBuilder()
+            units.forEach { unit ->
+                var remaining = unit
+                while (remaining.isNotBlank()) {
+                    val room = FORMAT_CHUNK_CHARACTERS - current.length - if (current.isNotEmpty()) 1 else 0
+                    if (room <= 0) {
+                        chunks += current.toString().trim()
+                        current = StringBuilder()
+                        continue
+                    }
+                    if (remaining.length <= room) {
+                        if (current.isNotEmpty()) current.append(' ')
+                        current.append(remaining)
+                        remaining = ""
+                    } else {
+                        val cut = remaining.lastIndexOf(' ', room.coerceAtLeast(1))
+                            .takeIf { it > 0 } ?: room
+                        if (current.isNotEmpty()) current.append(' ')
+                        current.append(remaining.take(cut))
+                        chunks += current.toString().trim()
+                        current = StringBuilder()
+                        remaining = remaining.drop(cut).trimStart()
+                    }
+                }
             }
-            if (current.isNotEmpty()) current.append("\\n\\n")
-            current.append(paragraph)
-        }
-        if (current.isNotEmpty()) chunks += current.toString().trim()
-        return chunks
+            if (current.isNotEmpty()) chunks += current.toString().trim()
+            return chunks
         }
     }
 

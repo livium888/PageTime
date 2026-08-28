@@ -16,17 +16,15 @@ class GeminiTranscriptFormattingTest {
     }
 
     @Test
-    fun `long transcript splits only between paragraphs and preserves all text`() {
+    fun `long transcript splits at hard boundaries and preserves all text`() {
         val paragraphs = (0..5).map { "paragraph-$it " + "x".repeat(5_000) }
         val text = paragraphs.joinToString("\n\n")
         val chunks = GeminiLearningClient.splitTranscriptForFormatting(text)
 
         assertTrue(chunks.size > 1)
-        paragraphs.forEach { paragraph ->
-            assertEquals(1, chunks.count { it.contains(paragraph) })
-        }
-        paragraphs.forEach { paragraph ->
-            assertTrue(chunks.any { it.contains(paragraph) })
-        }
+        assertTrue(chunks.all { it.length <= 16_000 })
+        val reconstructed = chunks.joinToString(" ").replace(Regex("\\s+"), " ").trim()
+        val normalized = text.replace(Regex("\\s+"), " ").trim()
+        assertEquals(normalized, reconstructed)
     }
 }

@@ -84,6 +84,7 @@ fun LibraryScreen(
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
     val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
+    val reformatProgress by viewModel.reformatProgress.collectAsStateWithLifecycle()
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showYouTubeDialog by remember { mutableStateOf(false) }
@@ -257,7 +258,8 @@ fun LibraryScreen(
                         onClick = { onOpenBook(book.id) },
                         onDelete = { viewModel.delete(book) },
                         onReformat = { viewModel.reformatWithAI(book.id) },
-                        isReformatting = book.id in isReformatting
+                        isReformatting = book.id in isReformatting,
+                        reformatProgress = reformatProgress[book.id]
                     )
                 }
             }
@@ -306,7 +308,14 @@ private fun ContinueThinkingCard(book: BookEntity, moment: MapMoment, onClick: (
 }
 
 @Composable
-private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit, onReformat: (() -> Unit)? = null, isReformatting: Boolean = false) {
+private fun BookRow(
+    book: BookEntity,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onReformat: (() -> Unit)? = null,
+    isReformatting: Boolean = false,
+    reformatProgress: Pair<Int, Int>? = null
+) {
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -395,10 +404,18 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit,
                         enabled = !isReformatting
                     ) {
                         if (isReformatting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                reformatProgress?.let { (completed, total) ->
+                                    Text(
+                                        "$completed/$total",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
                         } else {
                             Icon(
                                 Icons.Outlined.AutoAwesome,

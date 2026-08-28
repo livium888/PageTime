@@ -39,6 +39,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _reformatting = MutableStateFlow<Set<String>>(emptySet())
     val reformatting = _reformatting.asStateFlow()
 
+    private val _reformatProgress = MutableStateFlow<Map<String, Pair<Int, Int>>>(emptyMap())
+    val reformatProgress = _reformatProgress.asStateFlow()
+
     fun delete(book: BookEntity) {
         viewModelScope.launch { container.libraryRepository.deleteBook(book) }
     }
@@ -52,12 +55,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             _reformatting.value += bookId
+            _reformatProgress.value -= bookId
             _importError.value = null
-            container.libraryRepository.reformatTranscriptWithAI(bookId, gemini)
+            container.libraryRepository.reformatTranscriptWithAI(bookId, gemini) { completed, total ->
+                _reformatProgress.value = _reformatProgress.value + (bookId to (completed to total))
+            }
                 .onFailure { error ->
                     _importError.value = error.message ?: "AI formatting failed"
                 }
             _reformatting.value -= bookId
+            _reformatProgress.value -= bookId
         }
     }
 

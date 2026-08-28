@@ -247,7 +247,8 @@ class LibraryRepository(
      */
     suspend fun reformatTranscriptWithAI(
         bookId: String,
-        geminiClient: GeminiLearningClient
+        geminiClient: GeminiLearningClient,
+        onProgress: (suspend (completed: Int, total: Int) -> Unit)? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val book = bookDao.getById(bookId) ?: error("Book not found")
@@ -255,7 +256,7 @@ class LibraryRepository(
             if (rawText.isBlank()) error("Book has no text content")
 
             val call: suspend () -> String = {
-                geminiClient.formatTranscriptWithAI(rawText, book.title)
+                geminiClient.formatTranscriptWithAI(rawText, book.title, onProgress)
             }
             val formatted = if (aiUsageRepository != null) {
                 aiUsageRepository.track(

@@ -66,6 +66,12 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     private val _youtubeResults = MutableStateFlow<List<YouTubeSearchApi.SearchResult>>(emptyList())
     val youtubeResults = _youtubeResults.asStateFlow()
 
+    private val _categoryShelves = MutableStateFlow<List<YouTubeSearchApi.CategoryShelf>>(emptyList())
+    val categoryShelves = _categoryShelves.asStateFlow()
+
+    private val _loadingCategories = MutableStateFlow(false)
+    val loadingCategories = _loadingCategories.asStateFlow()
+
     val downloadedIds = repo.observeBooks()
         .map { books -> books.map { it.id }.toSet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
@@ -204,9 +210,14 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             val q = _query.value.trim()
-            if (q.isBlank()) return@launch
+            if (q.isBlank()) {
+                // Empty query: show browse categories
+                loadYouTubeBrowse()
+                return@launch
+            }
             _loading.value = true
             _error.value = null
+            _categoryShelves.value = emptyList()
             try {
                 val (results, _) = youtubeApi.search(q)
                 _youtubeResults.value = results
@@ -220,6 +231,30 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 _error.value = e.message ?: "YouTube search failed"
+            } finally {
+                _loading.value = false
+            }
+        }
+    }
+
+    /** Load browse/discovery categories when no search query is entered. */
+    private fun loadYouTubeBrowse() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _loading.value = true
+            _error.value = null
+            _youtubeResults.value = emptyList()
+            _categoryShelves.value = emptyList()
+            try {
+                val shelves = youtubeApi.browseCategories()
+                _categoryShelves.value = shelves
+                if (shelves.isEmpty()) {
+                    _error.value = "Could not load categories. Try searching instead."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Failed to load categories"
             } finally {
                 _loading.value = false
             }

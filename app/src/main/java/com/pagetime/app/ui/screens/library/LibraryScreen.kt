@@ -21,11 +21,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -249,10 +251,13 @@ fun LibraryScreen(
                     }
                 }
                 items(books, key = { it.id }) { book ->
+                    val isReformatting by viewModel.reformatting.collectAsStateWithLifecycle()
                     BookRow(
                         book = book,
                         onClick = { onOpenBook(book.id) },
-                        onDelete = { viewModel.delete(book) }
+                        onDelete = { viewModel.delete(book) },
+                        onReformat = { viewModel.reformatWithAI(book.id) },
+                        isReformatting = book.id in isReformatting
                     )
                 }
             }
@@ -301,7 +306,7 @@ private fun ContinueThinkingCard(book: BookEntity, moment: MapMoment, onClick: (
 }
 
 @Composable
-private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit, onReformat: (() -> Unit)? = null, isReformatting: Boolean = false) {
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -383,12 +388,33 @@ private fun BookRow(book: BookEntity, onClick: () -> Unit, onDelete: () -> Unit)
                     }
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (onReformat != null && book.format == "txt") {
+                    IconButton(
+                        onClick = onReformat,
+                        enabled = !isReformatting
+                    ) {
+                        if (isReformatting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Outlined.AutoAwesome,
+                                contentDescription = "AI Format",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

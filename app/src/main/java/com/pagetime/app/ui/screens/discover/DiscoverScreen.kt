@@ -75,6 +75,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
     val youtubeResults by viewModel.youtubeResults.collectAsStateWithLifecycle()
+    val categoryShelves by viewModel.categoryShelves.collectAsStateWithLifecycle()
     val searchingAll by viewModel.searchingAll.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
@@ -220,11 +221,23 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     if (source == BookSource.YOUTUBE) {
-                        items(youtubeResults, key = { it.videoId }) { video ->
-                            YouTubeVideoRow(
-                                video = video,
-                                onImport = { viewModel.importYouTubeVideo(video.videoId) }
-                            )
+                        if (categoryShelves.isNotEmpty() && youtubeResults.isEmpty()) {
+                            // Show browse categories when no search query
+                            items(categoryShelves, key = { it.title }) { shelf ->
+                                CategoryShelfRow(
+                                    shelf = shelf,
+                                    onImport = { videoId ->
+                                        viewModel.importYouTubeVideo(videoId)
+                                    }
+                                )
+                            }
+                        } else {
+                            items(youtubeResults, key = { it.videoId }) { video ->
+                                YouTubeVideoRow(
+                                    video = video,
+                                    onImport = { viewModel.importYouTubeVideo(video.videoId) }
+                                )
+                            }
                         }
                     } else {
                         items(books, key = { it.id }) { book ->
@@ -396,12 +409,24 @@ private fun YouTubeVideoRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (video.duration.isNotBlank()) {
-                        Text(
-                            video.duration,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (video.viewCount.isNotBlank()) {
+                            Text(
+                                video.viewCount,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (video.duration.isNotBlank()) {
+                            Text(
+                                video.duration,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.width(10.dp))
@@ -453,6 +478,71 @@ private fun YouTubeVideoRow(
                         modifier = Modifier
                             .padding(top = 2.dp)
                             .clickable { expanded = true }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryShelfRow(
+    shelf: YouTubeSearchApi.CategoryShelf,
+    onImport: (String) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            shelf.title,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        androidx.compose.foundation.lazy.LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(shelf.results.size) { index ->
+                val video = shelf.results[index]
+                CategoryVideoCard(
+                    video = video,
+                    onImport = { onImport(video.videoId) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryVideoCard(
+    video: YouTubeSearchApi.SearchResult,
+    onImport: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .width(160.dp)
+            .clickable { onImport() },
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            AsyncImage(
+                model = video.thumbnailUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(90.dp)
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+            )
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(
+                    video.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (video.viewCount.isNotBlank()) {
+                    Text(
+                        video.viewCount,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

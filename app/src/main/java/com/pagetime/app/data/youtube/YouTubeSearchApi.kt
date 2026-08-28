@@ -34,7 +34,8 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
         val channelName: String,
         val thumbnailUrl: String,
         val duration: String,
-        val description: String
+        val description: String,
+        val viewCount: String = ""
     )
 
     /**
@@ -140,6 +141,63 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
+     * Search YouTube for popular videos in a category using curated queries.
+     * Returns shelves of results grouped by category name.
+     */
+    suspend fun browseCategories(): List<CategoryShelf> = withContext(Dispatchers.IO) {
+        val categories = listOf(
+            CategoryShelf("🎙️ Podcasts & Interviews", listOf(
+                "best podcast episodes 2025",
+                "long form interview must watch",
+                "podcast conversation life changing"
+            )),
+            CategoryShelf("🔬 Science & Education", listOf(
+                "fascinating science documentary",
+                "mind blowing science explanation",
+                "educational video everyone should watch"
+            )),
+            CategoryShelf("🧠 Psychology & Philosophy", listOf(
+                "psychology of human behavior",
+                "philosophy meaning of life lecture",
+                "cognitive science decision making"
+            )),
+            CategoryShelf("💼 Business & Finance", listOf(
+                "business strategy documentary",
+                "investing principles explained",
+                "startup founder interview"
+            )),
+            CategoryShelf("🌍 History & Culture", listOf(
+                "history documentary must watch",
+                "civilization explained documentary",
+                "cultural evolution human species"
+            )),
+            CategoryShelf("🧘 Health & Wellness", listOf(
+                "health science explained",
+                "sleep neuroscience documentary",
+                "longevity research breakthrough"
+            ))
+        )
+
+        categories.mapNotNull { shelf ->
+            try {
+                val query = shelf.queries.random()
+                val (results, _) = searchViaInnertube(query)
+                if (results.isNotEmpty()) {
+                    shelf.copy(results = results.take(6))
+                } else null
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    data class CategoryShelf(
+        val title: String,
+        val queries: List<String> = emptyList(),
+        val results: List<SearchResult> = emptyList()
+    )
+
+    /**
      * Parse video results from a YouTube innertube search JSON response.
      * The response mirrors the shape of the old ytInitialData blob:
      * contents.twoColumnSearchResultsRenderer.primaryContents.
@@ -194,6 +252,10 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
                         .optJSONObject("lengthText")
                         ?.optString("simpleText", "") ?: ""
 
+                    val viewCount = video
+                        .optJSONObject("viewCountText")
+                        ?.optString("simpleText", "") ?: ""
+
                     val descRuns = video
                         .optJSONArray("detailedMetadataSnippets")
                         ?.optJSONObject(0)
@@ -212,7 +274,8 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
                             channelName = channel,
                             thumbnailUrl = thumbnail,
                             duration = lengthText,
-                            description = description
+                            description = description,
+                            viewCount = viewCount
                         )
                     )
                 }

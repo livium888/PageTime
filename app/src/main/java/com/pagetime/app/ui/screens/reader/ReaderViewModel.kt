@@ -12,7 +12,9 @@ import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.ConceptMap
 import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenDraft
+import com.pagetime.app.data.local.LumenCardEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -379,6 +382,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _lumenCapturing = MutableStateFlow(false)
     val lumenCapturing = _lumenCapturing.asStateFlow()
 
+    /** Where the freshly captured card could continue the line (box 1). */
+    private val _lumenFileSuggestions = MutableStateFlow<List<LumenCardEntity>>(emptyList())
+    val lumenFileSuggestions = _lumenFileSuggestions.asStateFlow()
+
     private var pendingLumenContext: PendingLumenContext? = null
 
     private data class PendingLumenContext(
@@ -427,6 +434,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     chapterIndex = chapterIndex,
                     fraction = if (b.format == "txt") latestTxtFraction else 0f
                 )
+                // Where should this new slip continue the line? Ranked locally
+                // against the whole box — Luhmann filed behind the thought it
+                // continued, never at random.
+                _lumenFileSuggestions.value = LumenConnections.filingCandidates(
+                    cards = lumenRepo.observeAll().first(),
+                    front = draft.front,
+                    back = draft.back,
+                    quote = draft.quote,
+                    bookId = b.id,
+                    box = 1
+                )
                 _lumenDraft.value = draft
             } catch (error: CancellationException) {
                 throw error
@@ -438,7 +456,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    fun saveLumenCard(front: String, back: String) {
+    fun saveLumenCard(front: String, back: String, afterIndex: String? = null) {
         val b = _book.value ?: return
         val pending = pendingLumenContext ?: return
         viewModelScope.launch {
@@ -450,7 +468,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     quote = pending.draft.quote,
                     sourceLocatorJson = pending.locatorJson,
                     sourceChapterIndex = pending.chapterIndex,
-                    sourceFraction = pending.fraction
+                    sourceFraction = pending.fraction,
+                    afterIndex = afterIndex
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -458,6 +477,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _error.value = error.message ?: "Couldn't save the card"
             } finally {
                 _lumenDraft.value = null
+                _lumenFileSuggestions.value = emptyList()
                 pendingLumenContext = null
             }
         }
@@ -465,6 +485,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     fun dismissLumenDraft() {
         _lumenDraft.value = null
+        _lumenFileSuggestions.value = emptyList()
         pendingLumenContext = null
     }
 

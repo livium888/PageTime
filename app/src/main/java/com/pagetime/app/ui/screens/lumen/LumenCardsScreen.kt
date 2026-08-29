@@ -24,7 +24,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
@@ -33,8 +38,12 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,10 +76,13 @@ import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenCoach
 import com.pagetime.app.data.LumenLesson
+import com.pagetime.app.data.LumenManuscript
 import com.pagetime.app.data.LumenRegister
 import com.pagetime.app.data.LumenRepository
+import com.pagetime.app.data.LumenRole
 import com.pagetime.app.data.LumenSearch
 import com.pagetime.app.data.LumenThread
+import com.pagetime.app.data.ManuscriptEntry
 import com.pagetime.app.data.local.LumenCardEntity
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -153,6 +165,13 @@ class LumenViewModel(
         }
     }
 
+    /** All cards across every box, for the writing desk (loaded on demand). */
+    fun allCards(onLoaded: (List<LumenCardEntity>) -> Unit) {
+        viewModelScope.launch {
+            onLoaded(repository.observeAll().first())
+        }
+    }
+
     /** The literature box: sources with their citing cards, loaded on demand. */
     fun sources(onLoaded: (List<com.pagetime.app.data.LumenSources.Source>) -> Unit) {
         viewModelScope.launch {
@@ -203,6 +222,16 @@ fun LumenCardsScreen(
     var searching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var pullingThread by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var writing by remember { mutableStateOf(false) }
+    var writeCards by remember { mutableStateOf<List<LumenCardEntity>?>(null) }
+
+    if (writing) {
+        ManuscriptEditor(
+            cards = writeCards,
+            onClose = { writing = false }
+        )
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -228,6 +257,13 @@ fun LumenCardsScreen(
                     }
                     IconButton(onClick = { studying = true }) {
                         Icon(Icons.Outlined.School, contentDescription = "Learn the method")
+                    }
+                    IconButton(onClick = {
+                        writing = true
+                        writeCards = null
+                        vm.allCards { writeCards = it }
+                    }) {
+                        Icon(Icons.Outlined.EditNote, contentDescription = "Write from the box")
                     }
                 }
             )
@@ -1495,3 +1531,300 @@ private fun SourcesDialog(
 private val dateFormat by lazy { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
 
 private fun formatDate(millis: Long): String = dateFormat.format(Date(millis))
+
+/**
+ * The writing desk — Luhmann's way of producing something new: ask the box a
+ * question, take out the slips that answer (whole lines, not single Zetteln),
+ * order them into an argument, then write from that arrangement. Everything
+ * here is local and deterministic; the copy button hands you the outline.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManuscriptEditor(
+    cards: List<LumenCardEntity>?,
+    onClose: () -> Unit
+) {
+    if (cards == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+    var question by remember { mutableStateOf("") }
+    var entries by remember { mutableStateOf<List<ManuscriptEntry>>(emptyList()) }
+    var draft by remember { mutableStateOf("") }
+    var copied by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val suggestions = remember(question, cards) {
+        if (question.trim().length < 3) emptyList() else LumenManuscript.gather(question, cards)
+    }
+    val addedIds = remember(entries) { entries.map { it.card.id }.toSet() }
+
+    val copyManuscript = {
+        val text = LumenManuscript.render(question, entries, draft)
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText("Lumen manuscript", text)
+        )
+        copied = true
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Write — from the box") },
+                navigationIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = copyManuscript) {
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy manuscript")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
+            Text(
+                "Luhmann wrote by asking the box a question and arranging the slips it returned. Ask, gather, order the argument, then write.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+            OutlinedTextField(
+                value = question,
+                onValueChange = { question = it },
+                label = { Text("What are you writing about?") },
+                minLines = 2,
+                maxLines = 4,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "THE BOX ANSWERS",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(6.dp))
+            when {
+                question.trim().length < 3 -> Text(
+                    "Ask a question — the box returns the cards that speak to it, whole lines included.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                suggestions.isEmpty() -> Text(
+                    "Nothing matches yet. Try different words, or open the register to see the terms your box actually uses.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> suggestions.forEach { card ->
+                    if (card.id !in addedIds) {
+                        Surface(
+                            onClick = { entries = entries + ManuscriptEntry(card) },
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        card.indexNumber.ifBlank { "?" },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        card.front,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    Icons.Outlined.Add,
+                                    contentDescription = "Add to argument",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "YOUR ARGUMENT",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(6.dp))
+            if (entries.isEmpty()) {
+                Text(
+                    "Tap a suggestion above to bring it in, then order the slips the way the argument should run.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                entries.forEachIndexed { index, entry ->
+                    ManuscriptEntryRow(
+                        entry = entry,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < entries.size - 1,
+                        onMoveUp = {
+                            val list = entries.toMutableList()
+                            val tmp = list[index]
+                            list[index] = list[index - 1]
+                            list[index - 1] = tmp
+                            entries = list
+                        },
+                        onMoveDown = {
+                            val list = entries.toMutableList()
+                            val tmp = list[index]
+                            list[index] = list[index + 1]
+                            list[index + 1] = tmp
+                            entries = list
+                        },
+                        onRemove = { entries = entries.filterNot { it.card.id == entry.card.id } },
+                        onRole = { role ->
+                            entries = entries.mapIndexed { i, e -> if (i == index) e.copy(role = role) else e }
+                        }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "YOUR DRAFT",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                label = { Text("Write here — the slips above are your outline") },
+                minLines = 4,
+                maxLines = 12,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = copyManuscript,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Outlined.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (copied) "Copied manuscript" else "Copy manuscript")
+            }
+        }
+    }
+}
+
+/** One slip inside the manuscript: address, front, role, and ordering controls. */
+@Composable
+private fun ManuscriptEntryRow(
+    entry: ManuscriptEntry,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+    onRole: (LumenRole?) -> Unit
+) {
+    var roleMenu by remember { mutableStateOf(false) }
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    entry.card.indexNumber.ifBlank { "?" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    entry.card.front,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                IconButton(onClick = onMoveUp, enabled = canMoveUp, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Outlined.KeyboardArrowUp,
+                        contentDescription = "Move up",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(onClick = onMoveDown, enabled = canMoveDown, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = "Move down",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(onClick = onRemove, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        contentDescription = "Remove from argument",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            if (entry.card.back.isNotBlank()) {
+                Text(
+                    entry.card.back,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box {
+                TextButton(onClick = { roleMenu = true }, contentPadding = PaddingValues(0.dp)) {
+                    Text(
+                        entry.role?.let { "Role: ${it.label}" } ?: "Assign a role",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                DropdownMenu(expanded = roleMenu, onDismissRequest = { roleMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("No role") },
+                        onClick = { onRole(null); roleMenu = false }
+                    )
+                    LumenRole.entries.forEach { role ->
+                        DropdownMenuItem(
+                            text = { Text(role.label) },
+                            onClick = { onRole(role); roleMenu = false }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

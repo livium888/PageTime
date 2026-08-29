@@ -45,4 +45,57 @@ class LumenConnectionsTest {
         assertEquals(12, result.size)
         assertTrue(result.none { it.card.id == "new" })
     }
+
+    @Test
+    fun `filing candidates prefer shared terms in the target box`() {
+        val cards = listOf(
+            card("21a", "Rituals repeat the institutional pattern"),
+            card("21b", "Rituals and power", box = 2),
+            card("44", "Cooking with seasonal vegetables", book = "other")
+        )
+
+        val result = LumenConnections.filingCandidates(
+            cards = cards,
+            front = "Rituals repeat patterns",
+            back = "",
+            quote = "",
+            bookId = "book",
+            box = 1
+        )
+
+        // Only box-1 cards may be suggested, best match first.
+        assertEquals(listOf("21a"), result.map { it.id })
+    }
+
+    @Test
+    fun `filing candidates stay within the box and are bounded`() {
+        val cards = (1..30).map { card("$it", "Rituals repeat the institutional pattern", box = 1) } +
+            card("99", "Rituals repeat the institutional pattern", box = 2)
+
+        val result = LumenConnections.filingCandidates(
+            cards = cards,
+            front = "Rituals repeat patterns",
+            back = "",
+            quote = "",
+            bookId = "book",
+            box = 1,
+            limit = 5
+        )
+
+        assertEquals(5, result.size)
+        assertTrue(result.all { it.box == 1 })
+    }
+
+    @Test
+    fun `filing candidates return empty when nothing matches`() {
+        val cards = listOf(card("21", "Cooking with seasonal vegetables"))
+        val result = LumenConnections.filingCandidates(
+            cards = cards,
+            front = "Rituals repeat patterns",
+            back = "",
+            quote = "",
+            bookId = "other"
+        )
+        assertTrue(result.isEmpty())
+    }
 }

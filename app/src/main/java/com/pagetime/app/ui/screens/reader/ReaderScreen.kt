@@ -36,8 +36,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
@@ -107,6 +110,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
 import com.pagetime.app.data.LumenDraft
+import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
@@ -212,6 +216,7 @@ fun ReaderScreen(
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
     val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
+    val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -598,7 +603,8 @@ fun ReaderScreen(
     lumenDraft?.let { draft ->
         LumenDraftDialog(
             draft = draft,
-            onSave = { front, back -> vm.saveLumenCard(front, back) },
+            suggestions = lumenFileSuggestions,
+            onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
     }
@@ -1689,11 +1695,14 @@ private fun StatRow(label: String, value: String) {
 @Composable
 private fun LumenDraftDialog(
     draft: LumenDraft,
-    onSave: (front: String, back: String) -> Unit,
+    suggestions: List<LumenCardEntity>,
+    onSave: (front: String, back: String, afterIndex: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     var front by remember(draft) { mutableStateOf(draft.front) }
     var back by remember(draft) { mutableStateOf(draft.back) }
+    var fileBehind by remember(draft) { mutableStateOf<LumenCardEntity?>(null) }
+    var filingMenu by remember(draft) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1709,7 +1718,7 @@ private fun LumenDraftDialog(
             }
         },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (!draft.usedAi) {
                     Text(
                         "Drafted on-device (no AI key or offline) — edit freely.",
@@ -1749,11 +1758,68 @@ private fun LumenDraftDialog(
                         modifier = Modifier.padding(10.dp)
                     )
                 }
+                if (suggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "FILE BEHIND",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Box {
+                        TextButton(
+                            onClick = { filingMenu = true },
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                fileBehind?.let { "${it.indexNumber} — ${it.front}" } ?: "End of box",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                Icons.Outlined.ExpandMore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = filingMenu,
+                            onDismissRequest = { filingMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("End of box") },
+                                onClick = {
+                                    fileBehind = null
+                                    filingMenu = false
+                                }
+                            )
+                            suggestions.forEach { card ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "${card.indexNumber} — ${card.front}",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    onClick = {
+                                        fileBehind = card
+                                        filingMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(front, back) },
+                onClick = { onSave(front, back, fileBehind?.indexNumber) },
                 enabled = front.isNotBlank()
             ) {
                 Text("Save card")

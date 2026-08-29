@@ -1,7 +1,6 @@
 package com.pagetime.app.ui.screens.lumen
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -25,12 +24,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
@@ -274,7 +271,7 @@ fun LumenCardsScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            if (searchQuery.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.NoteAdd,
+                            if (searchQuery.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.Add,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(44.dp)
@@ -835,7 +832,7 @@ private fun CardDetailDialog(
                     Text("Connect", maxLines = 1)
                 }
                 IconButton(onClick = onMore) {
-                    Icon(Icons.Outlined.Info, contentDescription = "More actions")
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
                 }
             }
         }

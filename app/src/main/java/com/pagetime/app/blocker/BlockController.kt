@@ -56,8 +56,8 @@ class BlockController(
         /** Debounce so sitting on a blocked app at zero doesn't spam BLOCKED rows. */
         private const val BLOCKED_LOG_DEBOUNCE_MS = 60_000L
 
-        /** How often the block screen is re-asserted while it should be up. */
-        private const val ENFORCE_INTERVAL_MS = 1_000L
+        /** Retry only if an OEM detached the overlay; never redraw an attached one. */
+        private const val ENFORCE_INTERVAL_MS = 2_000L
 
     }
 
@@ -207,8 +207,8 @@ class BlockController(
      * keyboard, another overlay stacking on top of the block screen).
      */
     fun reassert() {
-        if (currentBlockedPackage == null) return
-        if (balanceSeconds <= 0) startEnforcing()
+        // Transient windows are intentionally ignored. The enforcement job owns
+        // retries and checks `isTimeUpShowing()` before touching WindowManager.
     }
 
     /**
@@ -298,7 +298,13 @@ class BlockController(
                         // `showTimeUp()` is idempotent, but calling it repeatedly can
                         // still cause OEM WindowManager focus churn. Only retry when
                         // the overlay has genuinely disappeared.
-                        if (!svc.isTimeUpShowing()) {
+                        if (BlockEnforcementPolicy.shouldShowOverlay(
+                                overlayAttached = svc.isTimeUpShowing(),
+                                currentBlockedPackage = currentBlockedPackage,
+                                expectedBlockedPackage = pkg,
+                                balanceSeconds = balanceSeconds
+                            )
+                        ) {
                             val shown = withContext(Dispatchers.Main) { svc.showTimeUp() }
                             if (!shown) {
                                 // No overlay window available at all (permission revoked,

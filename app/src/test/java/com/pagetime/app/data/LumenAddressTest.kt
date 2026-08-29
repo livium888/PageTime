@@ -329,3 +329,73 @@ class LumenSourcesTest {
         assertEquals("Untitled", LumenSources.render(source))
     }
 }
+
+class LumenSearchTest {
+
+    private fun card(
+        id: String,
+        indexNumber: String,
+        front: String = "Note $id",
+        back: String = "",
+        quote: String = "",
+        keywords: String = ""
+    ): LumenCardEntity {
+        val now = System.currentTimeMillis()
+        return LumenCardEntity(
+            id = id,
+            bookId = "b1",
+            box = 1,
+            indexNumber = indexNumber,
+            front = front,
+            back = back,
+            quote = quote,
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            snippetsJson = "[]",
+            linksJson = "[]",
+            keywords = keywords,
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    private val box: List<LumenCardEntity> = listOf(
+        card("1", "21", front = "Sovereign power grows", keywords = "power sovereignty"),
+        card("2", "21a", front = "Discipline spreads", back = "via institutions"),
+        card("3", "22", front = "Markets price risk", quote = "The market prices risk."),
+        card("4", "23", front = "Unrelated note")
+    )
+
+    private fun ids(cards: List<LumenCardEntity>): List<String> = cards.map { it.id }
+
+    @Test
+    fun `blank query returns the list unchanged`() {
+        assertEquals(box, LumenSearch.filter(box, ""))
+        assertEquals(box, LumenSearch.filter(box, "   "))
+    }
+
+    @Test
+    fun `one term matches across front back quote keywords and address`() {
+        assertEquals(listOf("1"), ids(LumenSearch.filter(box, "sovereign")))
+        assertEquals(listOf("2"), ids(LumenSearch.filter(box, "institutions")))
+        assertEquals(listOf("3"), ids(LumenSearch.filter(box, "prices risk")))
+        assertEquals(listOf("1"), ids(LumenSearch.filter(box, "sovereignty")))
+    }
+
+    @Test
+    fun `multiple terms AND together`() {
+        assertEquals(listOf("3"), ids(LumenSearch.filter(box, "market risk")))
+        assertTrue(LumenSearch.filter(box, "market sovereignty").isEmpty())
+    }
+
+    @Test
+    fun `matching is case-insensitive`() {
+        assertEquals(listOf("1"), ids(LumenSearch.filter(box, "SOVEREIGN")))
+    }
+
+    @Test
+    fun `an address term finds its whole line`() {
+        assertEquals(listOf("1", "2"), ids(LumenSearch.filter(box, "21")))
+    }
+}

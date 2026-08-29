@@ -32,6 +32,8 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -67,6 +69,7 @@ import com.pagetime.app.data.LumenCoach
 import com.pagetime.app.data.LumenLesson
 import com.pagetime.app.data.LumenRegister
 import com.pagetime.app.data.LumenRepository
+import com.pagetime.app.data.LumenSearch
 import com.pagetime.app.data.LumenThread
 import com.pagetime.app.data.local.LumenCardEntity
 import java.text.SimpleDateFormat
@@ -184,6 +187,8 @@ fun LumenCardsScreen(
     var studying by remember { mutableStateOf(false) }
     var register by remember { mutableStateOf(false) }
     var sources by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     var pullingThread by remember { mutableStateOf<LumenCardEntity?>(null) }
 
     Scaffold(
@@ -196,6 +201,12 @@ fun LumenCardsScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { searching = !searching; if (!searching) searchQuery = "" }) {
+                        Icon(
+                            if (searching) Icons.Outlined.SearchOff else Icons.Outlined.Search,
+                            contentDescription = "Search"
+                        )
+                    }
                     IconButton(onClick = { sources = true }) {
                         Icon(Icons.Outlined.MenuBook, contentDescription = "Sources")
                     }
@@ -224,7 +235,21 @@ fun LumenCardsScreen(
                 dueCount = dueCount,
                 onSelect = { vm.selectBox(it) }
             )
-            if (cards.isEmpty()) {
+            if (searching) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search address, note, quote, keyword…") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+            val visibleCards = remember(cards, searchQuery) {
+                LumenSearch.filter(cards, searchQuery)
+            }
+            if (visibleCards.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -233,22 +258,28 @@ fun LumenCardsScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            Icons.Outlined.NoteAdd,
+                            if (searchQuery.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.NoteAdd,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(44.dp)
                         )
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            if (selectedBox == 0) "The slip box is empty" else "Box $selectedBox is empty",
+                            when {
+                                searchQuery.isNotBlank() -> "No notes match “${searchQuery.take(30)}”"
+                                selectedBox == 0 -> "The slip box is empty"
+                                else -> "Box $selectedBox is empty"
+                            },
                             style = MaterialTheme.typography.titleMedium
                         )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "While reading, open Options → New Lumen card\nto file the idea in front of you, or tap + to\nwrite a card at your desk.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (searchQuery.isBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "While reading, open Options → New Lumen card\nto file the idea in front of you, or tap + to\nwrite a card at your desk.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             } else {
@@ -257,7 +288,7 @@ fun LumenCardsScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(cards, key = { it.id }) { card ->
+                    items(visibleCards, key = { it.id }) { card ->
                         LumenCardRow(
                             card = card,
                             onOpen = { detailCard = card },

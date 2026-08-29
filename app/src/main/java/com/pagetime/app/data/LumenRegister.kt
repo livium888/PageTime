@@ -106,6 +106,38 @@ object LumenThread {
 }
 
 /**
+ * Direct lookup across the box — the partner of the Register. Luhmann walked
+ * to a slip by address or by register entry; digitally, a plain query across
+ * addresses, note text, quotes, and keywords does the same job. Pure-local:
+ * no AI, no network, linear in box size.
+ */
+object LumenSearch {
+
+    /**
+     * Filters [cards] to those matching every whitespace-separated term in
+     * [query] (AND semantics, case-insensitive substring). An empty or blank
+     * query returns the list unchanged. A term that looks like an address
+     * (e.g. "21a") also matches by address prefix, so "21" finds the whole
+     * 21-line.
+     */
+    fun filter(cards: List<LumenCardEntity>, query: String): List<LumenCardEntity> {
+        val terms = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (terms.isEmpty()) return cards
+        return cards.filter { card ->
+            val address = card.indexNumber.lowercase()
+            val haystack = buildString {
+                append(address).append(' ')
+                append(card.front.lowercase()).append(' ')
+                append(card.back.lowercase()).append(' ')
+                append(card.quote.lowercase()).append(' ')
+                append(card.keywords.lowercase())
+            }
+            terms.all { term -> haystack.contains(term) }
+        }
+    }
+}
+
+/**
  * The literature box — Luhmann's second Zettelkasten. His main notes did not
  * float free: each cited a bibliographic slip in the literature box, one per
  * source, and the literature slip recorded where in that source the note came

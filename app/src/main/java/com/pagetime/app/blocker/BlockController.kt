@@ -290,21 +290,15 @@ class BlockController(
                     !powerManager.isInteractive -> Unit
 
                     else -> {
-                        // Confirm the blocked app is STILL verifiably in front before
-                        // drawing. The poll's focused window can be our own overlay,
-                        // the keyboard, the shade, or a secure window — none of those
-                        // prove the user is in the blocked app, and drawing over the
-                        // home screen or a background app is exactly the reported bug.
-                        val focused = svc.focusedWindowPackage()
-                        val stillInFront = if (focused == null) {
-                            // Uninspectable window: the level-triggered window events
-                            // remain the source of truth, so keep the block standing.
-                            true
-                        } else {
-                            ForegroundEventPolicy.isTrustedForegroundPackage(focused, selfPackage) &&
-                                focused == pkg
-                        }
-                        if (stillInFront) {
+                        // The foreground-change event already proved that `pkg` was
+                        // in front. Do not query rootInActiveWindow here: while the
+                        // overlay is attached Android reports our overlay (or the
+                        // keyboard/shade), and treating that transient result as a
+                        // new foreground decision causes the two-second flashing.
+                        // `showTimeUp()` is idempotent, but calling it repeatedly can
+                        // still cause OEM WindowManager focus churn. Only retry when
+                        // the overlay has genuinely disappeared.
+                        if (!svc.isTimeUpShowing()) {
                             val shown = withContext(Dispatchers.Main) { svc.showTimeUp() }
                             if (!shown) {
                                 // No overlay window available at all (permission revoked,
@@ -312,17 +306,6 @@ class BlockController(
                                 withContext(Dispatchers.Main) { svc.bounceOut() }
                                 break
                             }
-                        }
-                        // else: a trusted, different app is verifiably in front — the
-                        // block state is stale. Clear it and let the poll/event path
-                        // decide what happens next; do NOT draw over that app.
-                        else {
-                            endSpendSession()
-                            currentBlockedPackage = null
-                            lastForegroundPackage = null
-                            stopEnforcing()
-                            svc.dismissTimeUp()
-                            break
                         }
                     }
                 }

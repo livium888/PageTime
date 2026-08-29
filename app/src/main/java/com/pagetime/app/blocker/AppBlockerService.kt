@@ -62,8 +62,8 @@ class AppBlockerService : AccessibilityService() {
                     )
                 ) {
                     // Transient chrome (shade, keyboard, toast) or our own overlay:
-                    // the blocked app is still there, so just make sure we still are.
-                    controller?.reassert()
+                    // do nothing. The existing enforcement loop already keeps the
+                    // overlay attached; restarting it here caused visible flashing.
                     return
                 }
                 controller?.onForegroundPackage(eventPackage)
@@ -101,6 +101,9 @@ class AppBlockerService : AccessibilityService() {
      * before drawing the overlay — null is "unknown", never "gone".
      */
     fun focusedWindowPackage(): String? = rootInActiveWindow?.packageName?.toString()
+
+    /** Whether the block overlay is currently attached. */
+    fun isTimeUpShowing(): Boolean = overlay?.isShowing() == true
 
     /** Shows the block screen. Returns false if no overlay window could be added. */
     fun showTimeUp(): Boolean {

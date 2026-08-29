@@ -1,8 +1,13 @@
 package com.pagetime.app.ui.screens.lumen
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,22 +19,29 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -38,7 +50,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,21 +61,45 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.LumenRepository
 import com.pagetime.app.data.local.LumenCardEntity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class LumenViewModel(
     private val repository: LumenRepository
 ) : ViewModel() {
 
-    val cards = repository.observeAll()
+    /** Which slip box is open; 0 = "all boxes". */
+    private val _selectedBox = MutableStateFlow(0)
+    val selectedBox = _selectedBox.asStateFlow()
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val cards = _selectedBox
+        .flatMapLatest { box ->
+            if (box <= 0) repository.observeAll() else repository.observeBox(box)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val dueCount = repository.observeDueCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun selectBox(box: Int) {
+        _selectedBox.value = box
+    }
+
+    suspend fun boxRange(): IntRange = repository.boxRange()
 
     fun addContext(cardId: String, text: String) {
         viewModelScope.launch { repository.addContext(cardId, text, null) }
@@ -78,6 +113,74 @@ class LumenViewModel(
         viewModelScope.launch { repository.delete(cardId) }
     }
 
+    fun moveToBox(cardId: String, box: Int) {
+        viewModelScope.launch { repository.moveToBox(cardId, box) }
+    }
+
+    fun saveManual(front: String, back: String) {
+        viewModelScope.launch {
+            val box = withContext(kotlinx.coroutines.Dispatchers.IO) { repository.boxRange().lastOrNull() ?: 1 }
+            repository.saveManual(box, front, back)
+        }
+    }
+
+    fun link(cardId: String, otherId: String) {
+        viewModelScope.launch { repository.link(cardId, otherId) }
+    }
+
+    fun linkedCards(card: LumenCardEntity, onLoaded: (List<LumenCardEntity>) -> Unit) {
+        viewModelScope.launch {
+            val ids = LumenCapture.linksFromJson(card.linksJson)
+            onLoaded(if (ids.isEmpty()) emptyList() else repository.cardsByIds(ids))
+        }
+    }
+
+    // Training session state.
+    private val _trainingQueue = MutableStateFlow<List<LumenCardEntity>>(emptyList())
+    val trainingQueue = _trainingQueue.asStateFlow()
+
+    private val _trainingRevealed = MutableStateFlow(false)
+    val trainingRevealed = _trainingRevealed.asStateFlow()
+
+    private val _trainingMessage = MutableStateFlow<String?>(null)
+    val trainingMessage = _trainingMessage.asStateFlow()
+
+    fun startTraining() {
+        viewModelScope.launch {
+            val due = repository.dueCards(limit = 20)
+            _trainingQueue.value = due
+            _trainingRevealed.value = false
+            if (due.isEmpty()) {
+                _trainingMessage.value = "Nothing due — the slip box is caught up."
+            }
+        }
+    }
+
+    fun revealTraining() {
+        _trainingRevealed.value = true
+    }
+
+    fun rateTraining(rating: LumenRating) {
+        val card = _trainingQueue.value.firstOrNull() ?: return
+        viewModelScope.launch {
+            val next = repository.rateTraining(card.id, rating)
+            _trainingMessage.value = next?.let {
+                "Next review: ${formatDate(it.toEpochMilli())}"
+            }
+            _trainingQueue.value = _trainingQueue.value.drop(1)
+            _trainingRevealed.value = false
+        }
+    }
+
+    fun stopTraining() {
+        _trainingQueue.value = emptyList()
+        _trainingRevealed.value = false
+    }
+
+    fun clearMessage() {
+        _trainingMessage.value = null
+    }
+
     class Factory(private val repository: LumenRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -86,8 +189,9 @@ class LumenViewModel(
 }
 
 /**
- * The slip box: every captured Lumen card, newest change first. Cards evolve
- * here — edit text, append context snippets, or delete.
+ * The slip box: numbered boxes along the top, cards filed at stable Luhmann
+ * addresses ("21/2a7"), pop-up card details with cross-reference links, and an
+ * optional FSRS training session.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,69 +204,124 @@ fun LumenCardsScreen(
         factory = LumenViewModel.Factory(app.container.lumenRepository)
     )
     val cards by vm.cards.collectAsStateWithLifecycle()
+    val selectedBox by vm.selectedBox.collectAsStateWithLifecycle()
+    val dueCount by vm.dueCount.collectAsStateWithLifecycle()
 
+    var detailCard by remember { mutableStateOf<LumenCardEntity?>(null) }
     var editing by remember { mutableStateOf<LumenCardEntity?>(null) }
     var addingContext by remember { mutableStateOf<LumenCardEntity?>(null) }
     var deleting by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var linking by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var moving by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var composing by remember { mutableStateOf(false) }
+    var training by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Lumen cards") },
+                title = { Text("Slip box") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    IconButton(onClick = { training = true }) {
+                        Icon(Icons.Outlined.School, contentDescription = "Train")
+                    }
                 }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { composing = true }) {
+                Icon(Icons.Outlined.Add, contentDescription = "New card")
+            }
         }
     ) { padding ->
-        if (cards.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Outlined.NoteAdd,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(44.dp)
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "No cards yet",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "While reading, open Options → New Lumen card\nto capture the idea in front of you.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            BoxTabs(
+                selected = selectedBox,
+                dueCount = dueCount,
+                onSelect = { vm.selectBox(it) }
+            )
+            if (cards.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Outlined.NoteAdd,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            if (selectedBox == 0) "The slip box is empty" else "Box $selectedBox is empty",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "While reading, open Options → New Lumen card\nto file the idea in front of you, or tap + to\nwrite a card at your desk.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(cards, key = { it.id }) { card ->
-                    LumenCardRow(
-                        card = card,
-                        onOpen = { onOpenSource(card.bookId) },
-                        onEdit = { editing = card },
-                        onAddContext = { addingContext = card },
-                        onDelete = { deleting = card }
-                    )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(cards, key = { it.id }) { card ->
+                        LumenCardRow(
+                            card = card,
+                            onOpen = { detailCard = card },
+                            onDelete = { deleting = card }
+                        )
+                    }
                 }
             }
         }
+    }
+
+    detailCard?.let { card ->
+        CardDetailDialog(
+            card = card,
+            onClose = { detailCard = null },
+            onEdit = {
+                editing = card
+                detailCard = null
+            },
+            onAddContext = {
+                addingContext = card
+                detailCard = null
+            },
+            onLink = {
+                linking = card
+                detailCard = null
+            },
+            onMove = {
+                moving = card
+                detailCard = null
+            },
+            onOpenSource = {
+                detailCard = null
+                onOpenSource(card.bookId)
+            },
+            onOpenLinked = { linked ->
+                detailCard = linked
+            },
+            loadLinked = { c, cb -> vm.linkedCards(c, cb) }
+        )
     }
 
     editing?.let { card ->
@@ -187,6 +346,30 @@ fun LumenCardsScreen(
         )
     }
 
+    linking?.let { card ->
+        LinkCardDialog(
+            card = card,
+            allCards = cards,
+            onLink = { other ->
+                vm.link(card.id, other.id)
+                linking = null
+            },
+            onDismiss = { linking = null }
+        )
+    }
+
+    moving?.let { card ->
+        MoveBoxDialog(
+            card = card,
+            currentRange = 1..maxOf(1, selectedBox),
+            onMove = { box ->
+                vm.moveToBox(card.id, box)
+                moving = null
+            },
+            onDismiss = { moving = null }
+        )
+    }
+
     deleting?.let { card ->
         AlertDialog(
             onDismissRequest = { deleting = null },
@@ -203,40 +386,124 @@ fun LumenCardsScreen(
             }
         )
     }
+
+    if (composing) {
+        ComposeCardDialog(
+            onSave = { front, back ->
+                vm.saveManual(front, back)
+                composing = false
+            },
+            onDismiss = { composing = false }
+        )
+    }
+
+    if (training) {
+        TrainingDialog(
+            vm = vm,
+            onDismiss = { training = false }
+        )
+    }
+}
+
+@Composable
+private fun BoxTabs(
+    selected: Int,
+    dueCount: Int,
+    onSelect: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = selected == 0,
+            onClick = { onSelect(0) },
+            label = { Text("All") }
+        )
+        FilterChip(
+            selected = selected == 1,
+            onClick = { onSelect(1) },
+            label = { Text("Box 1") }
+        )
+        FilterChip(
+            selected = selected == 2,
+            onClick = { onSelect(2) },
+            label = { Text("Box 2") }
+        )
+        FilterChip(
+            selected = selected == 3,
+            onClick = { onSelect(3) },
+            label = { Text("Box 3") }
+        )
+        if (dueCount > 0) {
+            FilterChip(
+                selected = false,
+                onClick = { onSelect(0) },
+                label = { Text("$dueCount due") }
+            )
+        }
+    }
 }
 
 @Composable
 private fun LumenCardRow(
     card: LumenCardEntity,
     onOpen: () -> Unit,
-    onEdit: () -> Unit,
-    onAddContext: () -> Unit,
     onDelete: () -> Unit
 ) {
     val snippets = remember(card.snippetsJson) {
         LumenCapture.snippetsFromJson(card.snippetsJson)
     }
-    Card(onClick = onOpen) {
+    val links = remember(card.linksJson) {
+        LumenCapture.linksFromJson(card.linksJson)
+    }
+    Card(
+        onClick = onOpen,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Outlined.MenuBook,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(6.dp))
+                // The index number is the card's identity — show it prominently.
                 Text(
-                    "Tap to jump to source",
+                    card.indexNumber.ifBlank { "?" },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .background(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            RoundedCornerShape(6.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Box ${card.box}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.weight(1f))
-                Text(
-                    formatDate(card.updatedAt),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (card.dueAt != null) {
+                    Icon(
+                        Icons.Outlined.School,
+                        contentDescription = "In training",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                if (links.isNotEmpty()) {
+                    Icon(
+                        Icons.Outlined.Link,
+                        contentDescription = "${links.size} links",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
             Text(
@@ -251,39 +518,145 @@ private fun LumenCardRow(
                     card.back,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
             if (snippets.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    "+${snippets.size} context snippet${if (snippets.size == 1) "" else "s"} — latest ${formatDate(snippets.last().addedAt)}",
+                    "+${snippets.size} context — latest ${formatDate(snippets.last().addedAt)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
-            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun CardDetailDialog(
+    card: LumenCardEntity,
+    onClose: () -> Unit,
+    onEdit: () -> Unit,
+    onAddContext: () -> Unit,
+    onLink: () -> Unit,
+    onMove: () -> Unit,
+    onOpenSource: () -> Unit,
+    onOpenLinked: (LumenCardEntity) -> Unit,
+    loadLinked: (LumenCardEntity, (List<LumenCardEntity>) -> Unit) -> Unit
+) {
+    var linked by remember(card.id) { mutableStateOf<List<LumenCardEntity>>(emptyList()) }
+    androidx.compose.runtime.LaunchedEffect(card.id) {
+        loadLinked(card) { linked = it }
+    }
+    val snippets = remember(card.snippetsJson) {
+        LumenCapture.snippetsFromJson(card.snippetsJson)
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    card.indexNumber.ifBlank { "?" },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Box ${card.box}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    card.front,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                if (card.back.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        card.back,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (card.quote.isNotBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "\u201C${card.quote.take(300)}${if (card.quote.length > 300) "…" else ""}\u201D",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = onOpenSource, contentPadding = PaddingValues(0.dp)) {
+                        Icon(
+                            Icons.Outlined.MenuBook,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Jump to source")
+                    }
+                }
+                if (linked.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Linked notes",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    linked.forEach { other ->
+                        Text(
+                            "${other.indexNumber.ifBlank { "?" }} — ${other.front}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { onOpenLinked(other) }
+                                .padding(vertical = 4.dp)
+                        )
+                    }
+                }
+                if (snippets.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Evolution",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    snippets.forEach { snippet ->
+                        Text(
+                            "${formatDate(snippet.addedAt)} — ${snippet.text}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
             Row {
                 TextButton(onClick = onEdit) {
                     Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Edit")
                 }
-                TextButton(onClick = onAddContext) {
-                    Text("+ Context")
+                TextButton(onClick = onAddContext) { Text("+ Context") }
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onLink) {
+                    Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Link")
                 }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Outlined.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                TextButton(onClick = onMove) { Text("Move") }
             }
         }
-    }
+    )
 }
 
 @Composable
@@ -365,6 +738,213 @@ private fun AddContextDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun LinkCardDialog(
+    card: LumenCardEntity,
+    allCards: List<LumenCardEntity>,
+    onLink: (LumenCardEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val existing = remember(card.linksJson) { LumenCapture.linksFromJson(card.linksJson) }
+    val candidates = allCards.filter { it.id != card.id }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Link \u201C${card.indexNumber}\u201D to…") },
+        text = {
+            if (candidates.isEmpty()) {
+                Text("No other cards to link yet.")
+            } else {
+                LazyColumn {
+                    items(candidates, key = { it.id }) { other ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onLink(other) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                other.indexNumber.ifBlank { "?" },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.width(56.dp)
+                            )
+                            Text(
+                                other.front,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (other.id in existing) {
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "linked",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+private fun MoveBoxDialog(
+    card: LumenCardEntity,
+    currentRange: IntRange,
+    onMove: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val boxes = (1..maxOf(3, currentRange.last + 1)).toList()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Move to box") },
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                boxes.forEach { box ->
+                    FilterChip(
+                        selected = box == card.box,
+                        onClick = { onMove(box) },
+                        label = { Text("$box") }
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun ComposeCardDialog(
+    onSave: (front: String, back: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var front by remember { mutableStateOf("") }
+    var back by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New card") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = front,
+                    onValueChange = { front = it },
+                    label = { Text("Title / question") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = back,
+                    onValueChange = { back = it },
+                    label = { Text("Note") },
+                    minLines = 3,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(front, back) },
+                enabled = front.isNotBlank()
+            ) { Text("File card") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun TrainingDialog(
+    vm: LumenViewModel,
+    onDismiss: () -> Unit
+) {
+    val queue by vm.trainingQueue.collectAsStateWithLifecycle()
+    val revealed by vm.trainingRevealed.collectAsStateWithLifecycle()
+    val message by vm.trainingMessage.collectAsStateWithLifecycle()
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        vm.startTraining()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (queue.isEmpty()) "Training" else "Training — ${queue.size} due"
+            )
+        },
+        text = {
+            Column {
+                message?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                val current = queue.firstOrNull()
+                if (current == null) {
+                    Text(
+                        message ?: "Nothing to train right now.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    Text(
+                        current.indexNumber.ifBlank { "?" },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        current.front,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    if (revealed) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            current.back.ifBlank { current.quote },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val current = queue.firstOrNull()
+            if (current != null && revealed) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { vm.rateTraining(LumenRating.AGAIN) }) { Text("Again") }
+                    TextButton(onClick = { vm.rateTraining(LumenRating.HARD) }) { Text("Hard") }
+                    TextButton(onClick = { vm.rateTraining(LumenRating.GOOD) }) { Text("Good") }
+                    TextButton(onClick = { vm.rateTraining(LumenRating.EASY) }) { Text("Easy") }
+                }
+            } else if (current != null) {
+                TextButton(onClick = { vm.revealTraining() }) { Text("Show answer") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("Done") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
 }

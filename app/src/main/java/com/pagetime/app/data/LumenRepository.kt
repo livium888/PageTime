@@ -4,6 +4,10 @@ import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
 import com.pagetime.app.data.local.LumenCardEntity
+import io.github.openspacedrepetition.Card
+import io.github.openspacedrepetition.Rating
+import io.github.openspacedrepetition.Scheduler
+import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
@@ -24,20 +28,53 @@ data class LumenSnippet(
     val fraction: Float? = null
 )
 
+/** Review ratings for Lumen training, mirroring the learning-card scale. */
+enum class LumenRating(val value: Int, val label: String) {
+    AGAIN(1, "Again"),
+    HARD(2, "Hard"),
+    GOOD(3, "Good"),
+    EASY(4, "Easy");
+
+    fun toFsrs(): Rating = when (this) {
+        AGAIN -> Rating.AGAIN
+        HARD -> Rating.HARD
+        GOOD -> Rating.GOOD
+        EASY -> Rating.EASY
+    }
+}
+
 /**
- * Luhmann-style index notes ("Lumen cards"): manually captured at the reader's
- * position, drafted by one small AI call, then evolved append-only. The AI is
- * involved only at capture (and never rewrites a saved card); storage and
- * re-encounters stay on-device.
+ * Luhmann-style slip box ("Lumen"): manually captured index notes filed in
+ * numbered boxes at stable addresses, cross-referenced like Zettel 21/2a7,
+ * and optionally trained with the same FSRS scheduler as learning cards.
+ * The AI is involved only at capture (and never rewrites a saved card);
+ * storage, filing, and re-encounters stay on-device.
  */
 class LumenRepository(
     private val dao: LumenCardDao,
     private val geminiClient: GeminiLearningClient,
-    private val aiUsageRepository: AiUsageRepository? = null
+    private val aiUsageRepository: AiUsageRepository? = null,
+    private val scheduler: Scheduler = Scheduler.builder()
+        .desiredRetention(0.9)
+        .enableFuzzing(false)
+        .build()
 ) {
     fun observeAll(): Flow<List<LumenCardEntity>> = dao.observeAll()
 
-    fun observeForBook(bookId: String): Flow<List<LumenCardEntity>> = dao.observeForBook(bookId)
+    fun observeBox(box: Int): Flow<List<LumenCardEntity>> = dao.observeBox(box)
+
+    fun observeDueCount(now: () -> Long = { System.currentTimeMillis() }): Flow<Int> =
+        dao.observeDueCount(now())
+
+    suspend fun get(cardId: String): LumenCardEntity? = dao.get(cardId)
+
+    suspend fun cardsByIds(ids: List<String>): List<LumenCardEntity> = dao.getByIds(ids)
+
+    suspend fun boxRange(): IntRange {
+        val min = dao.minBox() ?: return 1..1
+        val max = dao.maxBox() ?: return 1..1
+        return min..max
+    }
 
     /**
      * Drafts a card from the passage around the current reading position.
@@ -76,6 +113,11 @@ class LumenRepository(
         return LumenDraft(front, back, clean, usedAi = false)
     }
 
+    /**
+     * Saves a new card, filing it at the next free address in [box]. The
+     * address is stable for the card's lifetime — like Luhmann's Zetteln,
+     * cards are never renumbered when neighbors move.
+     */
     suspend fun save(
         book: BookEntity,
         front: String,
@@ -83,12 +125,19 @@ class LumenRepository(
         quote: String,
         sourceLocatorJson: String?,
         sourceChapterIndex: Int?,
-        sourceFraction: Float
+        sourceFraction: Float,
+        box: Int = 1,
+        afterIndex: String? = null
     ): LumenCardEntity {
         val now = System.currentTimeMillis()
+        val address = LumenAddress.nextAddress(
+            dao.indexNumbersInBox(box.coerceAtLeast(1)), afterIndex
+        )
         val card = LumenCardEntity(
             id = UUID.randomUUID().toString(),
             bookId = book.id,
+            box = box.coerceAtLeast(1),
+            indexNumber = address,
             front = front.trim().ifBlank { LumenCapture.fallbackDraft(quote).first },
             back = back.trim(),
             quote = quote.trim(),
@@ -96,7 +145,37 @@ class LumenRepository(
             sourceChapterIndex = sourceChapterIndex,
             sourceFraction = sourceFraction.coerceIn(0f, 1f),
             snippetsJson = "[]",
+            linksJson = "[]",
             keywords = LumenCapture.extractKeywords("$front $quote"),
+            createdAt = now,
+            updatedAt = now
+        )
+        dao.upsert(card)
+        return card
+    }
+
+    /**
+     * Saves a note written directly in the slip box (not captured from the
+     * reader) — Luhmann wrote at his desk too. Filed at the next free address
+     * in [box].
+     */
+    suspend fun saveManual(box: Int, front: String, back: String): LumenCardEntity {
+        val now = System.currentTimeMillis()
+        val address = LumenAddress.nextAddress(dao.indexNumbersInBox(box.coerceAtLeast(1)), null)
+        val card = LumenCardEntity(
+            id = UUID.randomUUID().toString(),
+            bookId = "",
+            box = box.coerceAtLeast(1),
+            indexNumber = address,
+            front = front.trim(),
+            back = back.trim(),
+            quote = "",
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            snippetsJson = "[]",
+            linksJson = "[]",
+            keywords = LumenCapture.extractKeywords("$front $back"),
             createdAt = now,
             updatedAt = now
         )
@@ -133,7 +212,141 @@ class LumenRepository(
         )
     }
 
-    suspend fun delete(cardId: String) = dao.delete(cardId)
+    /** Moves a card (with everything filed behind it) to another slip box. */
+    suspend fun moveToBox(cardId: String, targetBox: Int) {
+        val existing = dao.get(cardId) ?: return
+        val box = targetBox.coerceAtLeast(1)
+        if (box == existing.box) return
+        // Keep the relative position: same branch suffix, new box prefix.
+        val relative = LumenAddress.relativePart(existing.indexNumber)
+        val address = LumenAddress.nextAddress(dao.indexNumbersInBox(box), relative)
+        dao.upsert(
+            existing.copy(
+                box = box,
+                indexNumber = address,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /** Links this card to another; the relation is bidirectional. */
+    suspend fun link(cardId: String, otherId: String) {
+        if (cardId == otherId) return
+        val a = dao.get(cardId) ?: return
+        val b = dao.get(otherId) ?: return
+        val aLinks = LumenCapture.linksFromJson(a.linksJson)
+        val bLinks = LumenCapture.linksFromJson(b.linksJson)
+        val now = System.currentTimeMillis()
+        if (otherId !in aLinks) {
+            dao.upsert(
+                a.copy(
+                    linksJson = LumenCapture.linksToJson(aLinks + otherId),
+                    updatedAt = now
+                )
+            )
+        }
+        if (cardId !in bLinks) {
+            dao.upsert(
+                b.copy(
+                    linksJson = LumenCapture.linksToJson(bLinks + cardId),
+                    updatedAt = now
+                )
+            )
+        }
+    }
+
+    /** Removes the link between two cards (from both sides). */
+    suspend fun unlink(cardId: String, otherId: String) {
+        val a = dao.get(cardId) ?: return
+        val b = dao.get(otherId) ?: return
+        val now = System.currentTimeMillis()
+        dao.upsert(
+            a.copy(
+                linksJson = LumenCapture.linksToJson(
+                    LumenCapture.linksFromJson(a.linksJson) - otherId
+                ),
+                updatedAt = now
+            )
+        )
+        dao.upsert(
+            b.copy(
+                linksJson = LumenCapture.linksToJson(
+                    LumenCapture.linksFromJson(b.linksJson) - cardId
+                ),
+                updatedAt = now
+            )
+        )
+    }
+
+    suspend fun delete(cardId: String) {
+        dao.delete(cardId)
+    }
+
+    /**
+     * Puts a card into training: schedules its first FSRS review from now.
+     */
+    suspend fun startTraining(cardId: String, now: Instant = Instant.now()) {
+        val existing = dao.get(cardId) ?: return
+        if (existing.fsrsCardJson != null) return
+        val card = Card.builder().due(now).build()
+        dao.upsert(
+            existing.copy(
+                fsrsCardJson = FsrsCardCodec.toJson(card),
+                dueAt = (card.due ?: now.plusSeconds(60)).toEpochMilli(),
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun stopTraining(cardId: String) {
+        val existing = dao.get(cardId) ?: return
+        dao.upsert(
+            existing.copy(
+                fsrsCardJson = null,
+                dueAt = null,
+                reviewCount = 0,
+                lastRating = null,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun dueCards(now: Instant = Instant.now(), limit: Int = 20): List<LumenCardEntity> =
+        dao.dueCards(now.toEpochMilli(), limit.coerceAtLeast(1))
+
+    /**
+     * Applies a training rating with the same FSRS scheduler used for learning
+     * cards. Returns the next due time, or null if the card was not in training.
+     */
+    suspend fun rateTraining(
+        cardId: String,
+        rating: LumenRating,
+        now: Instant = Instant.now()
+    ): Instant? {
+        val existing = dao.get(cardId) ?: return null
+        val oldJson = existing.fsrsCardJson ?: return null
+        val oldCard = FsrsCardCodec.fromJson(oldJson)
+        val result = scheduler.reviewCard(oldCard, rating.toFsrs(), now, null)
+        var persisted = result.card()
+        var nextDue = persisted.due ?: now.plusSeconds(86_400)
+        if (persisted.due == null) {
+            persisted = Card.builder().due(nextDue).build()
+        }
+        dao.upsert(
+            existing.copy(
+                fsrsCardJson = FsrsCardCodec.toJson(persisted),
+                dueAt = nextDue.toEpochMilli(),
+                reviewCount = existing.reviewCount + 1,
+                lastRating = rating.value,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+        return nextDue
+    }
+
+    /** Training prompt for a card: front, with back as the revealed answer. */
+    fun trainingPrompt(card: LumenCardEntity): Pair<String, String> =
+        card.front to card.back.ifBlank { card.quote }
 }
 
 /**
@@ -229,6 +442,20 @@ object LumenCapture {
         }
     }.getOrDefault(emptyList())
 
+    fun linksToJson(links: List<String>): String {
+        val array = JSONArray()
+        for (link in links) array.put(link)
+        return array.toString()
+    }
+
+    fun linksFromJson(json: String): List<String> = runCatching {
+        val array = JSONArray(json)
+        (0 until array.length()).mapNotNull { i ->
+            val s = array.optString(i)
+            s.ifBlank { null }
+        }
+    }.getOrDefault(emptyList())
+
     /**
      * On-device draft used when Gemini is unavailable: the first whole sentence
      * becomes the front, the back stays empty for the user to fill in.
@@ -255,4 +482,69 @@ object LumenCapture {
         val back = root.optString("back").trim()
         if (front.isBlank()) null else front to back
     }.getOrNull()
+}
+
+/**
+ * Luhmann-style addressing. A card's address is stable for its lifetime; new
+ * cards filed "behind" an existing one extend it with a letter (21 → 21a),
+ * following the historical folgezettel branching scheme.
+ */
+object LumenAddress {
+    /** One dot/segment of an address: numeric prefix + letter suffix ("2a7"). */
+    private data class Segment(val num: Int, val suffix: String)
+
+    private fun parseSegment(s: String): Segment {
+        val firstLetter = s.indexOfFirst { !it.isDigit() }
+        return when {
+            firstLetter == -1 -> Segment(s.toIntOrNull() ?: Int.MAX_VALUE, "")
+            firstLetter == 0 -> Segment(-1, s)
+            else -> Segment(s.take(firstLetter).toIntOrNull() ?: Int.MAX_VALUE, s.substring(firstLetter))
+        }
+    }
+
+    /** Natural sort so 21/2 < 21/2a < 21/2b < 21/3 < 21/10. */
+    val COMPARATOR: Comparator<String> = Comparator { a, b ->
+        val pa = a.split('/')
+        val pb = b.split('/')
+        val n = maxOf(pa.size, pb.size)
+        for (i in 0 until n) {
+            val sa = parseSegment(pa.getOrElse(i) { "" })
+            val sb = parseSegment(pb.getOrElse(i) { "" })
+            if (sa.num != sb.num) return@Comparator sa.num.compareTo(sb.num)
+            if (sa.suffix != sb.suffix) return@Comparator sa.suffix.compareTo(sb.suffix)
+        }
+        0
+    }
+
+    /**
+     * The next free address in a box. With [afterIndex], the new card branches
+     * off that card (21 → 21a, 21a → 21aa…); otherwise it appends at the end
+     * of the box's top level (21/1, 21/2, …).
+     */
+    fun nextAddress(existing: List<String>, afterIndex: String?): String {
+        val taken = existing.toSet()
+        if (afterIndex.isNullOrBlank()) {
+            // Append after the numerically largest top-level sibling, so removing
+            // a middle card never causes its address to be reused.
+            var n = (taken.mapNotNull { it.toIntOrNull() }.maxOrNull() ?: 0) + 1
+            while (true) {
+                val candidate = "$n"
+                if (candidate !in taken) return candidate
+                n++
+            }
+        }
+        // Branch: find the first free letter-extension of afterIndex.
+        var letters = "a"
+        while (true) {
+            val candidate = afterIndex + letters
+            if (candidate !in taken) return candidate
+            letters += "a"
+        }
+    }
+
+    /** The part after the box's leading number, e.g. "2a7" from "21/2a7". */
+    fun relativePart(indexNumber: String): String {
+        val idx = indexNumber.indexOf('/')
+        return if (idx >= 0) indexNumber.substring(idx + 1) else indexNumber
+    }
 }

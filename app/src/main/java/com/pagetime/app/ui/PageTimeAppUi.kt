@@ -6,12 +6,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -42,7 +42,6 @@ import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.review.ReviewScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
-import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
@@ -65,7 +64,7 @@ private data class BottomTab(
 private val tabs = listOf(
     BottomTab("library", "Library", Icons.Outlined.MenuBook, Icons.Filled.MenuBook),
     BottomTab("review", "Review", Icons.Outlined.School, Icons.Filled.School),
-    BottomTab("concepts", "Map", Icons.Outlined.AccountTree, Icons.Filled.AccountTree),
+    BottomTab("lumen", "Lumen", Icons.Outlined.Style, Icons.Filled.Style),
     BottomTab("search", "Discover", Icons.Outlined.Search, Icons.Filled.Search),
     BottomTab("settings", "Settings", Icons.Outlined.Settings, Icons.Filled.Settings)
 )
@@ -77,7 +76,7 @@ fun PageTimeAppUi(openReader: Boolean) {
     val currentRoute = backStackEntry?.destination?.route
     val learningBadgeViewModel: LearningBadgeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val dueCount by learningBadgeViewModel.dueCount.collectAsStateWithLifecycle()
-    val showBottomBar = currentRoute in setOf("library", "review", "concepts", "search", "settings")
+    val showBottomBar = currentRoute in setOf("library", "review", "lumen", "search", "settings")
     val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -168,7 +167,7 @@ fun PageTimeAppUi(openReader: Boolean) {
             composable("library") {
                 LibraryScreen(
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
-                    onOpenConcepts = { bookId -> navController.navigate("concepts?bookId=$bookId") },
+                    onOpenConcepts = { bookId -> navController.navigate("lumen") },
                     onDiscover = { navController.navigate("search") }
                 )
             }
@@ -178,13 +177,10 @@ fun PageTimeAppUi(openReader: Boolean) {
                     onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
                 )
             }
-            composable("concepts") {
-                ConceptMapScreen(onBack = { navController.popBackStack() })
-            }
-            composable("concepts?bookId={bookId}") { entry ->
-                ConceptMapScreen(
+            composable("lumen") {
+                LumenCardsScreen(
                     onBack = { navController.popBackStack() },
-                    initialBookId = entry.arguments?.getString("bookId")
+                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
                 )
             }
             composable("search") { DiscoverScreen() }
@@ -207,19 +203,13 @@ fun PageTimeAppUi(openReader: Boolean) {
             composable("ai_usage") {
                 AiUsageScreen(onBack = { navController.popBackStack() })
             }
-            composable("lumen_cards") {
-                LumenCardsScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
-                )
-            }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
                 ReaderScreen(
                     bookId = bookId,
                     onBack = { navController.popBackStack() },
-                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts?bookId=$conceptBookId") },
-                    onOpenLumenCards = { navController.navigate("lumen_cards") },
+                    onOpenConcepts = { conceptBookId -> navController.navigate("lumen") },
+                    onOpenLumenCards = { navController.navigate("lumen") },
                     onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
                         val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
                         val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")

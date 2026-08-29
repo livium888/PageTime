@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExplanationEntity::class,
         LumenCardEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -144,6 +144,23 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE concepts ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /** Luhmann slip-box filing + optional FSRS training for Lumen cards. */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // All existing cards land in box 1; addresses are assigned on
+                // first read of the slip box (see LumenRepository.ensureAddresses).
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN box INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN indexNumber TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN linksJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN fsrsCardJson TEXT")
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN dueAt INTEGER")
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN reviewCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN lastRating INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_lumen_cards_box ON lumen_cards(box)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_lumen_cards_dueAt ON lumen_cards(dueAt)")
             }
         }
 

@@ -329,6 +329,10 @@ fun LumenCardsScreen(
                 filingBehind = card
                 detailCard = null
             },
+            onDelete = {
+                deleting = card
+                detailCard = null
+            },
             onPullThread = {
                 pullingThread = card
                 detailCard = null
@@ -622,6 +626,7 @@ private fun CardDetailDialog(
     onLink: () -> Unit,
     onMove: () -> Unit,
     onFileBehind: () -> Unit,
+    onDelete: () -> Unit,
     onPullThread: () -> Unit,
     onOpenSource: () -> Unit,
     onOpenLinked: (LumenCardEntity) -> Unit,
@@ -735,6 +740,7 @@ private fun CardDetailDialog(
                     Text("Link")
                 }
                 TextButton(onClick = onFileBehind) { Text("File behind") }
+                TextButton(onClick = onDelete) { Text("Delete") }
                 TextButton(onClick = onPullThread) { Text("Pull thread") }
                 TextButton(onClick = onMove) { Text("Move") }
             }
@@ -834,7 +840,9 @@ private fun LinkCardDialog(
     title: String = "Link \u201C${card.indexNumber}\u201D to…"
 ) {
     val existing = remember(card.linksJson) { LumenCapture.linksFromJson(card.linksJson) }
-    val candidates = allCards.filter { it.id != card.id }
+    val candidates = allCards
+        .filter { it.id != card.id }
+        .sortedWith(compareBy<LumenCardEntity> { it.box }.thenBy { it.indexNumber })
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },

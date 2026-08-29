@@ -38,6 +38,8 @@ import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -569,11 +571,11 @@ private fun LumenCardRow(
     }
     Card(
         onClick = onOpen,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The index number is the card's identity — show it prominently.
                 Text(
@@ -589,7 +591,7 @@ private fun LumenCardRow(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    "Box ${card.box}",
+                    "BOX ${card.box}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -614,16 +616,26 @@ private fun LumenCardRow(
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                card.front,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+                    card.front,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
             if (card.back.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     card.back,
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (card.quote.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "From source · ${card.quote.replace(Regex("\\s+"), " ").take(110)}${if (card.quote.length > 110) "…" else ""}",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -666,33 +678,60 @@ private fun CardDetailDialog(
     }
     AlertDialog(
         onDismissRequest = onClose,
+        shape = MaterialTheme.shapes.large,
         title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        card.indexNumber.ifBlank { "?" },
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            "BOX ${card.box}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    card.indexNumber.ifBlank { "?" },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Box ${card.box}",
-                    style = MaterialTheme.typography.labelMedium,
+                    "Permanent address · edit the thought, not the identity",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                Text(
+                    "THE IDEA",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(4.dp))
                 Text(
                     card.front,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleLarge
                 )
                 if (card.back.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         card.back,
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyLarge
                     )
+                }
                 }
                 if (card.quote.isNotBlank()) {
                     Spacer(Modifier.height(10.dp))
@@ -711,8 +750,13 @@ private fun CardDetailDialog(
                         Text("Jump to source")
                     }
                 }
+                if (card.keywords.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("REGISTER TERMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    Text(card.keywords, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (linked.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                     Text(
                         "Linked notes",
                         style = MaterialTheme.typography.labelMedium,
@@ -730,7 +774,8 @@ private fun CardDetailDialog(
                     }
                 }
                 if (snippets.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         "Evolution",
                         style = MaterialTheme.typography.labelMedium,
@@ -745,6 +790,7 @@ private fun CardDetailDialog(
                         )
                     }
                 }
+            }
             }
         },
         confirmButton = {
@@ -1204,7 +1250,7 @@ private fun ThreadDialog(
 @Composable
 private fun ConnectionCandidatesDialog(
     card: LumenCardEntity,
-    onLoad: (((List<com.pagetime.app.data.LumenCandidate>) -> Unit)) -> Unit,
+    onLoad: ((List<com.pagetime.app.data.LumenCandidate>) -> Unit) -> Unit,
     onLink: (com.pagetime.app.data.LumenCandidate) -> Unit,
     onDismiss: () -> Unit
 ) {

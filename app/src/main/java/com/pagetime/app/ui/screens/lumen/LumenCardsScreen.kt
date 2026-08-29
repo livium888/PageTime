@@ -196,6 +196,7 @@ fun LumenCardsScreen(
     var linking by remember { mutableStateOf<LumenCardEntity?>(null) }
     var findingConnections by remember { mutableStateOf<LumenCardEntity?>(null) }
     var moving by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var moreActions by remember { mutableStateOf<LumenCardEntity?>(null) }
     var composing by remember { mutableStateOf(false) }
     var composingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
     var filingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
@@ -335,6 +336,10 @@ fun LumenCardsScreen(
                 findingConnections = card
                 detailCard = null
             },
+            onMore = {
+                moreActions = card
+                detailCard = null
+            },
             onMove = {
                 moving = card
                 detailCard = null
@@ -418,6 +423,17 @@ fun LumenCardsScreen(
                 filingBehind = null
             },
             onDismiss = { filingBehind = null }
+        )
+    }
+
+    moreActions?.let { card ->
+        CardActionsDialog(
+            card = card,
+            onFileBehind = { moreActions = null; filingBehind = card },
+            onPullThread = { moreActions = null; pullingThread = card },
+            onMove = { moreActions = null; moving = card },
+            onDelete = { moreActions = null; deleting = card },
+            onDismiss = { moreActions = null }
         )
     }
 
@@ -661,6 +677,7 @@ private fun CardDetailDialog(
     onAddContext: () -> Unit,
     onLink: () -> Unit,
     onFindConnections: () -> Unit,
+    onMore: () -> Unit,
     onMove: () -> Unit,
     onFileBehind: () -> Unit,
     onDelete: () -> Unit,
@@ -804,19 +821,49 @@ private fun CardDetailDialog(
             }
         },
         dismissButton = {
-            Row {
-                TextButton(onClick = onLink) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onLink, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Link")
+                    Spacer(Modifier.width(3.dp))
+                    Text("Link", maxLines = 1)
                 }
-                TextButton(onClick = onFindConnections) { Text("Find connections") }
-                TextButton(onClick = onFileBehind) { Text("File behind") }
-                TextButton(onClick = onDelete) { Text("Delete") }
-                TextButton(onClick = onPullThread) { Text("Pull thread") }
-                TextButton(onClick = onMove) { Text("Move") }
+                TextButton(onClick = onFindConnections, modifier = Modifier.weight(1f)) {
+                    Text("Connect", maxLines = 1)
+                }
+                IconButton(onClick = onMore) {
+                    Icon(Icons.Outlined.Info, contentDescription = "More actions")
+                }
             }
         }
+    )
+}
+
+@Composable
+private fun CardActionsDialog(
+    card: LumenCardEntity,
+    onFileBehind: () -> Unit,
+    onPullThread: () -> Unit,
+    onMove: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Actions for ${card.indexNumber.ifBlank { "?" }}") },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                TextButton(onClick = onFileBehind, modifier = Modifier.fillMaxWidth()) { Text("File behind", maxLines = 1) }
+                TextButton(onClick = onPullThread, modifier = Modifier.fillMaxWidth()) { Text("Pull thread", maxLines = 1) }
+                TextButton(onClick = onMove, modifier = Modifier.fillMaxWidth()) { Text("Move to another box", maxLines = 1) }
+                TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete card", maxLines = 1) }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
 

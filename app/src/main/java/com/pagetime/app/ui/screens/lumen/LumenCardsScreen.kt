@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,7 +65,9 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenCoach
 import com.pagetime.app.data.LumenLesson
+import com.pagetime.app.data.LumenRegister
 import com.pagetime.app.data.LumenRepository
+import com.pagetime.app.data.LumenThread
 import com.pagetime.app.data.local.LumenCardEntity
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -171,6 +175,8 @@ fun LumenCardsScreen(
     var composing by remember { mutableStateOf(false) }
     var composingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
     var studying by remember { mutableStateOf(false) }
+    var register by remember { mutableStateOf(false) }
+    var pullingThread by remember { mutableStateOf<LumenCardEntity?>(null) }
 
     Scaffold(
         topBar = {
@@ -182,6 +188,9 @@ fun LumenCardsScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { register = true }) {
+                        Icon(Icons.Outlined.ListAlt, contentDescription = "Register")
+                    }
                     IconButton(onClick = { studying = true }) {
                         Icon(Icons.Outlined.School, contentDescription = "Learn the method")
                     }
@@ -267,6 +276,10 @@ fun LumenCardsScreen(
             },
             onMove = {
                 moving = card
+                detailCard = null
+            },
+            onPullThread = {
+                pullingThread = card
                 detailCard = null
             },
             onOpenSource = {
@@ -373,6 +386,25 @@ fun LumenCardsScreen(
                 composingBehind = card
             },
             onDismiss = { studying = false }
+        )
+    }
+
+    if (register) {
+        RegisterDialog(
+            cards = cards,
+            onOpenCard = { card ->
+                register = false
+                detailCard = card
+            },
+            onDismiss = { register = false }
+        )
+    }
+
+    pullingThread?.let { root ->
+        ThreadDialog(
+            root = root,
+            allCards = cards,
+            onDismiss = { pullingThread = null }
         )
     }
 }
@@ -514,6 +546,7 @@ private fun CardDetailDialog(
     onAddContext: () -> Unit,
     onLink: () -> Unit,
     onMove: () -> Unit,
+    onPullThread: () -> Unit,
     onOpenSource: () -> Unit,
     onOpenLinked: (LumenCardEntity) -> Unit,
     loadLinked: (LumenCardEntity, (List<LumenCardEntity>) -> Unit) -> Unit
@@ -625,6 +658,7 @@ private fun CardDetailDialog(
                     Spacer(Modifier.width(4.dp))
                     Text("Link")
                 }
+                TextButton(onClick = onPullThread) { Text("Pull thread") }
                 TextButton(onClick = onMove) { Text("Move") }
             }
         }
@@ -934,6 +968,123 @@ private fun StudyDialog(
             } else {
                 TextButton(onClick = onDismiss) { Text("Close") }
             }
+        }
+    )
+}
+
+/**
+ * The Register: Luhmann's keyword index. One line per keyword, pointing at
+ * entry addresses; tap an entry to open the card it opens onto.
+ */
+@Composable
+private fun RegisterDialog(
+    cards: List<LumenCardEntity>,
+    onOpenCard: (LumenCardEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val entries = remember(cards.hashCode()) { LumenRegister.build(cards) }
+    val byId = remember(cards.hashCode()) { cards.associateBy { it.id } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Register") },
+        text = {
+            if (entries.isEmpty()) {
+                Text(
+                    "The register grows by itself as you capture cards — every keyword gets an entry pointing at its address.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                LazyColumn {
+                    items(entries, key = { it.keyword }) { entry ->
+                        val firstCard = entry.cardIds.firstNotNullOfOrNull { byId[it] }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = firstCard != null) {
+                                    firstCard?.let(onOpenCard)
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                entry.keyword,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                entry.addresses.joinToString(
+                                    ", ",
+                                    limit = 3,
+                                    truncated = "…"
+                                ) { it },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+/**
+ * Pulling a thread: the root slip plus everything filed behind it, in shelf
+ * order — the outline falls out of the chain. Copyable as plain text.
+ */
+@Composable
+private fun ThreadDialog(
+    root: LumenCardEntity,
+    allCards: List<LumenCardEntity>,
+    onDismiss: () -> Unit
+) {
+    val steps = remember(root.id, allCards.hashCode()) { LumenThread.pull(root, allCards) }
+    val rendered = remember(root.id, allCards.hashCode()) { LumenThread.render(steps) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Thread from ${root.indexNumber.ifBlank { "?" }}")
+                Text(
+                    "${steps.size} slip${if (steps.size == 1) "" else "s"} filed behind it, in box order",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column {
+                Text(
+                    rendered,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.verticalScroll(rememberScrollState()).heightIn(max = 360.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(
+                        android.content.ClipData.newPlainText("Lumen thread", rendered)
+                    )
+                    copied = true
+                }
+            ) { Text(if (copied) "Copied" else "Copy outline") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
 }

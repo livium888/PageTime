@@ -591,4 +591,25 @@ object LumenAddress {
         val idx = indexNumber.indexOf('/')
         return if (idx >= 0) indexNumber.substring(idx + 1) else indexNumber
     }
+
+    /**
+     * True when [candidate] is a strict descendant of [ancestor] in the same
+     * line: 21a and 21a1 descend from 21, but 210 does NOT descend from 21
+     * (Luhmann's numbers are not decimals — 210 is a sibling of 21, filed
+     * after it). The character right after the ancestor prefix must be a
+     * letter or digit that begins a *child* address, not a continuation of
+     * the ancestor's own number.
+     */
+    fun isDescendantOf(candidate: String, ancestor: String): Boolean {
+        if (candidate.length <= ancestor.length) return false
+        if (!candidate.startsWith(ancestor)) return false
+        val next = candidate[ancestor.length]
+        // A digit here would extend the ancestor's trailing number (21 → 210);
+        // only letters or a digit following a letter start a child.
+        return if (ancestor.lastOrNull()?.isDigit() == true) {
+            next.isLetter()
+        } else {
+            true
+        }
+    }
 }

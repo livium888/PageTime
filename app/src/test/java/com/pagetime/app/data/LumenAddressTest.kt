@@ -72,6 +72,17 @@ class LumenAddressTest {
         val sorted = listOf("21b", "21", "21a").sortedWith(LumenAddress.COMPARATOR)
         assertEquals(listOf("21", "21a", "21b"), sorted)
     }
+
+    @Test
+    fun `descendants include lettered children but not numeric neighbors`() {
+        // 210 is a sibling of 21 in Luhmann's grid, not a child.
+        assertTrue(LumenAddress.isDescendantOf("21a", "21"))
+        assertTrue(LumenAddress.isDescendantOf("21a1", "21"))
+        assertTrue(LumenAddress.isDescendantOf("21z3", "21"))
+        assertTrue(!LumenAddress.isDescendantOf("210", "21"))
+        assertTrue(!LumenAddress.isDescendantOf("22", "21"))
+        assertTrue(!LumenAddress.isDescendantOf("21", "21"))
+    }
 }
 
 class LumenLinksTest {
@@ -91,6 +102,80 @@ class LumenLinksTest {
     @Test
     fun `empty links list serializes to empty array`() {
         assertEquals("[]", LumenCapture.linksToJson(emptyList()))
+    }
+}
+
+class LumenRegisterThreadTest {
+
+    private fun card(
+        id: String,
+        indexNumber: String,
+        front: String = "Note $indexNumber",
+        back: String = "",
+        keywords: String = ""
+    ): LumenCardEntity {
+        val now = System.currentTimeMillis()
+        return LumenCardEntity(
+            id = id,
+            bookId = "b",
+            box = 1,
+            indexNumber = indexNumber,
+            front = front,
+            back = back,
+            quote = "",
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            snippetsJson = "[]",
+            linksJson = "[]",
+            keywords = keywords,
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    @Test
+    fun `register maps keywords to entry addresses`() {
+        val register = LumenRegister.build(
+            listOf(
+                card("1", "21", keywords = "power sovereignty"),
+                card("2", "21a", keywords = "power"),
+                card("3", "30", keywords = "biology evolution")
+            )
+        )
+        val power = register.first { it.keyword == "power" }
+        assertEquals(listOf("21", "21a"), power.addresses)
+    }
+
+    @Test
+    fun `register skips cards without addresses`() {
+        val register = LumenRegister.build(listOf(card("1", "")))
+        assertTrue(register.isEmpty())
+    }
+
+    @Test
+    fun `thread pulls the whole line in shelf order`() {
+        val root = card("1", "21")
+        val all = listOf(
+            root,
+            card("2", "22"),
+            card("3", "21b"),
+            card("4", "21a"),
+            card("5", "210")
+        )
+        val steps = LumenThread.pull(root, all)
+        assertEquals(listOf("21", "21a", "21b"), steps.map { it.card.indexNumber })
+        // 210 and 22 are NOT part of 21's thread.
+    }
+
+    @Test
+    fun `render produces an indented outline with addresses`() {
+        val root = card("1", "21", front = "Power", back = "The core idea")
+        val child = card("2", "21a", front = "Sovereignty")
+        val text = LumenThread.render(LumenThread.pull(root, listOf(root, child)))
+        assertTrue(text.contains("21  Power"))
+        assertTrue(text.contains("    The core idea"))
+        assertTrue(text.contains("  21a  Sovereignty"))
     }
 }
 

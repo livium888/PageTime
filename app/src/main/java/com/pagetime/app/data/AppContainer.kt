@@ -56,7 +56,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
                 AppDatabase.MIGRATION_10_11,
-                AppDatabase.MIGRATION_11_12
+                AppDatabase.MIGRATION_11_12,
+                AppDatabase.MIGRATION_12_13
             )
             .build()
 
@@ -102,6 +103,12 @@ class AppContainer(context: Context) {
 
     val geminiLearningClient = GeminiLearningClient(settingsRepository)
     val learningContextExtractor = LearningContextExtractor(appContext, epubParser)
+
+    val lumenRepository = LumenRepository(
+        dao = database.lumenCardDao(),
+        geminiClient = geminiLearningClient,
+        aiUsageRepository = aiUsageRepository
+    )
 
     val learningRepository = LearningRepository(
         database = database,

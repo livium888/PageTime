@@ -28,6 +28,9 @@ class GeminiLearningClient(
 
     fun hasUserKey(): Boolean = settingsRepository.geminiApiKey() != null
 
+    /** True when any usable key exists (user-entered or build-time fallback). */
+    fun hasKey(): Boolean = runCatching { currentApiKey().isNotBlank() }.getOrDefault(false)
+
     fun saveUserApiKey(value: String) {
         settingsRepository.setGeminiApiKey(value)
     }
@@ -491,6 +494,54 @@ class GeminiLearningClient(
             .trim()
     }
 
+
+    /**
+     * One small call: drafts a Lumen card (front + back) from a captured
+     * passage around the reader's position. Returns strict JSON {front, back}.
+     */
+    suspend fun draftLumenCard(passage: String, bookTitle: String): String = withContext(Dispatchers.IO) {
+        val prompt = """
+            |You capture index cards for a reader's personal knowledge system.
+            |Book: "$bookTitle"
+            |
+            |Below is a passage the reader highlighted in the act of reading.
+            |Write ONE index card for it:
+            |
+            |1. "front": a sharp title or question naming the single core idea
+            |   (max 12 words, no quotes around it).
+            |2. "back": 1-2 sentences explaining the idea in plain words, as if
+            |   the reader wrote it for their future self. Never copy the passage.
+            |
+            |If the passage contains clearly separable ideas, pick the most
+            |prominent one — one card, one idea.
+            |
+            |Respond with ONLY a JSON object: {"front": "...", "back": "..."}
+            |
+            |Passage:
+            |$passage
+        """.trimMargin()
+
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject()
+                .put("temperature", 0.4)
+                .put("maxOutputTokens", 512))
+            .toString()
+
+        val request = Request.Builder()
+            .url("$endpointBase/models/${currentModel()}:generateContent")
+            .header("x-goog-api-key", currentApiKey())
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val raw = executeWithRetry(request)
+        JSONObject(raw).getJSONArray("candidates")
+            .getJSONObject(0).getJSONObject("content")
+            .getJSONArray("parts").getJSONObject(0)
+            .getString("text")
+            .trim()
+    }
 
     companion object {
         private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)

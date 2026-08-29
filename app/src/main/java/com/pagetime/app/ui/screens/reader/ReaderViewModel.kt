@@ -11,6 +11,8 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.ConceptMap
+import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.LumenDraft
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -366,6 +368,107 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         } else {
             null to latestTxtOffset()
         }
+
+    // region Lumen cards
+
+    private val lumenRepo = container.lumenRepository
+
+    private val _lumenDraft = MutableStateFlow<LumenDraft?>(null)
+    val lumenDraft = _lumenDraft.asStateFlow()
+
+    private val _lumenCapturing = MutableStateFlow(false)
+    val lumenCapturing = _lumenCapturing.asStateFlow()
+
+    private var pendingLumenContext: PendingLumenContext? = null
+
+    private data class PendingLumenContext(
+        val draft: LumenDraft,
+        val locatorJson: String?,
+        val chapterIndex: Int?,
+        val fraction: Float
+    )
+
+    /**
+     * Captures the passage around the current position and drafts a Lumen
+     * card. One small AI call when a key exists; on-device draft otherwise.
+     */
+    fun captureLumenCard() {
+        val b = _book.value ?: return
+        if (_lumenCapturing.value || _lumenDraft.value != null) return
+        _lumenCapturing.value = true
+        viewModelScope.launch {
+            try {
+                val passage: String
+                val chapterIndex: Int?
+                if (b.format == "epub") {
+                    chapterIndex = currentChapterIndex() ?: 0
+                    val context = container.learningContextExtractor.extract(
+                        book = b,
+                        chapterIndex = chapterIndex,
+                        checkpoint = null,
+                        currentLocatorJson = latestLocator?.toJSON()?.toString(),
+                        currentTextOffset = null,
+                        maxCharacters = 4_000
+                    )
+                    passage = context.recentText.takeLast(1_500)
+                } else {
+                    chapterIndex = null
+                    passage = LumenCapture.captureWindow(
+                        _textContent.value.orEmpty(),
+                        latestTxtOffset()
+                    )
+                }
+                val draft = lumenRepo.draft(b, passage)
+                pendingLumenContext = PendingLumenContext(
+                    draft = draft,
+                    locatorJson = if (b.format == "epub") {
+                        latestLocator?.toJSON()?.toString()
+                    } else null,
+                    chapterIndex = chapterIndex,
+                    fraction = if (b.format == "txt") latestTxtFraction else 0f
+                )
+                _lumenDraft.value = draft
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _error.value = error.message ?: "Couldn't capture a card here"
+            } finally {
+                _lumenCapturing.value = false
+            }
+        }
+    }
+
+    fun saveLumenCard(front: String, back: String) {
+        val b = _book.value ?: return
+        val pending = pendingLumenContext ?: return
+        viewModelScope.launch {
+            try {
+                lumenRepo.save(
+                    book = b,
+                    front = front,
+                    back = back,
+                    quote = pending.draft.quote,
+                    sourceLocatorJson = pending.locatorJson,
+                    sourceChapterIndex = pending.chapterIndex,
+                    sourceFraction = pending.fraction
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _error.value = error.message ?: "Couldn't save the card"
+            } finally {
+                _lumenDraft.value = null
+                pendingLumenContext = null
+            }
+        }
+    }
+
+    fun dismissLumenDraft() {
+        _lumenDraft.value = null
+        pendingLumenContext = null
+    }
+
+    // endregion
 
     fun setLearningCheckpoint() {
         val b = _book.value ?: return

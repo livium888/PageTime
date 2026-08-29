@@ -16,9 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConceptEntity::class,
         ConceptRelationshipEntity::class,
         AiUsageEntity::class,
-        ExplanationEntity::class
+        ExplanationEntity::class,
+        LumenCardEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao
     abstract fun aiUsageDao(): AiUsageDao
     abstract fun explanationDao(): ExplanationDao
+    abstract fun lumenCardDao(): LumenCardDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -142,6 +144,28 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE concepts ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS lumen_cards (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "bookId TEXT NOT NULL, " +
+                        "front TEXT NOT NULL, " +
+                        "back TEXT NOT NULL, " +
+                        "quote TEXT NOT NULL, " +
+                        "sourceLocatorJson TEXT, " +
+                        "sourceChapterIndex INTEGER, " +
+                        "sourceFraction REAL NOT NULL, " +
+                        "snippetsJson TEXT NOT NULL, " +
+                        "keywords TEXT NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_lumen_cards_bookId ON lumen_cards(bookId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_lumen_cards_updatedAt ON lumen_cards(updatedAt)")
             }
         }
     }

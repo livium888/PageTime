@@ -43,6 +43,7 @@ import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.review.ReviewScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
+import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
@@ -206,12 +207,19 @@ fun PageTimeAppUi(openReader: Boolean) {
             composable("ai_usage") {
                 AiUsageScreen(onBack = { navController.popBackStack() })
             }
+            composable("lumen_cards") {
+                LumenCardsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
+                )
+            }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
                 ReaderScreen(
                     bookId = bookId,
                     onBack = { navController.popBackStack() },
                     onOpenConcepts = { conceptBookId -> navController.navigate("concepts?bookId=$conceptBookId") },
+                    onOpenLumenCards = { navController.navigate("lumen_cards") },
                     onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
                         val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
                         val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")

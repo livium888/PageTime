@@ -49,8 +49,11 @@ import androidx.compose.material.icons.outlined.Brightness5
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NightsStay
+import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,6 +65,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -102,6 +106,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
+import com.pagetime.app.data.LumenDraft
 import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
@@ -176,7 +181,8 @@ fun ReaderScreen(
     bookId: String,
     onBack: () -> Unit,
     onOpenConcepts: (String) -> Unit = {},
-    onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String, locatorJson: String?, textOffset: Int?) -> Unit = { _, _, _, _, _, _ -> }
+    onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String, locatorJson: String?, textOffset: Int?) -> Unit = { _, _, _, _, _, _ -> },
+    onOpenLumenCards: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -203,6 +209,8 @@ fun ReaderScreen(
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
+    val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
+    val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -479,7 +487,10 @@ fun ReaderScreen(
                 isTextBook = book?.format == "txt" && textContent != null,
                 enhancing = enhancing,
                 onEnhance = vm::enhanceWithAI,
-                enhancementProgress = enhancementProgress
+                enhancementProgress = enhancementProgress,
+                lumenCapturing = lumenCapturing,
+                onCaptureLumen = vm::captureLumenCard,
+                onOpenLumen = { onOpenLumenCards(bookId) }
             )
         }
 
@@ -580,6 +591,14 @@ fun ReaderScreen(
             settings = settings,
             onApply = vm::applyReaderSettings,
             onDismiss = { showSettings = false }
+        )
+    }
+
+    lumenDraft?.let { draft ->
+        LumenDraftDialog(
+            draft = draft,
+            onSave = { front, back -> vm.saveLumenCard(front, back) },
+            onDismiss = vm::dismissLumenDraft
         )
     }
 
@@ -971,7 +990,10 @@ private fun ReaderTopBar(
     isTextBook: Boolean = false,
     enhancing: Boolean = false,
     onEnhance: () -> Unit = {},
-    enhancementProgress: Pair<Int, Int>? = null
+    enhancementProgress: Pair<Int, Int>? = null,
+    lumenCapturing: Boolean = false,
+    onCaptureLumen: () -> Unit = {},
+    onOpenLumen: () -> Unit = {}
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
 
@@ -1066,6 +1088,38 @@ private fun ReaderTopBar(
                         onClick = {
                             optionsExpanded = false
                             onExplainBack()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            if (lumenCapturing) {
+                                Text("Capturing…")
+                            } else {
+                                Text("New Lumen card")
+                            }
+                        },
+                        leadingIcon = {
+                            if (lumenCapturing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(Icons.Outlined.NoteAdd, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            optionsExpanded = false
+                            onCaptureLumen()
+                        },
+                        enabled = !lumenCapturing
+                    )
+                    DropdownMenuItem(
+                        text = { Text("View Lumen cards") },
+                        leadingIcon = { Icon(Icons.Outlined.Style, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onOpenLumen()
                         }
                     )
                     DropdownMenuItem(
@@ -1596,4 +1650,83 @@ private fun StatRow(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
     }
+}
+
+@Composable
+private fun LumenDraftDialog(
+    draft: LumenDraft,
+    onSave: (front: String, back: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var front by remember(draft) { mutableStateOf(draft.front) }
+    var back by remember(draft) { mutableStateOf(draft.back) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Outlined.NoteAdd,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("New Lumen card")
+            }
+        },
+        text = {
+            Column {
+                if (!draft.usedAi) {
+                    Text(
+                        "Drafted on-device (no AI key or offline) — edit freely.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                OutlinedTextField(
+                    value = front,
+                    onValueChange = { front = it },
+                    label = { Text("Title / question") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = back,
+                    onValueChange = { back = it },
+                    label = { Text("Your note (optional)") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        draft.quote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 5,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(front, back) },
+                enabled = front.isNotBlank()
+            ) {
+                Text("Save card")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Discard") }
+        }
+    )
 }

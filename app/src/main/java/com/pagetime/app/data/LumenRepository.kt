@@ -214,9 +214,41 @@ class LumenRepository(
             existing.copy(
                 front = front.trim(),
                 back = back.trim(),
+                keywords = LumenCapture.extractKeywords("$front $back ${existing.quote}"),
                 updatedAt = System.currentTimeMillis()
             )
         )
+    }
+
+    /** Re-files a card directly behind another card in the same box. */
+    suspend fun fileBehind(cardId: String, behindCardId: String) {
+        val card = dao.get(cardId) ?: return
+        val behind = dao.get(behindCardId) ?: return
+        if (card.id == behind.id || card.box != behind.box) return
+        val address = LumenAddress.nextAddress(
+            dao.indexNumbersInBox(card.box).filterNot { it == card.indexNumber },
+            behind.indexNumber
+        )
+        dao.upsert(card.copy(indexNumber = address, updatedAt = System.currentTimeMillis()))
+    }
+
+    /** Removes a card while leaving every other stable address untouched. */
+    suspend fun deleteWithLinks(cardId: String) {
+        val card = dao.get(cardId) ?: return
+        val linkedIds = LumenCapture.linksFromJson(card.linksJson)
+        linkedIds.forEach { otherId ->
+            dao.get(otherId)?.let { other ->
+                dao.upsert(
+                    other.copy(
+                        linksJson = LumenCapture.linksToJson(
+                            LumenCapture.linksFromJson(other.linksJson) - cardId
+                        ),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+        dao.delete(cardId)
     }
 
     /** Moves a card (with everything filed behind it) to another slip box. */

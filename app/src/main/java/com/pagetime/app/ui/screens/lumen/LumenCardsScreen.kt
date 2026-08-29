@@ -118,7 +118,11 @@ class LumenViewModel(
     }
 
     fun delete(cardId: String) {
-        viewModelScope.launch { repository.delete(cardId) }
+        viewModelScope.launch { repository.deleteWithLinks(cardId) }
+    }
+
+    fun fileBehind(cardId: String, behindCardId: String) {
+        viewModelScope.launch { repository.fileBehind(cardId, behindCardId) }
     }
 
     fun moveToBox(cardId: String, box: Int) {
@@ -184,6 +188,7 @@ fun LumenCardsScreen(
     var moving by remember { mutableStateOf<LumenCardEntity?>(null) }
     var composing by remember { mutableStateOf(false) }
     var composingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var filingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
     var studying by remember { mutableStateOf(false) }
     var register by remember { mutableStateOf(false) }
     var sources by remember { mutableStateOf(false) }
@@ -320,6 +325,10 @@ fun LumenCardsScreen(
                 moving = card
                 detailCard = null
             },
+            onFileBehind = {
+                filingBehind = card
+                detailCard = null
+            },
             onPullThread = {
                 pullingThread = card
                 detailCard = null
@@ -366,6 +375,19 @@ fun LumenCardsScreen(
                 linking = null
             },
             onDismiss = { linking = null }
+        )
+    }
+
+    filingBehind?.let { card ->
+        LinkCardDialog(
+            card = card,
+            allCards = cards.filter { it.box == card.box },
+            title = "File ${card.indexNumber.ifBlank { "?" }} behind…",
+            onLink = { behind ->
+                vm.fileBehind(card.id, behind.id)
+                filingBehind = null
+            },
+            onDismiss = { filingBehind = null }
         )
     }
 
@@ -599,6 +621,7 @@ private fun CardDetailDialog(
     onAddContext: () -> Unit,
     onLink: () -> Unit,
     onMove: () -> Unit,
+    onFileBehind: () -> Unit,
     onPullThread: () -> Unit,
     onOpenSource: () -> Unit,
     onOpenLinked: (LumenCardEntity) -> Unit,
@@ -711,6 +734,7 @@ private fun CardDetailDialog(
                     Spacer(Modifier.width(4.dp))
                     Text("Link")
                 }
+                TextButton(onClick = onFileBehind) { Text("File behind") }
                 TextButton(onClick = onPullThread) { Text("Pull thread") }
                 TextButton(onClick = onMove) { Text("Move") }
             }
@@ -806,13 +830,14 @@ private fun LinkCardDialog(
     card: LumenCardEntity,
     allCards: List<LumenCardEntity>,
     onLink: (LumenCardEntity) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    title: String = "Link \u201C${card.indexNumber}\u201D to…"
 ) {
     val existing = remember(card.linksJson) { LumenCapture.linksFromJson(card.linksJson) }
     val candidates = allCards.filter { it.id != card.id }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Link \u201C${card.indexNumber}\u201D to…") },
+        title = { Text(title) },
         text = {
             if (candidates.isEmpty()) {
                 Text("No other cards to link yet.")

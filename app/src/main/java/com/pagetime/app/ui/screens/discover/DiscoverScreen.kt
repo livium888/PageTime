@@ -75,6 +75,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
     val youtubeResults by viewModel.youtubeResults.collectAsStateWithLifecycle()
+    val importingVideo by viewModel.importingVideo.collectAsStateWithLifecycle()
     val categoryShelves by viewModel.categoryShelves.collectAsStateWithLifecycle()
     val searchingAll by viewModel.searchingAll.collectAsStateWithLifecycle()
 
@@ -235,6 +236,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                             items(youtubeResults, key = { it.videoId }) { video ->
                                 YouTubeVideoRow(
                                     video = video,
+                                    isImporting = video.videoId in importingVideo,
                                     onImport = { viewModel.importYouTubeVideo(video.videoId) }
                                 )
                             }
@@ -373,6 +375,7 @@ private fun BookRow(
 @Composable
 private fun YouTubeVideoRow(
     video: YouTubeSearchApi.SearchResult,
+    isImporting: Boolean,
     onImport: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -432,6 +435,7 @@ private fun YouTubeVideoRow(
                 Spacer(Modifier.width(10.dp))
                 Button(
                     onClick = onImport,
+                    enabled = !isImporting,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -439,9 +443,17 @@ private fun YouTubeVideoRow(
                     ),
                     contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
                 ) {
-                    Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
+                    if (isImporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
+                    }
                     Spacer(Modifier.width(6.dp))
-                    Text("Read", style = MaterialTheme.typography.labelLarge)
+                    Text(if (isImporting) "Importing…" else "Read", style = MaterialTheme.typography.labelLarge)
                 }
             }
             // Expandable description preview

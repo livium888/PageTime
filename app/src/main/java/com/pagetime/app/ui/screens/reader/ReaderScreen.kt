@@ -112,6 +112,7 @@ import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.yield
 import org.json.JSONObject
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -681,6 +682,7 @@ private fun TextReaderHost(
     val baseStyle = MaterialTheme.typography.bodyLarge
 
     var pagesState by remember { mutableStateOf<List<TextPage>?>(null) }
+    var layoutProgress by remember { mutableStateOf(0f) }
 
     LaunchedEffect(
         content,
@@ -707,6 +709,23 @@ private fun TextReaderHost(
             lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
             textAlign = if (settings.alignment == "justify") TextAlign.Justify else TextAlign.Start
         )
+        // Cap the binary-search measurement window to a generous multiple of
+        // what a page can hold. Without it the search measures the ENTIRE
+        // remaining book per page — O(book²) layout work that froze the UI for
+        // seconds on long transcripts. 3× a page's capacity keeps pages just
+        // as full while making layout linear in book size.
+        val windowChars = with(density) {
+            val avgCharPx = textMeasurer.measure(
+                text = "mmmmmmmmmm",
+                style = renderStyle,
+                constraints = Constraints(maxWidth = widthPx)
+            ).size.width / 10f
+            val charsPerLine = (widthPx / avgCharPx).toInt().coerceAtLeast(8)
+            val linesPerPage = (heightPx / (settings.fontSizeSp * settings.lineHeight * density.fontScale).dp
+                .roundToPx()).coerceAtLeast(1)
+            (charsPerLine * linesPerPage * 3).coerceIn(2_000, 200_000)
+        }
+        layoutProgress = 0f
         pagesState = runCatching {
             TextPageLayout.paginateMeasured(
                 content = content,
@@ -717,8 +736,13 @@ private fun TextReaderHost(
                         style = renderStyle,
                         constraints = Constraints(maxWidth = widthPx)
                     ).size.height
-                }
-            )
+                },
+                maxWindowChars = windowChars
+            ) {
+                layoutProgress = it
+                // Stay responsive: hand control back to the UI between pages.
+                yield()
+            }
         }.getOrElse {
             // Measurement should never fail; fall back to the heuristic layout
             // so the reader always shows the full book rather than nothing.
@@ -732,7 +756,17 @@ private fun TextReaderHost(
             modifier = Modifier.fillMaxSize().background(palette.background),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(color = palette.text)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = palette.text)
+                if (layoutProgress > 0f && layoutProgress < 1f) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Laying out pages… ${(layoutProgress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = palette.text
+                    )
+                }
+            }
         }
         return
     }

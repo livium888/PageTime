@@ -61,6 +61,10 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     private val _downloading = MutableStateFlow<Set<String>>(emptySet())
     val downloading = _downloading.asStateFlow()
 
+    /** Video IDs whose transcript import is in flight (Read button spinner). */
+    private val _importingVideo = MutableStateFlow<Set<String>>(emptySet())
+    val importingVideo = _importingVideo.asStateFlow()
+
     private val youtubeApi = container.youtubeSearchApi
 
     private val _youtubeResults = MutableStateFlow<List<YouTubeSearchApi.SearchResult>>(emptyList())
@@ -268,10 +272,13 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Import a YouTube video transcript as a readable book. */
     fun importYouTubeVideo(videoId: String) {
+        if (videoId in _importingVideo.value) return
         viewModelScope.launch {
+            _importingVideo.value += videoId
             val url = "https://www.youtube.com/watch?v=$videoId"
             repo.importYouTubeTranscript(url)
                 .onFailure { _error.value = it.message ?: "Could not fetch transcript" }
+            _importingVideo.value -= videoId
         }
     }
 

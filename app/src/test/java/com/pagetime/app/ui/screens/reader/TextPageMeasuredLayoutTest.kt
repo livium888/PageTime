@@ -2,6 +2,7 @@ package com.pagetime.app.ui.screens.reader
 
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,7 +29,7 @@ class TextPageMeasuredLayoutTest {
     }
 
     @Test
-    fun `every page fits the measured screen height`() {
+    fun `every page fits the measured screen height`() = runTest {
         val content = ("A readable paragraph with enough words to exercise the " +
             "measurer. ").repeat(400)
         val maxHeight = 5 * LINE_HEIGHT_PX // 5 lines per page
@@ -46,7 +47,7 @@ class TextPageMeasuredLayoutTest {
     }
 
     @Test
-    fun `no character is ever lost across pages`() {
+    fun `no character is ever lost across pages`() = runTest {
         val paragraphs = (0 until 60).joinToString("\n\n") { index ->
             "Paragraph $index tells a slightly different story with plenty of words."
         }
@@ -59,7 +60,7 @@ class TextPageMeasuredLayoutTest {
     }
 
     @Test
-    fun `breaks prefer paragraph boundaries when the fit limit lands past them`() {
+    fun `breaks prefer paragraph boundaries when the fit limit lands past them`() = runTest {
         // The second paragraph is one unbroken run: the raw fit limit lands
         // inside it, the nearest space boundary would orphan half of it, so the
         // paginator must walk back to the end of paragraph one.
@@ -78,7 +79,7 @@ class TextPageMeasuredLayoutTest {
     }
 
     @Test
-    fun `oversized unbroken paragraph still splits and never stalls`() {
+    fun `oversized unbroken paragraph still splits and never stalls`() = runTest {
         val giantWord = "w".repeat(50_000)
         val pages = TextPageLayout.paginateMeasured(giantWord, 5 * LINE_HEIGHT_PX, ::fakeMeasure)
 
@@ -87,7 +88,7 @@ class TextPageMeasuredLayoutTest {
     }
 
     @Test
-    fun `a page of ordinary words breaks at spaces not mid-word`() {
+    fun `a page of ordinary words breaks at spaces not mid-word`() = runTest {
         val content = "word ".repeat(300).trim()
         val pages = TextPageLayout.paginateMeasured(content, 5 * LINE_HEIGHT_PX, ::fakeMeasure)
 
@@ -101,7 +102,7 @@ class TextPageMeasuredLayoutTest {
     }
 
     @Test
-    fun `offset helpers stay stable for measured pages`() {
+    fun `offset helpers stay stable for measured pages`() = runTest {
         val content = ("sentence with several words. ").repeat(500)
         val pages = TextPageLayout.paginateMeasured(content, 5 * LINE_HEIGHT_PX, ::fakeMeasure)
 
@@ -116,5 +117,53 @@ class TextPageMeasuredLayoutTest {
         }
         assertEquals(0f, TextPageLayout.fractionForPage(0, pages.size))
         assertEquals(1f, TextPageLayout.fractionForPage(pages.lastIndex, pages.size))
+    }
+
+    @Test
+    fun `measurement window caps how far ahead the search measures`() = runTest {
+        // 40k chars of ordinary words. With a 2k-char window the search may only
+        // ever measure snippets of ~2k chars, never the 40k-char remainder.
+        val content = "word ".repeat(8_000).trim()
+        var largestSnippet = 0
+        val pages = TextPageLayout.paginateMeasured(
+            content,
+            5 * LINE_HEIGHT_PX,
+            { snippet ->
+                largestSnippet = max(largestSnippet, snippet.length)
+                fakeMeasure(snippet)
+            },
+            maxWindowChars = 2_000
+        )
+
+        assertTrue(pages.size > 1)
+        assertTrue(
+            "search measured a $largestSnippet-char snippet; window cap leaked",
+            largestSnippet <= 2_000 + 8 // small boundary slack from trimming
+        )
+    }
+
+    @Test
+    fun `windowed layout produces the same pages as uncapped for ordinary text`() = runTest {
+        // A window well above page capacity must not change the layout at all.
+        val content = ("Sentence with several words here. ").repeat(300)
+        val capped = TextPageLayout.paginateMeasured(
+            content, 5 * LINE_HEIGHT_PX, ::fakeMeasure, maxWindowChars = 4_000
+        )
+        val uncapped = TextPageLayout.paginateMeasured(content, 5 * LINE_HEIGHT_PX, ::fakeMeasure)
+
+        assertEquals(uncapped, capped)
+    }
+
+    @Test
+    fun `progress reaches 1 when layout finishes`() = runTest {
+        val content = ("sentence with several words. ").repeat(500)
+        var lastProgress = 0f
+        TextPageLayout.paginateMeasured(
+            content,
+            5 * LINE_HEIGHT_PX,
+            ::fakeMeasure
+        ) { fraction -> lastProgress = fraction }
+
+        assertEquals(1f, lastProgress)
     }
 }

@@ -26,15 +26,35 @@ data class TextPage(
 object TextPageLayout {
 
     /**
+     * Upper bound on how much text one binary-search step may measure, for
+     * callers that don't pass a typography-derived [paginateMeasured]
+     * `maxWindowChars`. No real page holds anywhere near this many characters,
+     * so pages stay exactly as full as an uncapped layout would make them.
+     */
+    const val DEFAULT_MAX_WINDOW_CHARS = 100_000
+
+    /**
      * Splits [content] into pages whose measured height fits [maxHeightPx].
      *
      * @param measureHeightPx must return the rendered height of the exact
      *   string it receives, laid out with the same style the reader draws with.
+     * @param maxWindowChars caps how far ahead of each page's start the binary
+     *   search may measure. Measuring the whole remainder is O(book²) — on long
+     *   transcripts it laid out megabytes of text dozens of times per page and
+     *   froze the UI thread. A window above true page capacity (the caller can
+     *   derive one from typography) keeps pages just as full at a fraction of
+     *   the cost; a smaller window only makes pages slightly less full, never
+     *   overflowing or dropping text.
+     * @param onProgress invoked after each page with the fraction of the book
+     *   laid out so far (0–1); suspending here lets the caller keep the UI
+     *   responsive and show a progress indicator during long layouts.
      */
-    fun paginateMeasured(
+    suspend fun paginateMeasured(
         content: String,
         maxHeightPx: Int,
-        measureHeightPx: (String) -> Int
+        measureHeightPx: (String) -> Int,
+        maxWindowChars: Int = DEFAULT_MAX_WINDOW_CHARS,
+        onProgress: (suspend (fraction: Float) -> Unit)? = null
     ): List<TextPage> {
         if (content.isEmpty()) return listOf(TextPage(0, 0, 0, ""))
         require(maxHeightPx > 0) { "Page height must be positive" }
@@ -45,11 +65,15 @@ object TextPageLayout {
             while (start < content.length && content[start].isWhitespace()) start++
             if (start >= content.length) break
 
+            // Only measure a bounded window ahead of `start`; if the whole
+            // window fits, the remainder fits too (the window covers it or is
+            // the remainder itself).
+            val windowEnd = (start + maxWindowChars.coerceAtLeast(1)).coerceAtMost(content.length)
             // Binary search the largest end offset whose rendered page fits.
             var lo = start + 1            // one character is assumed to fit
-            var hi = content.length       // the whole remainder, may overflow
-            if (measureHeightPx(trimmed(content, start, content.length)) <= maxHeightPx) {
-                lo = content.length
+            var hi = windowEnd            // the window, may overflow
+            if (measureHeightPx(trimmed(content, start, windowEnd)) <= maxHeightPx) {
+                lo = windowEnd
             } else {
                 while (hi - lo > 1) {
                     val mid = (lo + hi) / 2
@@ -68,6 +92,7 @@ object TextPageLayout {
                 text = trimmed(content, start, end)
             )
             start = end
+            onProgress?.invoke((end.toFloat() / content.length).coerceIn(0f, 1f))
         }
         return pages
     }

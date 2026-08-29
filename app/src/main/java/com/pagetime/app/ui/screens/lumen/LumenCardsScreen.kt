@@ -726,29 +726,31 @@ private fun CardDetailDialog(
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                    shape = MaterialTheme.shapes.medium
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(14.dp)) {
-                Text(
-                    "THE IDEA",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    card.front,
-                    style = MaterialTheme.typography.titleLarge
-                )
-                if (card.back.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        card.back,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
+                        Text(
+                            "THE IDEA",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            card.front,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        if (card.back.isNotBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                card.back,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
                 }
                 if (card.quote.isNotBlank()) {
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
                     Text(
                         "\u201C${card.quote.take(300)}${if (card.quote.length > 300) "…" else ""}\u201D",
                         style = MaterialTheme.typography.bodySmall,
@@ -766,8 +768,16 @@ private fun CardDetailDialog(
                 }
                 if (card.keywords.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
-                    Text("REGISTER TERMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(card.keywords, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "REGISTER TERMS",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        card.keywords,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 if (linked.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -804,7 +814,6 @@ private fun CardDetailDialog(
                         )
                     }
                 }
-            }
             }
         },
         confirmButton = {

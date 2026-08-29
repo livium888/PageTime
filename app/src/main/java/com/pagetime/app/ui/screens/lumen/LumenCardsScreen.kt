@@ -61,7 +61,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LumenCapture
-import com.pagetime.app.data.LumenRating
+import com.pagetime.app.data.LumenCoach
+import com.pagetime.app.data.LumenLesson
 import com.pagetime.app.data.LumenRepository
 import com.pagetime.app.data.local.LumenCardEntity
 import java.text.SimpleDateFormat
@@ -117,10 +118,10 @@ class LumenViewModel(
         viewModelScope.launch { repository.moveToBox(cardId, box) }
     }
 
-    fun saveManual(front: String, back: String) {
+    fun saveManual(front: String, back: String, behindCardId: String? = null) {
         viewModelScope.launch {
             val box = withContext(kotlinx.coroutines.Dispatchers.IO) { repository.boxRange().lastOrNull() ?: 1 }
-            repository.saveManual(box, front, back)
+            repository.saveManual(box, front, back, behindCardId)
         }
     }
 
@@ -133,52 +134,6 @@ class LumenViewModel(
             val ids = LumenCapture.linksFromJson(card.linksJson)
             onLoaded(if (ids.isEmpty()) emptyList() else repository.cardsByIds(ids))
         }
-    }
-
-    // Training session state.
-    private val _trainingQueue = MutableStateFlow<List<LumenCardEntity>>(emptyList())
-    val trainingQueue = _trainingQueue.asStateFlow()
-
-    private val _trainingRevealed = MutableStateFlow(false)
-    val trainingRevealed = _trainingRevealed.asStateFlow()
-
-    private val _trainingMessage = MutableStateFlow<String?>(null)
-    val trainingMessage = _trainingMessage.asStateFlow()
-
-    fun startTraining() {
-        viewModelScope.launch {
-            val due = repository.dueCards(limit = 20)
-            _trainingQueue.value = due
-            _trainingRevealed.value = false
-            if (due.isEmpty()) {
-                _trainingMessage.value = "Nothing due — the slip box is caught up."
-            }
-        }
-    }
-
-    fun revealTraining() {
-        _trainingRevealed.value = true
-    }
-
-    fun rateTraining(rating: LumenRating) {
-        val card = _trainingQueue.value.firstOrNull() ?: return
-        viewModelScope.launch {
-            val next = repository.rateTraining(card.id, rating)
-            _trainingMessage.value = next?.let {
-                "Next review: ${formatDate(it.toEpochMilli())}"
-            }
-            _trainingQueue.value = _trainingQueue.value.drop(1)
-            _trainingRevealed.value = false
-        }
-    }
-
-    fun stopTraining() {
-        _trainingQueue.value = emptyList()
-        _trainingRevealed.value = false
-    }
-
-    fun clearMessage() {
-        _trainingMessage.value = null
     }
 
     class Factory(private val repository: LumenRepository) : ViewModelProvider.Factory {
@@ -214,7 +169,8 @@ fun LumenCardsScreen(
     var linking by remember { mutableStateOf<LumenCardEntity?>(null) }
     var moving by remember { mutableStateOf<LumenCardEntity?>(null) }
     var composing by remember { mutableStateOf(false) }
-    var training by remember { mutableStateOf(false) }
+    var composingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var studying by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -226,8 +182,8 @@ fun LumenCardsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { training = true }) {
-                        Icon(Icons.Outlined.School, contentDescription = "Train")
+                    IconButton(onClick = { studying = true }) {
+                        Icon(Icons.Outlined.School, contentDescription = "Learn the method")
                     }
                 }
             )
@@ -389,6 +345,7 @@ fun LumenCardsScreen(
 
     if (composing) {
         ComposeCardDialog(
+            behindLabel = null,
             onSave = { front, back ->
                 vm.saveManual(front, back)
                 composing = false
@@ -397,10 +354,25 @@ fun LumenCardsScreen(
         )
     }
 
-    if (training) {
-        TrainingDialog(
-            vm = vm,
-            onDismiss = { training = false }
+    composingBehind?.let { behind ->
+        ComposeCardDialog(
+            behindLabel = behind.indexNumber.ifBlank { null },
+            onSave = { front, back ->
+                vm.saveManual(front, back, behind.id)
+                composingBehind = null
+            },
+            onDismiss = { composingBehind = null }
+        )
+    }
+
+    if (studying) {
+        StudyDialog(
+            cards = cards,
+            onFileBehind = { card ->
+                studying = false
+                composingBehind = card
+            },
+            onDismiss = { studying = false }
         )
     }
 }
@@ -830,6 +802,7 @@ private fun MoveBoxDialog(
 
 @Composable
 private fun ComposeCardDialog(
+    behindLabel: String?,
     onSave: (front: String, back: String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -837,13 +810,23 @@ private fun ComposeCardDialog(
     var back by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New card") },
+        title = {
+            Text(if (behindLabel != null) "File behind $behindLabel" else "New card")
+        },
         text = {
             Column {
+                if (behindLabel != null) {
+                    Text(
+                        "This card continues the line at $behindLabel — it gets the next address in that branch.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 OutlinedTextField(
                     value = front,
                     onValueChange = { front = it },
-                    label = { Text("Title / question") },
+                    label = { Text("Title / question — your own words") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -870,81 +853,87 @@ private fun ComposeCardDialog(
     )
 }
 
+/**
+ * The method coach: Luhmann's practice as lessons, plus the next concrete
+ * step for THIS box. Not a quiz — a teaching conversation.
+ */
 @Composable
-private fun TrainingDialog(
-    vm: LumenViewModel,
+private fun StudyDialog(
+    cards: List<LumenCardEntity>,
+    onFileBehind: (LumenCardEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val queue by vm.trainingQueue.collectAsStateWithLifecycle()
-    val revealed by vm.trainingRevealed.collectAsStateWithLifecycle()
-    val message by vm.trainingMessage.collectAsStateWithLifecycle()
-
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        vm.startTraining()
+    var lessonIndex by remember { mutableStateOf(0) }
+    val lesson = LumenCoach.lessons[lessonIndex]
+    val nextStep = remember(cards.hashCode()) { LumenCoach.nextStep(cards) }
+    val tip = remember(cards.hashCode()) {
+        LumenCoach.tips[(cards.size + LumenCoach.tips.size) % LumenCoach.tips.size]
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                if (queue.isEmpty()) "Training" else "Training — ${queue.size} due"
-            )
+            Column {
+                Text(
+                    "Working with the slip box",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "${lessonIndex + 1}/${LumenCoach.lessons.size} — ${lesson.title}"
+                )
+            }
         },
         text = {
-            Column {
-                message?.let {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    lesson.body,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Try it now",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    lesson.practice,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (lessonIndex == 0) {
+                    Spacer(Modifier.height(12.dp))
                     Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                val current = queue.firstOrNull()
-                if (current == null) {
-                    Text(
-                        message ?: "Nothing to train right now.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                } else {
-                    Text(
-                        current.indexNumber.ifBlank { "?" },
+                        "Your box right now",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
+                    Text(
+                        nextStep ?: "Capture your first card while reading.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        current.front,
-                        style = MaterialTheme.typography.titleMedium
+                        tip,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (revealed) {
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            current.back.ifBlank { current.quote },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
         },
         confirmButton = {
-            val current = queue.firstOrNull()
-            if (current != null && revealed) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { vm.rateTraining(LumenRating.AGAIN) }) { Text("Again") }
-                    TextButton(onClick = { vm.rateTraining(LumenRating.HARD) }) { Text("Hard") }
-                    TextButton(onClick = { vm.rateTraining(LumenRating.GOOD) }) { Text("Good") }
-                    TextButton(onClick = { vm.rateTraining(LumenRating.EASY) }) { Text("Easy") }
-                }
-            } else if (current != null) {
-                TextButton(onClick = { vm.revealTraining() }) { Text("Show answer") }
+            if (lessonIndex < LumenCoach.lessons.size - 1) {
+                TextButton(onClick = { lessonIndex++ }) { Text("Next") }
             } else {
-                TextButton(onClick = onDismiss) { Text("Done") }
+                TextButton(onClick = onDismiss) { Text("Got it") }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            if (lessonIndex > 0) {
+                TextButton(onClick = { lessonIndex-- }) { Text("Back") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
         }
     )
 }

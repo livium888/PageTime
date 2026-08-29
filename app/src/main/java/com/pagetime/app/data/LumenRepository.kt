@@ -157,11 +157,16 @@ class LumenRepository(
     /**
      * Saves a note written directly in the slip box (not captured from the
      * reader) — Luhmann wrote at his desk too. Filed at the next free address
-     * in [box].
+     * in [box], or directly behind [behindCardId] when given.
      */
-    suspend fun saveManual(box: Int, front: String, back: String): LumenCardEntity {
+    suspend fun saveManual(box: Int, front: String, back: String, behindCardId: String? = null): LumenCardEntity {
         val now = System.currentTimeMillis()
-        val address = LumenAddress.nextAddress(dao.indexNumbersInBox(box.coerceAtLeast(1)), null)
+        val boxNumber = box.coerceAtLeast(1)
+        val behind = behindCardId?.let { dao.get(it) }?.takeIf { it.box == boxNumber }
+        val address = LumenAddress.nextAddress(
+            dao.indexNumbersInBox(boxNumber),
+            behind?.indexNumber
+        )
         val card = LumenCardEntity(
             id = UUID.randomUUID().toString(),
             bookId = "",
@@ -485,12 +490,12 @@ object LumenCapture {
 }
 
 /**
- * Luhmann-style addressing. A card's address is stable for its lifetime; new
- * cards filed "behind" an existing one extend it with a letter (21 → 21a),
- * following the historical folgezettel branching scheme.
+ * Luhmann-style addressing. A card's address is stable for its lifetime. New
+ * cards continue the line (21 → 22) or insert directly behind a slip with a
+ * letter (21 → 21a), the way Luhmann physically filed his Zetteln.
  */
 object LumenAddress {
-    /** One dot/segment of an address: numeric prefix + letter suffix ("2a7"). */
+    /** One segment of an address: numeric prefix + letter suffix ("2a7"). */
     private data class Segment(val num: Int, val suffix: String)
 
     private fun parseSegment(s: String): Segment {
@@ -502,7 +507,11 @@ object LumenAddress {
         }
     }
 
-    /** Natural sort so 21/2 < 21/2a < 21/2b < 21/3 < 21/10. */
+    /**
+     * Luhmann shelf order: 21 < 21a < 21a1 < 21a2 < 21b < 22 < 23 < 210.
+     * Segments compare numerically when both are numbers; letters sort after
+     * their number and in alphabetical order.
+     */
     val COMPARATOR: Comparator<String> = Comparator { a, b ->
         val pa = a.split('/')
         val pb = b.split('/')
@@ -517,15 +526,16 @@ object LumenAddress {
     }
 
     /**
-     * The next free address in a box. With [afterIndex], the new card branches
-     * off that card (21 → 21a, 21a → 21aa…); otherwise it appends at the end
-     * of the box's top level (21/1, 21/2, …).
+     * The next free address in a box. With [afterIndex], the new card is filed
+     * directly behind that card, exactly like Luhmann inserting a slip: the
+     * next card in the line continues numerically (21 → 22), and a sub-note
+     * branches with a letter (21 → 21a; 21a → 21a1). Existing slips are never
+     * renumbered, so references stay valid.
      */
     fun nextAddress(existing: List<String>, afterIndex: String?): String {
         val taken = existing.toSet()
         if (afterIndex.isNullOrBlank()) {
-            // Append after the numerically largest top-level sibling, so removing
-            // a middle card never causes its address to be reused.
+            // Continue the line after the numerically largest top-level slip.
             var n = (taken.mapNotNull { it.toIntOrNull() }.maxOrNull() ?: 0) + 1
             while (true) {
                 val candidate = "$n"
@@ -533,12 +543,46 @@ object LumenAddress {
                 n++
             }
         }
-        // Branch: find the first free letter-extension of afterIndex.
-        var letters = "a"
+        // Insert directly behind afterIndex.
+        val base = afterIndex ?: return nextAddress(existing, null)
+        // Children alternate by depth, like Luhmann's real addresses (21/2a7):
+        // behind a number-ending slip the child is lettered (21 → 21a, 21b),
+        // behind a letter-ending slip the child is numbered (21a → 21a1).
+        val nextChild = nextChildVariant(base, taken)
+        if (nextChild != null) return nextChild
+        // 26 direct letters exhausted: branch deeper (21z → 21z1).
+        var m = 1
         while (true) {
-            val candidate = afterIndex + letters
+            val candidate = "${base}z$m"
             if (candidate !in taken) return candidate
-            letters += "a"
+            m++
+        }
+    }
+
+    /**
+     * The next free child address of [base]: letters after numbers (21 → 21a,
+     * 21b → 21c), numbers after letters (21a → 21a1, 21a2 → 21a3). Returns
+     * null when the alphabet is exhausted.
+     */
+    private fun nextChildVariant(base: String, taken: Set<String>): String? {
+        val siblings = taken.filter { it.length > base.length && it.startsWith(base) }
+        return if (base.lastOrNull()?.isLetter() == true) {
+            val highest = siblings
+                .map { it.substring(base.length) }
+                .filter { it.isNotEmpty() && it.all { c -> c.isDigit() } }
+                .mapNotNull { it.toIntOrNull() }
+                .maxOrNull()
+            "$base${(highest ?: 0) + 1}"
+        } else {
+            val highest = siblings
+                .map { it.substring(base.length) }
+                .filter { it.length == 1 && it[0] in 'a'..'z' }
+                .maxOrNull()
+            when (highest) {
+                null -> base + "a"
+                "z" -> null
+                else -> base + (highest[0] + 1)
+            }
         }
     }
 

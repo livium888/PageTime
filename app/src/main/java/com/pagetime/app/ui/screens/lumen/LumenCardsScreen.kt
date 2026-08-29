@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenCoach
 import com.pagetime.app.data.LumenLesson
 import com.pagetime.app.data.LumenRegister
@@ -140,6 +141,12 @@ class LumenViewModel(
         viewModelScope.launch { repository.link(cardId, otherId) }
     }
 
+    fun connectionCandidates(card: LumenCardEntity, onLoaded: (List<com.pagetime.app.data.LumenCandidate>) -> Unit) {
+        viewModelScope.launch {
+            onLoaded(LumenConnections.rank(card, repository.observeAll().first()))
+        }
+    }
+
     fun linkedCards(card: LumenCardEntity, onLoaded: (List<LumenCardEntity>) -> Unit) {
         viewModelScope.launch {
             val ids = LumenCapture.linksFromJson(card.linksJson)
@@ -185,6 +192,7 @@ fun LumenCardsScreen(
     var addingContext by remember { mutableStateOf<LumenCardEntity?>(null) }
     var deleting by remember { mutableStateOf<LumenCardEntity?>(null) }
     var linking by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var findingConnections by remember { mutableStateOf<LumenCardEntity?>(null) }
     var moving by remember { mutableStateOf<LumenCardEntity?>(null) }
     var composing by remember { mutableStateOf(false) }
     var composingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
@@ -321,6 +329,10 @@ fun LumenCardsScreen(
                 linking = card
                 detailCard = null
             },
+            onFindConnections = {
+                findingConnections = card
+                detailCard = null
+            },
             onMove = {
                 moving = card
                 detailCard = null
@@ -367,6 +379,18 @@ fun LumenCardsScreen(
                 addingContext = null
             },
             onDismiss = { addingContext = null }
+        )
+    }
+
+    findingConnections?.let { card ->
+        ConnectionCandidatesDialog(
+            card = card,
+            onLoad = { callback -> vm.connectionCandidates(card, callback) },
+            onLink = { other ->
+                vm.link(card.id, other.card.id)
+                findingConnections = null
+            },
+            onDismiss = { findingConnections = null }
         )
     }
 
@@ -624,6 +648,7 @@ private fun CardDetailDialog(
     onEdit: () -> Unit,
     onAddContext: () -> Unit,
     onLink: () -> Unit,
+    onFindConnections: () -> Unit,
     onMove: () -> Unit,
     onFileBehind: () -> Unit,
     onDelete: () -> Unit,
@@ -739,6 +764,7 @@ private fun CardDetailDialog(
                     Spacer(Modifier.width(4.dp))
                     Text("Link")
                 }
+                TextButton(onClick = onFindConnections) { Text("Find connections") }
                 TextButton(onClick = onFileBehind) { Text("File behind") }
                 TextButton(onClick = onDelete) { Text("Delete") }
                 TextButton(onClick = onPullThread) { Text("Pull thread") }
@@ -1172,6 +1198,76 @@ private fun ThreadDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Close") }
         }
+    )
+}
+
+@Composable
+private fun ConnectionCandidatesDialog(
+    card: LumenCardEntity,
+    onLoad: (((List<com.pagetime.app.data.LumenCandidate>) -> Unit)) -> Unit,
+    onLink: (com.pagetime.app.data.LumenCandidate) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var candidates by remember { mutableStateOf<List<com.pagetime.app.data.LumenCandidate>?>(null) }
+    androidx.compose.runtime.LaunchedEffect(card.id) { onLoad { candidates = it } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Possible connections")
+                Text(
+                    "Local suggestions for ${card.indexNumber.ifBlank { "?" }} — review before linking",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            when (val items = candidates) {
+                null -> Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                }
+                emptyList<List<com.pagetime.app.data.LumenCandidate>>() -> Text(
+                    "No strong local matches yet. Try adding a clearer title or keywords, then search again.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                else -> LazyColumn {
+                    items(items, key = { it.card.id }) { candidate ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onLink(candidate) }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    candidate.card.indexNumber.ifBlank { "?" },
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    candidate.card.front,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (candidate.reasons.isNotEmpty()) {
+                                Text(
+                                    candidate.reasons.joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 32.dp, top = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
 }
 

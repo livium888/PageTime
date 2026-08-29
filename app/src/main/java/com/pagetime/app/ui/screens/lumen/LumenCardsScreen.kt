@@ -89,7 +89,9 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -101,9 +103,16 @@ class LumenViewModel(
     private val repository: LumenRepository
 ) : ViewModel() {
 
-    /** Which slip box is open; 0 = "all boxes". */
-    private val _selectedBox = MutableStateFlow(0)
+    /** Which slip box is open (1-based). */
+    private val _selectedBox = MutableStateFlow(1)
     val selectedBox = _selectedBox.asStateFlow()
+
+    /** The boxes that actually contain cards — unused boxes are not shown. */
+    val boxes: StateFlow<List<Int>> = repository.observeAll()
+        .map { all ->
+            if (all.isEmpty()) listOf(1) else all.map { it.box }.distinct().sorted()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), listOf(1))
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val cards = _selectedBox
@@ -203,6 +212,7 @@ fun LumenCardsScreen(
     )
     val cards by vm.cards.collectAsStateWithLifecycle()
     val selectedBox by vm.selectedBox.collectAsStateWithLifecycle()
+    val boxes by vm.boxes.collectAsStateWithLifecycle()
     val dueCount by vm.dueCount.collectAsStateWithLifecycle()
 
     var detailCard by remember { mutableStateOf<LumenCardEntity?>(null) }
@@ -280,6 +290,7 @@ fun LumenCardsScreen(
                 .padding(padding)
         ) {
             BoxTabs(
+                boxes = boxes,
                 selected = selectedBox,
                 dueCount = dueCount,
                 onSelect = { vm.selectBox(it) }
@@ -462,6 +473,7 @@ fun LumenCardsScreen(
     moreActions?.let { card ->
         CardActionsDialog(
             card = card,
+            canMove = boxes.size > 1,
             onFileBehind = { moreActions = null; filingBehind = card },
             onPullThread = { moreActions = null; pullingThread = card },
             onMove = { moreActions = null; moving = card },
@@ -473,7 +485,7 @@ fun LumenCardsScreen(
     moving?.let { card ->
         MoveBoxDialog(
             card = card,
-            currentRange = 1..maxOf(1, selectedBox),
+            boxes = boxes,
             onMove = { box ->
                 vm.moveToBox(card.id, box)
                 moving = null
@@ -565,6 +577,7 @@ fun LumenCardsScreen(
 
 @Composable
 private fun BoxTabs(
+    boxes: List<Int>,
     selected: Int,
     dueCount: Int,
     onSelect: (Int) -> Unit
@@ -576,30 +589,19 @@ private fun BoxTabs(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        FilterChip(
-            selected = selected == 0,
-            onClick = { onSelect(0) },
-            label = { Text("All") }
-        )
-        FilterChip(
-            selected = selected == 1,
-            onClick = { onSelect(1) },
-            label = { Text("Box 1") }
-        )
-        FilterChip(
-            selected = selected == 2,
-            onClick = { onSelect(2) },
-            label = { Text("Box 2") }
-        )
-        FilterChip(
-            selected = selected == 3,
-            onClick = { onSelect(3) },
-            label = { Text("Box 3") }
-        )
+        // Only the boxes that actually contain cards. Captures always file into
+        // Box 1, so an untouched box never appears — everything stays in one box.
+        boxes.forEach { box ->
+            FilterChip(
+                selected = selected == box,
+                onClick = { onSelect(box) },
+                label = { Text("Box $box") }
+            )
+        }
         if (dueCount > 0) {
             FilterChip(
                 selected = false,
-                onClick = { onSelect(0) },
+                onClick = { onSelect(boxes.first()) },
                 label = { Text("$dueCount due") }
             )
         }
@@ -887,6 +889,7 @@ private fun CardDetailDialog(
 @Composable
 private fun CardActionsDialog(
     card: LumenCardEntity,
+    canMove: Boolean = false,
     onFileBehind: () -> Unit,
     onPullThread: () -> Unit,
     onMove: () -> Unit,
@@ -900,7 +903,9 @@ private fun CardActionsDialog(
             Column(Modifier.fillMaxWidth()) {
                 TextButton(onClick = onFileBehind, modifier = Modifier.fillMaxWidth()) { Text("File behind", maxLines = 1) }
                 TextButton(onClick = onPullThread, modifier = Modifier.fillMaxWidth()) { Text("Pull thread", maxLines = 1) }
-                TextButton(onClick = onMove, modifier = Modifier.fillMaxWidth()) { Text("Move to another box", maxLines = 1) }
+                if (canMove) {
+                    TextButton(onClick = onMove, modifier = Modifier.fillMaxWidth()) { Text("Move to another box", maxLines = 1) }
+                }
                 TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete card", maxLines = 1) }
             }
         },
@@ -1055,11 +1060,10 @@ private fun LinkCardDialog(
 @Composable
 private fun MoveBoxDialog(
     card: LumenCardEntity,
-    currentRange: IntRange,
+    boxes: List<Int>,
     onMove: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val boxes = (1..maxOf(3, currentRange.last + 1)).toList()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to box") },
@@ -1069,7 +1073,7 @@ private fun MoveBoxDialog(
                     FilterChip(
                         selected = box == card.box,
                         onClick = { onMove(box) },
-                        label = { Text("$box") }
+                        label = { Text("Box $box") }
                     )
                 }
             }

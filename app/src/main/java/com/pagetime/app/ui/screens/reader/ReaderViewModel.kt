@@ -409,15 +409,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 val chapterIndex: Int?
                 if (b.format == "epub") {
                     chapterIndex = currentChapterIndex() ?: 0
-                    val context = container.learningContextExtractor.extract(
+                    // Centered on the current locator so the passage follows the
+                    // page the user is actually reading (two pages → two passages).
+                    // Falls back to the chapter tail if the window cannot be read.
+                    val centered = container.learningContextExtractor.captureEpub(
                         book = b,
                         chapterIndex = chapterIndex,
-                        checkpoint = null,
-                        currentLocatorJson = latestLocator?.toJSON()?.toString(),
-                        currentTextOffset = null,
-                        maxCharacters = 4_000
+                        currentLocatorJson = latestLocator?.toJSON()?.toString()
                     )
-                    passage = context.recentText.takeLast(1_500)
+                    passage = centered.ifBlank {
+                        // No key/href parse failure: reuse the chapter-tail context.
+                        container.learningContextExtractor.extract(
+                            book = b,
+                            chapterIndex = chapterIndex,
+                            checkpoint = null,
+                            currentLocatorJson = latestLocator?.toJSON()?.toString(),
+                            currentTextOffset = null,
+                            maxCharacters = 4_000
+                        ).recentText.takeLast(1_500)
+                    }
                 } else {
                     chapterIndex = null
                     passage = LumenCapture.captureWindow(

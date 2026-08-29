@@ -67,6 +67,23 @@ class LumenCaptureTest {
     }
 
     @Test
+    fun `advancing the reading position yields a different captured window and front`() {
+        // The EPUB capture regression: capture must center on the CURRENT page,
+        // not freeze on a chapter-tail window. Two different positions within a
+        // long chapter must produce two different source windows AND two
+        // different card fronts — otherwise "read more, same card".
+        val text = buildString {
+            for (i in 0 until 400) append("Sentence number $i holds some distinct words here. ")
+        }
+        val early = LumenCapture.captureWindow(text, text.length / 4)
+        val later = LumenCapture.captureWindow(text, text.length * 3 / 4)
+        assertTrue(early != later)
+        val earlyFront = LumenCapture.fallbackDraft(early).first
+        val laterFront = LumenCapture.fallbackDraft(later).first
+        assertTrue(earlyFront != laterFront)
+    }
+
+    @Test
     fun `newline boundaries split transcript-style text`() {
         val line = "Speaker one says something here.\n"
         val text = line.repeat(150)

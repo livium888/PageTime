@@ -47,7 +47,9 @@ class BlockController(
     private val blockedAppRepository: BlockedAppRepository,
     private val balanceManager: BalanceManager,
     private val usageRepository: UsageRepository,
-    private val powerManager: PowerManager
+    private val powerManager: PowerManager,
+    /** PageTime's own package, needed to classify poll results as trusted/unknown. */
+    private val selfPackage: String = "com.pagetime.app"
 ) {
 
     companion object {
@@ -165,6 +167,41 @@ class BlockController(
     }
 
     /**
+     * Called by the service's 2-second poll with the currently focused window's
+     * package. Unlike [onForegroundPackage] this NEVER starts a new block and
+     * NEVER ends one: the poll can observe our own overlay, the keyboard, the
+     * shade, or a secure window it cannot inspect — none of which prove the
+     * user left (or entered) the blocked app. Its only jobs are:
+     *  - keep the spend ticker honest: if the poll PROVES a different real app
+     *    is in front, end the session (window events may have been missed);
+     *  - drop the block when the poll PROVES the user is elsewhere.
+     * "Unknown" changes nothing — that is what keeps the block screen from
+     * appearing over the home screen or over background apps.
+     */
+    fun onPolledForeground(packageName: String?) {
+        if (!blockedPackagesLoaded) return
+        // Unknown focus (null, self overlay, keyboard, shade): stand down, change nothing.
+        if (!ForegroundEventPolicy.isTrustedForegroundPackage(packageName, selfPackage)) return
+        val pkg = packageName ?: return
+        if (pkg == currentBlockedPackage) return
+        if (pkg in blockedPackages) {
+            // The poll proved a DIFFERENT blocked app took the front (window events
+            // were missed). Treat it as a real switch.
+            onForegroundPackage(pkg)
+            return
+        }
+        // The poll proved a real, non-blocked app is in front: whatever block
+        // state remains is stale — clear it.
+        if (currentBlockedPackage != null) {
+            endSpendSession()
+            currentBlockedPackage = null
+            lastForegroundPackage = null
+            stopEnforcing()
+            service?.dismissTimeUp()
+        }
+    }
+
+    /**
      * Re-assert the current decision without treating the trigger as an app switch.
      * Called for window changes that are not foreground changes (notification shade,
      * keyboard, another overlay stacking on top of the block screen).
@@ -253,11 +290,38 @@ class BlockController(
                     !powerManager.isInteractive -> Unit
 
                     else -> {
-                        val shown = withContext(Dispatchers.Main) { svc.showTimeUp() }
-                        if (!shown) {
-                            // No overlay window available at all (permission revoked,
-                            // OEM restriction). Fall back to removing them from the app.
-                            withContext(Dispatchers.Main) { svc.bounceOut() }
+                        // Confirm the blocked app is STILL verifiably in front before
+                        // drawing. The poll's focused window can be our own overlay,
+                        // the keyboard, the shade, or a secure window — none of those
+                        // prove the user is in the blocked app, and drawing over the
+                        // home screen or a background app is exactly the reported bug.
+                        val focused = svc.focusedWindowPackage()
+                        val stillInFront = if (focused == null) {
+                            // Uninspectable window: the level-triggered window events
+                            // remain the source of truth, so keep the block standing.
+                            true
+                        } else {
+                            ForegroundEventPolicy.isTrustedForegroundPackage(focused, selfPackage) &&
+                                focused == pkg
+                        }
+                        if (stillInFront) {
+                            val shown = withContext(Dispatchers.Main) { svc.showTimeUp() }
+                            if (!shown) {
+                                // No overlay window available at all (permission revoked,
+                                // OEM restriction). Fall back to removing them from the app.
+                                withContext(Dispatchers.Main) { svc.bounceOut() }
+                                break
+                            }
+                        }
+                        // else: a trusted, different app is verifiably in front — the
+                        // block state is stale. Clear it and let the poll/event path
+                        // decide what happens next; do NOT draw over that app.
+                        else {
+                            endSpendSession()
+                            currentBlockedPackage = null
+                            lastForegroundPackage = null
+                            stopEnforcing()
+                            svc.dismissTimeUp()
                             break
                         }
                     }

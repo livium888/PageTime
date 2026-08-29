@@ -70,4 +70,32 @@ class ForegroundEventPolicyTest {
     fun `a missing class name does not block a real app switch`() {
         assertTrue(isChange("com.instagram.android", null))
     }
+
+    // ── Poll trust gating (the "overlay when not in the blocked app" bug) ──
+
+    @Test
+    fun `poll trusts a real foreign app window`() {
+        assertTrue(ForegroundEventPolicy.isTrustedForegroundPackage("com.instagram.android", SELF))
+    }
+
+    @Test
+    fun `poll does not trust null or blank focus`() {
+        // Secure windows, lock screen, uninspectable launcher windows: unknown.
+        assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage(null, SELF))
+        assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage("", SELF))
+    }
+
+    @Test
+    fun `poll does not trust our own overlay or reader`() {
+        // While the overlay is up, the focused window is ours. Trusting it made
+        // the controller believe the user had moved to PageTime — and the 2s
+        // poll then re-asserted the overlay over PageTime itself.
+        assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage(SELF, SELF))
+    }
+
+    @Test
+    fun `poll does not trust transient system chrome`() {
+        assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage("com.android.systemui", SELF))
+        assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage("android", SELF))
+    }
 }

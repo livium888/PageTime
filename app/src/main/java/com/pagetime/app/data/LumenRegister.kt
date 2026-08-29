@@ -104,3 +104,72 @@ object LumenThread {
         return sb.toString().trimEnd()
     }
 }
+
+/**
+ * The literature box — Luhmann's second Zettelkasten. His main notes did not
+ * float free: each cited a bibliographic slip in the literature box, one per
+ * source, and the literature slip recorded where in that source the note came
+ * from. Here the role of the literature box is played by the library itself:
+ * every captured card already carries a [LumenCardEntity.bookId], so sources
+ * can be grouped, counted, and navigated with no schema change and no AI.
+ */
+object LumenSources {
+
+    /** One bibliographic "slip": a source and the notes that cite it. */
+    data class Source(
+        val bookId: String,
+        val title: String,
+        val author: String,
+        val cards: List<LumenCardEntity>
+    )
+
+    /**
+     * Groups captured cards by their source book, in shelf order within each
+     * source. Desk cards (bookId = "") are not literature — they have no
+     * source — so they are excluded; they live in the box, not the bibliography.
+     */
+    fun group(cards: List<LumenCardEntity>, books: List<BookMeta>): List<Source> {
+        val byBook = cards
+            .filter { it.bookId.isNotBlank() }
+            .groupBy { it.bookId }
+        return byBook
+            .map { (bookId, cardList) ->
+                val meta = books.firstOrNull { it.id == bookId }
+                Source(
+                    bookId = bookId,
+                    title = meta?.title ?: "Unknown source",
+                    author = meta?.author ?: "",
+                    cards = cardList.sortedWith(
+                        compareBy<LumenCardEntity> { it.box }.thenBy(LumenAddress.COMPARATOR) { it.indexNumber }
+                    )
+                )
+            }
+            .sortedBy { it.title.lowercase() }
+    }
+
+    /** Minimal book metadata the grouping needs — decoupled from BookEntity. */
+    data class BookMeta(val id: String, val title: String, val author: String)
+
+    /**
+     * Plain-text rendering of one source's slip list: the bibliography line
+     * followed by every note citing it, in shelf order — the reading-notes
+     * digest Luhmann's literature slips enabled.
+     */
+    fun render(source: Source): String {
+        val sb = StringBuilder()
+        sb.append(source.title)
+        if (source.author.isNotBlank()) sb.append(" — ").append(source.author)
+        sb.append('\n')
+        for (card in source.cards) {
+            sb.append(card.indexNumber.ifBlank { "?" }).append("  ")
+            sb.append(card.front).append('\n')
+            if (card.quote.isNotBlank()) {
+                sb.append("    \u201C")
+                sb.append(card.quote.replace("\n", " ").take(160))
+                if (card.quote.length > 160) sb.append("…")
+                sb.append("\u201D\n")
+            }
+        }
+        return sb.toString().trimEnd()
+    }
+}

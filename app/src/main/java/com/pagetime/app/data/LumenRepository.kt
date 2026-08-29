@@ -10,6 +10,7 @@ import io.github.openspacedrepetition.Scheduler
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -54,6 +55,7 @@ class LumenRepository(
     private val dao: LumenCardDao,
     private val geminiClient: GeminiLearningClient,
     private val aiUsageRepository: AiUsageRepository? = null,
+    private val bookDao: com.pagetime.app.data.local.BookDao? = null,
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
@@ -352,6 +354,21 @@ class LumenRepository(
     /** Training prompt for a card: front, with back as the revealed answer. */
     fun trainingPrompt(card: LumenCardEntity): Pair<String, String> =
         card.front to card.back.ifBlank { card.quote }
+
+    /**
+     * The literature box: all captured cards grouped by their source book with
+     * real titles, one bibliographic slip per source. Pure-local — no AI.
+     */
+    suspend fun sources(): List<LumenSources.Source> {
+        val all = dao.observeAll().first()
+        if (all.none { it.bookId.isNotBlank() }) return emptyList()
+        val bookIds = all.map { it.bookId }.filter { it.isNotBlank() }.distinct()
+        val books = bookDao?.let { bd ->
+            bookIds.mapNotNull { bd.getById(it) }
+        } ?: emptyList()
+        val metas = books.map { LumenSources.BookMeta(it.id, it.title, it.author) }
+        return LumenSources.group(all, metas)
+    }
 }
 
 /**

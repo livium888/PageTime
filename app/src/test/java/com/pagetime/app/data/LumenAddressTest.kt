@@ -236,3 +236,96 @@ class LumenCoachTest {
         assertTrue(LumenCoach.lessons.size >= 6)
     }
 }
+
+class LumenSourcesTest {
+
+    private fun card(
+        id: String,
+        bookId: String,
+        indexNumber: String,
+        box: Int = 1,
+        front: String = "Note $id",
+        quote: String = ""
+    ): LumenCardEntity {
+        val now = System.currentTimeMillis()
+        return LumenCardEntity(
+            id = id,
+            bookId = bookId,
+            box = box,
+            indexNumber = indexNumber,
+            front = front,
+            back = "",
+            quote = quote,
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            snippetsJson = "[]",
+            linksJson = "[]",
+            keywords = "",
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    private val books = listOf(
+        LumenSources.BookMeta("b1", "Power", "Foucault"),
+        LumenSources.BookMeta("b2", "Anti-Oedipus", "Deleuze")
+    )
+
+    @Test
+    fun `cards group by their source book`() {
+        val sources = LumenSources.group(
+            listOf(card("1", "b1", "21"), card("2", "b1", "22"), card("3", "b2", "1")),
+            books
+        )
+        assertEquals(2, sources.size)
+        assertEquals("Anti-Oedipus", sources[0].title) // sorted by title
+        assertEquals("Power", sources[1].title)
+    }
+
+    @Test
+    fun `desk cards without a source are excluded`() {
+        val sources = LumenSources.group(
+            listOf(card("1", "", "1"), card("2", "b1", "21")),
+            books
+        )
+        assertEquals(1, sources.size)
+        assertEquals("b1", sources[0].bookId)
+    }
+
+    @Test
+    fun `cards within a source are in shelf order`() {
+        val sources = LumenSources.group(
+            listOf(card("1", "b1", "22"), card("2", "b1", "21"), card("3", "b1", "21a")),
+            books
+        )
+        assertEquals(listOf("21", "21a", "22"), sources[0].cards.map { it.indexNumber })
+    }
+
+    @Test
+    fun `unknown source falls back to a placeholder title`() {
+        val sources = LumenSources.group(listOf(card("1", "deleted-book", "21")), books)
+        assertEquals("Unknown source", sources[0].title)
+    }
+
+    @Test
+    fun `render includes the bibliography line and cited notes`() {
+        val source = LumenSources.Source(
+            bookId = "b1",
+            title = "Power",
+            author = "Foucault",
+            cards = listOf(card("1", "b1", "21", quote = "Power is everywhere."))
+        )
+        val text = LumenSources.render(source)
+        assertTrue(text.contains("Power — Foucault"))
+        assertTrue(text.contains("21  Note 1"))
+        assertTrue(text.contains("Power is everywhere."))
+    }
+
+    @Test
+    fun `render omits the author when missing`() {
+        val source = LumenSources.Source("b1", "Untitled", "", emptyList())
+        // No cards and no author: the render is just the bibliography line.
+        assertEquals("Untitled", LumenSources.render(source))
+    }
+}

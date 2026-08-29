@@ -140,6 +140,13 @@ class LumenViewModel(
         }
     }
 
+    /** The literature box: sources with their citing cards, loaded on demand. */
+    fun sources(onLoaded: (List<com.pagetime.app.data.LumenSources.Source>) -> Unit) {
+        viewModelScope.launch {
+            onLoaded(repository.sources())
+        }
+    }
+
     class Factory(private val repository: LumenRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -176,6 +183,7 @@ fun LumenCardsScreen(
     var composingBehind by remember { mutableStateOf<LumenCardEntity?>(null) }
     var studying by remember { mutableStateOf(false) }
     var register by remember { mutableStateOf(false) }
+    var sources by remember { mutableStateOf(false) }
     var pullingThread by remember { mutableStateOf<LumenCardEntity?>(null) }
 
     Scaffold(
@@ -188,6 +196,9 @@ fun LumenCardsScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { sources = true }) {
+                        Icon(Icons.Outlined.MenuBook, contentDescription = "Sources")
+                    }
                     IconButton(onClick = { register = true }) {
                         Icon(Icons.Outlined.ListAlt, contentDescription = "Register")
                     }
@@ -397,6 +408,17 @@ fun LumenCardsScreen(
                 detailCard = card
             },
             onDismiss = { register = false }
+        )
+    }
+
+    if (sources) {
+        SourcesDialog(
+            onLoad = { onLoaded -> vm.sources(onLoaded) },
+            onOpenCard = { card ->
+                sources = false
+                detailCard = card
+            },
+            onDismiss = { sources = false }
         )
     }
 
@@ -1082,6 +1104,128 @@ private fun ThreadDialog(
                     copied = true
                 }
             ) { Text(if (copied) "Copied" else "Copy outline") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+/**
+ * The literature box: one bibliographic slip per source, with the notes that
+ * cite it. Luhmann's second Zettelkasten, powered by the library's own data.
+ */
+@Composable
+private fun SourcesDialog(
+    onLoad: ((List<com.pagetime.app.data.LumenSources.Source>) -> Unit) -> Unit,
+    onOpenCard: (LumenCardEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var loaded by remember { mutableStateOf<List<com.pagetime.app.data.LumenSources.Source>?>(null) }
+    var expandedSource by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { onLoad { loaded = it } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Sources")
+                Text(
+                    "The literature box — every source your notes cite",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            val sources = loaded
+            when {
+                sources == null -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    }
+                }
+                sources.isEmpty() -> {
+                    Text(
+                        "No sourced notes yet. Cards captured while reading (Options \u2192 New Lumen card) appear here, grouped by the book they came from.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                else -> {
+                    Column(Modifier.verticalScroll(rememberScrollState()).heightIn(max = 380.dp)) {
+                        sources.forEach { source ->
+                            val expanded = expandedSource == source.bookId
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { expandedSource = if (expanded) null else source.bookId }
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            source.title,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (source.author.isNotBlank()) {
+                                            Text(
+                                                source.author,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        "${source.cards.size} note${if (source.cards.size == 1) "" else "s"}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        if (expanded) "\u25BC" else "\u25B6",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (expanded) {
+                                    source.cards.forEach { card ->
+                                        Text(
+                                            "${card.indexNumber.ifBlank { "?" }}  ${card.front}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier
+                                                .clickable { onOpenCard(card) }
+                                                .padding(start = 12.dp, top = 4.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val sources = loaded
+            val context = androidx.compose.ui.platform.LocalContext.current
+            if (sources != null && sources.isNotEmpty()) {
+                TextButton(onClick = {
+                    val text = sources.joinToString("\n\n") { com.pagetime.app.data.LumenSources.render(it) }
+                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(
+                        android.content.ClipData.newPlainText("Lumen sources", text)
+                    )
+                }) { Text("Copy all") }
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Close") }

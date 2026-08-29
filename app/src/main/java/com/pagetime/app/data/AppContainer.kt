@@ -108,7 +108,8 @@ class AppContainer(context: Context) {
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),
         geminiClient = geminiLearningClient,
-        aiUsageRepository = aiUsageRepository
+        aiUsageRepository = aiUsageRepository,
+        bookDao = bookDao
     )
 
     val learningRepository = LearningRepository(
@@ -151,7 +152,8 @@ class AppContainer(context: Context) {
         blockedAppRepository = blockedAppRepository,
         balanceManager = balanceManager,
         usageRepository = usageRepository,
-        powerManager = powerManager
+        powerManager = powerManager,
+        selfPackage = appContext.packageName
     )
 
     /** UsageStats audit: charges blocked-app time even if our service was dead. */

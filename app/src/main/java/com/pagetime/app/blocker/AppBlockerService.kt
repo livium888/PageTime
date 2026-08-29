@@ -15,7 +15,15 @@ class AppBlockerService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val foregroundRefresh = object : Runnable {
         override fun run() {
-            rootInActiveWindow?.packageName?.toString()?.let { controller?.onForegroundPackage(it) }
+            // The poll sees whatever window holds input focus right now — which
+            // can be our own overlay, the keyboard, the shade, or a secure window
+            // we cannot inspect (null). Only a trusted package (a real, foreign
+            // app window) may drive foreground decisions; anything else is
+            // "unknown" and must never start or extend a block. Without this
+            // filter the block screen appeared over the home screen and over
+            // apps that were merely open in the background.
+            val pkg = rootInActiveWindow?.packageName?.toString()
+            controller?.onPolledForeground(pkg)
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
@@ -32,8 +40,12 @@ class AppBlockerService : AccessibilityService() {
         // The service can connect (or reconnect after a process death) while a
         // blocked app is already in front. Without this, nothing is enforced until
         // that app happens to emit another window event — which it never does while
-        // it stays foreground.
-        rootInActiveWindow?.packageName?.toString()?.let { controller?.onForegroundPackage(it) }
+        // it stays foreground. Same trust filter as the poll: a null or transient
+        // focused window must not start a block on a guess.
+        val pkg = rootInActiveWindow?.packageName?.toString()
+        if (ForegroundEventPolicy.isTrustedForegroundPackage(pkg, packageName)) {
+            controller?.onForegroundPackage(pkg)
+        }
         mainHandler.removeCallbacks(foregroundRefresh)
         mainHandler.post(foregroundRefresh)
     }
@@ -57,7 +69,15 @@ class AppBlockerService : AccessibilityService() {
                 controller?.onForegroundPackage(eventPackage)
             }
             // Something re-stacked the windows — possibly on top of our block screen.
-            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> controller?.reassert()
+            // Re-assert only when the focused window still names the blocked app;
+            // a re-stack while we are NOT in the blocked app must never draw the
+            // block screen (the reported "overlay when not in the blocked app" bug).
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                val pkg = rootInActiveWindow?.packageName?.toString()
+                if (ForegroundEventPolicy.isTrustedForegroundPackage(pkg, packageName)) {
+                    controller?.reassert()
+                }
+            }
         }
     }
 
@@ -73,6 +93,14 @@ class AppBlockerService : AccessibilityService() {
     companion object {
         private const val FOREGROUND_REFRESH_MS = 2_000L
     }
+
+    /**
+     * The package of the window that currently holds input focus, or null when
+     * that window cannot be inspected (secure windows, some system surfaces).
+     * Used by the enforce loop to confirm the blocked app is still in front
+     * before drawing the overlay — null is "unknown", never "gone".
+     */
+    fun focusedWindowPackage(): String? = rootInActiveWindow?.packageName?.toString()
 
     /** Shows the block screen. Returns false if no overlay window could be added. */
     fun showTimeUp(): Boolean {

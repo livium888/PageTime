@@ -57,4 +57,23 @@ object ForegroundEventPolicy {
         val lowered = className.lowercase()
         return TRANSIENT_CLASS_MARKERS.any { lowered.contains(it) }
     }
+
+    /**
+     * The package we are ALLOWED to consider "the app in front". The polling
+     * path (rootInActiveWindow every 2 s) reports whatever window currently has
+     * input focus: our own overlay, the keyboard, the shade, or null when the
+     * focused window is not inspectable (secure windows, some launchers, the
+     * lock screen). Treating any of those as "the user is in blocked app X"
+     * made the block screen appear over the home screen, over PageTime itself,
+     * and over apps that were merely open in the background — the reported
+     * "shows up even when I'm not in the blocked app" bug.
+     *
+     * The rule: only trust a poll when it names a real, non-transient,
+     * non-self package. Anything else is "unknown", and unknown must NEVER
+     * re-assert or extend a block — it may only let an existing block stand.
+     */
+    fun isTrustedForegroundPackage(packageName: String?, selfPackage: String): Boolean {
+        if (packageName.isNullOrBlank()) return false
+        return isForegroundChange(packageName, null, selfPackage)
+    }
 }

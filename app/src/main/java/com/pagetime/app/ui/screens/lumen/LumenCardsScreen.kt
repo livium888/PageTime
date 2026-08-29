@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -584,31 +586,44 @@ private fun LumenCardRow(
     }
     Card(
         onClick = onOpen,
+        modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // The index number is the card's identity — show it prominently.
-                Text(
-                    card.indexNumber.ifBlank { "?" },
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .background(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                            RoundedCornerShape(6.dp)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "BOX ${card.box}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.weight(1f))
+                // Address and box label share the space left by the status
+                // icons, so a deep branch address ellipsises inside its chip
+                // instead of pushing the icons off the card.
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // The index number is the card's identity — show it prominently.
+                    Text(
+                        card.indexNumber.ifBlank { "?" },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "BOX ${card.box}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
                 if (card.dueAt != null) {
                     Icon(
                         Icons.Outlined.School,
@@ -699,7 +714,10 @@ private fun CardDetailDialog(
                     Text(
                         card.indexNumber.ifBlank { "?" },
                         style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(Modifier.width(10.dp))
                     Surface(
@@ -723,29 +741,39 @@ private fun CardDetailDialog(
             }
         },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+            // Everything below the idea panel is a sibling in this scrolling
+            // column. A Surface stacks its content children on top of each other,
+            // so the quote, register terms, links and evolution have to live
+            // outside the panel or they paint over the idea itself.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Surface(
+                    modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
                     shape = MaterialTheme.shapes.medium
                 ) {
                     Column(Modifier.padding(14.dp)) {
-                Text(
-                    "THE IDEA",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    card.front,
-                    style = MaterialTheme.typography.titleLarge
-                )
-                if (card.back.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        card.back,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
+                        Text(
+                            "THE IDEA",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            card.front,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        if (card.back.isNotBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                card.back,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
                 }
                 if (card.quote.isNotBlank()) {
                     Spacer(Modifier.height(10.dp))
@@ -761,13 +789,21 @@ private fun CardDetailDialog(
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text("Jump to source")
+                        Text("Jump to source", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 if (card.keywords.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
-                    Text("REGISTER TERMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(card.keywords, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "REGISTER TERMS",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        card.keywords,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 if (linked.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -781,7 +817,10 @@ private fun CardDetailDialog(
                             "${other.indexNumber.ifBlank { "?" }} — ${other.front}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .clickable { onOpenLinked(other) }
                                 .padding(vertical = 4.dp)
                         )
@@ -805,38 +844,65 @@ private fun CardDetailDialog(
                     }
                 }
             }
-            }
         },
+        // All five actions go in one slot: the dialog's own button row wraps
+        // whatever it is given, which on a narrow phone tore the labels apart.
         confirmButton = {
-            Row {
-                TextButton(onClick = onEdit) {
-                    Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Edit")
-                }
-                TextButton(onClick = onAddContext) { Text("+ Context") }
-            }
-        },
-        dismissButton = {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                TextButton(onClick = onLink, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text("Link", maxLines = 1)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DetailAction("Edit", Icons.Outlined.Edit, onEdit)
+                    DetailAction("+ Context", null, onAddContext)
                 }
-                TextButton(onClick = onFindConnections, modifier = Modifier.weight(1f)) {
-                    Text("Connect", maxLines = 1)
-                }
-                IconButton(onClick = onMore) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DetailAction("Link", Icons.Outlined.Link, onLink)
+                    DetailAction("Connect", null, onFindConnections)
+                    IconButton(onClick = onMore) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
+                    }
                 }
             }
         }
     )
+}
+
+/**
+ * One action in the card detail dialog's button bar. Weighted so a row of
+ * actions always fits the dialog width, with the label kept to a single
+ * ellipsised line instead of wrapping into a tower of words.
+ */
+@Composable
+private fun RowScope.DetailAction(
+    label: String,
+    icon: ImageVector?,
+    onClick: () -> Unit
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.weight(1f),
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @Composable
@@ -985,10 +1051,13 @@ private fun LinkCardDialog(
                                 other.front,
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                // Weighted, so a long title ellipsises instead of
+                                // squeezing the "linked" marker out of the row.
+                                modifier = Modifier.weight(1f)
                             )
                             if (other.id in existing) {
-                                Spacer(Modifier.weight(1f))
+                                Spacer(Modifier.width(8.dp))
                                 Text(
                                     "linked",
                                     style = MaterialTheme.typography.labelSmall,
@@ -1019,7 +1088,10 @@ private fun MoveBoxDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to box") },
         text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 boxes.forEach { box ->
                     FilterChip(
                         selected = box == card.box,

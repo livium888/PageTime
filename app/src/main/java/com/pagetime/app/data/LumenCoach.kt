@@ -34,9 +34,9 @@ object LumenCoach {
         ),
         LumenLesson(
             id = "addresses",
-            title = "The address is a line of thought, not a page",
-            body = "Luhmann did start with plain numbers (1, 2, 3…) — each was a new main line, a distinct train of thought. What makes it Zettelkasten is what the suffix does: a note that grows out of a line branches with a letter (1 → 1a), that branch's children get numbers (1a → 1a1), alternating forever (1a1 → 1a1a). A slash (21/2a7) marks a slip filed in one spot that continues a different line — Luhmann's cross-reference. The address is assigned when a slip is filed and never changes, so his references always resolve.",
-            practice = "Look at your box: 1, 2, 3… are main lines; 2a, 2a1 sit under 2 as its branches. Tap a card to see its badge — that identity never moves."
+            title = "A few trunk lines, not one topic per note",
+            body = "The box starts with zero topics. The first note is 1, the next main line 2, then 3 — a handful of trunk lines, never one per subject. Everything else branches off them: a note that grows out of a line branches with a letter (1 → 1a), that branch's children get numbers (1a → 1a1), alternating forever (1a1 → 1a1a). Even with 3,000 notes you still run on a few trunks — 1 for broad human ideas, 2 for the natural sciences, 3 for tools. A slash (21/2a7) marks a slip filed in one spot that continues a different line — Luhmann's cross-reference. The address is assigned when a slip is filed and never changes, so his references always resolve.",
+            practice = "Look at your box: 1, 2, 3… are the trunk lines; 2a, 2a1 sit under 2 as its branches. A new topic is never a new trunk — it's a branch off the note that inspired it."
         ),
         LumenLesson(
             id = "file_behind",
@@ -58,9 +58,9 @@ object LumenCoach {
         ),
         LumenLesson(
             id = "hubs",
-            title = "Let hub notes emerge",
-            body = "When a cluster grew, Luhmann didn't create a category — he wrote a hub slip: a note whose only job is to list the addresses of the notes around one theme, updated as the cluster grows. The structure is discovered from the notes, never imposed before them.",
-            practice = "Spot a theme that now has 3+ cards? File one new card as its hub: one line per related card, using their addresses. Then Link the hub to each."
+            title = "Structure maps: hub notes handle the scale",
+            body = "When a branch grew, Luhmann didn't create a category — he wrote a structure map: a single slip whose only job is to list the addresses where a cluster begins, updated as the cluster grows. The main index points to just 10–20 hubs, and each hub walks you into a whole web of ideas. Structure is discovered from the notes, never imposed before them.",
+            practice = "Spot a theme that now has 3+ cards? File one new card as its hub: one line per starting point, using their addresses. Link the hub to each, then mark it as a hub note from its actions — it now leads the Register, your index."
         ),
         LumenLesson(
             id = "evolution",
@@ -82,7 +82,9 @@ object LumenCoach {
         "Never file by topic — file behind the note it continues.",
         "A new box is a new line of work, not a new folder. Ask \"what does this continue?\" before asking \"where does it live?\"",
         "A link you don't add today is a connection you'll never find later.",
-        "1, 2, 3… are your main lines; 2a and 2a1 branch under 2. Same number, deeper suffix = same train of thought.",
+        "1, 2, 3… are your trunk lines; 2a and 2a1 branch under 2. Same number, deeper suffix = same train of thought.",
+        "A new topic is not a new trunk — it's a branch behind the note that inspired it.",
+        "Your main index should point to 10–20 hub notes, not 3,000 topics.",
         "Quotes are raw material. Your own words are the note.",
         "When a line of notes gets long, that's a chapter of your future book.",
         "Contradictions between slips are features — they mean you're thinking.",
@@ -110,12 +112,12 @@ object LumenCoach {
         if (cards.size >= 4 && linkedCount < cards.size / 2) {
             return "Half your notes float unconnected. Pick one orphan and link it — the web grows one thread at a time."
         }
-        val hasHub = cards.any {
-            it.back.trim().split('\n').size >= 3 &&
-                LumenCapture.linksFromJson(it.linksJson).size >= 2
+        val hubs = cards.filter { it.isHub }
+        if (hubs.isEmpty() && cards.size >= 6) {
+            return "A theme is forming. File one card as its hub: list the starting addresses of that cluster, link the hub to each, then mark it as a hub note."
         }
-        if (!hasHub && cards.size >= 6) {
-            return "A theme is forming. File one hub card: a list of the addresses in that cluster, linked to each."
+        if (hubs.isNotEmpty()) {
+            return "You have ${hubs.size} hub note${if (hubs.size == 1) "" else "s"}. Open the Register and tap a hub to walk into its cluster."
         }
         return "Steady state: capture while reading, file behind the thought it continues, add one link. The box does the rest."
     }

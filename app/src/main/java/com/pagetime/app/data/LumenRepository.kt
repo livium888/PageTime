@@ -65,6 +65,9 @@ class LumenRepository(
 
     fun observeBox(box: Int): Flow<List<LumenCardEntity>> = dao.observeBox(box)
 
+    /** Structure maps (hub notes) across every box, newest first. */
+    fun observeHubs(): Flow<List<LumenCardEntity>> = dao.observeHubs()
+
     fun observeDueCount(now: () -> Long = { System.currentTimeMillis() }): Flow<Int> =
         dao.observeDueCount(now())
 
@@ -214,6 +217,22 @@ class LumenRepository(
                 front = front.trim(),
                 back = back.trim(),
                 keywords = LumenCapture.extractKeywords("$front $back ${existing.quote}"),
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /**
+     * Marks or unmarks a card as a structure map (hub note). The card itself
+     * does not change — the flag only tells the Register to surface it as an
+     * entry point into the cluster it links to.
+     */
+    suspend fun setHub(cardId: String, isHub: Boolean) {
+        val existing = dao.get(cardId) ?: return
+        if (existing.isHub == isHub) return
+        dao.upsert(
+            existing.copy(
+                isHub = isHub,
                 updatedAt = System.currentTimeMillis()
             )
         )

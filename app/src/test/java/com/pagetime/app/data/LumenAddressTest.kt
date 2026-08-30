@@ -351,7 +351,8 @@ class LumenCoachTest {
         id: String,
         links: List<String> = emptyList(),
         snippets: Int = 0,
-        back: String = ""
+        back: String = "",
+        isHub: Boolean = false
     ): LumenCardEntity {
         val now = System.currentTimeMillis()
         return LumenCardEntity(
@@ -369,6 +370,7 @@ class LumenCoachTest {
                 (0 until snippets).map { LumenSnippet("s$it", now, null) }
             ),
             linksJson = LumenCapture.linksToJson(links),
+            isHub = isHub,
             createdAt = now,
             updatedAt = now
         )
@@ -400,6 +402,22 @@ class LumenCoachTest {
             assertTrue(lesson.practice.isNotBlank())
         }
         assertTrue(LumenCoach.lessons.size >= 6)
+    }
+
+    @Test
+    fun `six growing cards with no hub are told to file one`() {
+        val cards = (1..6).map { card("$it", links = listOf("1"), snippets = 1) }
+        val step = LumenCoach.nextStep(cards)
+        assertTrue(step!!.contains("hub", ignoreCase = true))
+    }
+
+    @Test
+    fun `a marked hub is recognized as the index head`() {
+        val cards = (1..6).map { card("$it", links = listOf("1"), snippets = 1) } +
+            card("7", links = listOf("1", "2"), snippets = 1, isHub = true)
+        val step = LumenCoach.nextStep(cards)
+        assertTrue(step!!.contains("hub", ignoreCase = true))
+        assertTrue(step.contains("Register"))
     }
 }
 
@@ -563,5 +581,88 @@ class LumenSearchTest {
     @Test
     fun `an address term finds its whole line`() {
         assertEquals(listOf("1", "2"), ids(LumenSearch.filter(box, "21")))
+    }
+}
+
+class LumenStructureMapTest {
+
+    private fun card(
+        id: String,
+        indexNumber: String,
+        box: Int = 1,
+        front: String = "Note $indexNumber",
+        back: String = "",
+        links: List<String> = emptyList()
+    ): LumenCardEntity {
+        val now = System.currentTimeMillis()
+        return LumenCardEntity(
+            id = id,
+            bookId = "",
+            box = box,
+            indexNumber = indexNumber,
+            front = front,
+            back = back,
+            quote = "",
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            snippetsJson = "[]",
+            linksJson = LumenCapture.linksToJson(links),
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    @Test
+    fun `clusters expand linked roots into their whole lines in shelf order`() {
+        val hub = card("hub", "10", front = "Efficient shapes", links = listOf("c2", "c1"))
+        val c1 = card("c1", "21", front = "Bees build hexagons")
+        val c1a = card("c1a", "21a", front = "Hexagons pack tightly")
+        val c2 = card("c2", "30", front = "Spheres minimize area")
+        val c2a = card("c2a", "30a", front = "Soap bubbles")
+        val c2a1 = card("c2a1", "30a1", front = "Triple junctions")
+        val unrelated = card("u", "5", front = "Unrelated note")
+
+        val clusters = LumenStructureMap.clusters(
+            hub,
+            listOf(hub, unrelated, c2a, c1a, c1, c2a1, c2)
+        )
+
+        // Roots in shelf order (21 before 30), regardless of link order.
+        assertEquals(listOf("21", "30"), clusters.map { it.root.indexNumber })
+        assertEquals(listOf("21", "21a"), clusters[0].steps.map { it.card.indexNumber })
+        assertEquals(listOf("30", "30a", "30a1"), clusters[1].steps.map { it.card.indexNumber })
+        // Unlinked cards are not part of the map, even though they share the box.
+        assertTrue(clusters.none { it.root.id == "u" })
+    }
+
+    @Test
+    fun `render lists the hub heading then each cluster indented under it`() {
+        val hub = card("hub", "10", front = "Efficient shapes", links = listOf("c1"))
+        val c1 = card("c1", "21", front = "Bees build hexagons")
+        val c1a = card("c1a", "21a", front = "Hexagons pack tightly")
+        val text = LumenStructureMap.render(
+            hub,
+            LumenStructureMap.clusters(hub, listOf(hub, c1, c1a))
+        )
+        assertTrue(text.contains("10  Efficient shapes"))
+        assertTrue(text.contains("  21  Bees build hexagons"))
+        assertTrue(text.contains("    21a  Hexagons pack tightly"))
+    }
+
+    @Test
+    fun `a hub with no links has no clusters`() {
+        val hub = card("hub", "10", front = "Empty hub")
+        val other = card("c1", "21")
+        assertTrue(LumenStructureMap.clusters(hub, listOf(hub, other)).isEmpty())
+        assertEquals("10  Empty hub", LumenStructureMap.render(hub, emptyList()))
+    }
+
+    @Test
+    fun `clusters from a hub in one box can point into another box`() {
+        val hub = card("hub", "10", box = 1, front = "Cross-box hub", links = listOf("c2"))
+        val c2 = card("c2", "1", box = 2, front = "Other line")
+        val clusters = LumenStructureMap.clusters(hub, listOf(hub, c2))
+        assertEquals(listOf("1"), clusters.map { it.root.indexNumber })
     }
 }

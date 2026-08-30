@@ -2,6 +2,7 @@ package com.pagetime.app.ui.screens.lumen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -64,7 +68,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -76,12 +89,14 @@ import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenCoach
-import com.pagetime.app.data.LumenLesson
 import com.pagetime.app.data.LumenManuscript
+import com.pagetime.app.data.LumenReferences
 import com.pagetime.app.data.LumenRegister
 import com.pagetime.app.data.LumenRepository
 import com.pagetime.app.data.LumenRole
 import com.pagetime.app.data.LumenSearch
+import com.pagetime.app.data.LumenTree
+import com.pagetime.app.data.LumenStructureMap
 import com.pagetime.app.data.LumenThread
 import com.pagetime.app.data.ManuscriptEntry
 import com.pagetime.app.data.local.LumenCardEntity
@@ -95,7 +110,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -125,8 +139,16 @@ class LumenViewModel(
     val dueCount = repository.observeDueCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    /** Structure maps (hub notes) across every box — the main index's heads. */
+    val hubs = repository.observeHubs()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun selectBox(box: Int) {
         _selectedBox.value = box
+    }
+
+    fun setHub(cardId: String, isHub: Boolean) {
+        viewModelScope.launch { repository.setHub(cardId, isHub) }
     }
 
     suspend fun boxRange(): IntRange = repository.boxRange()
@@ -215,6 +237,24 @@ fun LumenCardsScreen(
     val selectedBox by vm.selectedBox.collectAsStateWithLifecycle()
     val boxes by vm.boxes.collectAsStateWithLifecycle()
     val dueCount by vm.dueCount.collectAsStateWithLifecycle()
+    val hubs by vm.hubs.collectAsStateWithLifecycle()
+
+    // True Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210), not Room's
+    // lexicographic indexNumber sort (which scatters branches and puts 10
+    // before 2). Shared by the shelf list, the map, and slip-by-slip walking.
+    val shelfCards = remember(cards) { LumenAddress.shelfOrder(cards) }
+
+    // Every card knows its thread: the trunk line it hangs under and that
+    // line's name — the trunk slip's title, exactly like "21 Literatur" in
+    // Luhmann's box. Branch cards show it so you always know what line of
+    // thought you're reading; the trunk's title is its name, editable like
+    // any slip (edit the thought, never the address).
+    val threadLabels = remember(shelfCards) {
+        shelfCards.associate { card ->
+            val path = LumenAddress.threadPath(card.indexNumber, shelfCards)
+            card.id to if (path.size > 1) path.first() else null
+        }
+    }
 
     var detailCard by remember { mutableStateOf<LumenCardEntity?>(null) }
     var editing by remember { mutableStateOf<LumenCardEntity?>(null) }
@@ -232,7 +272,9 @@ fun LumenCardsScreen(
     var sources by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var mapMode by remember { mutableStateOf(false) }
     var pullingThread by remember { mutableStateOf<LumenCardEntity?>(null) }
+    var structureMapHub by remember { mutableStateOf<LumenCardEntity?>(null) }
     var writing by remember { mutableStateOf(false) }
     var writeCards by remember { mutableStateOf<List<LumenCardEntity>?>(null) }
 
@@ -254,7 +296,7 @@ fun LumenCardsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { searching = !searching; if (!searching) searchQuery = "" }) {
+                    IconButton(onClick = { searching = !searching; mapMode = false; if (!searching) searchQuery = "" }) {
                         Icon(
                             if (searching) Icons.Outlined.SearchOff else Icons.Outlined.Search,
                             contentDescription = "Search"
@@ -296,6 +338,25 @@ fun LumenCardsScreen(
                 dueCount = dueCount,
                 onSelect = { vm.selectBox(it) }
             )
+            if (!searching) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = !mapMode,
+                        onClick = { mapMode = false },
+                        label = { Text("Shelf") }
+                    )
+                    FilterChip(
+                        selected = mapMode,
+                        onClick = { mapMode = true },
+                        label = { Text("Map") }
+                    )
+                }
+            }
             if (searching) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -307,14 +368,19 @@ fun LumenCardsScreen(
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 )
             }
-            val visibleCards = remember(cards, searchQuery) {
-                // True Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210),
-                // not Room's lexicographic indexNumber sort (which scatters
-                // branches and puts 10 before 2). Deep lines stay adjacent and
-                // the box reads like the wooden Zettelkasten.
-                LumenAddress.shelfOrder(LumenSearch.filter(cards, searchQuery))
+            val visibleCards = remember(shelfCards, searchQuery) {
+                LumenSearch.filter(shelfCards, searchQuery)
             }
-            if (visibleCards.isEmpty()) {
+            if (mapMode && visibleCards.isNotEmpty()) {
+                // The Inhaltsübersicht: the box as a tree of trunk lines and
+                // branches, like the official archive's content overview.
+                val roots = remember(shelfCards) { LumenTree.build(shelfCards) }
+                BoxMapView(
+                    roots = roots,
+                    onOpen = { detailCard = it },
+                    onEdit = { editing = it }
+                )
+            } else if (visibleCards.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -364,6 +430,9 @@ fun LumenCardsScreen(
                             card = card,
                             indentDp = (depth * 14).dp,
                             isBranch = depth > 0,
+                            threadLabel = threadLabels[card.id]?.let { (address, title) ->
+                                "$address · $title"
+                            },
                             onOpen = { detailCard = card },
                             onDelete = { deleting = card }
                         )
@@ -374,8 +443,22 @@ fun LumenCardsScreen(
     }
 
     detailCard?.let { card ->
+        // The archive's slip view walks the line slip by slip (‹ ›) and shows
+        // the branch the slip sits on; both come from the same shelf order.
+        val indexInShelf = shelfCards.indexOfFirst { it.id == card.id }
+        val previous = if (indexInShelf > 0) shelfCards[indexInShelf - 1] else null
+        val next = if (indexInShelf in 0 until shelfCards.size - 1) shelfCards[indexInShelf + 1] else null
+        val threadPath = remember(card.id, cards) {
+            LumenAddress.threadPath(card.indexNumber, cards).map { it.first }
+        }
         CardDetailDialog(
             card = card,
+            previous = previous,
+            next = next,
+            onPrevious = { if (previous != null) detailCard = previous },
+            onNext = { if (next != null) detailCard = next },
+            threadPath = threadPath,
+            boxCards = cards,
             onClose = { detailCard = null },
             onEdit = {
                 editing = card
@@ -475,6 +558,7 @@ fun LumenCardsScreen(
             card = card,
             allCards = cards.filter { it.box == card.box },
             title = "File ${card.indexNumber.ifBlank { "?" }} behind…",
+            sortByRecency = true,
             onLink = { behind ->
                 vm.fileBehind(card.id, behind.id)
                 filingBehind = null
@@ -489,6 +573,7 @@ fun LumenCardsScreen(
             canMove = boxes.size > 1,
             onFileBehind = { moreActions = null; filingBehind = card },
             onPullThread = { moreActions = null; pullingThread = card },
+            onToggleHub = { moreActions = null; vm.setHub(card.id, !card.isHub) },
             onMove = { moreActions = null; moving = card },
             onDelete = { moreActions = null; deleting = card },
             onDismiss = { moreActions = null }
@@ -549,10 +634,6 @@ fun LumenCardsScreen(
     if (studying) {
         StudyDialog(
             cards = cards,
-            onFileBehind = { card ->
-                studying = false
-                composingBehind = card
-            },
             onDismiss = { studying = false }
         )
     }
@@ -560,11 +641,24 @@ fun LumenCardsScreen(
     if (register) {
         RegisterDialog(
             cards = cards,
+            hubs = hubs,
             onOpenCard = { card ->
                 register = false
                 detailCard = card
             },
+            onOpenHub = { hub ->
+                register = false
+                structureMapHub = hub
+            },
             onDismiss = { register = false }
+        )
+    }
+
+    structureMapHub?.let { hub ->
+        StructureMapDialog(
+            hub = hub,
+            onLoad = { callback -> vm.allCards(callback) },
+            onDismiss = { structureMapHub = null }
         )
     }
 
@@ -626,6 +720,7 @@ private fun LumenCardRow(
     card: LumenCardEntity,
     indentDp: androidx.compose.ui.unit.Dp = 0.dp,
     isBranch: Boolean = false,
+    threadLabel: String? = null,
     onOpen: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -666,6 +761,20 @@ private fun LumenCardRow(
                         )
                         .padding(horizontal = 8.dp, vertical = 2.dp)
                 )
+                if (card.isHub) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "HUB",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.tertiaryContainer,
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
                 Text(
                     "BOX ${card.box}",
@@ -691,13 +800,24 @@ private fun LumenCardRow(
                     )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                    card.front,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 3,
+
+            if (threadLabel != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    threadLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                card.front,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
             if (card.back.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -730,9 +850,139 @@ private fun LumenCardRow(
     }
 }
 
+/**
+ * The Inhaltsübersicht: the box as a tree of trunk lines and branches, like
+ * the official archive's content overview. Trunks carry their title (the
+ * front of the first slip, e.g. "21 Literatur") and their size; branches
+ * expand in place, and tapping a slip opens it.
+ */
+@Composable
+private fun BoxMapView(
+    roots: List<LumenTree.Node>,
+    onOpen: (LumenCardEntity) -> Unit,
+    onEdit: (LumenCardEntity) -> Unit
+) {
+    val expanded = remember { mutableStateOf(mutableSetOf<String>()) }
+    val rows = remember(roots, expanded.value) {
+        val visible = mutableListOf<Pair<LumenTree.Node, Int>>()
+        fun walk(node: LumenTree.Node, depth: Int) {
+            visible.add(node to depth)
+            if (node.card.id in expanded.value) {
+                node.children.forEach { walk(it, depth + 1) }
+            }
+        }
+        roots.forEach { walk(it, 0) }
+        visible
+    }
+    Column(Modifier.fillMaxSize()) {
+        Text(
+            "Trunk lines (1, 2, 3…) are threads — the first slip's title names the line. Edit a trunk to rename it.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            items(rows, key = { it.first.card.id }) { (node, depth) ->
+                val isExpanded = node.card.id in expanded.value
+                MapNodeRow(
+                    node = node,
+                    depth = depth,
+                    expanded = isExpanded,
+                    onToggle = {
+                        if (isExpanded) expanded.value.remove(node.card.id)
+                        else expanded.value.add(node.card.id)
+                    },
+                    onOpen = { onOpen(node.card) },
+                    onEdit = { onEdit(node.card) }
+                )
+            }
+        }
+    }
+}
+
+/** One row of the map: chevron, address, title, size, and a rename pencil. */
+@Composable
+private fun MapNodeRow(
+    node: LumenTree.Node,
+    depth: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (depth * 18).dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (node.children.isEmpty()) {
+            Spacer(Modifier.size(40.dp))
+        } else {
+            IconButton(onClick = onToggle, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    if (expanded) Icons.Outlined.KeyboardArrowDown
+                    else Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = if (expanded) "Collapse branch" else "Expand branch",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        Text(
+            node.card.indexNumber.ifBlank { "?" },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .background(
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    RoundedCornerShape(6.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+                .clickable(onClick = onOpen)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            node.card.front,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onOpen)
+        )
+        if (node.descendantCount > 0) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "${node.descendantCount}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+            Icon(
+                Icons.Outlined.Edit,
+                contentDescription = "Edit ${node.card.indexNumber.ifBlank { "?" }}",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun CardDetailDialog(
     card: LumenCardEntity,
+    previous: LumenCardEntity? = null,
+    next: LumenCardEntity? = null,
+    onPrevious: () -> Unit = {},
+    onNext: () -> Unit = {},
+    threadPath: List<String> = emptyList(),
+    boxCards: List<LumenCardEntity> = emptyList(),
     onClose: () -> Unit,
     onEdit: () -> Unit,
     onAddContext: () -> Unit,
@@ -760,12 +1010,26 @@ private fun CardDetailDialog(
         title = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onPrevious, enabled = previous != null, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                            contentDescription = "Previous slip",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                     Text(
                         card.indexNumber.ifBlank { "?" },
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(Modifier.width(10.dp))
+                    IconButton(onClick = onNext, enabled = next != null, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = "Next slip",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
                         shape = RoundedCornerShape(50)
@@ -778,7 +1042,16 @@ private fun CardDetailDialog(
                         )
                     }
                 }
-                Spacer(Modifier.height(6.dp))
+                // The branch the slip sits on — the archive's branch visualization.
+                if (threadPath.size > 1) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        threadPath.joinToString(" → "),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
                 Text(
                     "Permanent address · edit the thought, not the identity",
                     style = MaterialTheme.typography.bodySmall,
@@ -800,15 +1073,19 @@ private fun CardDetailDialog(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            card.front,
-                            style = MaterialTheme.typography.titleLarge
+                        ReferencedText(
+                            text = card.front,
+                            boxCards = boxCards,
+                            style = MaterialTheme.typography.titleLarge,
+                            onOpenCard = onOpenLinked
                         )
                         if (card.back.isNotBlank()) {
                             Spacer(Modifier.height(8.dp))
-                            Text(
-                                card.back,
-                                style = MaterialTheme.typography.bodyLarge
+                            ReferencedText(
+                                text = card.back,
+                                boxCards = boxCards,
+                                style = MaterialTheme.typography.bodyLarge,
+                                onOpenCard = onOpenLinked
                             )
                         }
                     }
@@ -870,12 +1147,23 @@ private fun CardDetailDialog(
                         color = MaterialTheme.colorScheme.primary
                     )
                     snippets.forEach { snippet ->
-                        Text(
-                            "${formatDate(snippet.addedAt)} — ${snippet.text}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                "${formatDate(snippet.addedAt)} — ",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            ReferencedText(
+                                text = snippet.text,
+                                boxCards = boxCards,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                onOpenCard = onOpenLinked
+                            )
+                        }
                     }
                 }
             }
@@ -912,12 +1200,73 @@ private fun CardDetailDialog(
     )
 }
 
+/**
+ * Text with Luhmann's Verweisungen made tappable: address-shaped tokens that
+ * resolve to a real card are rendered as underlined links that open that card.
+ * Everything else renders exactly as written. (Clickable spans are handled
+ * manually — this Compose version predates LinkAnnotation — by tagging each
+ * mention with a string annotation and hit-testing the tap position.)
+ */
+@Composable
+private fun ReferencedText(
+    text: String,
+    boxCards: List<LumenCardEntity>,
+    style: TextStyle,
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    onOpenCard: (LumenCardEntity) -> Unit
+) {
+    val byId = remember(boxCards.hashCode()) { boxCards.associateBy { it.id } }
+    val mentions = remember(text, boxCards.hashCode()) { LumenReferences.find(text, boxCards) }
+    val linkColor = MaterialTheme.colorScheme.primary
+    val annotated = remember(text, mentions, linkColor) {
+        buildAnnotatedString {
+            var cursor = 0
+            for (mention in mentions) {
+                append(text.substring(cursor, mention.start))
+                pushStringAnnotation(REFERENCE_TAG, mention.cardId)
+                withStyle(
+                    SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
+                ) {
+                    append(text.substring(mention.start, mention.end))
+                }
+                cursor = mention.end
+            }
+            append(text.substring(cursor))
+        }
+    }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        annotated,
+        style = style,
+        color = color,
+        maxLines = maxLines,
+        onTextLayout = { layout = it },
+        modifier = Modifier
+            .clipToBounds()
+            .pointerInput(annotated) {
+                detectTapGestures { tap ->
+                    val result = layout ?: return@detectTapGestures
+                    val offset = result.getOffsetForPosition(tap)
+                    val cardId = annotated.getStringAnnotations(REFERENCE_TAG, offset, offset)
+                        .firstOrNull()?.item
+                        ?: annotated.getStringAnnotations(REFERENCE_TAG, (offset - 1).coerceAtLeast(0), offset)
+                            .firstOrNull()?.item
+                    cardId?.let { byId[it] }?.let(onOpenCard)
+                }
+            }
+    )
+}
+
+private const val REFERENCE_TAG = "lumen_reference"
+
 @Composable
 private fun CardActionsDialog(
     card: LumenCardEntity,
     canMove: Boolean = false,
     onFileBehind: () -> Unit,
     onPullThread: () -> Unit,
+    onToggleHub: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
@@ -929,6 +1278,10 @@ private fun CardActionsDialog(
             Column(Modifier.fillMaxWidth()) {
                 TextButton(onClick = onFileBehind, modifier = Modifier.fillMaxWidth()) { Text("File behind", maxLines = 1) }
                 TextButton(onClick = onPullThread, modifier = Modifier.fillMaxWidth()) { Text("Pull thread", maxLines = 1) }
+                TextButton(
+                    onClick = onToggleHub,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (card.isHub) "Remove hub marker" else "Mark as hub note", maxLines = 1) }
                 if (canMove) {
                     TextButton(onClick = onMove, modifier = Modifier.fillMaxWidth()) { Text("Move to another box", maxLines = 1) }
                 }
@@ -1029,15 +1382,39 @@ private fun LinkCardDialog(
     allCards: List<LumenCardEntity>,
     onLink: (LumenCardEntity) -> Unit,
     onDismiss: () -> Unit,
-    title: String = "Link \u201C${card.indexNumber}\u201D to…"
+    title: String = "Link \u201C${card.indexNumber}\u201D to…",
+    sortByRecency: Boolean = false
 ) {
     val existing = remember(card.linksJson) { LumenCapture.linksFromJson(card.linksJson) }
-    val candidates = allCards
-        .filter { it.id != card.id }
-        .sortedWith(compareBy<LumenCardEntity> { it.box }.thenBy { it.indexNumber })
+    val candidates = if (sortByRecency) {
+        // Filing is a thought connection: the notes you recently wrote are the
+        // ones this idea continues, so they lead the picker.
+        allCards
+            .filter { it.id != card.id }
+            .sortedWith(
+                compareByDescending<LumenCardEntity> { it.updatedAt }.thenBy { it.indexNumber }
+            )
+    } else {
+        allCards
+            .filter { it.id != card.id }
+            .sortedWith(compareBy<LumenCardEntity> { it.box }.thenBy { it.indexNumber })
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            if (sortByRecency) {
+                Column {
+                    Text(title)
+                    Text(
+                        "Pick the note this thought continues — it gets the next address in that branch. Recently touched first.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Text(title)
+            }
+        },
         text = {
             if (candidates.isEmpty()) {
                 Text("No other cards to link yet.")
@@ -1171,7 +1548,6 @@ private fun ComposeCardDialog(
 @Composable
 private fun StudyDialog(
     cards: List<LumenCardEntity>,
-    onFileBehind: (LumenCardEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
     var lessonIndex by remember { mutableStateOf(0) }
@@ -1256,7 +1632,9 @@ private fun StudyDialog(
 @Composable
 private fun RegisterDialog(
     cards: List<LumenCardEntity>,
+    hubs: List<LumenCardEntity> = emptyList(),
     onOpenCard: (LumenCardEntity) -> Unit,
+    onOpenHub: (LumenCardEntity) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val entries = remember(cards.hashCode()) { LumenRegister.build(cards) }
@@ -1265,7 +1643,7 @@ private fun RegisterDialog(
         onDismissRequest = onDismiss,
         title = { Text("Register") },
         text = {
-            if (entries.isEmpty()) {
+            if (entries.isEmpty() && hubs.isEmpty()) {
                 Text(
                     "The register grows by itself as you capture cards — every keyword gets an entry pointing at its address.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -1273,6 +1651,58 @@ private fun RegisterDialog(
                 )
             } else {
                 LazyColumn {
+                    // The main index points to hub notes first — Luhmann's
+                    // index walked you to 10–20 structure maps, not thousands
+                    // of topics.
+                    if (hubs.isNotEmpty()) {
+                        item(key = "hub-header") {
+                            Column(Modifier.padding(vertical = 4.dp)) {
+                                Text(
+                                    "HUB NOTES — STRUCTURE MAPS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    "Your index points here: tap a hub to walk into its cluster.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        items(hubs, key = { it.id }) { hub ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenHub(hub) }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Outlined.AccountTree,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    hub.indexNumber.ifBlank { "?" },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    hub.front,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        item(key = "hub-divider") {
+                            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        }
+                    }
                     items(entries, key = { it.keyword }) { entry ->
                         val firstCard = entry.cardIds.firstNotNullOfOrNull { byId[it] }
                         Row(
@@ -1359,6 +1789,97 @@ private fun ThreadDialog(
                     copied = true
                 }
             ) { Text(if (copied) "Copied" else "Copy outline") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+/**
+ * A structure map: the hub note at the top, then each cluster it links to —
+ * every starting point expanded into its whole line in shelf order. The hub
+ * is a mini table of contents; the map walks you into the web of ideas.
+ */
+@Composable
+private fun StructureMapDialog(
+    hub: LumenCardEntity,
+    onLoad: ((List<LumenCardEntity>) -> Unit) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var all by remember(hub.id) { mutableStateOf<List<LumenCardEntity>?>(null) }
+    androidx.compose.runtime.LaunchedEffect(hub.id) { onLoad { all = it } }
+    val clusters = remember(hub.id, all?.hashCode()) {
+        all?.let { LumenStructureMap.clusters(hub, it) } ?: emptyList()
+    }
+    val rendered = remember(hub.id, clusters.hashCode()) {
+        LumenStructureMap.render(hub, clusters)
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Outlined.AccountTree,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Structure map — ${hub.indexNumber.ifBlank { "?" }}")
+                }
+                Text(
+                    "${clusters.size} cluster${if (clusters.size == 1) "" else "s"} linked from this hub note",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            if (all == null) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                Column {
+                    if (clusters.isEmpty()) {
+                        Text(
+                            "This hub has no starting points yet — open its details and Link it to the cards where each cluster begins.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            rendered,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier
+                                .verticalScroll(rememberScrollState())
+                                .heightIn(max = 360.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (clusters.isNotEmpty()) {
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(
+                            android.content.ClipData.newPlainText("Lumen structure map", rendered)
+                        )
+                        copied = true
+                    }
+                ) { Text(if (copied) "Copied" else "Copy outline") }
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Close") }

@@ -164,11 +164,10 @@ class LumenRepository(
     suspend fun saveManual(box: Int, front: String, back: String, behindCardId: String? = null): LumenCardEntity {
         val now = System.currentTimeMillis()
         val boxNumber = box.coerceAtLeast(1)
+        val existingIndexes = dao.indexNumbersInBox(boxNumber)
         val behind = behindCardId?.let { dao.get(it) }?.takeIf { it.box == boxNumber }
-        val address = LumenAddress.nextAddress(
-            dao.indexNumbersInBox(boxNumber),
-            behind?.indexNumber
-        )
+        val resolvedBehind = behind?.let { LumenAddress.resolveExisting(existingIndexes, it.indexNumber) }
+        val address = LumenAddress.nextAddress(existingIndexes, resolvedBehind)
         val card = LumenCardEntity(
             id = UUID.randomUUID().toString(),
             bookId = "",
@@ -225,10 +224,9 @@ class LumenRepository(
         val card = dao.get(cardId) ?: return
         val behind = dao.get(behindCardId) ?: return
         if (card.id == behind.id || card.box != behind.box) return
-        val address = LumenAddress.nextAddress(
-            dao.indexNumbersInBox(card.box).filterNot { it == card.indexNumber },
-            behind.indexNumber
-        )
+        val existingIndexes = dao.indexNumbersInBox(card.box).filterNot { it == card.indexNumber }
+        val resolvedBehind = LumenAddress.resolveExisting(existingIndexes, behind.indexNumber)
+        val address = LumenAddress.nextAddress(existingIndexes, resolvedBehind)
         dao.upsert(card.copy(indexNumber = address, updatedAt = System.currentTimeMillis()))
     }
 

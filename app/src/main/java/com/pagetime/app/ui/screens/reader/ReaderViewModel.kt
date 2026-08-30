@@ -408,7 +408,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun captureLumenCard() {
         val b = _book.value ?: return
-        if (_lumenCapturing.value || _lumenDraft.value != null) return
+        // Clear any stuck state from a prior interrupted capture rather than
+        // silently bailing out — a cancelled coroutine can leave _lumenCapturing
+        // true forever, making every later capture a no-op (spinner spins, no
+        // dialog). The draft dialog is the real gate; if it's already open we
+        // just don't start another capture.
+        if (_lumenDraft.value != null) return
         _lumenCapturing.value = true
         viewModelScope.launch {
             try {

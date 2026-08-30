@@ -50,6 +50,14 @@ class LumenAddressTest {
     }
 
     @Test
+    fun `picker address is resolved case insensitively before generating child`() {
+        val existing = listOf("8", "1A")
+        val selected = LumenAddress.resolveExisting(existing, "1a")
+        assertEquals("1A", selected)
+        assertEquals("1A1", LumenAddress.nextAddress(existing, selected))
+    }
+
+    @Test
     fun `adding another card behind 1a keeps growing that exact line`() {
         // The reported bug: filing behind a branched slip (1a) must continue
         // to produce new addresses on THAT line, never the same one and never

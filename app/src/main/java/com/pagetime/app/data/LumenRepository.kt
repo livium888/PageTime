@@ -132,9 +132,9 @@ class LumenRepository(
         afterIndex: String? = null
     ): LumenCardEntity {
         val now = System.currentTimeMillis()
-        val address = LumenAddress.nextAddress(
-            dao.indexNumbersInBox(box.coerceAtLeast(1)), afterIndex
-        )
+        val existingIndexes = dao.indexNumbersInBox(box.coerceAtLeast(1))
+        val resolvedAfterIndex = LumenAddress.resolveExisting(existingIndexes, afterIndex)
+        val address = LumenAddress.nextAddress(existingIndexes, resolvedAfterIndex)
         val card = LumenCardEntity(
             id = UUID.randomUUID().toString(),
             bookId = book.id,
@@ -597,7 +597,8 @@ object LumenAddress {
         // Children alternate by depth, like Luhmann's real addresses (21/2a7):
         // behind a number-ending slip the child is lettered (21 → 21a, 21b),
         // behind a letter-ending slip the child is numbered (21a → 21a1).
-        val nextChild = nextChildVariant(base, taken)
+        val canonicalBase = taken.firstOrNull { normalize(it) == normalize(base) } ?: base
+        val nextChild = nextChildVariant(canonicalBase, taken)
         if (nextChild != null) return nextChild
         // 26 direct letters exhausted: branch deeper (21z → 21z1).
         var m = 1
@@ -616,7 +617,8 @@ object LumenAddress {
     private fun nextChildVariant(base: String, taken: Set<String>): String? {
         // Only direct children belong to this insertion point. Descendants such
         // as 1a1 must not be mistaken for another child of 1a (or of 1).
-        val directChildren = taken.filter { isDirectChildOf(it, base) }
+        val normalizedBase = normalize(base)
+        val directChildren = taken.filter { isDirectChildOf(normalize(it), normalizedBase) }
         return if (base.lastOrNull()?.isLetter() == true) {
             val highest = directChildren
                 .map { it.substring(base.length) }
@@ -647,6 +649,15 @@ object LumenAddress {
         } else {
             remainder.length == 1 && remainder[0] in 'a'..'z'
         }
+    }
+
+    /** Normalizes picker input so 1A, 1a, and 1a1 resolve to the stored address. */
+    fun normalize(address: String): String = address.trim().lowercase()
+
+    /** Resolves a user-selected address case-insensitively against persisted cards. */
+    fun resolveExisting(existing: List<String>, selected: String?): String? {
+        val normalized = selected?.let(::normalize)?.takeIf { it.isNotBlank() } ?: return null
+        return existing.firstOrNull { normalize(it) == normalized }
     }
 
     /** The part after the box's leading number, e.g. "2a7" from "21/2a7". */

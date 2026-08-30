@@ -44,6 +44,76 @@ class LumenAddressTest {
     }
 
     @Test
+    fun `adding another card behind 1a keeps growing that exact line`() {
+        // The reported bug: filing behind a branched slip (1a) must continue
+        // to produce new addresses on THAT line, never the same one and never
+        // a detached top-level number.
+        var taken = listOf("1", "1a")
+        assertEquals("1a1", LumenAddress.nextAddress(taken, "1a"))
+        taken = taken + "1a1"
+        // Again behind 1a → the next sibling on the same line.
+        assertEquals("1a2", LumenAddress.nextAddress(taken, "1a"))
+        taken = taken + "1a2"
+        // Behind the branch root again → a sibling of the letters, not a repeat.
+        assertEquals("1b", LumenAddress.nextAddress(taken, "1"))
+        // Behind a grandchild → nests deeper on the 1a line.
+        assertEquals("1a1a", LumenAddress.nextAddress(taken, "1a1"))
+        taken = taken + "1b" + "1a1a"
+        val all = taken.toSet()
+        assertEquals(taken.size, all.size)
+    }
+
+    @Test
+    fun `filing at arbitrary depth never repeats an existing address`() {
+        // Simulate "a million cards one after another": each filing, whether a
+        // top-level continuation or a branch behind an existing slip (going
+        // arbitrarily deep), must yield a brand-new stable address. The concern
+        // is that a scheme breaks past a few levels — it must hold indefinitely.
+        var taken = emptyList<String>()
+        val seen = mutableSetOf<String>()
+        repeat(150) { i ->
+            val target = when {
+                taken.isEmpty() -> null
+                i % 4 == 0 -> null // top-level continuation
+                i % 10 == 0 -> taken.last() // follow the newest card down a line
+                else -> taken[(i * 7 + 3) % taken.size] // branch behind something
+            }
+            val next = LumenAddress.nextAddress(taken, target)
+            assertTrue("Reused $next at step $i", next !in seen)
+            seen.add(next)
+            taken = taken + next
+        }
+        assertTrue(taken.size == seen.size && taken.size == 150)
+    }
+
+    @Test
+    fun `shelf order keeps deep branches adjacent and numeric siblings after their root`() {
+        val cards = listOf(
+            card("210", "Numeric sibling"),
+            card("22", "Main line b"),
+            card("21a", "Child a"),
+            card("2", "Main line two"),
+            card("21", "Main line"),
+            card("21a1", "Grandchild"),
+            card("10", "Tenth main"),
+            card("21b", "Child b"),
+            card("21a1a", "Great-grandchild")
+        )
+        val order = LumenAddress.shelfOrder(cards).map { it.indexNumber }
+        assertEquals(
+            listOf("2", "10", "21", "21a", "21a1", "21a1a", "21b", "22", "210"),
+            order
+        )
+    }
+
+    private fun containsDistinct(values: List<String>): Boolean {
+        val set = values.toSet()
+        return set.size == values.size
+    }
+
+    private fun <T> List<T>.randomIndexed(): T = this[size - 1 - (size % 5)]
+
+    @Test
     fun `exhausted alphabet branches deeper under the last letter`() {
         val alphabet = "abcdefghijklmnopqrstuvwxyz"
         val taken = (0 until 26).map { "21${alphabet[it]}" }.toSet()

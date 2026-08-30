@@ -63,6 +63,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -1700,6 +1701,17 @@ private fun StatRow(label: String, value: String) {
     }
 }
 
+/** Small section label inside the File-behind menu. */
+@Composable
+private fun MenuHeader(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+    )
+}
+
 @Composable
 private fun LumenDraftDialog(
     draft: LumenDraft,
@@ -1712,6 +1724,7 @@ private fun LumenDraftDialog(
     var back by remember(draft) { mutableStateOf(draft.back) }
     var fileBehind by remember(draft) { mutableStateOf<LumenCardEntity?>(null) }
     var filingMenu by remember(draft) { mutableStateOf(false) }
+    var filingSearch by remember(draft) { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1805,25 +1818,68 @@ private fun LumenDraftDialog(
                         }
                         DropdownMenu(
                             expanded = filingMenu,
-                            onDismissRequest = { filingMenu = false }
+                            onDismissRequest = { filingMenu = false },
+                            modifier = Modifier.heightIn(max = 520.dp)
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("End of box") },
-                                onClick = {
-                                    fileBehind = null
-                                    filingMenu = false
-                                }
-                            )
-                            suggestions.forEach { card ->
+                            Column(Modifier.verticalScroll(rememberScrollState())) {
                                 DropdownMenuItem(
-                                    text = {
-                                        FilingItem(card = card, boxCards = boxCards)
-                                    },
+                                    text = { Text("End of box") },
                                     onClick = {
-                                        fileBehind = card
+                                        fileBehind = null
                                         filingMenu = false
                                     }
                                 )
+                                if (suggestions.isNotEmpty()) {
+                                    HorizontalDivider()
+                                    MenuHeader("SUGGESTED FOR THIS IDEA")
+                                    suggestions.forEach { card ->
+                                        DropdownMenuItem(
+                                            text = { FilingItem(card = card, boxCards = boxCards) },
+                                            onClick = {
+                                                fileBehind = card
+                                                filingMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                                val inBox = boxCards.filter { it.box == 1 }
+                                if (LumenAddress.shelfOrder(inBox).isNotEmpty()) {
+                                    HorizontalDivider()
+                                    MenuHeader("BROWSE ALL LINES")
+                                    OutlinedTextField(
+                                        value = filingSearch,
+                                        onValueChange = { filingSearch = it },
+                                        placeholder = { Text("Search address or title…") },
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    )
+                                    val query = filingSearch.trim().lowercase()
+                                    val browse = LumenAddress.shelfOrder(inBox).filter { card ->
+                                        query.isEmpty() ||
+                                            card.indexNumber.lowercase().contains(query) ||
+                                            card.front.lowercase().contains(query)
+                                    }
+                                    browse.forEach { card ->
+                                        DropdownMenuItem(
+                                            text = { FilingItem(card = card, boxCards = boxCards) },
+                                            onClick = {
+                                                fileBehind = card
+                                                filingMenu = false
+                                            }
+                                        )
+                                    }
+                                    if (browse.isEmpty()) {
+                                        Text(
+                                            "No note in the box matches that search.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(16.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

@@ -642,6 +642,16 @@ object LumenAddress {
     }
 
     /**
+     * Cards in true Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210).
+     * Files straight into the list the way Luhmann physically stacked slips —
+     * never the lexicographic string order a database would give you (which
+     * would put 10 before 2 and scatter deep branches). Room/DAO string sorts
+     * can't do this, so any long-lived box view should route through here.
+     */
+    fun shelfOrder(cards: List<LumenCardEntity>): List<LumenCardEntity> =
+        cards.sortedWith(compareBy(COMPARATOR) { it.indexNumber })
+
+    /**
      * How deep [indexNumber] sits in its line: the number of cards above it
      * that are its proper ancestors. A main slip (21, 22…) has depth 0, a
      * direct child letter is depth 1 (21a), a grandchild 2 (21a1), and so on.

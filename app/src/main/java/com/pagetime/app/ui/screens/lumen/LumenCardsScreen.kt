@@ -308,7 +308,11 @@ fun LumenCardsScreen(
                 )
             }
             val visibleCards = remember(cards, searchQuery) {
-                LumenSearch.filter(cards, searchQuery)
+                // True Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210),
+                // not Room's lexicographic indexNumber sort (which scatters
+                // branches and puts 10 before 2). Deep lines stay adjacent and
+                // the box reads like the wooden Zettelkasten.
+                LumenAddress.shelfOrder(LumenSearch.filter(cards, searchQuery))
             }
             if (visibleCards.isEmpty()) {
                 Box(

@@ -72,6 +72,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenCoach
@@ -349,8 +350,16 @@ fun LumenCardsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(visibleCards, key = { it.id }) { card ->
+                        // Reveal the branch tree: slips filed behind a card sit
+                        // indented under it, so the box reads as lines of thought
+                        // (21 → 21a → 21a1) instead of a flat 1,2,3 count.
+                        val depth = remember(card.indexNumber, visibleCards.hashCode()) {
+                            LumenAddress.branchDepth(card.indexNumber, visibleCards)
+                        }
                         LumenCardRow(
                             card = card,
+                            indentDp = (depth * 14).dp,
+                            isBranch = depth > 0,
                             onOpen = { detailCard = card },
                             onDelete = { deleting = card }
                         )
@@ -611,6 +620,8 @@ private fun BoxTabs(
 @Composable
 private fun LumenCardRow(
     card: LumenCardEntity,
+    indentDp: androidx.compose.ui.unit.Dp = 0.dp,
+    isBranch: Boolean = false,
     onOpen: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -622,12 +633,23 @@ private fun LumenCardRow(
     }
     Card(
         onClick = onOpen,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentDp),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isBranch) {
+                    Text(
+                        "›",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(12.dp)
+                    )
+                }
                 // The index number is the card's identity — show it prominently.
                 Text(
                     card.indexNumber.ifBlank { "?" },

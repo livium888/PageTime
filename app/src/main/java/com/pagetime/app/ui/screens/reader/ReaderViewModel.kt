@@ -679,7 +679,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private suspend fun saveLocator() {
         val b = _book.value ?: return
         val locator = latestLocator ?: return
-        settingsRepository.saveLocator(b.id, locator.toJSON().toString())
+        val locatorJson = locator.toJSON().toString()
+        settingsRepository.saveLocator(b.id, locatorJson)
+
+        // Keep the in-memory restore locator current. The Readium navigator is
+        // recreated from this whenever the reader screen leaves and re-enters
+        // composition (e.g. viewing Lumen cards then coming back), so a stale
+        // session-open value here is what made the book appear to "jump back"
+        // a few pages. Syncing it on every save makes re-entry resume the exact
+        // spot the reader was actually at.
+        _initialLocatorJson.value = locatorJson
 
         // Keep the legacy DB progress roughly in sync (library UI shows it).
         val publication = _publication.value ?: return

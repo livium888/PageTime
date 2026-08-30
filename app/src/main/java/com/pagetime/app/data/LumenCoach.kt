@@ -34,9 +34,9 @@ object LumenCoach {
         ),
         LumenLesson(
             id = "addresses",
-            title = "Every slip has a fixed address",
-            body = "Luhmann never renumbered. A slip's address (21, 21a, 21a1) is assigned when it's filed and stays for life — his cross-references point at addresses that never move. New notes continue the line (after 21 comes 22); a note that grows out of another branches with a letter (21 → 21a).",
-            practice = "Tap any card in your box and look at its address badge. That identity is permanent — links you make will always resolve."
+            title = "The address is a line of thought, not a page",
+            body = "Luhmann did start with plain numbers (1, 2, 3…) — each was a new main line, a distinct train of thought. What makes it Zettelkasten is what the suffix does: a note that grows out of a line branches with a letter (1 → 1a), that branch's children get numbers (1a → 1a1), alternating forever (1a1 → 1a1a). A slash (21/2a7) marks a slip filed in one spot that continues a different line — Luhmann's cross-reference. The address is assigned when a slip is filed and never changes, so his references always resolve.",
+            practice = "Look at your box: 1, 2, 3… are main lines; 2a, 2a1 sit under 2 as its branches. Tap a card to see its badge — that identity never moves."
         ),
         LumenLesson(
             id = "file_behind",
@@ -82,6 +82,7 @@ object LumenCoach {
         "Never file by topic — file behind the note it continues.",
         "A new box is a new line of work, not a new folder. Ask \"what does this continue?\" before asking \"where does it live?\"",
         "A link you don't add today is a connection you'll never find later.",
+        "1, 2, 3… are your main lines; 2a and 2a1 branch under 2. Same number, deeper suffix = same train of thought.",
         "Quotes are raw material. Your own words are the note.",
         "When a line of notes gets long, that's a chapter of your future book.",
         "Contradictions between slips are features — they mean you're thinking.",

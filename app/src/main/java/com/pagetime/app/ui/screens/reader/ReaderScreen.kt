@@ -893,7 +893,13 @@ private fun ReadiumNavigatorHost(
         }
     )
 
-    LaunchedEffect(fragmentManager, container, publication, initialLocatorReady, initialLocatorJson) {
+    // initialLocatorJson is deliberately NOT a key: the ViewModel now refreshes it
+    // on every position save, and re-keying would tear down and recreate the live
+    // navigator each time. The effect restarts on re-entry anyway (container is a
+    // fresh FrameLayout) and reads the then-current restore locator, so returning
+    // to the reader resumes where the user actually was instead of a stale
+    // session-open position.
+    LaunchedEffect(fragmentManager, container, publication, initialLocatorReady) {
         val fm = fragmentManager ?: return@LaunchedEffect
         if (!initialLocatorReady) return@LaunchedEffect
         val frame = container ?: return@LaunchedEffect

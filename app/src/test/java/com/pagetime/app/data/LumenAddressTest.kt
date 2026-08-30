@@ -127,6 +127,34 @@ class LumenAddressTest {
         assertTrue(LumenAddress.threadPath("", cards).isEmpty())
     }
 
+    @Test
+    fun `branch depth counts proper ancestors within the line`() {
+        val cards = listOf(
+            card("1", "Root one"),
+            card("2", "Systems persist"),
+            card("2a", "Rituals repeat the pattern"),
+            card("2a1", "Rites bind groups"),
+            card("2b", "Another child"),
+            card("210", "Sibling, not a child of 21"),
+            card("22", "Next main line")
+        )
+        assertEquals(0, LumenAddress.branchDepth("1", cards))
+        assertEquals(0, LumenAddress.branchDepth("2", cards))
+        assertEquals(1, LumenAddress.branchDepth("2a", cards))
+        assertEquals(1, LumenAddress.branchDepth("2b", cards))
+        assertEquals(2, LumenAddress.branchDepth("2a1", cards))
+        // 210 is a sibling of 2 in Luhmann's grid, so depth stays 0.
+        assertEquals(0, LumenAddress.branchDepth("210", cards))
+        assertEquals(0, LumenAddress.branchDepth("22", cards))
+    }
+
+    @Test
+    fun `branch depth is zero for blank or absent addresses`() {
+        val cards = listOf(card("21", "Systems persist"))
+        assertEquals(0, LumenAddress.branchDepth("", cards))
+        assertEquals(0, LumenAddress.branchDepth("99", cards))
+    }
+
     private fun card(address: String, front: String): LumenCardEntity =
         LumenCardEntity(
             id = "id-$address",

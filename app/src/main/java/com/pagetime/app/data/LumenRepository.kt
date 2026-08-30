@@ -642,6 +642,26 @@ object LumenAddress {
     }
 
     /**
+     * How deep [indexNumber] sits in its line: the number of cards above it
+     * that are its proper ancestors. A main slip (21, 22…) has depth 0, a
+     * direct child letter is depth 1 (21a), a grandchild 2 (21a1), and so on.
+     * Blank addresses and Luhmann siblings (210 is not a child of 21) are
+     * handled exactly like [isDescendantOf]. Used to reveal the branch tree in
+     * the slip-box list instead of a flat count.
+     */
+    fun branchDepth(
+        indexNumber: String,
+        all: List<LumenCardEntity>
+    ): Int {
+        val address = indexNumber.trim()
+        if (address.isEmpty()) return 0
+        return all.count { other ->
+            val anc = other.indexNumber.trim()
+            anc.isNotEmpty() && anc != address && isDescendantOf(address, anc)
+        }
+    }
+
+    /**
      * True when [candidate] is a strict descendant of [ancestor] in the same
      * line: 21a and 21a1 descend from 21, but 210 does NOT descend from 21
      * (Luhmann's numbers are not decimals — 210 is a sibling of 21, filed

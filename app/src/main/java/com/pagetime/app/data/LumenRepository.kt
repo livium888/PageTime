@@ -614,24 +614,38 @@ object LumenAddress {
      * null when the alphabet is exhausted.
      */
     private fun nextChildVariant(base: String, taken: Set<String>): String? {
-        val siblings = taken.filter { it.length > base.length && it.startsWith(base) }
+        // Only direct children belong to this insertion point. Descendants such
+        // as 1a1 must not be mistaken for another child of 1a (or of 1).
+        val directChildren = taken.filter { isDirectChildOf(it, base) }
         return if (base.lastOrNull()?.isLetter() == true) {
-            val highest = siblings
+            val highest = directChildren
                 .map { it.substring(base.length) }
-                .filter { it.isNotEmpty() && it.all { c -> c.isDigit() } }
                 .mapNotNull { it.toIntOrNull() }
                 .maxOrNull()
             "$base${(highest ?: 0) + 1}"
         } else {
-            val highest = siblings
+            val highest = directChildren
                 .map { it.substring(base.length) }
-                .filter { it.length == 1 && it[0] in 'a'..'z' }
-                .maxOrNull()
+                .singleOrNull { it.length == 1 && it[0] in 'a'..'z' }
+                ?: directChildren
+                    .map { it.substring(base.length) }
+                    .filter { it.length == 1 && it[0] in 'a'..'z' }
+                    .maxOrNull()
             when (highest) {
                 null -> base + "a"
                 "z" -> null
                 else -> base + (highest[0] + 1)
             }
+        }
+    }
+
+    private fun isDirectChildOf(candidate: String, base: String): Boolean {
+        if (!candidate.startsWith(base) || candidate.length <= base.length) return false
+        val remainder = candidate.substring(base.length)
+        return if (base.lastOrNull()?.isLetter() == true) {
+            remainder.isNotEmpty() && remainder.all(Char::isDigit)
+        } else {
+            remainder.length == 1 && remainder[0] in 'a'..'z'
         }
     }
 

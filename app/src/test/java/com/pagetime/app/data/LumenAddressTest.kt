@@ -44,6 +44,12 @@ class LumenAddressTest {
     }
 
     @Test
+    fun `filing repeatedly behind a lettered slip keeps the same line`() {
+        val existing = listOf("1", "1a", "1a1", "1a2", "1a1a")
+        assertEquals("1a3", LumenAddress.nextAddress(existing, "1a"))
+    }
+
+    @Test
     fun `adding another card behind 1a keeps growing that exact line`() {
         // The reported bug: filing behind a branched slip (1a) must continue
         // to produce new addresses on THAT line, never the same one and never
@@ -105,13 +111,6 @@ class LumenAddressTest {
             order
         )
     }
-
-    private fun containsDistinct(values: List<String>): Boolean {
-        val set = values.toSet()
-        return set.size == values.size
-    }
-
-    private fun <T> List<T>.randomIndexed(): T = this[size - 1 - (size % 5)]
 
     @Test
     fun `exhausted alphabet branches deeper under the last letter`() {

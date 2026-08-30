@@ -386,6 +386,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _lumenFileSuggestions = MutableStateFlow<List<LumenCardEntity>>(emptyList())
     val lumenFileSuggestions = _lumenFileSuggestions.asStateFlow()
 
+    /**
+     * The whole slip box at capture time, so the dialog can render each
+     * suggested card's branch path (its address chain) when filing behind.
+     */
+    private val _lumenBoxCards = MutableStateFlow<List<LumenCardEntity>>(emptyList())
+    val lumenBoxCards = _lumenBoxCards.asStateFlow()
+
     private var pendingLumenContext: PendingLumenContext? = null
 
     private data class PendingLumenContext(
@@ -447,8 +454,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 // Where should this new slip continue the line? Ranked locally
                 // against the whole box — Luhmann filed behind the thought it
                 // continued, never at random.
+                val boxCards = lumenRepo.observeAll().first()
+                _lumenBoxCards.value = boxCards
                 _lumenFileSuggestions.value = LumenConnections.filingCandidates(
-                    cards = lumenRepo.observeAll().first(),
+                    cards = boxCards,
                     front = draft.front,
                     back = draft.back,
                     quote = draft.quote,
@@ -488,6 +497,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             } finally {
                 _lumenDraft.value = null
                 _lumenFileSuggestions.value = emptyList()
+                _lumenBoxCards.value = emptyList()
                 pendingLumenContext = null
             }
         }
@@ -496,6 +506,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun dismissLumenDraft() {
         _lumenDraft.value = null
         _lumenFileSuggestions.value = emptyList()
+        _lumenBoxCards.value = emptyList()
         pendingLumenContext = null
     }
 

@@ -83,6 +83,67 @@ class LumenAddressTest {
         assertTrue(!LumenAddress.isDescendantOf("22", "21"))
         assertTrue(!LumenAddress.isDescendantOf("21", "21"))
     }
+
+    @Test
+    fun `thread path walks the branch for a nested card`() {
+        val cards = listOf(
+            card("21", "Systems persist"),
+            card("21a", "Rituals repeat the pattern"),
+            card("21a1", "Rites bind groups"),
+            card("22", "Networks hold")
+        )
+        val path = LumenAddress.threadPath("21a1", cards)
+        assertEquals(
+            listOf("21" to "Systems persist", "21a" to "Rituals repeat the pattern", "21a1" to "Rites bind groups"),
+            path
+        )
+    }
+
+    @Test
+    fun `thread path for a top-level card is just itself`() {
+        val cards = listOf(card("21", "Systems persist"), card("22", "Networks hold"))
+        assertEquals(listOf(cardOf("21", "Systems persist")), LumenAddress.threadPath("21", cards))
+    }
+
+    @Test
+    fun `thread path skips missing middle slips but keeps the numeric root`() {
+        // 21a is only implied (deleted); the path shows 21 then 21a1.
+        val cards = listOf(
+            card("21", "Systems persist"),
+            card("21a1", "Rites bind groups"),
+            card("22", "Networks hold")
+        )
+        val path = LumenAddress.threadPath("21a1", cards)
+        assertEquals(
+            listOf("21" to "Systems persist", "21a1" to "Rites bind groups"),
+            path
+        )
+    }
+
+    @Test
+    fun `thread path ignores numeric siblings and is empty for blank address`() {
+        val cards = listOf(card("21", "Systems persist"), card("210", "A sibling, not a child"))
+        assertEquals(listOf(cardOf("21", "Systems persist")), LumenAddress.threadPath("21", cards))
+        assertTrue(LumenAddress.threadPath("", cards).isEmpty())
+    }
+
+    private fun card(address: String, front: String): LumenCardEntity =
+        LumenCardEntity(
+            id = "id-$address",
+            bookId = "",
+            box = 1,
+            indexNumber = address,
+            front = front,
+            back = "",
+            quote = "",
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            createdAt = 0,
+            updatedAt = 0
+        )
+
+    private fun cardOf(address: String, front: String): Pair<String, String> = address to front
 }
 
 class LumenLinksTest {

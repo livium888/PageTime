@@ -661,4 +661,30 @@ object LumenAddress {
             true
         }
     }
+
+    /**
+     * The line a card sits on, top-down: its ancestor addresses with each
+     * step labelled by that card's front line, ending with [indexNumber]
+     * itself. [all] lets each step resolve to a real card's title; ancestors
+     * that are only implied (their parent slip was deleted) are skipped, so
+     * the branch is shown as it actually exists. Used when filing so picking
+     * "behind" a card reads as branching a line (21 → 21a → 21a1), not just
+     * choosing a bare address. A blank address yields an empty list.
+     */
+    fun threadPath(
+        indexNumber: String,
+        all: List<LumenCardEntity>
+    ): List<Pair<String, String>> {
+        val address = indexNumber.trim()
+        if (address.isEmpty()) return emptyList()
+        val byAddress = all.associateBy { it.indexNumber.trim() }
+        val ancestors = all
+            .mapNotNull { it.indexNumber.trim().takeIf(String::isNotEmpty) }
+            .filter { it != address && isDescendantOf(address, it) }
+            .distinct()
+            .sortedBy { it.length }
+        return (ancestors + address).map { addr ->
+            addr to (byAddress[addr]?.front ?: "")
+        }
+    }
 }

@@ -109,6 +109,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
+import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenDraft
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.MapMoment
@@ -604,6 +605,7 @@ fun ReaderScreen(
         LumenDraftDialog(
             draft = draft,
             suggestions = lumenFileSuggestions,
+            boxCards = vm.lumenBoxCards.collectAsStateWithLifecycle().value,
             onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
@@ -1696,6 +1698,7 @@ private fun StatRow(label: String, value: String) {
 private fun LumenDraftDialog(
     draft: LumenDraft,
     suggestions: List<LumenCardEntity>,
+    boxCards: List<LumenCardEntity>,
     onSave: (front: String, back: String, afterIndex: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1772,14 +1775,22 @@ private fun LumenDraftDialog(
                             contentPadding = PaddingValues(0.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                fileBehind?.let { "${it.indexNumber} — ${it.front}" } ?: "End of box",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
+                            if (fileBehind == null) {
+                                Text(
+                                    "End of box",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            } else {
+                                FilingSelectionLabel(
+                                    modifier = Modifier.weight(1f),
+                                    card = fileBehind!!,
+                                    boxCards = boxCards
+                                )
+                            }
                             Icon(
                                 Icons.Outlined.ExpandMore,
                                 contentDescription = null,
@@ -1800,11 +1811,7 @@ private fun LumenDraftDialog(
                             suggestions.forEach { card ->
                                 DropdownMenuItem(
                                     text = {
-                                        Text(
-                                            "${card.indexNumber} — ${card.front}",
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        FilingItem(card = card, boxCards = boxCards)
                                     },
                                     onClick = {
                                         fileBehind = card
@@ -1828,5 +1835,95 @@ private fun LumenDraftDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Discard") }
         }
+    )
+}
+
+/**
+ * The selected filing target inside the picker: the card's address threaded
+ * through its branch (21 → 21a → 21a1) and its front. Reads like branching a
+ * Luhmann line, not choosing a bare address.
+ */
+@Composable
+private fun FilingSelectionLabel(
+    modifier: Modifier = Modifier,
+    card: LumenCardEntity,
+    boxCards: List<LumenCardEntity>
+) {
+    Column(modifier) {
+        FilingTargetText(card = card, boxCards = boxCards)
+    }
+}
+
+/**
+ * One candidate in the File-behind menu: the front line, with the address
+ * branch it belongs to shown underneath so the user sees which line they'd
+ * continue.
+ */
+@Composable
+private fun FilingItem(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                card.front,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                card.indexNumber,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        ThreadPathText(address = card.indexNumber, boxCards = boxCards)
+    }
+}
+
+/**
+ * Renders the target label inside the picker button: the address line and the
+ * front, both clipped to a single line.
+ */
+@Composable
+private fun FilingTargetText(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
+    val path = LumenAddress.threadPath(card.indexNumber, boxCards)
+    Column {
+        Text(
+            path.map { it.first }.joinToString(" → "),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            card.front,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Muted "in {branch}" breadcrumb under a candidate's front in the menu. */
+@Composable
+private fun ThreadPathText(address: String, boxCards: List<LumenCardEntity>) {
+    val ancestors = LumenAddress.threadPath(address, boxCards).dropLast(1)
+    Text(
+        text = if (ancestors.isEmpty()) {
+            "new main line — ${LumenAddress.relativePart(address)}"
+        } else {
+            buildString {
+                append("continues ")
+                append(ancestors.joinToString(" → ") { "${it.first}: ${it.second}" })
+            }
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
     )
 }

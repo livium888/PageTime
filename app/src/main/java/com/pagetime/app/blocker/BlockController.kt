@@ -73,6 +73,16 @@ class BlockController(
     var balanceSeconds: Long = 0
         private set
 
+    /** Wall-clock time the temporary "block paused" grace ends (0 = none). */
+    @Volatile
+    private var quickDisableUntil = 0L
+
+    /** Wall-clock time the non-cancellable hard lock ends (0 = none). A hard lock
+     *  dominates any grace: while it is active, not even a quick-disable lets the
+     *  user through. */
+    @Volatile
+    private var hardLockUntil = 0L
+
     @Volatile
     var currentBlockedPackage: String? = null
         private set
@@ -131,6 +141,9 @@ class BlockController(
                 val previous = balanceSeconds
                 balanceSeconds = s.browseBalanceSeconds
                 if (previous != balanceSeconds) onBalanceChanged()
+
+                quickDisableUntil = s.quickDisableUntil
+                hardLockUntil = s.hardLockUntil
             }
         }
     }
@@ -141,7 +154,9 @@ class BlockController(
         // block on an empty set. The collector above re-runs this once Room answers.
         if (!blockedPackagesLoaded) return
 
-        val isBlocked = packageName != null && packageName in blockedPackages
+        val isBlocked = packageName != null &&
+            packageName in blockedPackages &&
+            !graceActive()
         if (!isBlocked) {
             if (currentBlockedPackage != null) endSpendSession()
             currentBlockedPackage = null
@@ -225,6 +240,18 @@ class BlockController(
         lastForegroundPackage = null
         stopEnforcing()
         service?.dismissTimeUp()
+    }
+
+    /**
+     * A user-approved temporary override of the block. True only while the soft
+     * quick-disable grace is running AND no hard lock is in force — a hard lock
+     * deliberately makes the block unavoidable, so it wins over any grace that
+     * was set before it. Read on each decision, so no timer needs to be armed.
+     */
+    private fun graceActive(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now < hardLockUntil) return false
+        return now < quickDisableUntil
     }
 
     private fun onBalanceChanged() {

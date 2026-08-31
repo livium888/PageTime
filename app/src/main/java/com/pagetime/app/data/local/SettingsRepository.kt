@@ -21,7 +21,11 @@ data class Settings(
     val browseBalanceSeconds: Long = 0,
     /** Browse seconds earned per 1 second of reading. */
     val ratio: Double = 1.0,
-    val totalReadingSeconds: Long = 0
+    val totalReadingSeconds: Long = 0,
+    /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
+    val quickDisableUntil: Long = 0,
+    /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
+    val hardLockUntil: Long = 0
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
@@ -98,6 +102,9 @@ class SettingsRepository(private val context: Context) {
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
+        val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
+        val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
+
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -309,7 +316,9 @@ class SettingsRepository(private val context: Context) {
         Settings(
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
             ratio = p[Keys.RATIO] ?: 1.0,
-            totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L
+            totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
+            quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
+            hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L
         )
     }
 
@@ -356,6 +365,30 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             p[Keys.BALANCE] = ((p[Keys.BALANCE] ?: 0L) + delta).coerceAtLeast(0L)
         }
+    }
+
+    /** Wall-clock time (epoch millis) until the temporary quick-disable grace ends (0 = none). */
+    suspend fun quickDisableUntil(): Long =
+        context.dataStore.data.first()[Keys.QUICK_DISABLE_UNTIL] ?: 0L
+
+    /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
+    suspend fun hardLockUntil(): Long =
+        context.dataStore.data.first()[Keys.HARD_LOCK_UNTIL] ?: 0L
+
+    suspend fun setQuickDisableUntil(epochMillis: Long) {
+        context.dataStore.edit { it[Keys.QUICK_DISABLE_UNTIL] = epochMillis }
+    }
+
+    suspend fun clearQuickDisableUntil() {
+        context.dataStore.edit { it.remove(Keys.QUICK_DISABLE_UNTIL) }
+    }
+
+    suspend fun setHardLockUntil(epochMillis: Long) {
+        context.dataStore.edit { it[Keys.HARD_LOCK_UNTIL] = epochMillis }
+    }
+
+    suspend fun clearHardLockUntil() {
+        context.dataStore.edit { it.remove(Keys.HARD_LOCK_UNTIL) }
     }
 
     suspend fun addTotalReadingSeconds(delta: Long) {

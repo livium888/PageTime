@@ -405,7 +405,15 @@ class LumenRepository(
         card.front to card.back.ifBlank { card.quote }
 
     /**
-     * The literature box: all captured cards grouped by their source book with
+     * Lossless backup of the whole box as JSON: every slip with its snippets,
+     * links, keywords, hub flag, and FSRS state, addresses verbatim.
+     */
+    suspend fun exportJson(): String {
+        val all = dao.observeAll().first()
+        return LumenBoxExport.toJson(all)
+    }
+
+    /** The literature box: all captured cards grouped by their source book with
      * real titles, one bibliographic slip per source. Pure-local — no AI.
      */
     suspend fun sources(): List<LumenSources.Source> {

@@ -53,6 +53,7 @@ fun BlockedAppsScreen(
     val blockedPackages by viewModel.blockedPackages.collectAsStateWithLifecycle()
     val quickDisableUntil by viewModel.quickDisableUntil.collectAsStateWithLifecycle()
     val hardLockUntil by viewModel.hardLockUntil.collectAsStateWithLifecycle()
+    val blockedStats by viewModel.blockedStats.collectAsStateWithLifecycle()
 
     // A lightweight wall-clock ticker so the countdowns stay live and the switches
     // unlock the moment the hard lock expires — without any persisted-state churn.
@@ -107,6 +108,9 @@ fun BlockedAppsScreen(
                     onCancelQuickDisable = viewModel::cancelQuickDisable,
                     onHardLock = viewModel::hardLock
                 )
+            }
+            item {
+                BlockingStatsCard(stats = blockedStats)
             }
             items(installed, key = { it.packageName }) { app ->
                 val blocked = app.packageName in blockedPackages
@@ -283,6 +287,75 @@ private fun BlockOverrideControls(
                 )
             }
         }
+    }
+}
+
+/**
+ * Last 24 hours of blocking, surfaced as a report card: how many times each
+ * app was bounced and how much browse time it burned. The ledger already
+ * records every BLOCKED and SPENT row; this just reads it back.
+ */
+@Composable
+private fun BlockingStatsCard(stats: List<BlockedAppsViewModel.BlockStat>) {
+    if (stats.isEmpty()) return
+    val totalBlocked = stats.sumOf { it.blockedCount }
+    val totalSpent = stats.sumOf { it.spentSeconds }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Blocking stats — last 24h", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "$totalBlocked time${if (totalBlocked == 1L) "" else "s"} blocked · " +
+                    "${formatMinutes(totalSpent)} of browse time burned in these apps",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            HorizontalDivider()
+            stats.take(8).forEach { stat ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stat.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${stat.blockedCount}× · ${formatMinutes(stat.spentSeconds)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (stats.size > 8) {
+                Text(
+                    "+ ${stats.size - 8} more apps",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun formatMinutes(seconds: Long): String {
+    val minutes = seconds / 60
+    val remainder = seconds % 60
+    return when {
+        minutes <= 0 -> "${remainder}s"
+        remainder == 0L -> "${minutes}m"
+        else -> "${minutes}m ${remainder}s"
     }
 }
 

@@ -5,6 +5,12 @@ import androidx.room.Insert
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
+/** One per-package ledger aggregate (blocked count or spent seconds). */
+data class PackageTotal(
+    val packageName: String,
+    val total: Long
+)
+
 @Dao
 interface UsageEventDao {
 
@@ -28,6 +34,22 @@ interface UsageEventDao {
 
     @Query("SELECT COUNT(*) FROM usage_events WHERE type = :type AND timestamp >= :since")
     fun countSince(type: String, since: Long): Flow<Long>
+
+    /** Blocked counts per package since [since], most-blocked first. */
+    @Query(
+        "SELECT packageName, COUNT(*) AS total FROM usage_events " +
+            "WHERE type = 'BLOCKED' AND timestamp >= :since AND packageName IS NOT NULL " +
+            "GROUP BY packageName ORDER BY total DESC"
+    )
+    fun blockedCountsByPackageSince(since: Long): Flow<List<PackageTotal>>
+
+    /** Browse-seconds burned per package since [since], most-burned first. */
+    @Query(
+        "SELECT packageName, COALESCE(SUM(seconds), 0) AS total FROM usage_events " +
+            "WHERE type IN ('SPENT', 'RECONCILED') AND timestamp >= :since AND packageName IS NOT NULL " +
+            "GROUP BY packageName ORDER BY total DESC"
+    )
+    fun spentSecondsByPackageSince(since: Long): Flow<List<PackageTotal>>
 
     /**
      * Live spend sessions (and reconciled sweeps) with wall-clock windows,

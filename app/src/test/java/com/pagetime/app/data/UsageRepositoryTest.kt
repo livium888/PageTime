@@ -1,6 +1,7 @@
 package com.pagetime.app.data
 
 import app.cash.turbine.test
+import com.pagetime.app.data.local.PackageTotal
 import com.pagetime.app.data.local.UsageEventDao
 import com.pagetime.app.data.local.UsageEventEntity
 import kotlinx.coroutines.flow.Flow
@@ -81,6 +82,32 @@ class UsageRepositoryTest {
     }
 
     @Test
+    fun `per-package stats split blocked counts and spent seconds by app`() = runTest {
+        repo.log(UsageRepository.TYPE_BLOCKED, "com.instagram", 0)
+        repo.log(UsageRepository.TYPE_BLOCKED, "com.instagram", 0)
+        repo.log(UsageRepository.TYPE_BLOCKED, "com.twitter.android", 0)
+        repo.log(UsageRepository.TYPE_SPENT, "com.instagram", 60)
+        repo.log(UsageRepository.TYPE_RECONCILED, "com.twitter.android", 120)
+        repo.log(UsageRepository.TYPE_SPENT, "com.other", 90)
+
+        repo.blockedCountsByPackageToday().test {
+            val counts = awaitItem()
+            assertEquals(listOf("com.instagram", "com.twitter.android"), counts.map { it.packageName })
+            assertEquals(2L, counts.first().total)
+            cancelAndIgnoreRemainingEvents()
+        }
+        repo.spentSecondsByPackageToday().test {
+            val spent = awaitItem()
+            // com.other is in the top-3 launchable apps but never blocked: the
+            // spend list is not filtered to blocked packages — it reports every
+            // app that burned browse time today.
+            assertEquals(setOf("com.instagram", "com.twitter.android", "com.other"), spent.map { it.packageName }.toSet())
+            assertEquals(120L, spent.first { it.packageName == "com.twitter.android" }.total)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `spentWithWindows returns only live spend rows overlapping the cutoff`() = runTest {
         val t = System.currentTimeMillis()
         repo.logSpent("com.instagram", 120, t - 60_000, t) // windowEnd == now → included
@@ -142,6 +169,27 @@ class UsageRepositoryTest {
         override fun countSince(type: String, since: Long): Flow<Long> =
             flow.map { list ->
                 list.count { it.type == type && it.timestamp >= since }.toLong()
+            }
+
+        override fun blockedCountsByPackageSince(since: Long): Flow<List<PackageTotal>> =
+            flow.map { list ->
+                list.filter { it.type == UsageRepository.TYPE_BLOCKED && it.timestamp >= since && it.packageName != null }
+                    .groupingBy { it.packageName!! }
+                    .eachCount()
+                    .map { (pkg, count) -> PackageTotal(pkg, count.toLong()) }
+                    .sortedByDescending { it.total }
+            }
+
+        override fun spentSecondsByPackageSince(since: Long): Flow<List<PackageTotal>> =
+            flow.map { list ->
+                list.filter {
+                    it.type in listOf(UsageRepository.TYPE_SPENT, UsageRepository.TYPE_RECONCILED) &&
+                        it.timestamp >= since && it.packageName != null
+                }
+                    .groupingBy { it.packageName!! }
+                    .fold(0L) { acc, e -> acc + e.seconds }
+                    .map { (pkg, total) -> PackageTotal(pkg, total) }
+                    .sortedByDescending { it.total }
             }
 
         override suspend fun spentWithWindows(type: String, from: Long): List<UsageEventEntity> =

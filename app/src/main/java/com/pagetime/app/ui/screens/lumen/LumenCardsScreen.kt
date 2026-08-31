@@ -1,8 +1,13 @@
 package com.pagetime.app.ui.screens.lumen
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +37,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreVert
@@ -69,16 +75,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -89,7 +106,11 @@ import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenCoach
+import com.pagetime.app.data.LumenGraph
+import com.pagetime.app.data.LumenGraphEdgeKind
+import com.pagetime.app.data.LumenGraphLayout
 import com.pagetime.app.data.LumenManuscript
+import com.pagetime.app.data.LumenMentions
 import com.pagetime.app.data.LumenReferences
 import com.pagetime.app.data.LumenRegister
 import com.pagetime.app.data.LumenRepository
@@ -211,6 +232,14 @@ class LumenViewModel(
         }
     }
 
+    /** Lossless JSON backup of the whole box, built on the IO dispatcher. */
+    fun exportJson(onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            val json = withContext(kotlinx.coroutines.Dispatchers.IO) { repository.exportJson() }
+            onReady(json)
+        }
+    }
+
     class Factory(private val repository: LumenRepository) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -272,11 +301,32 @@ fun LumenCardsScreen(
     var sources by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var mapMode by remember { mutableStateOf(false) }
+    var viewMode by remember { mutableStateOf("shelf") }
     var pullingThread by remember { mutableStateOf<LumenCardEntity?>(null) }
     var structureMapHub by remember { mutableStateOf<LumenCardEntity?>(null) }
     var writing by remember { mutableStateOf(false) }
     var writeCards by remember { mutableStateOf<List<LumenCardEntity>?>(null) }
+
+    // Lossless backup of the whole box: pick a location via the system file
+    // picker, then write the JSON the ViewModel built on the IO dispatcher.
+    val context = LocalContext.current
+    var exportReadyJson by remember { mutableStateOf<String?>(null) }
+    val exportLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            val json = exportReadyJson
+            exportReadyJson = null
+            if (uri == null || json == null) return@rememberLauncherForActivityResult
+            val ok = runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    stream.write(json.toByteArray(Charsets.UTF_8))
+                } != null
+            }.getOrDefault(false)
+            Toast.makeText(
+                context,
+                if (ok) "Box exported" else "Export failed",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
 
     if (writing) {
         ManuscriptEditor(
@@ -296,11 +346,14 @@ fun LumenCardsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { searching = !searching; mapMode = false; if (!searching) searchQuery = "" }) {
+                    IconButton(onClick = { searching = !searching; viewMode = "shelf"; if (!searching) searchQuery = "" }) {
                         Icon(
                             if (searching) Icons.Outlined.SearchOff else Icons.Outlined.Search,
                             contentDescription = "Search"
                         )
+                    }
+                    IconButton(onClick = { exportReadyJson = null; vm.exportJson { json -> exportReadyJson = json; exportLauncher.launch("pagetime-lumen-box.json") } }) {
+                        Icon(Icons.Outlined.FileDownload, contentDescription = "Export box backup")
                     }
                     IconButton(onClick = { sources = true }) {
                         Icon(Icons.Outlined.MenuBook, contentDescription = "Sources")
@@ -346,14 +399,19 @@ fun LumenCardsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilterChip(
-                        selected = !mapMode,
-                        onClick = { mapMode = false },
+                        selected = viewMode == "shelf",
+                        onClick = { viewMode = "shelf" },
                         label = { Text("Shelf") }
                     )
                     FilterChip(
-                        selected = mapMode,
-                        onClick = { mapMode = true },
+                        selected = viewMode == "map",
+                        onClick = { viewMode = "map" },
                         label = { Text("Map") }
+                    )
+                    FilterChip(
+                        selected = viewMode == "graph",
+                        onClick = { viewMode = "graph" },
+                        label = { Text("Graph") }
                     )
                 }
             }
@@ -371,7 +429,12 @@ fun LumenCardsScreen(
             val visibleCards = remember(shelfCards, searchQuery) {
                 LumenSearch.filter(shelfCards, searchQuery)
             }
-            if (mapMode && visibleCards.isNotEmpty()) {
+            if (viewMode == "graph" && visibleCards.isNotEmpty()) {
+                BoxGraphView(
+                    cards = visibleCards,
+                    onOpen = { detailCard = it }
+                )
+            } else if (viewMode == "map" && visibleCards.isNotEmpty()) {
                 // The Inhaltsübersicht: the box as a tree of trunk lines and
                 // branches, like the official archive's content overview.
                 val roots = remember(shelfCards) { LumenTree.build(shelfCards) }
@@ -503,7 +566,17 @@ fun LumenCardsScreen(
             onOpenLinked = { linked ->
                 detailCard = linked
             },
-            loadLinked = { c, cb -> vm.linkedCards(c, cb) }
+            loadLinked = { c, cb -> vm.linkedCards(c, cb) },
+            // Unlinked mentions: other slips that already quote this card's
+            // title (and slips whose titles this card quotes) but were never
+            // linked. One tap turns the echo into a real Verweisung.
+            mentionSuggestions = remember(card.id, cards) {
+                LumenMentions.pointingAt(card, cards, limit = 3) +
+                    LumenMentions.madeBy(card, cards, limit = 3)
+            },
+            onLinkMention = { mention ->
+                vm.link(mention.source.id, mention.target.id)
+            }
         )
     }
 
@@ -904,6 +977,174 @@ private fun BoxMapView(
     }
 }
 
+/**
+ * The box as a web: every slip a node, explicit links solid, the filing
+ * hierarchy dotted, hubs drawn large so clusters of thought stand out. Tap a
+ * node to open the slip; pinch to zoom, drag to pan. Layout is a deterministic
+ * force simulation ([LumenGraphLayout]) run off the main thread.
+ */
+@Composable
+private fun BoxGraphView(
+    cards: List<LumenCardEntity>,
+    onOpen: (LumenCardEntity) -> Unit
+) {
+    val graph = remember(cards.hashCode()) { LumenGraph.build(cards) }
+    val (nodes, edges) = graph
+    var layout by remember(cards.hashCode()) { mutableStateOf<LumenGraphLayout.Result?>(null) }
+    androidx.compose.runtime.LaunchedEffect(cards.hashCode()) {
+        layout = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            LumenGraphLayout.run(nodes, edges)
+        }
+    }
+    val byId = remember(nodes) { nodes.associateBy { it.id } }
+    val cardById = remember(cards) { cards.associateBy { it.id } }
+
+    var zoom by remember { mutableStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var tappedId by remember { mutableStateOf<String?>(null) }
+
+    val density = LocalDensity.current
+    val hubRadius = with(density) { 16.dp.toPx() }
+    val nodeRadius = with(density) { 9.dp.toPx() }
+    val textMeasurer = rememberTextMeasurer()
+    // Colors must be captured outside the Canvas draw lambda, which is not a
+    // composable context and cannot read MaterialTheme itself.
+    val colors = MaterialTheme.colorScheme
+    val labelStyle = TextStyle(fontSize = 9.sp, color = colors.onSurfaceVariant)
+
+    Column(Modifier.fillMaxSize()) {
+        val result = layout
+        if (result == null || result.positions.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            Text(
+                if (result.shownCount < result.totalCount) {
+                    "Web of the box — showing ${result.shownCount} of ${result.totalCount} slips (hubs first). " +
+                        "Tap a dot to open the slip."
+                } else {
+                    "Web of the box — tap a dot to open the slip. Pinch to zoom, drag to pan. " +
+                        "Big dots are hub notes."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { canvasSize = it }
+                    .pointerInput(cards.hashCode()) {
+                        detectTransformGestures { _, gesturePan, gestureZoom, _ ->
+                            zoom = (zoom * gestureZoom).coerceIn(0.5f, 4f)
+                            pan += gesturePan
+                        }
+                    }
+                    .pointerInput(cards.hashCode()) {
+                        detectTapGestures { tap ->
+                            val size = canvasSize
+                            val positions = layout?.positions ?: return@detectTapGestures
+                            if (size.width == 0 || size.height == 0) return@detectTapGestures
+                            val scale = minOf(size.width.toFloat(), size.height.toFloat()) * zoom
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val hit = positions.entries.firstOrNull { (id, p) ->
+                                val node = byId[id] ?: return@firstOrNull false
+                                val r = if (node.isHub) hubRadius else nodeRadius
+                                val sx = (p.first - 0.5f) * scale + center.x + pan.x
+                                val sy = (p.second - 0.5f) * scale + center.y + pan.y
+                                (tap.x - sx) * (tap.x - sx) + (tap.y - sy) * (tap.y - sy) <= r * r * 4
+                            }
+                            if (hit != null) {
+                                tappedId = hit.key
+                                cardById[hit.key]?.let(onOpen)
+                            }
+                        }
+                    }
+            ) {
+                val positions = layout?.positions ?: return@Canvas
+                val scale = minOf(size.width, size.height) * zoom
+                val center = Offset(size.width / 2f, size.height / 2f)
+                fun toScreen(p: Pair<Float, Float>): Offset =
+                    Offset((p.first - 0.5f) * scale, (p.second - 0.5f) * scale) + center + pan
+
+                // Edges first, so nodes sit on top.
+                edges.forEach { edge ->
+                    val a = positions[edge.fromId] ?: return@forEach
+                    val b = positions[edge.toId] ?: return@forEach
+                    val from = toScreen(a)
+                    val to = toScreen(b)
+                    if (edge.kind == LumenGraphEdgeKind.LINK) {
+                        drawLine(
+                            color = colors.primary.copy(alpha = 0.5f),
+                            start = from,
+                            end = to,
+                            strokeWidth = 1.5.dp.toPx(),
+                            cap = StrokeCap.Round
+                        )
+                    } else {
+                        drawLine(
+                            color = colors.onSurfaceVariant.copy(alpha = 0.22f),
+                            start = from,
+                            end = to,
+                            strokeWidth = 1.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))
+                        )
+                    }
+                }
+                positions.forEach { (id, p) ->
+                    val node = byId[id] ?: return@forEach
+                    val screen = toScreen(p)
+                    if (node.isHub) {
+                        drawCircle(
+                            color = colors.tertiary,
+                            radius = hubRadius,
+                            center = screen
+                        )
+                    } else {
+                        drawCircle(
+                            color = colors.primaryContainer,
+                            radius = nodeRadius,
+                            center = screen
+                        )
+                        drawCircle(
+                            color = colors.primary.copy(alpha = 0.6f),
+                            radius = nodeRadius,
+                            center = screen,
+                            style = Stroke(width = 1.dp.toPx())
+                        )
+                    }
+                    if (node.isHub || nodes.size <= 80) {
+                        val label = if (node.address.length > 12) node.address.take(11) + "…" else node.address
+                        drawText(
+                            textMeasurer = textMeasurer,
+                            text = label,
+                            topLeft = Offset(screen.x + nodeRadius + 2.dp.toPx(), screen.y - 6.dp.toPx()),
+                            style = labelStyle
+                        )
+                    }
+                }
+                // Lift the most recently tapped node, so the tap target is visible.
+                tappedId?.let { id ->
+                    val p = positions[id] ?: return@let
+                    val node = byId[id] ?: return@let
+                    val screen = toScreen(p)
+                    drawCircle(
+                        color = colors.primary,
+                        radius = (if (node.isHub) hubRadius else nodeRadius) + 4.dp.toPx(),
+                        center = screen,
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** One row of the map: chevron, address, title, size, and a rename pencil. */
 @Composable
 private fun MapNodeRow(
@@ -995,7 +1236,9 @@ private fun CardDetailDialog(
     onPullThread: () -> Unit,
     onOpenSource: () -> Unit,
     onOpenLinked: (LumenCardEntity) -> Unit,
-    loadLinked: (LumenCardEntity, (List<LumenCardEntity>) -> Unit) -> Unit
+    loadLinked: (LumenCardEntity, (List<LumenCardEntity>) -> Unit) -> Unit,
+    mentionSuggestions: List<LumenMentions.Mention> = emptyList(),
+    onLinkMention: (LumenMentions.Mention) -> Unit = {}
 ) {
     var linked by remember(card.id) { mutableStateOf<List<LumenCardEntity>>(emptyList()) }
     androidx.compose.runtime.LaunchedEffect(card.id) {
@@ -1136,6 +1379,50 @@ private fun CardDetailDialog(
                                 .clickable { onOpenLinked(other) }
                                 .padding(vertical = 4.dp)
                         )
+                    }
+                }
+                if (mentionSuggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Possible connections",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Text(
+                        "Slips that already echo each other in the text but were never linked.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    mentionSuggestions.forEach { mention ->
+                        val pointsAtMe = mention.target.id == card.id
+                        val other = if (pointsAtMe) mention.source else mention.target
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${other.indexNumber.ifBlank { "?" }} — ${other.front}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    if (pointsAtMe) "quotes your title" else "your title quotes it",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(
+                                onClick = { onLinkMention(mention) },
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Text("Link")
+                            }
+                        }
                     }
                 }
                 if (snippets.isNotEmpty()) {

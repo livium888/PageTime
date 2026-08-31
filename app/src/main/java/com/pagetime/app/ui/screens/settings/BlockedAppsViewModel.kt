@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -19,9 +20,18 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
 
     data class InstalledApp(val packageName: String, val label: String)
 
+    /** One row of the blocking stats: how often and how long an app got through. */
+    data class BlockStat(
+        val packageName: String,
+        val label: String,
+        val blockedCount: Long,
+        val spentSeconds: Long
+    )
+
     private val container = (app as PageTimeApp).container
     private val repo = container.blockedAppRepository
     private val settingsRepo = container.settingsRepository
+    private val usageRepo = container.usageRepository
 
     val blockedPackages = repo.observeEnabled()
         .map { apps -> apps.map { it.packageName }.toSet() }
@@ -40,8 +50,33 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
     private val _installed = MutableStateFlow<List<InstalledApp>>(emptyList())
     val installed = _installed.asStateFlow()
 
+    /** Human labels for every launchable app, so stats can name packages. */
+    private val _packageLabels = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /** Blocking stats for the last 24h: blocked count + browse-seconds per app. */
+    val blockedStats = combine(
+        usageRepo.blockedCountsByPackageToday(),
+        usageRepo.spentSecondsByPackageToday()
+    ) { counts, spent ->
+        val spentBy = spent.associate { it.packageName to it.total }
+        val labels = _packageLabels.value
+        counts
+            .map { stat ->
+                BlockStat(
+                    packageName = stat.packageName,
+                    label = labels[stat.packageName] ?: stat.packageName,
+                    blockedCount = stat.total,
+                    spentSeconds = spentBy[stat.packageName] ?: 0L
+                )
+            }
+            .sortedWith(compareByDescending<BlockStat> { it.blockedCount }.thenBy { it.label })
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     init {
-        viewModelScope.launch { _installed.value = loadLaunchableApps(app) }
+        viewModelScope.launch {
+            _installed.value = loadLaunchableApps(app)
+            _packageLabels.value = _installed.value.associate { it.packageName to it.label }
+        }
     }
 
     fun toggle(app: InstalledApp, blocked: Boolean) {

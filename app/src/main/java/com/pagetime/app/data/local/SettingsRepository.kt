@@ -3,6 +3,7 @@ package com.pagetime.app.data.local
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -25,7 +26,9 @@ data class Settings(
     /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
     val quickDisableUntil: Long = 0,
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
-    val hardLockUntil: Long = 0
+    val hardLockUntil: Long = 0,
+    /** Whether the slip box shows newcomer help / confirmations before card actions. */
+    val helpEnabled: Boolean = true
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
@@ -104,6 +107,7 @@ class SettingsRepository(private val context: Context) {
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
+        val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
 
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
@@ -318,8 +322,14 @@ class SettingsRepository(private val context: Context) {
             ratio = p[Keys.RATIO] ?: 1.0,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
-            hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L
+            hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
+            helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true
         )
+    }
+
+    /** Whether the slip box should explain actions before running them. */
+    suspend fun setHelpEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.METHOD_HELP_ENABLED] = value }
     }
 
     val aiSettings: Flow<AiSettings> = context.dataStore.data.map { p ->

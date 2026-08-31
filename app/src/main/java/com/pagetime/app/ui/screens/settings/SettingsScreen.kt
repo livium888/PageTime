@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -67,6 +68,7 @@ fun SettingsScreen(
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
+    val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
     val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
     val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
@@ -146,6 +148,38 @@ fun SettingsScreen(
                 label = "AI usage & statistics",
                 onClick = onAiUsage
             )
+
+            SectionHeader("Slip box")
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Explain slip-box actions", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (helpEnabled) {
+                                "Before Link, Connect, or File behind runs, you'll get a short\n" +
+                                    "explanation and a confirmation. Leave this on while you learn\n" +
+                                    "the Zettelkasten method."
+                            } else {
+                                "Help is off — Link, Connect, and File behind run immediately\n" +
+                                    "with no explanation."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = helpEnabled,
+                        onCheckedChange = { viewModel.setHelpEnabled(it) }
+                    )
+                }
+            }
 
             GeminiSettingsCard(
                 keyInput = geminiKeyInput,

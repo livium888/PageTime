@@ -111,6 +111,7 @@ import com.pagetime.app.data.LumenGraphEdgeKind
 import com.pagetime.app.data.LumenGraphLayout
 import com.pagetime.app.data.LumenManuscript
 import com.pagetime.app.data.LumenMentions
+import com.pagetime.app.data.LumenOnboarding
 import com.pagetime.app.data.LumenReferences
 import com.pagetime.app.data.LumenRegister
 import com.pagetime.app.data.LumenRepository
@@ -135,8 +136,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** A newcomer-help confirmation awaiting the user's answer before an action runs. */
+private data class LumenHelpPrompt(
+    val action: LumenOnboarding.Action,
+    val onConfirm: () -> Unit
+)
+
 class LumenViewModel(
-    private val repository: LumenRepository
+    private val repository: LumenRepository,
+    private val settingsRepository: com.pagetime.app.data.local.SettingsRepository
 ) : ViewModel() {
 
     /** Which slip box is open (1-based). */
@@ -163,6 +171,15 @@ class LumenViewModel(
     /** Structure maps (hub notes) across every box — the main index's heads. */
     val hubs = repository.observeHubs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Newcomer help: explains actions before they run until turned off in Settings. */
+    val helpEnabled = settingsRepository.settings
+        .map { it.helpEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setHelpEnabled(value: Boolean) {
+        viewModelScope.launch { settingsRepository.setHelpEnabled(value) }
+    }
 
     fun selectBox(box: Int) {
         _selectedBox.value = box
@@ -240,10 +257,13 @@ class LumenViewModel(
         }
     }
 
-    class Factory(private val repository: LumenRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: LumenRepository,
+        private val settingsRepository: com.pagetime.app.data.local.SettingsRepository
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            LumenViewModel(repository) as T
+            LumenViewModel(repository, settingsRepository) as T
     }
 }
 
@@ -260,13 +280,17 @@ fun LumenCardsScreen(
 ) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as PageTimeApp
     val vm: LumenViewModel = viewModel(
-        factory = LumenViewModel.Factory(app.container.lumenRepository)
+        factory = LumenViewModel.Factory(
+            app.container.lumenRepository,
+            app.container.settingsRepository
+        )
     )
     val cards by vm.cards.collectAsStateWithLifecycle()
     val selectedBox by vm.selectedBox.collectAsStateWithLifecycle()
     val boxes by vm.boxes.collectAsStateWithLifecycle()
     val dueCount by vm.dueCount.collectAsStateWithLifecycle()
     val hubs by vm.hubs.collectAsStateWithLifecycle()
+    val helpEnabled by vm.helpEnabled.collectAsStateWithLifecycle()
 
     // True Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210), not Room's
     // lexicographic indexNumber sort (which scatters branches and puts 10
@@ -306,6 +330,19 @@ fun LumenCardsScreen(
     var structureMapHub by remember { mutableStateOf<LumenCardEntity?>(null) }
     var writing by remember { mutableStateOf(false) }
     var writeCards by remember { mutableStateOf<List<LumenCardEntity>?>(null) }
+    var helpPrompt by remember { mutableStateOf<LumenHelpPrompt?>(null) }
+
+    /**
+     * Runs [go] right away when help is off; otherwise shows a plain-language
+     * explainer and confirmation first, so a newcomer knows what an action
+     * does before anything is changed.
+     */
+    fun runWithHelp(
+        action: LumenOnboarding.Action,
+        go: () -> Unit,
+    ) {
+        if (helpEnabled) helpPrompt = LumenHelpPrompt(action, go) else go()
+    }
 
     // Lossless backup of the whole box: pick a location via the system file
     // picker, then write the JSON the ViewModel built on the IO dispatcher.
@@ -532,12 +569,10 @@ fun LumenCardsScreen(
                 detailCard = null
             },
             onLink = {
-                linking = card
-                detailCard = null
+                runWithHelp(LumenOnboarding.Action.LINK) { linking = card; detailCard = null }
             },
             onFindConnections = {
-                findingConnections = card
-                detailCard = null
+                runWithHelp(LumenOnboarding.Action.CONNECT) { findingConnections = card; detailCard = null }
             },
             onMore = {
                 moreActions = card
@@ -548,16 +583,14 @@ fun LumenCardsScreen(
                 detailCard = null
             },
             onFileBehind = {
-                filingBehind = card
-                detailCard = null
+                runWithHelp(LumenOnboarding.Action.FILE_BEHIND) { filingBehind = card; detailCard = null }
             },
             onDelete = {
                 deleting = card
                 detailCard = null
             },
             onPullThread = {
-                pullingThread = card
-                detailCard = null
+                runWithHelp(LumenOnboarding.Action.PULL_THREAD) { pullingThread = card; detailCard = null }
             },
             onOpenSource = {
                 detailCard = null
@@ -576,6 +609,36 @@ fun LumenCardsScreen(
             },
             onLinkMention = { mention ->
                 vm.link(mention.source.id, mention.target.id)
+            }
+        )
+    }
+
+    // Newcomer help: before a confusing action runs, explain it and ask for
+    // confirmation. Turned off from Settings once the user has learned the box.
+    helpPrompt?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = { helpPrompt = null },
+            title = { Text("${prompt.action.title} — what it does") },
+            text = {
+                Column {
+                    Text(prompt.action.what)
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Nothing is changed yet. You'll get the chance to back out after this too.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val go = prompt.onConfirm
+                    helpPrompt = null
+                    go()
+                }) { Text(prompt.action.confirmLabel) }
+            },
+            dismissButton = {
+                TextButton(onClick = { helpPrompt = null }) { Text("Not now") }
             }
         )
     }
@@ -644,8 +707,12 @@ fun LumenCardsScreen(
         CardActionsDialog(
             card = card,
             canMove = boxes.size > 1,
-            onFileBehind = { moreActions = null; filingBehind = card },
-            onPullThread = { moreActions = null; pullingThread = card },
+            onFileBehind = {
+                runWithHelp(LumenOnboarding.Action.FILE_BEHIND) { moreActions = null; filingBehind = card }
+            },
+            onPullThread = {
+                runWithHelp(LumenOnboarding.Action.PULL_THREAD) { moreActions = null; pullingThread = card }
+            },
             onToggleHub = { moreActions = null; vm.setHub(card.id, !card.isHub) },
             onMove = { moreActions = null; moving = card },
             onDelete = { moreActions = null; deleting = card },

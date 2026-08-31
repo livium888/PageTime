@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.learning.GenerationMode
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -25,6 +26,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val aiSettings = container.settingsRepository.aiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
 
+    val helpEnabled = container.settingsRepository.settings
+        .map { it.helpEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     fun setRatio(value: Double) {
         viewModelScope.launch { container.balanceManager.setRatio(value) }
     }
@@ -35,5 +40,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setGenerationMode(mode: GenerationMode) {
         viewModelScope.launch { container.settingsRepository.setGenerationMode(mode) }
+    }
+
+    fun setHelpEnabled(value: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setHelpEnabled(value) }
     }
 }

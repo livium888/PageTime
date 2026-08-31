@@ -303,10 +303,22 @@ fun LumenCardsScreen(
     // thought you're reading; the trunk's title is its name, editable like
     // any slip (edit the thought, never the address).
     val threadLabels = remember(shelfCards) {
-        shelfCards.associate { card ->
-            val path = LumenAddress.threadPath(card.indexNumber, shelfCards)
-            card.id to if (path.size > 1) path.first() else null
+        // Trunk labels flow down each tree in one pass (O(n)) instead of
+        // running an O(n) threadPath per slip (O(n²) as a box grows): every
+        // branch card inherits the name of its trunk line. Roots themselves
+        // carry no label, exactly like the per-card threadPath it replaces.
+        val roots = LumenTree.build(shelfCards)
+        val labels = mutableMapOf<String, Pair<String, String>>()
+        fun label(node: LumenTree.Node, trunk: Pair<String, String>) {
+            for (child in node.children) {
+                labels[child.card.id] = trunk
+                label(child, trunk)
+            }
         }
+        for (root in roots) {
+            label(root, root.card.indexNumber to root.card.front)
+        }
+        labels
     }
 
     var detailCard by remember { mutableStateOf<LumenCardEntity?>(null) }
@@ -466,6 +478,15 @@ fun LumenCardsScreen(
             val visibleCards = remember(shelfCards, searchQuery) {
                 LumenSearch.filter(shelfCards, searchQuery)
             }
+            // Branch depth per card, hoisted into one map. Computing it inside the
+            // row did O(n) work per visible slip on every scroll frame (each row
+            // re-called visibleCards.hashCode() across the whole list); a single
+            // remembered pass is O(n) total, computed once per box/view change.
+            val branchDepths = remember(visibleCards) {
+                visibleCards.associate { card ->
+                    card.id to LumenAddress.branchDepth(card.indexNumber, visibleCards)
+                }
+            }
             if (viewMode == "graph" && visibleCards.isNotEmpty()) {
                 BoxGraphView(
                     cards = visibleCards,
@@ -523,9 +544,7 @@ fun LumenCardsScreen(
                         // Reveal the branch tree: slips filed behind a card sit
                         // indented under it, so the box reads as lines of thought
                         // (21 → 21a → 21a1) instead of a flat 1,2,3 count.
-                        val depth = remember(card.indexNumber, visibleCards.hashCode()) {
-                            LumenAddress.branchDepth(card.indexNumber, visibleCards)
-                        }
+                        val depth = branchDepths[card.id] ?: 0
                         LumenCardRow(
                             card = card,
                             indentDp = (depth * 14).dp,
@@ -1055,10 +1074,10 @@ private fun BoxGraphView(
     cards: List<LumenCardEntity>,
     onOpen: (LumenCardEntity) -> Unit
 ) {
-    val graph = remember(cards.hashCode()) { LumenGraph.build(cards) }
+    val graph = remember(cards) { LumenGraph.build(cards) }
     val (nodes, edges) = graph
-    var layout by remember(cards.hashCode()) { mutableStateOf<LumenGraphLayout.Result?>(null) }
-    androidx.compose.runtime.LaunchedEffect(cards.hashCode()) {
+    var layout by remember(cards) { mutableStateOf<LumenGraphLayout.Result?>(null) }
+    androidx.compose.runtime.LaunchedEffect(cards) {
         layout = withContext(kotlinx.coroutines.Dispatchers.Default) {
             LumenGraphLayout.run(nodes, edges)
         }
@@ -1106,13 +1125,13 @@ private fun BoxGraphView(
                 modifier = Modifier
                     .fillMaxSize()
                     .onSizeChanged { canvasSize = it }
-                    .pointerInput(cards.hashCode()) {
+                    .pointerInput(cards) {
                         detectTransformGestures { _, gesturePan, gestureZoom, _ ->
                             zoom = (zoom * gestureZoom).coerceIn(0.5f, 4f)
                             pan += gesturePan
                         }
                     }
-                    .pointerInput(cards.hashCode()) {
+                    .pointerInput(cards) {
                         detectTapGestures { tap ->
                             val size = canvasSize
                             val positions = layout?.positions ?: return@detectTapGestures

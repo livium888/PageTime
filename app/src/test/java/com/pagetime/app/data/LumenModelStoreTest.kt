@@ -49,10 +49,12 @@ class LumenModelStoreTest {
     private fun store(
         expectedBytes: Long,
         downloader: LumenModelDownloader,
+        fetcher: suspend (String) -> LumenRemoteModelInfo? = { null },
     ) = LumenModelStore(
         directory = directory,
         downloader = downloader,
         expectedBytes = expectedBytes,
+        remoteInfoFetcher = fetcher,
     )
 
     @Test
@@ -165,6 +167,111 @@ class LumenModelStoreTest {
 
             assertEquals(0, downloadAttempts)
             assertEquals(LumenModelStatus.Ready(1_000), modelStore.status.value)
+        }
+
+    @Test
+    fun `checkForUpdate flags a same-size remote change via etag`() =
+        runTest {
+            var remote = LumenRemoteModelInfo(sizeBytes = 1_100, etag = "\"v1\"")
+            val downloader = FakeModelDownloader(bytes = 1_100)
+            val fetcher: suspend (String) -> LumenRemoteModelInfo? = { remote }
+            val modelStore = store(expectedBytes = 1_000, downloader = downloader, fetcher = fetcher)
+            modelStore.download()
+            assertTrue(modelStore.isInstalled())
+
+            // Same size, new etag: the file on the server changed in place.
+            remote = LumenRemoteModelInfo(sizeBytes = 1_100, etag = "\"v2\"")
+            modelStore.checkForUpdate()
+
+            assertEquals(LumenModelStatus.UpdateAvailable(1_100, 1_100), modelStore.status.value)
+        }
+
+    @Test
+    fun `checkForUpdate flags a remote size change`() =
+        runTest {
+            var remote = LumenRemoteModelInfo(sizeBytes = 1_100, etag = "\"v1\"")
+            val downloader = FakeModelDownloader(bytes = 1_100)
+            val fetcher: suspend (String) -> LumenRemoteModelInfo? = { remote }
+            val modelStore = store(expectedBytes = 1_000, downloader = downloader, fetcher = fetcher)
+            modelStore.download()
+
+            remote = LumenRemoteModelInfo(sizeBytes = 1_200, etag = "\"v1\"")
+            modelStore.checkForUpdate()
+
+            assertTrue(modelStore.status.value is LumenModelStatus.UpdateAvailable)
+        }
+
+    @Test
+    fun `checkForUpdate keeps Ready when remote matches the stored fingerprint`() =
+        runTest {
+            val downloader = FakeModelDownloader(bytes = 1_000)
+            val fetcher: suspend (String) -> LumenRemoteModelInfo? = {
+                LumenRemoteModelInfo(sizeBytes = 1_000, etag = "\"same\"")
+            }
+            val modelStore = store(expectedBytes = 1_000, downloader = downloader, fetcher = fetcher)
+            modelStore.download()
+
+            modelStore.checkForUpdate()
+
+            assertEquals(LumenModelStatus.Ready(1_000), modelStore.status.value)
+        }
+
+    @Test
+    fun `checkForUpdate with unreachable remote keeps the current status`() =
+        runTest {
+            val modelStore =
+                store(
+                    expectedBytes = 1_000,
+                    downloader = FakeModelDownloader(bytes = 1_000),
+                )
+            modelStore.download()
+
+            modelStore.checkForUpdate()
+
+            assertEquals(LumenModelStatus.Ready(1_000), modelStore.status.value)
+        }
+
+    @Test
+    fun `updating replaces the installed model and re-fingerprints it`() =
+        runTest {
+            directory.mkdirs()
+            File(directory, LumenModelStore.MODEL_FILE_NAME).writeBytes(ByteArray(1_000))
+            val downloader = FakeModelDownloader(bytes = 1_100)
+            val fetcher: suspend (String) -> LumenRemoteModelInfo? = {
+                LumenRemoteModelInfo(sizeBytes = 1_100, etag = "\"v2\"")
+            }
+            val modelStore = store(expectedBytes = 1_000, downloader = downloader, fetcher = fetcher)
+
+            modelStore.download()
+
+            assertTrue(modelStore.isInstalled())
+            assertEquals(1_100L, modelStore.modelFile.length())
+            assertEquals(LumenModelStatus.Ready(1_100), modelStore.status.value)
+            // After the update the fingerprint matches the server again.
+            modelStore.checkForUpdate()
+            assertEquals(LumenModelStatus.Ready(1_100), modelStore.status.value)
+        }
+
+    @Test
+    fun `a failed update leaves the previously installed model intact`() =
+        runTest {
+            directory.mkdirs()
+            File(directory, LumenModelStore.MODEL_FILE_NAME).writeBytes(ByteArray(1_000))
+            val downloader =
+                FakeModelDownloader(
+                    bytes = 1_100,
+                    failWith = IllegalStateException("network dropped"),
+                )
+            val fetcher: suspend (String) -> LumenRemoteModelInfo? = {
+                LumenRemoteModelInfo(sizeBytes = 1_100, etag = "\"v2\"")
+            }
+            val modelStore = store(expectedBytes = 1_000, downloader = downloader, fetcher = fetcher)
+
+            modelStore.download()
+
+            assertTrue(modelStore.status.value is LumenModelStatus.Failed)
+            assertEquals(1_000L, modelStore.modelFile.length())
+            assertFalse(File(directory, "${LumenModelStore.MODEL_FILE_NAME}.part").exists())
         }
 
     @Test

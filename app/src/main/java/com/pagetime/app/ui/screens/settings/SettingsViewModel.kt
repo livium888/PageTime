@@ -64,6 +64,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { container.lumenModelStore.download() }
     }
 
+    fun checkForModelUpdate() {
+        viewModelScope.launch { container.lumenModelStore.checkForUpdate() }
+    }
+
     fun deleteOfflineModel() {
         viewModelScope.launch { container.lumenModelStore.deleteModel() }
     }

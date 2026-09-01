@@ -36,8 +36,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,6 +84,9 @@ fun SettingsScreen(
     val geminiStatus by geminiViewModel.status.collectAsStateWithLifecycle()
     var geminiKeyInput by remember { mutableStateOf("") }
     var modelMenuExpanded by remember { mutableStateOf(false) }
+
+    // Cheap HEAD against the model host; best-effort and silent on failure.
+    LaunchedEffect(Unit) { viewModel.checkForModelUpdate() }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Settings") }) }
@@ -195,6 +200,7 @@ fun SettingsScreen(
             OfflineModelSettingsCard(
                 status = lumenModelStatus,
                 onDownload = viewModel::downloadOfflineModel,
+                onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
             )
 
@@ -274,6 +280,7 @@ private fun LlmProviderSettingsCard(
 private fun OfflineModelSettingsCard(
     status: LumenModelStatus,
     onDownload: () -> Unit,
+    onCheckForUpdate: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -298,6 +305,22 @@ private fun OfflineModelSettingsCard(
                         Text("Download model")
                     }
                 }
+                is LumenModelStatus.UpdateAvailable -> {
+                    Text(
+                        "A newer version of the offline model is available " +
+                            "(~${(status.remoteBytes / 1_048_576).toInt()} MB). Update keeps " +
+                            "capture quality current; the installed model keeps working " +
+                            "until the new one finishes verifying.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Update model")
+                    }
+                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                        Text("Delete model")
+                    }
+                }
                 is LumenModelStatus.Downloading -> {
                     LinearProgressIndicator(
                         progress = { status.fraction },
@@ -311,11 +334,17 @@ private fun OfflineModelSettingsCard(
                 }
                 is LumenModelStatus.Ready -> {
                     Text(
-                        "Installed — ${LumenModelStore.MODEL_SIZE_MB} MB. Capture now drafts " +
+                        "Installed — ${(status.bytes / 1_048_576).toInt()} MB. Capture now drafts " +
                             "cards on-device when Offline model is selected.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                    TextButton(
+                        onClick = onCheckForUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Check for updates")
+                    }
                     OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
                         Text("Delete model")
                     }

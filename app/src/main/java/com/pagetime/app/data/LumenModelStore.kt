@@ -10,6 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import org.json.JSONObject
 import java.io.File
 
 /**
@@ -17,6 +18,12 @@ import java.io.File
  * MediaPipe `.task` file (Qwen 2.5 0.5B Instruct, q8) downloaded on demand —
  * it is never bundled into the APK, so the app stays small until the user
  * opts into offline AI.
+ *
+ * Updates: a cheap HEAD request against the model URL returns the remote
+ * file's size and ETag. Each completed download stores that fingerprint in a
+ * small sidecar file, so the app can tell "the model on Hugging Face changed"
+ * from "up to date" without downloading anything. Every network lookup is
+ * best-effort: offline or unreachable means "keep whatever you have".
  */
 sealed interface LumenModelStatus {
     data object NotDownloaded : LumenModelStatus
@@ -33,8 +40,17 @@ sealed interface LumenModelStatus {
 
     data class Ready(val bytes: Long) : LumenModelStatus
 
+    /** The installed file works, but the remote model has changed since install. */
+    data class UpdateAvailable(val installedBytes: Long, val remoteBytes: Long) : LumenModelStatus
+
     data class Failed(val message: String) : LumenModelStatus
 }
+
+/** What the remote server reports about the model file (HEAD metadata). */
+data class LumenRemoteModelInfo(
+    val sizeBytes: Long,
+    val etag: String?,
+)
 
 /** Streams a model file; injected so unit tests can fake the network. */
 interface LumenModelDownloader {
@@ -96,15 +112,34 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
     }
 }
 
+/** Reads the model's remote metadata (size + ETag) with a cheap HEAD request. */
+object HfModelRemoteInfoFetcher {
+    suspend fun fetch(url: String): LumenRemoteModelInfo? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder().url(url).head().build()
+                AppHttp.newClient(callTimeoutSeconds = 30L).newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val size = response.header("Content-Length")?.toLongOrNull() ?: return@use null
+                    val etag = response.header("ETag") ?: response.header("X-Linked-ETag")
+                    LumenRemoteModelInfo(size, etag)
+                }
+            }.getOrNull()
+        }
+}
+
 /**
  * Owns the model file on disk. [expectedBytes] is injectable so tests can run
  * against a small fake file; production uses the pinned q8 weight size.
+ * [remoteInfoFetcher] reports the server's current size/ETag; tests inject a
+ * fake, production uses [HfModelRemoteInfoFetcher].
  */
 class LumenModelStore(
     private val directory: File,
     private val downloader: LumenModelDownloader,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val expectedBytes: Long = EXPECTED_MODEL_BYTES,
+    private val remoteInfoFetcher: suspend (String) -> LumenRemoteModelInfo? = { null },
 ) {
     private val _status = MutableStateFlow<LumenModelStatus>(currentStatus())
     val status: StateFlow<LumenModelStatus> = _status.asStateFlow()
@@ -114,71 +149,149 @@ class LumenModelStore(
     val modelFile: File
         get() = File(directory, MODEL_FILE_NAME)
 
-    /** True when a complete, correctly-sized model file is on disk. */
-    fun isInstalled(): Boolean = modelFile.isFile && modelFile.length() == expectedBytes
+    private val partFile: File
+        get() = File(directory, "$MODEL_FILE_NAME.part")
+
+    private val fingerprintFile: File
+        get() = File(directory, "$MODEL_FILE_NAME.fp.json")
+
+    /** True when a complete model file is on disk (size matches its fingerprint or the pinned size). */
+    fun isInstalled(): Boolean {
+        if (!modelFile.isFile) return false
+        val length = modelFile.length()
+        return readFingerprint()?.sizeBytes == length || length == expectedBytes
+    }
 
     private fun currentStatus(): LumenModelStatus =
-        if (isInstalled()) {
-            LumenModelStatus.Ready(modelFile.length())
-        } else {
-            LumenModelStatus.NotDownloaded
+        if (isInstalled()) LumenModelStatus.Ready(modelFile.length()) else LumenModelStatus.NotDownloaded
+
+    /**
+     * Asks the server whether the model changed since it was installed.
+     * Best-effort: any failure (offline, server error) leaves the current
+     * status untouched. Legacy installs without a fingerprint are compared by
+     * size alone, so they are never falsely flagged.
+     */
+    suspend fun checkForUpdate() {
+        if (!isInstalled()) return
+        val remote = fetchRemoteSafely() ?: return
+        val installedBytes = modelFile.length()
+        val fingerprint = readFingerprint()
+        val changed =
+            remote.sizeBytes != installedBytes ||
+                (fingerprint?.etag != null && remote.etag != null && fingerprint.etag != remote.etag)
+        _status.value =
+            if (changed) {
+                LumenModelStatus.UpdateAvailable(installedBytes, remote.sizeBytes)
+            } else {
+                LumenModelStatus.Ready(installedBytes)
+            }
+    }
+
+    private suspend fun fetchRemoteSafely(): LumenRemoteModelInfo? =
+        try {
+            remoteInfoFetcher(MODEL_URL)
+        } catch (_: Exception) {
+            null
         }
 
     /**
-     * Downloads the model weights. Serialized: concurrent callers wait on the
-     * mutex, so a double-tap can't start two downloads. A stale partial file
-     * from a cancelled run is discarded first.
+     * Downloads (or updates) the model weights. Serialized: concurrent callers
+     * wait on the mutex. New bytes land in a `.part` file, are verified
+     * against the remote/pinned size, and only then replace the current
+     * model — a failed or cancelled update leaves the installed model intact.
      */
     suspend fun download() =
         mutex.withLock {
-            if (isInstalled()) {
+            val remote = fetchRemoteSafely()
+            val targetBytes = remote?.sizeBytes ?: expectedBytes
+            if (isInstalled() && isCurrent(remote)) {
                 _status.value = LumenModelStatus.Ready(modelFile.length())
                 return@withLock
             }
-            modelFile.delete()
-            _status.value = LumenModelStatus.Downloading(0, expectedBytes)
+            partFile.delete()
+            _status.value = LumenModelStatus.Downloading(0, targetBytes)
             try {
                 val result =
-                    downloader.download(MODEL_URL, modelFile) { downloaded, total ->
+                    downloader.download(MODEL_URL, partFile) { downloaded, total ->
                         _status.value =
                             LumenModelStatus.Downloading(
                                 downloaded,
-                                total.takeIf { it > 0 } ?: expectedBytes,
+                                total.takeIf { it > 0 } ?: targetBytes,
                             )
                     }
                 result.fold(
                     onSuccess = { file ->
-                        if (file.length() == expectedBytes) {
-                            _status.value = LumenModelStatus.Ready(file.length())
+                        if (file.length() == targetBytes) {
+                            writeFingerprint(ModelFingerprint(targetBytes, remote?.etag))
+                            if (partFile.renameTo(modelFile)) {
+                                _status.value = LumenModelStatus.Ready(modelFile.length())
+                            } else {
+                                partFile.delete()
+                                _status.value =
+                                    LumenModelStatus.Failed("Could not move the downloaded model into place")
+                            }
                         } else {
-                            file.delete()
+                            partFile.delete()
                             _status.value =
                                 LumenModelStatus.Failed(
                                     "Download incomplete (got ${file.length()} of " +
-                                        "$expectedBytes bytes). Check your connection and try again.",
+                                        "$targetBytes bytes). Check your connection and try again.",
                                 )
                         }
                     },
                     onFailure = { error ->
-                        modelFile.delete()
-                        _status.value =
-                            LumenModelStatus.Failed(
-                                error.message ?: "Model download failed",
-                            )
+                        partFile.delete()
+                        _status.value = LumenModelStatus.Failed(error.message ?: "Model download failed")
                     },
                 )
             } catch (cancelled: CancellationException) {
-                // Leaving the settings screen mid-download: return to the clean state.
-                _status.value = LumenModelStatus.NotDownloaded
+                // Leaving the settings screen mid-download: discard the partial
+                // bytes and keep the previous model if there was one.
+                partFile.delete()
+                _status.value =
+                    if (isInstalled()) LumenModelStatus.Ready(modelFile.length()) else LumenModelStatus.NotDownloaded
                 throw cancelled
             }
         }
 
+    /** Whether the installed file already matches what the server offers. */
+    private fun isCurrent(remote: LumenRemoteModelInfo?): Boolean {
+        if (remote == null) return true // nothing to compare against — keep what we have
+        if (modelFile.length() != remote.sizeBytes) return false
+        val fingerprint = readFingerprint()
+        return fingerprint?.etag == null || remote.etag == null || fingerprint.etag == remote.etag
+    }
+
     suspend fun deleteModel() =
         withContext(io) {
             modelFile.delete()
+            partFile.delete()
+            fingerprintFile.delete()
             _status.value = LumenModelStatus.NotDownloaded
         }
+
+    private data class ModelFingerprint(val sizeBytes: Long, val etag: String?)
+
+    private fun readFingerprint(): ModelFingerprint? =
+        runCatching {
+            if (!fingerprintFile.isFile) return null
+            val root = JSONObject(fingerprintFile.readText())
+            ModelFingerprint(
+                sizeBytes = root.getLong("sizeBytes"),
+                etag = root.optString("etag").takeIf { it.isNotBlank() },
+            )
+        }.getOrNull()
+
+    private fun writeFingerprint(fingerprint: ModelFingerprint) {
+        runCatching {
+            fingerprintFile.writeText(
+                JSONObject()
+                    .put("sizeBytes", fingerprint.sizeBytes)
+                    .put("etag", fingerprint.etag ?: "")
+                    .toString(),
+            )
+        }
+    }
 
     companion object {
         const val MODEL_FILE_NAME = "Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task"

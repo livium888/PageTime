@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Pure-core tests for the on-device capture driver: two attempts, echo guard. */
+/** Pure-core tests for the on-device capture driver and echo guard. */
 class LumenLocalDraftTest {
 
     private val passage =
@@ -17,7 +17,7 @@ class LumenLocalDraftTest {
     private fun ok(text: String) = Result.success(LlmResult(text, LlmProviderKind.OFFLINE))
 
     @Test
-    fun `uses a good first reply without retrying`() = runTest {
+    fun `uses a good reply and primes the model with the passage`() = runTest {
         var calls = 0
         val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
             calls++
@@ -32,51 +32,21 @@ class LumenLocalDraftTest {
     }
 
     @Test
-    fun `retries with the strict prompt when the first reply is a passage echo`() = runTest {
-        val prompts = mutableListOf<LlmRequest>()
-        var calls = 0
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
-            prompts += request
-            val out =
-                if (calls++ == 0) {
-                    // The model copied the passage instead of answering.
-                    """Here is your card: {"front": "However, this arena is extraordinarily large", "back": "copy"}"""
-                } else {
-                    """{"front": "Fiction bonds large groups", "back": "Shared stories let many people cooperate toward common goals."}"""
-                }
-            ok(out)
-        }
-
-        val parsed = LumenLocalDraft.generate(call, passage, "Sapiens")
-
-        assertEquals("Fiction bonds large groups", parsed!!.first)
-        assertEquals(2, calls)
-        assertTrue(prompts[1].prompt != prompts[0].prompt)
-        assertTrue(prompts[1].prompt.contains("Never copy"))
-    }
-
-    @Test
-    fun `retries when the first reply does not parse`() = runTest {
+    fun `rejects a passage echo without performing another native inference`() = runTest {
         var calls = 0
         val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            val out =
-                if (calls++ == 0) {
-                    // Truncated mid-object, no labels, nothing usable.
-                    "Here is your card. The passage is about how fiction lets large groups cooperate."
-                } else {
-                    """{"front":"Fiction unites strangers","back":"Stories create shared goals across large groups."}"""
-                }
-            ok(out)
+            calls++
+            ok("""Here is your card: {"front": "However, this arena is extraordinarily large", "back": "copy"}""")
         }
 
         val parsed = LumenLocalDraft.generate(call, passage, "Sapiens")
 
-        assertEquals("Fiction unites strangers", parsed!!.first)
-        assertEquals(2, calls)
+        assertNull(parsed)
+        assertEquals(1, calls)
     }
 
     @Test
-    fun `falls back when a provider call fails`() = runTest {
+    fun `returns null when a provider call fails`() = runTest {
         val call: suspend (LlmRequest) -> Result<LlmResult> = {
             Result.failure(IllegalStateException("runtime exploded"))
         }
@@ -85,34 +55,15 @@ class LumenLocalDraftTest {
     }
 
     @Test
-    fun `falls back when both attempts are unusable`() = runTest {
-        var calls = 0
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            calls++
-            ok("no json at all, just prose about the passage")
-        }
-
-        assertNull(LumenLocalDraft.generate(call, passage, "Sapiens"))
-        assertEquals(2, calls)
-    }
-
-    @Test
     fun `logs the discarded reply for diagnosis`() = runTest {
         val logged = mutableListOf<String>()
-        var calls = 0
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            val out =
-                if (calls++ == 0) {
-                    """{"front":"However, this arena is extraordinarily large","back":"echo"}"""
-                } else {
-                    """{"front":"Fiction unites strangers","back":"Stories create shared goals."}"""
-                }
-            ok(out)
+        val call: suspend (LlmRequest) -> Result<LlmResult> = {
+            ok("""{"front":"However, this arena is extraordinarily large","back":"echo"}""")
         }
 
-        val parsed = LumenLocalDraft.generate(call, passage, "Sapiens", debugLog = { logged += it })
-
-        assertEquals("Fiction unites strangers", parsed!!.first)
+        assertNull(
+            LumenLocalDraft.generate(call, passage, "Sapiens", debugLog = { logged += it })
+        )
         assertEquals(1, logged.size)
         assertTrue(logged.single().startsWith("discarded local draft"))
     }

@@ -739,8 +739,11 @@ object LumenLocalDraft {
             return parsed
         }
 
-        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = 512)
-            ?: attempt(LumenAiPrompts.cardDraftStrict(passage, bookTitle), maxTokens = 512)
+        // Native inference is deliberately attempted once per capture. Loading
+        // the 521 MB model twice in quick succession can exhaust smaller phones
+        // and kill the process. The first prompt is already JSON-primed; if it
+        // fails, the caller uses the safe non-AI draft.
+        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = 384)
     }
 }
 

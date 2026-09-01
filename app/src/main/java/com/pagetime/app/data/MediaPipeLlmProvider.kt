@@ -47,14 +47,22 @@ class MediaPipeLlmProvider(
                     // requested output format instead of wandering into prose.
                     .setMaxTopK(40)
                     .build()
-            val llm = LlmInference.createFromOptions(context, options)
+            val llm = try {
+                LlmInference.createFromOptions(context, options)
+            } catch (error: Throwable) {
+                throw IllegalStateException("Offline model could not be loaded on this device", error)
+            }
             try {
                 val prompt =
                     buildString {
                         request.systemInstruction?.let { append(it).append("\n\n") }
                         append(request.prompt)
                     }
-                val text = llm.generateResponse(prompt).trim()
+                val text = try {
+                    llm.generateResponse(prompt).trim()
+                } catch (error: Throwable) {
+                    throw IllegalStateException("Offline model inference failed", error)
+                }
                 check(text.isNotBlank()) { "The offline model returned an empty response" }
                 LlmResult(text, LlmProviderKind.OFFLINE)
             } finally {

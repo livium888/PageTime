@@ -43,6 +43,9 @@ class MediaPipeLlmProvider(
                 LlmInference.LlmInferenceOptions.builder()
                     .setModelPath(modelStore.modelFile.absolutePath)
                     .setMaxTokens(request.maxOutputTokens.coerceIn(128, 1024))
+                    // Keep sampling narrow so a small model reliably follows the
+                    // requested output format instead of wandering into prose.
+                    .setMaxTopK(40)
                     .build()
             val llm = LlmInference.createFromOptions(context, options)
             try {

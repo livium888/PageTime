@@ -194,5 +194,40 @@ class LumenCaptureTest {
         assertNull(LumenCapture.parseDraft(""))
     }
 
+    @Test
+    fun `parseDraft finds json buried in surrounding prose`() {
+        val raw =
+            "Here is your card: " +
+                """{"front":"Spaced repetition","back":"Reviews spaced over time stick better."}""" +
+                " I hope this helps!"
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews spaced over time stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft accepts a plain front back label format`() {
+        val raw = "Front: Spaced repetition\nBack: Reviews spaced over time stick better."
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews spaced over time stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft strips quotes and emphasis from fields`() {
+        val (front, back) =
+            LumenCapture.parseDraft("""{"front":"\"Spaced repetition\"","back":"**Reviews stick better.**"}""")!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft caps a runaway front`() {
+        val longFront = "word ".repeat(40).trim()
+        val (front, _) = LumenCapture.parseDraft("""{"front":"$longFront","back":"B"}""")!!
+        assertTrue(front.length <= 120)
+        assertTrue(front.endsWith("…"))
+    }
+
     // endregion
 }

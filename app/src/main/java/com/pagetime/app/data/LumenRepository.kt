@@ -591,17 +591,62 @@ object LumenCapture {
         return front to ""
     }
 
-    /** Parses the Gemini JSON reply ({front, back}); tolerates code fences. */
-    fun parseDraft(raw: String): Pair<String, String>? = runCatching {
-        val cleaned = raw.trim()
-            .removePrefix("```json").removePrefix("```")
-            .removeSuffix("```")
-            .trim()
-        val root = JSONObject(cleaned)
-        val front = root.optString("front").trim()
-        val back = root.optString("back").trim()
-        if (front.isBlank()) null else front to back
-    }.getOrNull()
+    /**
+     * Parses the model's reply into (front, back). Accepts strict JSON, JSON
+     * wrapped in prose or code fences, and a plain "Front:"/"Back:" label
+     * format — small on-device models rarely emit textbook JSON, and landing a
+     * real card is better than silently degrading to the raw-passage draft.
+     * Returns null only when nothing usable is present.
+     */
+    fun parseDraft(raw: String): Pair<String, String>? {
+        if (raw.isBlank()) return null
+        val cleaned =
+            raw.trim()
+                .removePrefix("```json")
+                .removePrefix("```")
+                .removeSuffix("```")
+                .trim()
+
+        // 1. The JSON object, whether it is the whole reply or buried in prose.
+        val root =
+            runCatching { JSONObject(cleaned) }.getOrNull()
+                ?: run {
+                    val start = cleaned.indexOf('{')
+                    val end = cleaned.lastIndexOf('}')
+                    if (start in 0 until end) {
+                        runCatching { JSONObject(cleaned.substring(start, end + 1)) }.getOrNull()
+                    } else {
+                        null
+                    }
+                }
+        if (root != null) {
+            val front = cleanField(root.optString("front"), maxLength = 120)
+            if (front.isBlank()) return null
+            return front to cleanField(root.optString("back"), maxLength = 400)
+        }
+
+        // 2. Labeled lines: "Front: ..." / "Back: ..." (small models often
+        //    answer in plain text when they cannot produce JSON).
+        val frontMarker = Regex("(?i)\\bfront\\s*[:\\-]").find(cleaned) ?: return null
+        val frontStart = frontMarker.range.last + 1
+        val backMarker =
+            Regex("(?i)\\bback\\s*[:\\-]").find(cleaned, frontStart) ?: return null
+        val front = cleanField(cleaned.substring(frontStart, backMarker.range.first), maxLength = 120)
+        val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = 400)
+        if (front.isBlank()) return null
+        return front to back
+    }
+
+    /** Trims quotes/emphasis markers, collapses whitespace, and caps length. */
+    private fun cleanField(value: String, maxLength: Int): String {
+        val cleaned =
+            value.trim()
+                .trim('"', '\'', '*', '`')
+                .replace(Regex("\\s+"), " ")
+                .trim()
+        if (cleaned.length <= maxLength) return cleaned
+        return cleaned.take(maxLength - 1).trimEnd() + "…"
+    }
 }
 
 /**

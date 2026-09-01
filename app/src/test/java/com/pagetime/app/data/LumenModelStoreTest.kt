@@ -46,6 +46,11 @@ class LumenModelStoreTest {
         }
     }
 
+    /**
+     * Size-behavior tests use a bypassing integrity check (their fake files are
+     * zero-filled, not real zips). The real structural check has its own test
+     * file, and the two tests at the bottom exercise the store's wiring of it.
+     */
     private fun store(
         expectedBytes: Long,
         downloader: LumenModelDownloader,
@@ -55,6 +60,7 @@ class LumenModelStoreTest {
         downloader = downloader,
         expectedBytes = expectedBytes,
         remoteInfoFetcher = fetcher,
+        integrityCheck = { true },
     )
 
     @Test
@@ -272,6 +278,61 @@ class LumenModelStoreTest {
             assertTrue(modelStore.status.value is LumenModelStatus.Failed)
             assertEquals(1_000L, modelStore.modelFile.length())
             assertFalse(File(directory, "${LumenModelStore.MODEL_FILE_NAME}.part").exists())
+        }
+
+    @Test
+    fun `a corrupt download is rejected before it is installed`() =
+        runTest {
+            // The fake writes zero-filled bytes with the right size — a file
+            // that matches the size contract but is not a valid model archive.
+            val downloader = FakeModelDownloader(bytes = 1_000)
+            val modelStore =
+                LumenModelStore(
+                    directory = directory,
+                    downloader = downloader,
+                    expectedBytes = 1_000,
+                    remoteInfoFetcher = { null },
+                    integrityCheck = { false },
+                )
+
+            modelStore.download()
+
+            assertFalse(modelStore.isInstalled())
+            assertFalse(modelStore.modelFile.exists())
+            assertFalse(File(directory, "${LumenModelStore.MODEL_FILE_NAME}.part").exists())
+            val status = modelStore.status.value
+            assertTrue(status is LumenModelStatus.Failed)
+            assertTrue((status as LumenModelStatus.Failed).message.contains("damaged"))
+        }
+
+    @Test
+    fun `an installed corrupt file is flagged damaged and re-downloaded, not treated as ready`() =
+        runTest {
+            directory.mkdirs()
+            File(directory, LumenModelStore.MODEL_FILE_NAME).writeBytes(ByteArray(1_000))
+            val downloader =
+                FakeModelDownloader(
+                    bytes = 1_000,
+                    failWith = IllegalStateException("network dropped"),
+                )
+            val modelStore =
+                LumenModelStore(
+                    directory = directory,
+                    downloader = downloader,
+                    expectedBytes = 1_000,
+                    remoteInfoFetcher = { null },
+                    integrityCheck = { false },
+                )
+
+            // The status surface must not say Ready for a file that would
+            // abort MediaPipe's native loader.
+            assertTrue(modelStore.status.value is LumenModelStatus.Failed)
+
+            // And download() must attempt a repair instead of the old
+            // "already installed and current" no-op.
+            modelStore.download()
+
+            assertTrue(modelStore.status.value is LumenModelStatus.Failed)
         }
 
     @Test

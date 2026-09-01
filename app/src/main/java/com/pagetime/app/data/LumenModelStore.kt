@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 
 /**
  * Lifecycle of the optional on-device LLM weights. The model is a single
@@ -112,6 +113,123 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
     }
 }
 
+/**
+ * Pure-Java structural check for the model file. A MediaPipe `.task` model is
+ * a ZIP archive (a TFLite payload inside), so a corrupt or truncated download
+ * fails ZIP parsing. The check is deliberately cheap (a few seeks at the head
+ * and tail of the file, never the whole body) and fails closed: any anomaly
+ * returns false.
+ *
+ * Why this exists: MediaPipe's native loader aborts the process on a corrupt
+ * file — a SIGABRT/SIGSEGV that no Kotlin try/catch can catch and that leaves
+ * no Java crash log. Validating the ZIP structure before the native call
+ * converts a guaranteed process kill into a recoverable "re-download" state.
+ */
+object LumenModelIntegrity {
+    /**
+     * True when [file] is structurally a sound ZIP: a local header at offset 0,
+     * an end-of-central-directory record at the tail, and a central directory
+     * that is present, in-bounds, and fully walkable.
+     */
+    fun isZipIntact(file: File): Boolean {
+        if (!file.isFile || file.length() < MIN_ZIP_BYTES) return false
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                val fileLen = raf.length()
+
+                // 1. The archive must start with a local file header.
+                require(readIntLe(raf, 0) == SIG_LOCAL_HEADER) { "no local header" }
+
+                // 2. The EOCD sits at the very end (fixed 22 bytes + comment).
+                val eocdPos = findEocd(raf, fileLen) ?: return false
+
+                // 3. Parse the EOCD: total entries @10 (2), cd size @12 (4),
+                //    cd offset @16 (4) — all little-endian.
+                val totalEntries = readShortLe(raf, eocdPos + 10).toInt()
+                val cdSize = readIntLe(raf, eocdPos + 12).toLong()
+                val cdOffset = readIntLe(raf, eocdPos + 16).toLong()
+                require(totalEntries > 0) { "no entries" }
+                require(cdOffset >= 0L && cdSize >= 0L) { "zip64 not supported" }
+                require(cdOffset + cdSize.toLong() <= eocdPos) { "central directory past EOCD" }
+
+                // 4. The central directory must start with a header record.
+                require(readIntLe(raf, cdOffset) == SIG_CENTRAL_DIR) { "no central directory" }
+
+                // 5. Walk every record so a truncated directory is caught, not
+                //    just one whose start happens to look right.
+                val cdEnd = cdOffset + cdSize.toLong()
+                var pos = cdOffset
+                var seen = 0
+                while (seen < totalEntries && pos + MIN_CD_RECORD <= cdEnd) {
+                    require(readIntLe(raf, pos) == SIG_CENTRAL_DIR) { "corrupt cd record" }
+                    val nameLen = readShortLe(raf, pos + 28).toInt()
+                    val extraLen = readShortLe(raf, pos + 30).toInt()
+                    val commentLen = readShortLe(raf, pos + 32).toInt()
+                    val recordLen = MIN_CD_RECORD + nameLen + extraLen + commentLen
+                    require(pos + recordLen <= cdEnd) { "cd record out of bounds" }
+                    pos += recordLen
+                    seen++
+                }
+                require(seen == totalEntries) { "central directory truncated" }
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Locates the EOCD by scanning the tail backwards for its signature, then
+     * confirming the comment-length field lands exactly at end-of-file (the
+     * real EOCD, not a signature that happens to appear inside a comment).
+     */
+    private fun findEocd(raf: RandomAccessFile, fileLen: Long): Long? {
+        val searchStart = (fileLen - EOCD_FIXED - MAX_COMMENT).coerceAtLeast(0L)
+        val searchLen = (fileLen - searchStart).toInt()
+        val tail = ByteArray(searchLen)
+        raf.seek(searchStart)
+        raf.readFully(tail)
+        var i = tail.size - EOCD_FIXED
+        while (i >= 0) {
+            if (readIntLe(tail, i) == SIG_EOCD) {
+                val commentLen = (tail[i + 20].toInt() and 0xff) or
+                    ((tail[i + 21].toInt() and 0xff) shl 8)
+                if (searchStart + i + EOCD_FIXED + commentLen == fileLen) return searchStart + i
+            }
+            i--
+        }
+        return null
+    }
+
+    private fun readIntLe(raf: RandomAccessFile, offset: Long): Int {
+        raf.seek(offset)
+        val b = ByteArray(4)
+        raf.readFully(b)
+        return readIntLe(b, 0)
+    }
+
+    private fun readIntLe(b: ByteArray, offset: Int): Int {
+        val i = offset
+        return (b[i].toInt() and 0xff) or
+            ((b[i + 1].toInt() and 0xff) shl 8) or
+            ((b[i + 2].toInt() and 0xff) shl 16) or
+            ((b[i + 3].toInt() and 0xff) shl 24)
+    }
+
+    private fun readShortLe(raf: RandomAccessFile, offset: Long): Int {
+        raf.seek(offset)
+        val b = ByteArray(2)
+        raf.readFully(b)
+        return (b[0].toInt() and 0xff) or ((b[1].toInt() and 0xff) shl 8)
+    }
+
+    private const val SIG_LOCAL_HEADER = 0x04034b50 // PK\x03\x04
+    private const val SIG_CENTRAL_DIR = 0x02014b50 // PK\x01\x02
+    private const val SIG_EOCD = 0x06054b50 // PK\x05\x06
+    private const val EOCD_FIXED = 22
+    private const val MAX_COMMENT = 65_535L
+    private const val MIN_CD_RECORD = 46L
+    private const val MIN_ZIP_BYTES = 22L
+}
+
 /** Reads the model's remote metadata (size + ETag) with a cheap HEAD request. */
 object HfModelRemoteInfoFetcher {
     suspend fun fetch(url: String): LumenRemoteModelInfo? =
@@ -140,6 +258,7 @@ class LumenModelStore(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val expectedBytes: Long = EXPECTED_MODEL_BYTES,
     private val remoteInfoFetcher: suspend (String) -> LumenRemoteModelInfo? = { null },
+    private val integrityCheck: (File) -> Boolean = LumenModelIntegrity::isZipIntact,
 ) {
     private val _status = MutableStateFlow<LumenModelStatus>(currentStatus())
     val status: StateFlow<LumenModelStatus> = _status.asStateFlow()
@@ -162,8 +281,19 @@ class LumenModelStore(
         return readFingerprint()?.sizeBytes == length || length == expectedBytes
     }
 
+    /**
+     * True when the installed model file passes the structural ZIP check.
+     * A corrupt file must never reach MediaPipe's native loader — that abort
+     * cannot be caught in Kotlin and kills the process.
+     */
+    fun isModelFileIntact(): Boolean = integrityCheck(modelFile)
+
     private fun currentStatus(): LumenModelStatus =
-        if (isInstalled()) LumenModelStatus.Ready(modelFile.length()) else LumenModelStatus.NotDownloaded
+        when {
+            !isInstalled() -> LumenModelStatus.NotDownloaded
+            !isModelFileIntact() -> LumenModelStatus.Failed(DAMAGED_MESSAGE)
+            else -> LumenModelStatus.Ready(modelFile.length())
+        }
 
     /**
      * Asks the server whether the model changed since it was installed.
@@ -204,7 +334,7 @@ class LumenModelStore(
         mutex.withLock {
             val remote = fetchRemoteSafely()
             val targetBytes = remote?.sizeBytes ?: expectedBytes
-            if (isInstalled() && isCurrent(remote)) {
+            if (isInstalled() && isModelFileIntact() && isCurrent(remote)) {
                 _status.value = LumenModelStatus.Ready(modelFile.length())
                 return@withLock
             }
@@ -222,6 +352,14 @@ class LumenModelStore(
                 result.fold(
                     onSuccess = { file ->
                         if (file.length() == targetBytes) {
+                            if (!integrityCheck(file)) {
+                                // A file with the right size but broken structure
+                                // would abort MediaPipe's native loader. Reject it
+                                // here instead of ever shipping it to the runtime.
+                                partFile.delete()
+                                _status.value = LumenModelStatus.Failed(DAMAGED_MESSAGE)
+                                return@fold
+                            }
                             writeFingerprint(ModelFingerprint(targetBytes, remote?.etag))
                             if (partFile.renameTo(modelFile)) {
                                 _status.value = LumenModelStatus.Ready(modelFile.length())
@@ -300,6 +438,11 @@ class LumenModelStore(
                 "$MODEL_FILE_NAME?download=true"
         const val MODEL_LABEL = "Qwen 2.5 0.5B Instruct (q8)"
         const val EXPECTED_MODEL_BYTES = 546_660_344L
+
+        /** Shown when the installed/downloaded file fails the structural check. */
+        const val DAMAGED_MESSAGE =
+            "The model file is damaged (incomplete or corrupted download). " +
+                "Tap retry to download it again — it will be verified before installing."
 
         /** ~521 MB for display strings. */
         val MODEL_SIZE_MB: Int = (EXPECTED_MODEL_BYTES / 1_048_576).toInt()

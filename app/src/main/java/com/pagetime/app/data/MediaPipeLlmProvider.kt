@@ -31,7 +31,7 @@ class MediaPipeLlmProvider(
     override val kind: LlmProviderKind = LlmProviderKind.OFFLINE
 
     override val isAvailable: Boolean
-        get() = modelStore.isInstalled() && modelStore.modelFile.length() > 0
+        get() = modelStore.isInstalled() && modelStore.isModelFileIntact()
 
     private val inferenceMutex = Mutex()
 
@@ -62,6 +62,12 @@ class MediaPipeLlmProvider(
             withContext(Dispatchers.Default) {
                 require(isAvailable) {
                     "No offline model is installed. Download it in Settings first."
+                }
+                // Belt and braces: re-check right before the native load. A
+                // corrupt file aborts the process inside MediaPipe with no
+                // exception Kotlin can catch — refuse the native call instead.
+                require(modelStore.isModelFileIntact()) {
+                    "The offline model file is damaged. Delete and re-download it in Settings."
                 }
                 require(hasEnoughNativeMemory()) {
                     "Not enough memory to load the offline model. Close other apps and try again."

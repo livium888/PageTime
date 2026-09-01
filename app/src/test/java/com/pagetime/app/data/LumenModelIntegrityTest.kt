@@ -45,6 +45,53 @@ class LumenModelIntegrityTest {
     }
 
     @Test
+    fun `a zip with a leading prefix passes like the real MediaPipe task file`() {
+        // The real Qwen task file begins with 4 zero bytes BEFORE the ZIP
+        // payload, and the archive's own offsets account for them (the local
+        // header sits at offset 4). Java's ZipOutputStream records offsets
+        // relative to its own start, so it can't emit that shape directly —
+        // build a normal zip, then shift every absolute offset by the prefix
+        // length, byte-for-byte what the genuine task file looks like.
+        val plain = validZipBytes()
+        val prefix = 4
+        val eocd = plain.size - 22
+        val shifted = ByteArray(plain.size + prefix)
+        System.arraycopy(plain, 0, shifted, prefix, plain.size)
+        // EOCD cdOffset field (at +16) moves with the archive.
+        val cdOffset = readLeInt(shifted, eocd + prefix + 16)
+        writeLeInt(shifted, eocd + prefix + 16, cdOffset + prefix)
+        // Each central-directory record's local-header offset (at +42) also
+        // moves; the records themselves sit at cdOffset + prefix now.
+        val entries = readLeShort(shifted, eocd + prefix + 10)
+        var p = cdOffset + prefix
+        repeat(entries) {
+            val headerOffset = readLeInt(shifted, p + 42)
+            writeLeInt(shifted, p + 42, headerOffset + prefix)
+            val nameLen = readLeShort(shifted, p + 28)
+            val extraLen = readLeShort(shifted, p + 30)
+            val commentLen = readLeShort(shifted, p + 32)
+            p += 46 + nameLen + extraLen + commentLen
+        }
+        assertTrue(LumenModelIntegrity.isZipIntact(tempFile("model.task", shifted)))
+    }
+
+    private fun readLeInt(b: ByteArray, offset: Int): Int =
+        (b[offset].toInt() and 0xff) or
+            ((b[offset + 1].toInt() and 0xff) shl 8) or
+            ((b[offset + 2].toInt() and 0xff) shl 16) or
+            ((b[offset + 3].toInt() and 0xff) shl 24)
+
+    private fun readLeShort(b: ByteArray, offset: Int): Int =
+        (b[offset].toInt() and 0xff) or ((b[offset + 1].toInt() and 0xff) shl 8)
+
+    private fun writeLeInt(b: ByteArray, offset: Int, value: Int) {
+        b[offset] = (value and 0xff).toByte()
+        b[offset + 1] = ((value shr 8) and 0xff).toByte()
+        b[offset + 2] = ((value shr 16) and 0xff).toByte()
+        b[offset + 3] = ((value shr 24) and 0xff).toByte()
+    }
+
+    @Test
     fun `a truncated zip fails`() {
         val full = validZipBytes()
         val cut = full.copyOf(full.size / 2) // local header survives, EOCD gone

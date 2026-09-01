@@ -221,6 +221,7 @@ fun SettingsScreen(
 
             OfflineModelSettingsCard(
                 status = lumenModelStatus,
+                downloadStats = viewModel.downloadStats.collectAsStateWithLifecycle().value,
                 onDownload = viewModel::downloadOfflineModel,
                 onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
@@ -355,6 +356,7 @@ private fun LlmProviderSettingsCard(
 @Composable
 private fun OfflineModelSettingsCard(
     status: LumenModelStatus,
+    downloadStats: LumenDownloadStats?,
     onDownload: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onDelete: () -> Unit,
@@ -403,7 +405,20 @@ private fun OfflineModelSettingsCard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "Downloading… ${(status.fraction * 100).toInt()}% — keep the app open",
+                        buildString {
+                            append("Downloading… ")
+                            append(formatModelMb(status.downloadedBytes))
+                            append(" of ")
+                            append(formatModelMb(status.totalBytes))
+                            downloadStats?.let { stats ->
+                                if (stats.rateBytesPerSec > 0) {
+                                    append(" — ")
+                                    append(formatModelMb(stats.rateBytesPerSec))
+                                    append("/s")
+                                }
+                            }
+                            append(" — keep the app open")
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -439,6 +454,10 @@ private fun OfflineModelSettingsCard(
         }
     }
 }
+
+/** "12.4 MB" / "3.2 MB" — live byte counts, not a percentage. */
+private fun formatModelMb(bytes: Long): String =
+    "%.1f".format(bytes / 1_048_576.0)
 
 @Composable
 private fun AiAnalysisSettingsCard(

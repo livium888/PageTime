@@ -137,8 +137,11 @@ object LumenModelIntegrity {
             RandomAccessFile(file, "r").use { raf ->
                 val fileLen = raf.length()
 
-                // 1. The archive must start with a local file header.
-                require(readIntLe(raf, 0) == SIG_LOCAL_HEADER) { "no local header" }
+                // 1. A local file header must exist in the leading region.
+                //    Not necessarily at offset 0: the real MediaPipe model file
+                //    starts with a small prefix (4 zero bytes) before the ZIP
+                //    payload, and other task files may carry metadata headers.
+                require(hasLocalHeaderInLead(raf, fileLen)) { "no local file header" }
 
                 // 2. The EOCD sits at the very end (fixed 22 bytes + comment).
                 val eocdPos = findEocd(raf, fileLen) ?: return false
@@ -174,6 +177,20 @@ object LumenModelIntegrity {
                 true
             }
         }.getOrDefault(false)
+    }
+
+    /** Whether any local file header signature appears in the first [LEAD_BYTES]. */
+    private fun hasLocalHeaderInLead(raf: RandomAccessFile, fileLen: Long): Boolean {
+        val leadLen = minOf(LEAD_BYTES, fileLen).toInt()
+        val lead = ByteArray(leadLen)
+        raf.seek(0)
+        raf.readFully(lead)
+        // 4-byte little-endian signature anywhere in the lead (offset +3 is safe:
+        // LEAD_BYTES is far larger than the 4-byte window).
+        for (i in 0..lead.size - 4) {
+            if (readIntLe(lead, i) == SIG_LOCAL_HEADER) return true
+        }
+        return false
     }
 
     /**
@@ -228,6 +245,7 @@ object LumenModelIntegrity {
     private const val MAX_COMMENT = 65_535L
     private const val MIN_CD_RECORD = 46L
     private const val MIN_ZIP_BYTES = 22L
+    private const val LEAD_BYTES = 64 * 1024L
 }
 
 /** Reads the model's remote metadata (size + ETag) with a cheap HEAD request. */

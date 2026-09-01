@@ -1,5 +1,7 @@
 package com.pagetime.app.ui.screens.reader
 
+import android.util.Log
+
 import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
@@ -336,6 +338,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     @Volatile
     private var latestTxtFraction: Float = 0f
 
+    /** Exact character offset of the current plain-text page's first char. */
+    @Volatile
+    private var latestTxtPageOffset: Int = 0
+
     /** No writes until the Compose scroll restore has applied the saved fraction. */
     @Volatile
     private var txtRestoreComplete = false
@@ -355,6 +361,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageStartOffset: Int = 0
     ) {
         if (pageCount <= 0) return
+        latestTxtPageOffset = pageStartOffset
         val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
         _progress.value = fraction
         if (!userInitiated || !txtRestoreComplete) return
@@ -427,7 +434,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     val centered = container.learningContextExtractor.captureEpub(
                         book = b,
                         chapterIndex = chapterIndex,
-                        currentLocatorJson = latestLocator?.toJSON()?.toString()
+                        currentLocatorJson = latestLocator?.toJSON()?.toString(),
+                        progressionOverride = latestLocator?.locations?.progression?.toFloat()
                     )
                     passage = centered.ifBlank {
                         // No key/href parse failure: reuse the chapter-tail context.
@@ -447,7 +455,29 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                         latestTxtOffset()
                     )
                 }
+                // Capture diagnostics: if every page yields the same card, this
+                // line shows whether the passage itself is frozen (same length /
+                // start text) or the AI is at fault.
+                val positionInfo =
+                    when (b.format) {
+                        "epub" -> {
+                            val locator = latestLocator
+                            "href=${locator?.href} progression=${locator?.locations?.progression} " +
+                                "position=${locator?.locations?.position}"
+                        }
+                        else -> "fraction=$latestTxtFraction pageOffset=$latestTxtPageOffset"
+                    }
+                Log.d(
+                    "LumenCapture",
+                    "format=${b.format} chapter=$chapterIndex $positionInfo " +
+                        "passageLen=${passage.length} " +
+                        "passageStart=${passage.take(80).replace(Regex("\\s+"), " ")}",
+                )
                 val draft = lumenRepo.draft(b, passage)
+                Log.d(
+                    "LumenCapture",
+                    "usedAi=${draft.usedAi} front=${draft.front.take(60)} quoteLen=${draft.quote.length}",
+                )
                 pendingLumenContext = PendingLumenContext(
                     draft = draft,
                     locatorJson = if (b.format == "epub") {
@@ -539,8 +569,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    private fun latestTxtOffset(): Int =
-        ((latestTxtFraction.coerceIn(0f, 1f)) * (_textContent.value?.length ?: 0)).toInt()
+    private fun latestTxtOffset(): Int {
+        val contentLength = _textContent.value?.length ?: 0
+        if (contentLength == 0) return 0
+        // The exact page-start offset when known, else the fraction estimate.
+        return if (latestTxtPageOffset > 0) latestTxtPageOffset
+        else (latestTxtFraction.coerceIn(0f, 1f) * contentLength).toInt()
+    }
 
     fun clearLearningCheckpoint() {
         persistenceScope.launch {

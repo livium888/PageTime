@@ -112,6 +112,7 @@ class LearningContextExtractor(
         book: BookEntity,
         chapterIndex: Int,
         currentLocatorJson: String?,
+        progressionOverride: Float? = null,
         radiusChars: Int = LumenCapture.DEFAULT_RADIUS_CHARS
     ): String {
         val extracted = File(context.cacheDir, "epub/${book.id}")
@@ -125,10 +126,13 @@ class LearningContextExtractor(
         val chapter = parsed.chapters[active]
         val raw = chapterRawText(book, chapter.filePath, chapter.title)
         if (raw.isBlank()) return ""
-        // Center on the current position. Unknown locator → end of chapter (tail
-        // window), which is safer than a blank capture.
+        // Center on the current position. Prefer the locator JSON (it carries the
+        // resource href so the fraction is only trusted for THIS chapter), then
+        // the caller's direct progression (some locators serialize without it),
+        // then the end of chapter as a last resort.
         val fraction = currentLocatorJson
             ?.let { locatorFraction(it, chapter.filePath) }
+            ?: progressionOverride
             ?: 1f
         val center = (raw.length * fraction.coerceIn(0f, 1f)).toInt().coerceIn(0, raw.length)
         return LumenCapture.captureWindow(raw, center, radiusChars)

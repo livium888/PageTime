@@ -39,6 +39,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,8 +48,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.LlmProviderKind
@@ -55,6 +62,7 @@ import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.learning.GeminiModel
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
@@ -84,6 +92,20 @@ fun SettingsScreen(
     val geminiStatus by geminiViewModel.status.collectAsStateWithLifecycle()
     var geminiKeyInput by remember { mutableStateOf("") }
     var modelMenuExpanded by remember { mutableStateOf(false) }
+
+    // Newest crash log from filesDir/crash, so the user can copy it to support
+    // without adb. Read once when Settings opens.
+    var crashLogText by remember { mutableStateOf<String?>(null) }
+    val settingsContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        crashLogText =
+            PageTimeApp.crashDirOf(settingsContext)
+                .listFiles { file -> file.name.startsWith("crash-") && file.name.endsWith(".log") }
+                ?.maxByOrNull { it.lastModified() }
+                ?.takeIf { it.length() > 0 }
+                ?.readText()
+                ?.take(4_000)
+    }
 
     // Cheap HEAD against the model host; best-effort and silent on failure.
     LaunchedEffect(Unit) { viewModel.checkForModelUpdate() }
@@ -225,6 +247,60 @@ fun SettingsScreen(
                 },
                 onRefresh = geminiViewModel::refreshModels
             )
+
+            SectionHeader("Support")
+            CrashDiagnosticsCard(crashLogText = crashLogText)
+        }
+    }
+}
+
+@Composable
+private fun CrashDiagnosticsCard(crashLogText: String?) {
+    val context = LocalContext.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Crash diagnostics", style = MaterialTheme.typography.titleMedium)
+            if (crashLogText == null) {
+                Text(
+                    "No crash log found. If the app crashes, reopen it and come back here — " +
+                        "the log appears automatically.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text(
+                    "Most recent crash log — copy it and send it to support:",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    crashLogText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 12,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val clip = ClipData.newPlainText("PageTime crash log", crashLogText)
+                        val clipboard =
+                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(clip)
+                    }) {
+                        Text("Copy")
+                    }
+                    OutlinedButton(onClick = {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, crashLogText)
+                        }
+                        context.startActivity(Intent.createChooser(send, "Share crash log"))
+                    }) {
+                        Text("Share")
+                    }
+                }
+            }
         }
     }
 }

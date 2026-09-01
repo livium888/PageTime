@@ -123,8 +123,10 @@ class LearningContextExtractor(
             return ""
         }
         val active = chapterIndex.coerceIn(0, (parsed.chapters.size - 1).coerceAtLeast(0))
-        val chapter = parsed.chapters[active]
-        val raw = chapterRawText(book, chapter.filePath, chapter.title)
+        val chapter = parsed.chapters.getOrNull(active) ?: return ""
+        val raw = runCatching {
+            chapterRawText(book, chapter.filePath, chapter.title)
+        }.getOrElse { return "" }
         if (raw.isBlank()) return ""
         // Center on the current position. Prefer the locator JSON (it carries the
         // resource href so the fraction is only trusted for THIS chapter), then

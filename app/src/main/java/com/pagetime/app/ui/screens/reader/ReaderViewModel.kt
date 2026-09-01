@@ -1,8 +1,7 @@
 package com.pagetime.app.ui.screens.reader
 
-import android.util.Log
-
 import android.app.Application
+import android.util.Log
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -503,7 +502,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                _error.value = error.message ?: "Couldn't capture a card here"
+                Log.e("LumenCapture", "Lumen capture failed", error)
+                _error.value = "Couldn't create a Lumen card here. Try again."
             } finally {
                 _lumenCapturing.value = false
             }

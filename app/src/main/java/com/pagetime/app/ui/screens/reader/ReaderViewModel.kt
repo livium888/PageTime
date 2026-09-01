@@ -501,7 +501,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _lumenDraft.value = draft
             } catch (error: CancellationException) {
                 throw error
-            } catch (error: Exception) {
+            } catch (error: Throwable) {
                 Log.e("LumenCapture", "Lumen capture failed", error)
                 _error.value = "Couldn't create a Lumen card here. Try again."
             } finally {

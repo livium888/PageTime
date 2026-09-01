@@ -20,13 +20,7 @@ android {
         targetSdk = 34
         // Monotonic so every build is a valid update over the previous one.
         // Minutes since epoch (~8.5M now) always increases and fits in an Int.
-        // -PVERSION_CODE overrides it (useful to pin identical consecutive
-        // builds, e.g. splitting compile from R8 in memory-constrained CI).
-        versionCode =
-            providers.gradleProperty("VERSION_CODE")
-                .map { it.toInt() }
-                .orElse(providers.provider { (System.currentTimeMillis() / 60_000L).toInt() })
-                .get()
+        versionCode = (System.currentTimeMillis() / 60_000L).toInt()
         versionName = "1.0"
         buildConfigField(
             "String",
@@ -59,12 +53,7 @@ android {
 
     buildTypes {
         release {
-            // R8 shrink/obfuscate. Rules for Readium + kotlinx.serialization +
-            // kotlin-reflect live in proguard-rules.pro. Resource shrinking is
-            // left off: Readium's WebView navigator loads resources indirectly
-            // and the gain here is mostly code size anyway.
-            isMinifyEnabled = true
-            isShrinkResources = false
+            isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

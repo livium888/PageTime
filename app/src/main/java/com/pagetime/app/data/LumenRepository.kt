@@ -59,6 +59,7 @@ class LumenRepository(
     private val bookDao: com.pagetime.app.data.local.BookDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val localLlmProvider: LlmProvider? = null,
+    private val debugLog: (String) -> Unit = {},
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
@@ -108,20 +109,15 @@ class LumenRepository(
         when (source) {
             LumenDraftSource.LOCAL -> {
                 val local = localLlmProvider ?: return fallbackDraft(clean)
-                try {
-                    val result =
-                        local.generate(
-                            LlmRequest(
-                                prompt = LumenAiPrompts.cardDraft(clean, book.title),
-                                maxOutputTokens = 512,
-                            ),
-                        )
-                    val raw = result.getOrThrow().text
-                    LumenCapture.parseDraft(raw)?.let { (front, back) ->
-                        return LumenDraft(front, back, clean, usedAi = true)
-                    }
-                } catch (_: Exception) {
-                    // Fall through to the on-device draft. Capture must never fail.
+                val parsed =
+                    LumenLocalDraft.generate(
+                        call = { request -> local.generate(request) },
+                        passage = clean,
+                        bookTitle = book.title,
+                        debugLog = debugLog,
+                    )
+                if (parsed != null) {
+                    return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
                 }
             }
             LumenDraftSource.GEMINI -> {
@@ -142,8 +138,12 @@ class LumenRepository(
                         } else {
                             call()
                         }
-                    LumenCapture.parseDraft(result)?.let { (front, back) ->
-                        return LumenDraft(front, back, clean, usedAi = true)
+                    val parsed =
+                        LumenCapture.parseDraft(result)?.takeIf { (front, _) ->
+                            !LumenCapture.isPassageEcho(front, clean)
+                        }
+                    if (parsed != null) {
+                        return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
                     }
                 } catch (_: Exception) {
                     // Fall through to the on-device draft. Capture must never fail.
@@ -593,10 +593,11 @@ object LumenCapture {
 
     /**
      * Parses the model's reply into (front, back). Accepts strict JSON, JSON
-     * wrapped in prose or code fences, and a plain "Front:"/"Back:" label
-     * format — small on-device models rarely emit textbook JSON, and landing a
-     * real card is better than silently degrading to the raw-passage draft.
-     * Returns null only when nothing usable is present.
+     * wrapped in prose or code fences, a plain "Front:"/"Back:" label
+     * format, and truncated/sloppy JSON — small on-device models rarely emit
+     * textbook JSON, and landing a real card is better than silently degrading
+     * to the raw-passage draft. Returns null only when nothing usable is
+     * present.
      */
     fun parseDraft(raw: String): Pair<String, String>? {
         if (raw.isBlank()) return null
@@ -627,15 +628,73 @@ object LumenCapture {
 
         // 2. Labeled lines: "Front: ..." / "Back: ..." (small models often
         //    answer in plain text when they cannot produce JSON).
-        val frontMarker = Regex("(?i)\\bfront\\s*[:\\-]").find(cleaned) ?: return null
-        val frontStart = frontMarker.range.last + 1
-        val backMarker =
-            Regex("(?i)\\bback\\s*[:\\-]").find(cleaned, frontStart) ?: return null
-        val front = cleanField(cleaned.substring(frontStart, backMarker.range.first), maxLength = 120)
-        val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = 400)
+        val frontMarker = Regex("(?i)\\bfront\\s*[:\\-]").find(cleaned)
+        if (frontMarker != null) {
+            val frontStart = frontMarker.range.last + 1
+            val backMarker =
+                Regex("(?i)\\bback\\s*[:\\-]").find(cleaned, frontStart)
+            if (backMarker != null) {
+                val front = cleanField(cleaned.substring(frontStart, backMarker.range.first), maxLength = 120)
+                val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = 400)
+                if (front.isNotBlank()) return front to back
+            }
+        }
+
+        // 3. Truncated or sloppy JSON: the token cap cut the reply mid-object
+        //    or quotes got mangled. Extracting the string values directly
+        //    salvages everything the model did manage to write.
+        val frontRaw = jsonStringValue(cleaned, "front", truncated = true) ?: return null
+        val front = cleanField(frontRaw, maxLength = 120)
         if (front.isBlank()) return null
-        return front to back
+        val frontMatch =
+            Regex("""(?i)["']front["']\s*:\s*["']""").find(cleaned) ?: return null
+        val remainder = cleaned.substring(frontMatch.range.last + 1)
+        val backRaw =
+            jsonStringValue(remainder, "back", truncated = true).orEmpty()
+        return front to cleanField(backRaw, maxLength = 400)
     }
+
+    /**
+     * Extracts a JSON string value for [key] from [source] even when the
+     * enclosing object is broken. [truncated] also allows a value cut off at
+     * the end of the reply (no closing quote). Returns null when the key is
+     * absent. Handles double- and single-quoted keys and values.
+     */
+    private fun jsonStringValue(source: String, key: String, truncated: Boolean): String? {
+        val full =
+            Regex("""(?i)["']$key["']\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""")
+                .find(source)
+        if (full != null) {
+            return unescapeJson(full.groupValues[1].ifEmpty { full.groupValues[2] })
+        }
+        if (!truncated) return null
+        val cut =
+            Regex("""(?i)["']$key["']\s*:\s*(["'])(.*)$""", RegexOption.DOT_MATCHES_ALL)
+                .find(source)
+                ?: return null
+        return unescapeJson(cut.groupValues[2])
+    }
+
+    private fun unescapeJson(value: String): String =
+        value.replace("\\\\", "\\")
+            .replace("\\\"", "\"")
+            .replace("\\n", " ")
+            .replace("\\t", " ")
+
+    /**
+     * True when [front] is a long verbatim chunk of [passage] — the model
+     * echoing the source instead of writing its own idea. Only exact,
+     * contiguous text of at least [minLength] chars counts, so paraphrases
+     * and short quoted terms pass. Used to reject copy-paste cards.
+     */
+    fun isPassageEcho(front: String, passage: String, minLength: Int = 24): Boolean {
+        val normalizedFront = normalizeWhitespace(front).lowercase()
+        if (normalizedFront.length < minLength) return false
+        return normalizeWhitespace(passage).lowercase().contains(normalizedFront)
+    }
+
+    private fun normalizeWhitespace(value: String): String =
+        value.replace(Regex("\\s+"), " ").trim()
 
     /** Trims quotes/emphasis markers, collapses whitespace, and caps length. */
     private fun cleanField(value: String, maxLength: Int): String {
@@ -646,6 +705,42 @@ object LumenCapture {
                 .trim()
         if (cleaned.length <= maxLength) return cleaned
         return cleaned.take(maxLength - 1).trimEnd() + "…"
+    }
+}
+
+/**
+ * Pure driver for the on-device model's capture attempts. Tries the full
+ * prompt once, then one short retry when the reply was unusable (unparseable
+ * or a verbatim copy of the passage). A small model's first attempt is
+ * sometimes a dud — a second, stricter chance is cheap and lands a real card
+ * instead of the raw-passage draft. Android-free for unit tests.
+ */
+object LumenLocalDraft {
+    suspend fun generate(
+        call: suspend (LlmRequest) -> Result<LlmResult>,
+        passage: String,
+        bookTitle: String,
+        debugLog: (String) -> Unit = {},
+    ): Pair<String, String>? {
+        suspend fun attempt(prompt: String, maxTokens: Int): Pair<String, String>? {
+            val raw =
+                runCatching { call(LlmRequest(prompt, maxOutputTokens = maxTokens)) }
+                    .getOrNull()
+                    ?.getOrNull()
+                    ?.text
+                    ?: return null
+            val parsed =
+                LumenCapture.parseDraft(raw)?.takeIf { (front, _) ->
+                    !LumenCapture.isPassageEcho(front, passage)
+                }
+            if (parsed == null) {
+                debugLog("discarded local draft (unparseable or passage echo): ${raw.take(240)}")
+            }
+            return parsed
+        }
+
+        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = 512)
+            ?: attempt(LumenAiPrompts.cardDraftStrict(passage, bookTitle), maxTokens = 512)
     }
 }
 

@@ -2,6 +2,7 @@ package com.pagetime.app.data
 
 import android.content.Context
 import android.os.PowerManager
+import android.util.Log
 import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
@@ -123,6 +124,7 @@ class AppContainer(context: Context) {
         bookDao = bookDao,
         settingsRepository = settingsRepository,
         localLlmProvider = localLlmProvider,
+        debugLog = { message -> Log.d("LumenDraft", message) },
     )
 
     val learningRepository = LearningRepository(

@@ -56,7 +56,11 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
         withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder().url(url).get().build()
-                AppHttp.newClient(callTimeoutSeconds = 30L).newCall(request).execute().use { response ->
+                // No call-timeout cap: OkHttp's callTimeout bounds the WHOLE
+                // exchange (headers + body) and a ~521 MB file legitimately
+                // takes minutes on slower connections. The client's 30 s read
+                // timeout still aborts a stalled connection between reads.
+                AppHttp.newClient(callTimeoutSeconds = 0L).newCall(request).execute().use { response ->
                     check(response.isSuccessful) { "Model download failed: HTTP ${response.code}" }
                     val body = response.body ?: error("Model download returned no body")
                     val total =
@@ -69,6 +73,10 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
                         val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
                         var downloaded = 0L
                         while (true) {
+                            // Safety net for a server that never ends the body:
+                            // stop once the declared size is reached; the store's
+                            // size verification catches any mismatch afterwards.
+                            if (total > 0 && downloaded >= total) break
                             val read = source.read(buffer)
                             if (read == -1) break
                             output.write(buffer, 0, read)

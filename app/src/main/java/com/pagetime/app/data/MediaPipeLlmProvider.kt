@@ -4,6 +4,8 @@ import android.content.Context
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -22,7 +24,10 @@ class MediaPipeLlmProvider(
     override val kind: LlmProviderKind = LlmProviderKind.OFFLINE
 
     override val isAvailable: Boolean
-        get() = modelStore.isInstalled()
+        get() = modelStore.isInstalled() && modelStore.modelFile.length() > 0
+
+    /** Native MediaPipe cannot safely load two copies of the model concurrently. */
+    private val inferenceMutex = Mutex()
 
     override suspend fun generate(request: LlmRequest): Result<LlmResult> =
         try {
@@ -35,7 +40,8 @@ class MediaPipeLlmProvider(
 
     /** Loads the runtime, runs one request, and always releases the weights. */
     private suspend fun infer(request: LlmRequest): LlmResult =
-        withContext(Dispatchers.Default) {
+        inferenceMutex.withLock {
+            withContext(Dispatchers.Default) {
             require(isAvailable) {
                 "No offline model is installed. Download it in Settings first."
             }
@@ -67,6 +73,7 @@ class MediaPipeLlmProvider(
                 LlmResult(text, LlmProviderKind.OFFLINE)
             } finally {
                 llm.close()
+            }
             }
         }
 }

@@ -419,7 +419,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // true forever, making every later capture a no-op (spinner spins, no
         // dialog). The draft dialog is the real gate; if it's already open we
         // just don't start another capture.
-        if (_lumenDraft.value != null) return
+        if (_lumenDraft.value != null || _lumenCapturing.value) return
         _lumenCapturing.value = true
         viewModelScope.launch {
             try {

@@ -20,12 +20,18 @@ android {
         targetSdk = 34
         // Monotonic so every build is a valid update over the previous one.
         // Minutes since epoch (~8.5M now) always increases and fits in an Int.
-        versionCode = (System.currentTimeMillis() / 60_000L).toInt()
+        // -PVERSION_CODE overrides it (useful to pin identical consecutive
+        // builds, e.g. splitting compile from R8 in memory-constrained CI).
+        versionCode =
+            providers.gradleProperty("VERSION_CODE")
+                .map { it.toInt() }
+                .orElse(providers.provider { (System.currentTimeMillis() / 60_000L).toInt() })
+                .get()
         versionName = "1.0"
         buildConfigField(
             "String",
             "GEMINI_API_KEY",
-            "\"${providers.gradleProperty("GEMINI_API_KEY").orNull ?: providers.environmentVariable("GEMINI_API_KEY").orNull ?: ""}\""
+            "\"${providers.gradleProperty("GEMINI_API_KEY").orNull ?: providers.environmentVariable("GEMINI_API_KEY").orNull ?: ""}\"",
         )
     }
 
@@ -37,10 +43,11 @@ android {
             val base64 = providers.environmentVariable("KEYSTORE_BASE64").orNull
             val password = providers.environmentVariable("KEYSTORE_PASSWORD").orNull
             if (!base64.isNullOrBlank() && !password.isNullOrBlank()) {
-                val keystoreFile = File(
-                    System.getenv("RUNNER_TEMP") ?: System.getProperty("java.io.tmpdir"),
-                    "pagetime-release.p12"
-                )
+                val keystoreFile =
+                    File(
+                        System.getenv("RUNNER_TEMP") ?: System.getProperty("java.io.tmpdir"),
+                        "pagetime-release.p12",
+                    )
                 keystoreFile.writeBytes(Base64.getDecoder().decode(base64))
                 storeFile = keystoreFile
                 storePassword = password
@@ -52,10 +59,15 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 shrink/obfuscate. Rules for Readium + kotlinx.serialization +
+            // kotlin-reflect live in proguard-rules.pro. Resource shrinking is
+            // left off: Readium's WebView navigator loads resources indirectly
+            // and the gain here is mostly code size anyway.
+            isMinifyEnabled = true
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
             if (!providers.environmentVariable("KEYSTORE_BASE64").orNull.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
@@ -123,12 +135,15 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.coil.compose)
 
+    // MediaPipe tasks-genai: on-device LLM inference for the offline AI provider.
+    // Weights are downloaded at runtime (Settings) — never bundled in the APK.
+    implementation(libs.mediapipe.tasks.genai)
+
     // Readium: open-source EPUB engine (rendering, pagination/scroll, locators).
     implementation(libs.readium.shared)
     implementation(libs.readium.streamer)
     implementation(libs.readium.navigator)
     implementation(libs.androidx.fragment.ktx)
-
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

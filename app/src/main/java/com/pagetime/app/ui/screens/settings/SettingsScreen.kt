@@ -28,6 +28,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +48,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagetime.app.data.LlmProviderKind
+import com.pagetime.app.data.LumenModelStatus
+import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.learning.GeminiModel
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.local.AiAnalysisLevel
@@ -69,6 +73,8 @@ fun SettingsScreen(
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
+    val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
+    val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
     val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
     val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
@@ -181,6 +187,17 @@ fun SettingsScreen(
                 }
             }
 
+            LlmProviderSettingsCard(
+                provider = llmProvider,
+                onSelect = viewModel::setLlmProvider
+            )
+
+            OfflineModelSettingsCard(
+                status = lumenModelStatus,
+                onDownload = viewModel::downloadOfflineModel,
+                onDelete = viewModel::deleteOfflineModel
+            )
+
             GeminiSettingsCard(
                 keyInput = geminiKeyInput,
                 onKeyInputChange = { geminiKeyInput = it },
@@ -202,6 +219,118 @@ fun SettingsScreen(
                 },
                 onRefresh = geminiViewModel::refreshModels
             )
+        }
+    }
+}
+
+@Composable
+private fun LlmProviderSettingsCard(
+    provider: LlmProviderKind,
+    onSelect: (LlmProviderKind) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("AI provider", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Choose where optional AI requests run. Offline mode is ready for a " +
+                    "downloaded local model and will never send book text to Gemini " +
+                    "automatically.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                LlmProviderKind.entries.forEach { option ->
+                    FilterChip(
+                        selected = option == provider,
+                        onClick = { onSelect(option) },
+                        label = { Text(option.label) },
+                    )
+                }
+            }
+            Text(
+                provider.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (provider == LlmProviderKind.OFFLINE) {
+                Text(
+                    "Capture will draft cards with the downloaded model below. Without " +
+                        "one, capture falls back to the plain on-device draft.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflineModelSettingsCard(
+    status: LumenModelStatus,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Offline model", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${LumenModelStore.MODEL_LABEL} — an open Apache-2.0 model that runs " +
+                    "entirely on this device. Book text and prompts never leave the phone. " +
+                    "Download once over Wi-Fi (~${LumenModelStore.MODEL_SIZE_MB} MB); the app " +
+                    "itself stays small either way.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (status) {
+                is LumenModelStatus.NotDownloaded -> {
+                    Text(
+                        "Not downloaded — ${LumenModelStore.MODEL_SIZE_MB} MB",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Download model")
+                    }
+                }
+                is LumenModelStatus.Downloading -> {
+                    LinearProgressIndicator(
+                        progress = { status.fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Downloading… ${(status.fraction * 100).toInt()}% — keep the app open",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                is LumenModelStatus.Ready -> {
+                    Text(
+                        "Installed — ${LumenModelStore.MODEL_SIZE_MB} MB. Capture now drafts " +
+                            "cards on-device when Offline model is selected.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                        Text("Delete model")
+                    }
+                }
+                is LumenModelStatus.Failed -> {
+                    Text(
+                        status.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Retry download")
+                    }
+                }
+            }
         }
     }
 }

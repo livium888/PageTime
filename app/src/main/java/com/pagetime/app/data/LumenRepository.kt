@@ -4,6 +4,7 @@ import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
 import com.pagetime.app.data.local.LumenCardEntity
+import com.pagetime.app.data.local.SettingsRepository
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
 import io.github.openspacedrepetition.Scheduler
@@ -56,6 +57,8 @@ class LumenRepository(
     private val geminiClient: GeminiLearningClient,
     private val aiUsageRepository: AiUsageRepository? = null,
     private val bookDao: com.pagetime.app.data.local.BookDao? = null,
+    private val settingsRepository: SettingsRepository? = null,
+    private val localLlmProvider: LlmProvider? = null,
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
@@ -83,37 +86,75 @@ class LumenRepository(
 
     /**
      * Drafts a card from the passage around the current reading position.
-     * AI is best-effort: if no key is configured or the call fails, the card is
-     * still drafted from the raw passage so capture never blocks reading.
+     * The source is chosen by the user's AI provider setting: Gemini, the
+     * offline model, or the plain on-device draft. AI is always best-effort —
+     * if nothing is configured or a call fails, the card is still drafted from
+     * the raw passage so capture never blocks reading.
      */
-    suspend fun draft(book: BookEntity, passage: String): LumenDraft {
+    suspend fun draft(
+        book: BookEntity,
+        passage: String,
+    ): LumenDraft {
         val clean = passage.trim()
         require(clean.isNotBlank()) { "Nothing to capture — move to a spot with text first" }
 
-        if (geminiClient.hasKey()) {
-            try {
-                val call: suspend () -> String = {
-                    geminiClient.draftLumenCard(clean, book.title)
+        val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
+        val source =
+            LumenDraftRouter.sourceFor(
+                provider = provider,
+                geminiConfigured = geminiClient.hasKey(),
+                localModelAvailable = localLlmProvider?.isAvailable == true,
+            )
+        when (source) {
+            LumenDraftSource.LOCAL -> {
+                val local = localLlmProvider ?: return fallbackDraft(clean)
+                try {
+                    val result =
+                        local.generate(
+                            LlmRequest(
+                                prompt = LumenAiPrompts.cardDraft(clean, book.title),
+                                maxOutputTokens = 512,
+                            ),
+                        )
+                    val raw = result.getOrThrow().text
+                    LumenCapture.parseDraft(raw)?.let { (front, back) ->
+                        return LumenDraft(front, back, clean, usedAi = true)
+                    }
+                } catch (_: Exception) {
+                    // Fall through to the on-device draft. Capture must never fail.
                 }
-                val result = if (aiUsageRepository != null) {
-                    aiUsageRepository.track(
-                        bookId = book.id,
-                        operation = AiUsageRepository.OPERATION_LUMEN,
-                        model = geminiClient.currentModel(),
-                        inputCharacters = clean.length,
-                        outputItems = { it.length },
-                        block = call
-                    )
-                } else {
-                    call()
-                }
-                LumenCapture.parseDraft(result)?.let { (front, back) ->
-                    return LumenDraft(front, back, clean, usedAi = true)
-                }
-            } catch (_: Exception) {
-                // Fall through to the on-device draft. Capture must never fail.
             }
+            LumenDraftSource.GEMINI -> {
+                try {
+                    val call: suspend () -> String = {
+                        geminiClient.draftLumenCard(clean, book.title)
+                    }
+                    val result =
+                        if (aiUsageRepository != null) {
+                            aiUsageRepository.track(
+                                bookId = book.id,
+                                operation = AiUsageRepository.OPERATION_LUMEN,
+                                model = geminiClient.currentModel(),
+                                inputCharacters = clean.length,
+                                outputItems = { it.length },
+                                block = call,
+                            )
+                        } else {
+                            call()
+                        }
+                    LumenCapture.parseDraft(result)?.let { (front, back) ->
+                        return LumenDraft(front, back, clean, usedAi = true)
+                    }
+                } catch (_: Exception) {
+                    // Fall through to the on-device draft. Capture must never fail.
+                }
+            }
+            LumenDraftSource.FALLBACK -> Unit
         }
+        return fallbackDraft(clean)
+    }
+
+    private fun fallbackDraft(clean: String): LumenDraft {
         val (front, back) = LumenCapture.fallbackDraft(clean)
         return LumenDraft(front, back, clean, usedAi = false)
     }

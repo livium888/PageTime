@@ -19,6 +19,7 @@ import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
 import com.pagetime.app.domain.BalanceManager
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -106,11 +107,21 @@ class AppContainer(context: Context) {
     val geminiLearningClient = GeminiLearningClient(settingsRepository)
     val learningContextExtractor = LearningContextExtractor(appContext, epubParser)
 
+    /** Optional on-device LLM: weights downloaded on demand, never bundled. */
+    val lumenModelStore =
+        LumenModelStore(
+            directory = File(appContext.filesDir, "lumen-model"),
+            downloader = OkHttpLumenModelDownloader(),
+        )
+    val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
+
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),
         geminiClient = geminiLearningClient,
         aiUsageRepository = aiUsageRepository,
-        bookDao = bookDao
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        localLlmProvider = localLlmProvider,
     )
 
     val learningRepository = LearningRepository(

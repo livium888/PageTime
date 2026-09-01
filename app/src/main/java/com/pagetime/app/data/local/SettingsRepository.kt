@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -28,7 +29,9 @@ data class Settings(
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
     val hardLockUntil: Long = 0,
     /** Whether the slip box shows newcomer help / confirmations before card actions. */
-    val helpEnabled: Boolean = true
+    val helpEnabled: Boolean = true,
+    /** Provider used for optional AI-assisted learning features. */
+    val llmProvider: LlmProviderKind = LlmProviderKind.GEMINI
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
@@ -108,6 +111,7 @@ class SettingsRepository(private val context: Context) {
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
+        val LLM_PROVIDER = stringPreferencesKey("llm_provider")
 
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
@@ -323,7 +327,8 @@ class SettingsRepository(private val context: Context) {
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
-            helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true
+            helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
+            llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
     }
 
@@ -331,6 +336,15 @@ class SettingsRepository(private val context: Context) {
     suspend fun setHelpEnabled(value: Boolean) {
         context.dataStore.edit { it[Keys.METHOD_HELP_ENABLED] = value }
     }
+
+    suspend fun setLlmProvider(provider: LlmProviderKind) {
+        context.dataStore.edit { it[Keys.LLM_PROVIDER] = provider.key }
+    }
+
+    suspend fun llmProvider(): LlmProviderKind =
+        context.dataStore.data.first()[Keys.LLM_PROVIDER]
+            ?.let(LlmProviderKind::fromKey)
+            ?: LlmProviderKind.GEMINI
 
     val aiSettings: Flow<AiSettings> = context.dataStore.data.map { p ->
         AiSettings(

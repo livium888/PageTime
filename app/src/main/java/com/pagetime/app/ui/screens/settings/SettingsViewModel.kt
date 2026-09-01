@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.LlmProviderKind
+import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.GenerationMode
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
@@ -26,9 +28,17 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val aiSettings = container.settingsRepository.aiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
 
+    val llmProvider = container.settingsRepository.settings
+        .map { it.llmProvider }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LlmProviderKind.GEMINI)
+
     val helpEnabled = container.settingsRepository.settings
         .map { it.helpEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val lumenModelStatus =
+        container.lumenModelStore.status
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LumenModelStatus.NotDownloaded)
 
     fun setRatio(value: Double) {
         viewModelScope.launch { container.balanceManager.setRatio(value) }
@@ -44,5 +54,17 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setHelpEnabled(value: Boolean) {
         viewModelScope.launch { container.settingsRepository.setHelpEnabled(value) }
+    }
+
+    fun setLlmProvider(provider: LlmProviderKind) {
+        viewModelScope.launch { container.settingsRepository.setLlmProvider(provider) }
+    }
+
+    fun downloadOfflineModel() {
+        viewModelScope.launch { container.lumenModelStore.download() }
+    }
+
+    fun deleteOfflineModel() {
+        viewModelScope.launch { container.lumenModelStore.deleteModel() }
     }
 }

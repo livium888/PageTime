@@ -17,6 +17,46 @@ class LumenLocalDraftTest {
     private fun ok(text: String) = Result.success(LlmResult(text, LlmProviderKind.OFFLINE))
 
     @Test
+    fun `reports the prompt actually sent, so diagnostics cannot drift from it`() = runTest {
+        // The capture log records the token cost from this callback. Reporting
+        // anything but the real prompt is how a constant passageLength=120 hid
+        // an over-budget prompt through days of diagnosis.
+        var reported: String? = null
+        var sent: String? = null
+        val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
+            sent = request.prompt
+            ok("""{"front":"Fiction bonds large groups","back":"Shared stories let many cooperate."}""")
+        }
+
+        LumenLocalDraft.generate(
+            call = call,
+            passage = passage,
+            bookTitle = "Sapiens",
+            onPromptBuilt = { reported = it },
+        )
+
+        assertEquals(sent, reported)
+        assertTrue(reported!!.contains(passage.take(40)))
+    }
+
+    @Test
+    fun `the reply budget leaves room for the prompt`() = runTest {
+        var request: LlmRequest? = null
+        val call: suspend (LlmRequest) -> Result<LlmResult> = { r ->
+            request = r
+            ok("""{"front":"A title","back":"A note."}""")
+        }
+
+        LumenLocalDraft.generate(call, passage, "Sapiens")
+
+        assertEquals(LumenLocalDraft.REPLY_TOKENS, request!!.maxOutputTokens)
+        assertTrue(
+            "The reply budget must leave input room inside the engine's total",
+            LlmTokenBudget.inputBudget(LumenLocalDraft.REPLY_TOKENS) > 0
+        )
+    }
+
+    @Test
     fun `uses a good reply and primes the model with the passage`() = runTest {
         var calls = 0
         val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->

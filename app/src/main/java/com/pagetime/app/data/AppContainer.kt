@@ -2,6 +2,7 @@ package com.pagetime.app.data
 
 import android.content.Context
 import android.os.PowerManager
+import android.util.Log
 import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
@@ -19,6 +20,7 @@ import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
 import com.pagetime.app.domain.BalanceManager
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -58,7 +60,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_10_11,
                 AppDatabase.MIGRATION_11_12,
                 AppDatabase.MIGRATION_12_13,
-                AppDatabase.MIGRATION_13_14
+                AppDatabase.MIGRATION_13_14,
+                AppDatabase.MIGRATION_14_15
             )
             .build()
 
@@ -105,11 +108,25 @@ class AppContainer(context: Context) {
     val geminiLearningClient = GeminiLearningClient(settingsRepository)
     val learningContextExtractor = LearningContextExtractor(appContext, epubParser)
 
+    /** Optional on-device LLM: weights downloaded on demand, never bundled. */
+    val lumenModelStore =
+        LumenModelStore(
+            directory = File(appContext.filesDir, "lumen-model"),
+            downloader = OkHttpLumenModelDownloader(),
+            remoteInfoFetcher = HfModelRemoteInfoFetcher::fetch,
+        )
+    val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
+
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),
         geminiClient = geminiLearningClient,
         aiUsageRepository = aiUsageRepository,
-        bookDao = bookDao
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        localLlmProvider = localLlmProvider,
+        debugLog = { message -> Log.d("LumenDraft", message) },
+        modelStore = { lumenModelStore },
+        captureDiagContext = { appContext },
     )
 
     val learningRepository = LearningRepository(

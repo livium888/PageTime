@@ -44,6 +44,52 @@ object LumenConnections {
             .toList()
     }
 
+    /**
+     * Filing suggestions for a freshly captured draft: where should this new
+     * slip continue the line? Ranked locally against the whole box, then
+     * limited to the target [box] (capture files into box 1 by default). The
+     * reader shows these as "File behind…" options before saving.
+     */
+    fun filingCandidates(
+        cards: List<LumenCardEntity>,
+        front: String,
+        back: String,
+        quote: String,
+        bookId: String,
+        box: Int = 1,
+        limit: Int = 5
+    ): List<LumenCardEntity> {
+        val pseudo = LumenCardEntity(
+            id = "__draft__",
+            bookId = bookId,
+            box = box,
+            indexNumber = "",
+            front = front,
+            back = back,
+            quote = quote,
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            createdAt = 0,
+            updatedAt = 0
+        )
+        return rank(pseudo, cards, limit = 50)
+            .filter { it.card.box == box }
+            // Pure same-box proximity is not a filing reason — the new slip
+            // should continue the thought, not just share the box.
+            .filter { candidate ->
+                candidate.reasons.any {
+                    it.startsWith("shared term") || it == "same source" || it == "already linked"
+                }
+            }
+            .sortedWith(
+                compareByDescending<LumenCandidate> { it.score }
+                    .thenBy(LumenAddress.COMPARATOR) { it.card.indexNumber }
+            )
+            .take(limit.coerceIn(0, 20))
+            .map { it.card }
+    }
+
     private fun terms(text: String): Set<String> = text.lowercase()
         .split(Regex("[^\\p{L}\\p{Nd}]+"))
         .filter { it.length >= 4 }

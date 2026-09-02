@@ -106,6 +106,64 @@ object LumenThread {
 }
 
 /**
+ * Structure maps (hub notes) — how the box stays navigable at scale. A hub is
+ * an ordinary card marked as a hub that links to the starting points of one
+ * cluster; the map expands each starting point into its whole line (the root
+ * plus everything filed behind it, in shelf order), so the hub reads as a mini
+ * table of contents for that web of ideas. Luhmann's main index pointed to a
+ * handful of such hubs; the Register is the same index here.
+ */
+object LumenStructureMap {
+
+    /** One cluster under a hub: a starting point and its whole line. */
+    data class Cluster(
+        val root: LumenCardEntity,
+        val steps: List<LumenThread.Step>
+    )
+
+    /**
+     * The clusters a hub opens onto: every card the hub links to, each
+     * expanded to its whole line in shelf order. Unlinked cards — even ones
+     * filed right next to the hub — are not part of the map.
+     */
+    fun clusters(hub: LumenCardEntity, all: List<LumenCardEntity>): List<Cluster> {
+        val linkedIds = LumenCapture.linksFromJson(hub.linksJson).toSet()
+        return all
+            .filter { it.id in linkedIds }
+            .distinctBy { it.id }
+            .sortedWith(
+                compareBy<LumenCardEntity> { it.box }
+                    .thenBy(LumenAddress.COMPARATOR) { it.indexNumber }
+            )
+            .map { root -> Cluster(root, LumenThread.pull(root, all)) }
+    }
+
+    /**
+     * Plain-text outline of the map: the hub heading, then each cluster's
+     * line indented under it — ready to read or paste into an editor.
+     */
+    fun render(hub: LumenCardEntity, clusters: List<Cluster>): String {
+        val sb = StringBuilder()
+        sb.append(hub.indexNumber.ifBlank { "?" }).append("  ").append(hub.front).append('\n')
+        if (hub.back.isNotBlank()) {
+            sb.append("    ").append(hub.back.replace("\n", " ")).append('\n')
+        }
+        clusters.forEach { cluster ->
+            cluster.steps.forEach { step ->
+                val indent = "  ".repeat(step.depth + 1)
+                sb.append(indent).append(step.card.indexNumber.ifBlank { "?" }).append("  ")
+                sb.append(step.card.front).append('\n')
+                if (step.card.back.isNotBlank()) {
+                    sb.append(indent).append("    ")
+                    sb.append(step.card.back.replace("\n", " ")).append('\n')
+                }
+            }
+        }
+        return sb.toString().trimEnd()
+    }
+}
+
+/**
  * Direct lookup across the box — the partner of the Register. Luhmann walked
  * to a slip by address or by register entry; digitally, a plain query across
  * addresses, note text, quotes, and keywords does the same job. Pure-local:

@@ -3,6 +3,7 @@ package com.pagetime.app.data.local
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -10,6 +11,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -21,7 +23,15 @@ data class Settings(
     val browseBalanceSeconds: Long = 0,
     /** Browse seconds earned per 1 second of reading. */
     val ratio: Double = 1.0,
-    val totalReadingSeconds: Long = 0
+    val totalReadingSeconds: Long = 0,
+    /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
+    val quickDisableUntil: Long = 0,
+    /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
+    val hardLockUntil: Long = 0,
+    /** Whether the slip box shows newcomer help / confirmations before card actions. */
+    val helpEnabled: Boolean = true,
+    /** Provider used for optional AI-assisted learning features. */
+    val llmProvider: LlmProviderKind = LlmProviderKind.GEMINI
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
@@ -98,6 +108,11 @@ class SettingsRepository(private val context: Context) {
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
+        val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
+        val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
+        val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
+        val LLM_PROVIDER = stringPreferencesKey("llm_provider")
+
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -309,9 +324,27 @@ class SettingsRepository(private val context: Context) {
         Settings(
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
             ratio = p[Keys.RATIO] ?: 1.0,
-            totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L
+            totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
+            quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
+            hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
+            helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
+            llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
     }
+
+    /** Whether the slip box should explain actions before running them. */
+    suspend fun setHelpEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.METHOD_HELP_ENABLED] = value }
+    }
+
+    suspend fun setLlmProvider(provider: LlmProviderKind) {
+        context.dataStore.edit { it[Keys.LLM_PROVIDER] = provider.key }
+    }
+
+    suspend fun llmProvider(): LlmProviderKind =
+        context.dataStore.data.first()[Keys.LLM_PROVIDER]
+            ?.let(LlmProviderKind::fromKey)
+            ?: LlmProviderKind.GEMINI
 
     val aiSettings: Flow<AiSettings> = context.dataStore.data.map { p ->
         AiSettings(
@@ -356,6 +389,30 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             p[Keys.BALANCE] = ((p[Keys.BALANCE] ?: 0L) + delta).coerceAtLeast(0L)
         }
+    }
+
+    /** Wall-clock time (epoch millis) until the temporary quick-disable grace ends (0 = none). */
+    suspend fun quickDisableUntil(): Long =
+        context.dataStore.data.first()[Keys.QUICK_DISABLE_UNTIL] ?: 0L
+
+    /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
+    suspend fun hardLockUntil(): Long =
+        context.dataStore.data.first()[Keys.HARD_LOCK_UNTIL] ?: 0L
+
+    suspend fun setQuickDisableUntil(epochMillis: Long) {
+        context.dataStore.edit { it[Keys.QUICK_DISABLE_UNTIL] = epochMillis }
+    }
+
+    suspend fun clearQuickDisableUntil() {
+        context.dataStore.edit { it.remove(Keys.QUICK_DISABLE_UNTIL) }
+    }
+
+    suspend fun setHardLockUntil(epochMillis: Long) {
+        context.dataStore.edit { it[Keys.HARD_LOCK_UNTIL] = epochMillis }
+    }
+
+    suspend fun clearHardLockUntil() {
+        context.dataStore.edit { it.remove(Keys.HARD_LOCK_UNTIL) }
     }
 
     suspend fun addTotalReadingSeconds(delta: Long) {

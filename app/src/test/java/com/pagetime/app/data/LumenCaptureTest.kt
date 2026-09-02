@@ -67,6 +67,23 @@ class LumenCaptureTest {
     }
 
     @Test
+    fun `advancing the reading position yields a different captured window and front`() {
+        // The EPUB capture regression: capture must center on the CURRENT page,
+        // not freeze on a chapter-tail window. Two different positions within a
+        // long chapter must produce two different source windows AND two
+        // different card fronts — otherwise "read more, same card".
+        val text = buildString {
+            for (i in 0 until 400) append("Sentence number $i holds some distinct words here. ")
+        }
+        val early = LumenCapture.captureWindow(text, text.length / 4)
+        val later = LumenCapture.captureWindow(text, text.length * 3 / 4)
+        assertTrue(early != later)
+        val earlyFront = LumenCapture.fallbackDraft(early).first
+        val laterFront = LumenCapture.fallbackDraft(later).first
+        assertTrue(earlyFront != laterFront)
+    }
+
+    @Test
     fun `newline boundaries split transcript-style text`() {
         val line = "Speaker one says something here.\n"
         val text = line.repeat(150)
@@ -175,6 +192,108 @@ class LumenCaptureTest {
         assertNull(LumenCapture.parseDraft("""{"front":"","back":"B"}"""))
         assertNull(LumenCapture.parseDraft("totally not json"))
         assertNull(LumenCapture.parseDraft(""))
+    }
+
+    @Test
+    fun `parseDraft finds json buried in surrounding prose`() {
+        val raw =
+            "Here is your card: " +
+                """{"front":"Spaced repetition","back":"Reviews spaced over time stick better."}""" +
+                " I hope this helps!"
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews spaced over time stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft accepts a plain front back label format`() {
+        val raw = "Front: Spaced repetition\nBack: Reviews spaced over time stick better."
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews spaced over time stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft strips quotes and emphasis from fields`() {
+        val (front, back) =
+            LumenCapture.parseDraft("""{"front":"\"Spaced repetition\"","back":"**Reviews stick better.**"}""")!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft caps a runaway front`() {
+        val longFront = "word ".repeat(40).trim()
+        val (front, _) = LumenCapture.parseDraft("""{"front":"$longFront","back":"B"}""")!!
+        assertTrue(front.length <= 120)
+        assertTrue(front.endsWith("…"))
+    }
+
+    @Test
+    fun `parseDraft salvages a json reply truncated mid-back`() {
+        val raw = """{"front":"Spaced repetition","back":"Reviews spaced over time stick"""
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews spaced over time stick", back)
+    }
+
+    @Test
+    fun `parseDraft salvages a json reply cut right after the front`() {
+        val raw = """{"front":"Spaced repetition"""
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("", back)
+    }
+
+    @Test
+    fun `parseDraft salvages single-quoted json`() {
+        val raw = """{'front': 'Spaced repetition', 'back': 'Reviews stick better.'}"""
+        val (front, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("Spaced repetition", front)
+        assertEquals("Reviews stick better.", back)
+    }
+
+    @Test
+    fun `parseDraft unescapes quotes inside salvaged fields`() {
+        val raw = """{"front":"Spaced repetition","back":"It is the \"spacing effect\" at work."}"""
+        val (_, back) = LumenCapture.parseDraft(raw)!!
+        assertEquals("It is the \"spacing effect\" at work.", back)
+    }
+
+    @Test
+    fun `isPassageEcho flags a verbatim copied front`() {
+        val passage =
+            "However, this arena is extraordinarily large, allowing Sapiens to play an astounding variety of games."
+        assertTrue(
+            LumenCapture.isPassageEcho(
+                "However, this arena is extraordinarily large",
+                passage,
+            )
+        )
+    }
+
+    @Test
+    fun `isPassageEcho ignores case and line breaks in the passage`() {
+        val passage = "First line.\nHowever, this arena is extraordinarily\nlarge, allowing Sapiens to play."
+        assertTrue(LumenCapture.isPassageEcho("this arena is extraordinarily large", passage))
+    }
+
+    @Test
+    fun `isPassageEcho accepts a paraphrased front`() {
+        val passage =
+            "Everything you see in this table has a strong scientific evidence that it will help with sleep."
+        assertFalse(
+            LumenCapture.isPassageEcho(
+                "Surprising sleep interventions backed by strong scientific evidence",
+                passage,
+            )
+        )
+    }
+
+    @Test
+    fun `isPassageEcho ignores short quoted terms`() {
+        val passage = "The mitochondria is the powerhouse of the cell."
+        assertFalse(LumenCapture.isPassageEcho("the powerhouse", passage))
     }
 
     // endregion

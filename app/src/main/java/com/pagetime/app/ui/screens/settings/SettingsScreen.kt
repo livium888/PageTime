@@ -28,26 +28,41 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagetime.app.data.LlmProviderKind
+import com.pagetime.app.data.LumenModelStatus
+import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.learning.GeminiModel
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
@@ -67,6 +82,9 @@ fun SettingsScreen(
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
+    val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
+    val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
+    val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
     val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
     val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
@@ -74,6 +92,23 @@ fun SettingsScreen(
     val geminiStatus by geminiViewModel.status.collectAsStateWithLifecycle()
     var geminiKeyInput by remember { mutableStateOf("") }
     var modelMenuExpanded by remember { mutableStateOf(false) }
+
+    // Newest crash log from filesDir/crash, so the user can copy it to support
+    // without adb. Read once when Settings opens.
+    var crashLogText by remember { mutableStateOf<String?>(null) }
+    val settingsContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        crashLogText =
+            PageTimeApp.crashDirOf(settingsContext)
+                .listFiles { file -> file.name.startsWith("crash-") && file.name.endsWith(".log") }
+                ?.maxByOrNull { it.lastModified() }
+                ?.takeIf { it.length() > 0 }
+                ?.readText()
+                ?.take(4_000)
+    }
+
+    // Cheap HEAD against the model host; best-effort and silent on failure.
+    LaunchedEffect(Unit) { viewModel.checkForModelUpdate() }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Settings") }) }
@@ -147,6 +182,51 @@ fun SettingsScreen(
                 onClick = onAiUsage
             )
 
+            SectionHeader("Slip box")
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Explain slip-box actions", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (helpEnabled) {
+                                "Before Link, Connect, or File behind runs, you'll get a short\n" +
+                                    "explanation and a confirmation. Leave this on while you learn\n" +
+                                    "the Zettelkasten method."
+                            } else {
+                                "Help is off — Link, Connect, and File behind run immediately\n" +
+                                    "with no explanation."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = helpEnabled,
+                        onCheckedChange = { viewModel.setHelpEnabled(it) }
+                    )
+                }
+            }
+
+            LlmProviderSettingsCard(
+                provider = llmProvider,
+                onSelect = viewModel::setLlmProvider
+            )
+
+            OfflineModelSettingsCard(
+                status = lumenModelStatus,
+                downloadStats = viewModel.downloadStats.collectAsStateWithLifecycle().value,
+                onDownload = viewModel::downloadOfflineModel,
+                onCheckForUpdate = viewModel::checkForModelUpdate,
+                onDelete = viewModel::deleteOfflineModel
+            )
+
             GeminiSettingsCard(
                 keyInput = geminiKeyInput,
                 onKeyInputChange = { geminiKeyInput = it },
@@ -168,9 +248,216 @@ fun SettingsScreen(
                 },
                 onRefresh = geminiViewModel::refreshModels
             )
+
+            SectionHeader("Support")
+            CrashDiagnosticsCard(crashLogText = crashLogText)
         }
     }
 }
+
+@Composable
+private fun CrashDiagnosticsCard(crashLogText: String?) {
+    val context = LocalContext.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Crash diagnostics", style = MaterialTheme.typography.titleMedium)
+            if (crashLogText == null) {
+                Text(
+                    "No crash log found. If the app crashes, reopen it and come back here — " +
+                        "the log appears automatically.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text(
+                    "Most recent crash log — copy it and send it to support:",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    crashLogText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 12,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val clip = ClipData.newPlainText("PageTime crash log", crashLogText)
+                        val clipboard =
+                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(clip)
+                    }) {
+                        Text("Copy")
+                    }
+                    OutlinedButton(onClick = {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, crashLogText)
+                        }
+                        context.startActivity(Intent.createChooser(send, "Share crash log"))
+                    }) {
+                        Text("Share")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LlmProviderSettingsCard(
+    provider: LlmProviderKind,
+    onSelect: (LlmProviderKind) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("AI provider", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Choose where optional AI requests run. Offline mode is ready for a " +
+                    "downloaded local model and will never send book text to Gemini " +
+                    "automatically.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                LlmProviderKind.entries.forEach { option ->
+                    FilterChip(
+                        selected = option == provider,
+                        onClick = { onSelect(option) },
+                        label = { Text(option.label) },
+                    )
+                }
+            }
+            Text(
+                provider.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (provider == LlmProviderKind.OFFLINE) {
+                Text(
+                    "Capture will draft cards with the downloaded model below. Without " +
+                        "one, capture falls back to the plain on-device draft.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflineModelSettingsCard(
+    status: LumenModelStatus,
+    downloadStats: LumenDownloadStats?,
+    onDownload: () -> Unit,
+    onCheckForUpdate: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Offline model", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${LumenModelStore.MODEL_LABEL} — Google's Gemma model built for this " +
+                    "runtime, running entirely on this device. Book text and prompts never " +
+                    "leave the phone. Download once over Wi-Fi (~${LumenModelStore.MODEL_SIZE_MB} MB); " +
+                    "the app itself stays small either way.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (status) {
+                is LumenModelStatus.NotDownloaded -> {
+                    Text(
+                        "Not downloaded — ${LumenModelStore.MODEL_SIZE_MB} MB",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Download model")
+                    }
+                }
+                is LumenModelStatus.UpdateAvailable -> {
+                    Text(
+                        "A newer version of the offline model is available " +
+                            "(~${(status.remoteBytes / 1_048_576).toInt()} MB). Update keeps " +
+                            "capture quality current; the installed model keeps working " +
+                            "until the new one finishes verifying.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Update model")
+                    }
+                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                        Text("Delete model")
+                    }
+                }
+                is LumenModelStatus.Downloading -> {
+                    LinearProgressIndicator(
+                        progress = { status.fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        buildString {
+                            append("Downloading… ")
+                            append(formatModelMb(status.downloadedBytes))
+                            append(" of ")
+                            append(formatModelMb(status.totalBytes))
+                            downloadStats?.let { stats ->
+                                if (stats.rateBytesPerSec > 0) {
+                                    append(" — ")
+                                    append(formatModelMb(stats.rateBytesPerSec))
+                                    append("/s")
+                                }
+                            }
+                            append(" — keep the app open")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                is LumenModelStatus.Ready -> {
+                    Text(
+                        "Installed — ${(status.bytes / 1_048_576).toInt()} MB. Capture now drafts " +
+                            "cards on-device when Offline model is selected.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    TextButton(
+                        onClick = onCheckForUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Check for updates")
+                    }
+                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                        Text("Delete model")
+                    }
+                }
+                is LumenModelStatus.Failed -> {
+                    Text(
+                        status.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Retry download")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** "12.4 MB" / "3.2 MB" — live byte counts, not a percentage. */
+private fun formatModelMb(bytes: Long): String =
+    "%.1f".format(bytes / 1_048_576.0)
 
 @Composable
 private fun AiAnalysisSettingsCard(

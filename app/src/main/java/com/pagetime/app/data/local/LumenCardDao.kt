@@ -17,6 +17,10 @@ interface LumenCardDao {
     @Query("SELECT * FROM lumen_cards WHERE box = :box ORDER BY indexNumber ASC, updatedAt DESC")
     fun observeBox(box: Int): Flow<List<LumenCardEntity>>
 
+    /** Structure maps (hub notes) across every box, newest first. */
+    @Query("SELECT * FROM lumen_cards WHERE isHub = 1 ORDER BY updatedAt DESC")
+    fun observeHubs(): Flow<List<LumenCardEntity>>
+
     @Query("SELECT * FROM lumen_cards WHERE id = :id LIMIT 1")
     suspend fun get(id: String): LumenCardEntity?
 

@@ -1,5 +1,6 @@
 package com.pagetime.app.data
 
+import com.pagetime.app.data.local.PackageTotal
 import com.pagetime.app.data.local.UsageEventDao
 import com.pagetime.app.data.local.UsageEventEntity
 import kotlinx.coroutines.flow.Flow
@@ -73,6 +74,14 @@ class UsageRepository(private val dao: UsageEventDao) {
 
     fun blockedToday(): Flow<Long> =
         dao.countSince(TYPE_BLOCKED, System.currentTimeMillis() - DAY_MS)
+
+    /** Blocked counts per app over the last day, most-blocked first. */
+    fun blockedCountsByPackageToday(): Flow<List<PackageTotal>> =
+        dao.blockedCountsByPackageSince(System.currentTimeMillis() - DAY_MS)
+
+    /** Browse-seconds burned per app over the last day, most-burned first. */
+    fun spentSecondsByPackageToday(): Flow<List<PackageTotal>> =
+        dao.spentSecondsByPackageSince(System.currentTimeMillis() - DAY_MS)
 
     fun earnedToday(): Flow<Long> = dao.sumSince(TYPE_EARNED, System.currentTimeMillis() - DAY_MS)
 

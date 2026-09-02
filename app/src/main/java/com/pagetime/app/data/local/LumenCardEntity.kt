@@ -15,6 +15,10 @@ import androidx.room.PrimaryKey
  * - [keywords] enable free, local re-encounter detection while reading.
  * - [linksJson] holds explicit cross-references to other Lumen cards, so the
  *   slip box becomes a navigable web of notes rather than a flat list.
+ * - [isHub] marks a card as a structure map (hub note): a single card whose
+ *   job is to list the starting points of one cluster. The main index (the
+ *   Register) points to just a handful of hubs, and each hub walks into its
+ *   whole web of ideas.
  * - [fsrsCardJson]/[dueAt]/[reviewCount]/[lastRating] power optional spaced
  *   training of the slip box, reusing the same FSRS scheduler as learning cards.
  */
@@ -47,6 +51,8 @@ data class LumenCardEntity(
     val sourceFraction: Float,
     /** Append-only evolution history, oldest first: [{text, addedAt, fraction}]. */
     val snippetsJson: String = "[]",
+    /** True when this card is a structure map / hub note for a cluster. */
+    val isHub: Boolean = false,
     /** IDs of other Lumen cards this card references, JSON array of strings. */
     val linksJson: String = "[]",
     /** Space-separated significant words for local re-encounter matching. */

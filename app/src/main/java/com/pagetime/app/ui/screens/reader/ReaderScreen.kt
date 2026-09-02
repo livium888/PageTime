@@ -36,8 +36,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatSize
@@ -45,6 +48,7 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.CopyAll
 import androidx.compose.material.icons.outlined.Brightness5
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.MenuBook
@@ -60,6 +64,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -106,7 +111,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.R
+import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenDraft
+import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
@@ -212,6 +219,7 @@ fun ReaderScreen(
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
     val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
+    val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -598,7 +606,11 @@ fun ReaderScreen(
     lumenDraft?.let { draft ->
         LumenDraftDialog(
             draft = draft,
-            onSave = { front, back -> vm.saveLumenCard(front, back) },
+            suggestions = lumenFileSuggestions,
+            boxCards = vm.lumenBoxCards.collectAsStateWithLifecycle().value,
+            captureDiagnostic = vm.captureDiagnostic.collectAsStateWithLifecycle().value,
+            captureLog = vm.lastCaptureLog(),
+            onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
     }
@@ -885,7 +897,13 @@ private fun ReadiumNavigatorHost(
         }
     )
 
-    LaunchedEffect(fragmentManager, container, publication, initialLocatorReady, initialLocatorJson) {
+    // initialLocatorJson is deliberately NOT a key: the ViewModel now refreshes it
+    // on every position save, and re-keying would tear down and recreate the live
+    // navigator each time. The effect restarts on re-entry anyway (container is a
+    // fresh FrameLayout) and reads the then-current restore locator, so returning
+    // to the reader resumes where the user actually was instead of a stale
+    // session-open position.
+    LaunchedEffect(fragmentManager, container, publication, initialLocatorReady) {
         val fm = fragmentManager ?: return@LaunchedEffect
         if (!initialLocatorReady) return@LaunchedEffect
         val frame = container ?: return@LaunchedEffect
@@ -1686,14 +1704,33 @@ private fun StatRow(label: String, value: String) {
     }
 }
 
+/** Small section label inside the File-behind menu. */
 @Composable
+private fun MenuHeader(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+    )
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun LumenDraftDialog(
     draft: LumenDraft,
-    onSave: (front: String, back: String) -> Unit,
-    onDismiss: () -> Unit
+    suggestions: List<LumenCardEntity>,
+    boxCards: List<LumenCardEntity>,
+    captureDiagnostic: com.pagetime.app.data.CaptureDiagnostic.Record?,
+    captureLog: List<String>,
+    onSave: (front: String, back: String, afterIndex: String?) -> Unit,
+    onDismiss: () -> Unit,
 ) {
     var front by remember(draft) { mutableStateOf(draft.front) }
     var back by remember(draft) { mutableStateOf(draft.back) }
+    var fileBehind by remember(draft) { mutableStateOf<LumenCardEntity?>(null) }
+    var filingMenu by remember(draft) { mutableStateOf(false) }
+    var filingSearch by remember(draft) { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1709,7 +1746,7 @@ private fun LumenDraftDialog(
             }
         },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (!draft.usedAi) {
                     Text(
                         "Drafted on-device (no AI key or offline) — edit freely.",
@@ -1735,6 +1772,21 @@ private fun LumenDraftDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
+                if (captureDiagnostic != null) {
+                    Text(
+                        when (captureDiagnostic.modelState) {
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.ready -> "Offline model: ready"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.notInstalled -> "Offline model: not installed"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.damaged -> "Offline model: damaged"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.notEnoughMemory -> "Offline model: not enough memory"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.generating -> "Offline model: generating..."
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.fallbackNoModel -> "Offline model: not used"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = MaterialTheme.shapes.small,
@@ -1749,11 +1801,119 @@ private fun LumenDraftDialog(
                         modifier = Modifier.padding(10.dp)
                     )
                 }
+                if (suggestions.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "FILE BEHIND",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(2.dp))
+                                    if (captureLog.isNotEmpty()) {
+                        CopyCaptureLogButton(captureLog)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Box {
+                        TextButton(
+                            onClick = { filingMenu = true },
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (fileBehind == null) {
+                                Text(
+                                    "End of box",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            } else {
+                                FilingSelectionLabel(
+                                    modifier = Modifier.weight(1f),
+                                    card = fileBehind!!,
+                                    boxCards = boxCards
+                                )
+                            }
+                            Icon(
+                                Icons.Outlined.ExpandMore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = filingMenu,
+                            onDismissRequest = { filingMenu = false },
+                            modifier = Modifier.heightIn(max = 520.dp)
+                        ) {
+                            Column(Modifier.verticalScroll(rememberScrollState())) {
+                                DropdownMenuItem(
+                                    text = { Text("End of box") },
+                                    onClick = {
+                                        fileBehind = null
+                                        filingMenu = false
+                                    }
+                                )
+                                if (suggestions.isNotEmpty()) {
+                                    HorizontalDivider()
+                                    MenuHeader("SUGGESTED FOR THIS IDEA")
+                                    suggestions.forEach { card ->
+                                        DropdownMenuItem(
+                                            text = { FilingItem(card = card, boxCards = boxCards) },
+                                            onClick = {
+                                                fileBehind = card
+                                                filingMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                                val inBox = boxCards.filter { it.box == 1 }
+                                if (LumenAddress.shelfOrder(inBox).isNotEmpty()) {
+                                    HorizontalDivider()
+                                    MenuHeader("BROWSE ALL LINES")
+                                    OutlinedTextField(
+                                        value = filingSearch,
+                                        onValueChange = { filingSearch = it },
+                                        placeholder = { Text("Search address or title…") },
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    )
+                                    val query = filingSearch.trim().lowercase()
+                                    val browse = LumenAddress.shelfOrder(inBox).filter { card ->
+                                        query.isEmpty() ||
+                                            card.indexNumber.lowercase().contains(query) ||
+                                            card.front.lowercase().contains(query)
+                                    }
+                                    browse.forEach { card ->
+                                        DropdownMenuItem(
+                                            text = { FilingItem(card = card, boxCards = boxCards) },
+                                            onClick = {
+                                                fileBehind = card
+                                                filingMenu = false
+                                            }
+                                        )
+                                    }
+                                    if (browse.isEmpty()) {
+                                        Text(
+                                            "No note in the box matches that search.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(front, back) },
+                onClick = { onSave(front, back, fileBehind?.indexNumber) },
                 enabled = front.isNotBlank()
             ) {
                 Text("Save card")
@@ -1763,4 +1923,120 @@ private fun LumenDraftDialog(
             TextButton(onClick = onDismiss) { Text("Discard") }
         }
     )
+}
+
+/**
+ * The selected filing target inside the picker: the card's address threaded
+ * through its branch (21 → 21a → 21a1) and its front. Reads like branching a
+ * Luhmann line, not choosing a bare address.
+ */
+@Composable
+private fun FilingSelectionLabel(
+    modifier: Modifier = Modifier,
+    card: LumenCardEntity,
+    boxCards: List<LumenCardEntity>
+) {
+    Column(modifier) {
+        FilingTargetText(card = card, boxCards = boxCards)
+    }
+}
+
+/**
+ * One candidate in the File-behind menu: the front line, with the address
+ * branch it belongs to shown underneath so the user sees which line they'd
+ * continue.
+ */
+@Composable
+private fun FilingItem(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                card.front,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                card.indexNumber,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        ThreadPathText(address = card.indexNumber, boxCards = boxCards)
+    }
+}
+
+/**
+ * Renders the target label inside the picker button: the address line and the
+ * front, both clipped to a single line.
+ */
+@Composable
+private fun FilingTargetText(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
+    val path = LumenAddress.threadPath(card.indexNumber, boxCards)
+    Column {
+        Text(
+            path.map { it.first }.joinToString(" → "),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            card.front,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Muted "in {branch}" breadcrumb under a candidate's front in the menu. */
+@Composable
+private fun ThreadPathText(address: String, boxCards: List<LumenCardEntity>) {
+    val ancestors = LumenAddress.threadPath(address, boxCards).dropLast(1)
+    Text(
+        text = if (ancestors.isEmpty()) {
+            "new main line — ${LumenAddress.relativePart(address)}"
+        } else {
+            buildString {
+                append("continues ")
+                append(ancestors.joinToString(" → ") { "${it.first}: ${it.second}" })
+            }
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+@Composable
+private fun CopyCaptureLogButton(captureLog: List<String>) {
+    val context = LocalContext.current
+    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+    Button(
+        onClick = {
+            try {
+                clipboard?.setPrimaryClip(
+                    android.content.ClipData.newPlainText("PageTime capture log", captureLog.joinToString("\n"))
+                )
+            } catch (t: Throwable) {
+                // Clipboard access failed; no-op.
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            Icons.Outlined.CopyAll,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("Copy capture log")
+    }
 }

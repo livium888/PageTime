@@ -44,6 +44,83 @@ class LumenAddressTest {
     }
 
     @Test
+    fun `filing repeatedly behind a lettered slip keeps the same line`() {
+        val existing = listOf("1", "1a", "1a1", "1a2", "1a1a")
+        assertEquals("1a3", LumenAddress.nextAddress(existing, "1a"))
+    }
+
+    @Test
+    fun `picker address is resolved case insensitively before generating child`() {
+        val existing = listOf("8", "1A")
+        val selected = LumenAddress.resolveExisting(existing, "1a")
+        assertEquals("1A", selected)
+        assertEquals("1A1", LumenAddress.nextAddress(existing, selected))
+    }
+
+    @Test
+    fun `adding another card behind 1a keeps growing that exact line`() {
+        // The reported bug: filing behind a branched slip (1a) must continue
+        // to produce new addresses on THAT line, never the same one and never
+        // a detached top-level number.
+        var taken = listOf("1", "1a")
+        assertEquals("1a1", LumenAddress.nextAddress(taken, "1a"))
+        taken = taken + "1a1"
+        // Again behind 1a → the next sibling on the same line.
+        assertEquals("1a2", LumenAddress.nextAddress(taken, "1a"))
+        taken = taken + "1a2"
+        // Behind the branch root again → a sibling of the letters, not a repeat.
+        assertEquals("1b", LumenAddress.nextAddress(taken, "1"))
+        // Behind a grandchild → nests deeper on the 1a line.
+        assertEquals("1a1a", LumenAddress.nextAddress(taken, "1a1"))
+        taken = taken + "1b" + "1a1a"
+        val all = taken.toSet()
+        assertEquals(taken.size, all.size)
+    }
+
+    @Test
+    fun `filing at arbitrary depth never repeats an existing address`() {
+        // Simulate "a million cards one after another": each filing, whether a
+        // top-level continuation or a branch behind an existing slip (going
+        // arbitrarily deep), must yield a brand-new stable address. The concern
+        // is that a scheme breaks past a few levels — it must hold indefinitely.
+        var taken = emptyList<String>()
+        val seen = mutableSetOf<String>()
+        repeat(150) { i ->
+            val target = when {
+                taken.isEmpty() -> null
+                i % 4 == 0 -> null // top-level continuation
+                i % 10 == 0 -> taken.last() // follow the newest card down a line
+                else -> taken[(i * 7 + 3) % taken.size] // branch behind something
+            }
+            val next = LumenAddress.nextAddress(taken, target)
+            assertTrue("Reused $next at step $i", next !in seen)
+            seen.add(next)
+            taken = taken + next
+        }
+        assertTrue(taken.size == seen.size && taken.size == 150)
+    }
+
+    @Test
+    fun `shelf order keeps deep branches adjacent and numeric siblings after their root`() {
+        val cards = listOf(
+            card("210", "Numeric sibling"),
+            card("22", "Main line b"),
+            card("21a", "Child a"),
+            card("2", "Main line two"),
+            card("21", "Main line"),
+            card("21a1", "Grandchild"),
+            card("10", "Tenth main"),
+            card("21b", "Child b"),
+            card("21a1a", "Great-grandchild")
+        )
+        val order = LumenAddress.shelfOrder(cards).map { it.indexNumber }
+        assertEquals(
+            listOf("2", "10", "21", "21a", "21a1", "21a1a", "21b", "22", "210"),
+            order
+        )
+    }
+
+    @Test
     fun `exhausted alphabet branches deeper under the last letter`() {
         val alphabet = "abcdefghijklmnopqrstuvwxyz"
         val taken = (0 until 26).map { "21${alphabet[it]}" }.toSet()
@@ -83,6 +160,95 @@ class LumenAddressTest {
         assertTrue(!LumenAddress.isDescendantOf("22", "21"))
         assertTrue(!LumenAddress.isDescendantOf("21", "21"))
     }
+
+    @Test
+    fun `thread path walks the branch for a nested card`() {
+        val cards = listOf(
+            card("21", "Systems persist"),
+            card("21a", "Rituals repeat the pattern"),
+            card("21a1", "Rites bind groups"),
+            card("22", "Networks hold")
+        )
+        val path = LumenAddress.threadPath("21a1", cards)
+        assertEquals(
+            listOf("21" to "Systems persist", "21a" to "Rituals repeat the pattern", "21a1" to "Rites bind groups"),
+            path
+        )
+    }
+
+    @Test
+    fun `thread path for a top-level card is just itself`() {
+        val cards = listOf(card("21", "Systems persist"), card("22", "Networks hold"))
+        assertEquals(listOf(cardOf("21", "Systems persist")), LumenAddress.threadPath("21", cards))
+    }
+
+    @Test
+    fun `thread path skips missing middle slips but keeps the numeric root`() {
+        // 21a is only implied (deleted); the path shows 21 then 21a1.
+        val cards = listOf(
+            card("21", "Systems persist"),
+            card("21a1", "Rites bind groups"),
+            card("22", "Networks hold")
+        )
+        val path = LumenAddress.threadPath("21a1", cards)
+        assertEquals(
+            listOf("21" to "Systems persist", "21a1" to "Rites bind groups"),
+            path
+        )
+    }
+
+    @Test
+    fun `thread path ignores numeric siblings and is empty for blank address`() {
+        val cards = listOf(card("21", "Systems persist"), card("210", "A sibling, not a child"))
+        assertEquals(listOf(cardOf("21", "Systems persist")), LumenAddress.threadPath("21", cards))
+        assertTrue(LumenAddress.threadPath("", cards).isEmpty())
+    }
+
+    @Test
+    fun `branch depth counts proper ancestors within the line`() {
+        val cards = listOf(
+            card("1", "Root one"),
+            card("2", "Systems persist"),
+            card("2a", "Rituals repeat the pattern"),
+            card("2a1", "Rites bind groups"),
+            card("2b", "Another child"),
+            card("210", "Sibling, not a child of 21"),
+            card("22", "Next main line")
+        )
+        assertEquals(0, LumenAddress.branchDepth("1", cards))
+        assertEquals(0, LumenAddress.branchDepth("2", cards))
+        assertEquals(1, LumenAddress.branchDepth("2a", cards))
+        assertEquals(1, LumenAddress.branchDepth("2b", cards))
+        assertEquals(2, LumenAddress.branchDepth("2a1", cards))
+        // 210 is a sibling of 2 in Luhmann's grid, so depth stays 0.
+        assertEquals(0, LumenAddress.branchDepth("210", cards))
+        assertEquals(0, LumenAddress.branchDepth("22", cards))
+    }
+
+    @Test
+    fun `branch depth is zero for blank or absent addresses`() {
+        val cards = listOf(card("21", "Systems persist"))
+        assertEquals(0, LumenAddress.branchDepth("", cards))
+        assertEquals(0, LumenAddress.branchDepth("99", cards))
+    }
+
+    private fun card(address: String, front: String): LumenCardEntity =
+        LumenCardEntity(
+            id = "id-$address",
+            bookId = "",
+            box = 1,
+            indexNumber = address,
+            front = front,
+            back = "",
+            quote = "",
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            createdAt = 0,
+            updatedAt = 0
+        )
+
+    private fun cardOf(address: String, front: String): Pair<String, String> = address to front
 }
 
 class LumenLinksTest {
@@ -185,7 +351,8 @@ class LumenCoachTest {
         id: String,
         links: List<String> = emptyList(),
         snippets: Int = 0,
-        back: String = ""
+        back: String = "",
+        isHub: Boolean = false
     ): LumenCardEntity {
         val now = System.currentTimeMillis()
         return LumenCardEntity(
@@ -203,6 +370,7 @@ class LumenCoachTest {
                 (0 until snippets).map { LumenSnippet("s$it", now, null) }
             ),
             linksJson = LumenCapture.linksToJson(links),
+            isHub = isHub,
             createdAt = now,
             updatedAt = now
         )
@@ -234,6 +402,22 @@ class LumenCoachTest {
             assertTrue(lesson.practice.isNotBlank())
         }
         assertTrue(LumenCoach.lessons.size >= 6)
+    }
+
+    @Test
+    fun `six growing cards with no hub are told to file one`() {
+        val cards = (1..6).map { card("$it", links = listOf("1"), snippets = 1) }
+        val step = LumenCoach.nextStep(cards)
+        assertTrue(step!!.contains("hub", ignoreCase = true))
+    }
+
+    @Test
+    fun `a marked hub is recognized as the index head`() {
+        val cards = (1..6).map { card("$it", links = listOf("1"), snippets = 1) } +
+            card("7", links = listOf("1", "2"), snippets = 1, isHub = true)
+        val step = LumenCoach.nextStep(cards)
+        assertTrue(step!!.contains("hub", ignoreCase = true))
+        assertTrue(step.contains("Register"))
     }
 }
 
@@ -397,5 +581,88 @@ class LumenSearchTest {
     @Test
     fun `an address term finds its whole line`() {
         assertEquals(listOf("1", "2"), ids(LumenSearch.filter(box, "21")))
+    }
+}
+
+class LumenStructureMapTest {
+
+    private fun card(
+        id: String,
+        indexNumber: String,
+        box: Int = 1,
+        front: String = "Note $indexNumber",
+        back: String = "",
+        links: List<String> = emptyList()
+    ): LumenCardEntity {
+        val now = System.currentTimeMillis()
+        return LumenCardEntity(
+            id = id,
+            bookId = "",
+            box = box,
+            indexNumber = indexNumber,
+            front = front,
+            back = back,
+            quote = "",
+            sourceLocatorJson = null,
+            sourceChapterIndex = null,
+            sourceFraction = 0f,
+            snippetsJson = "[]",
+            linksJson = LumenCapture.linksToJson(links),
+            createdAt = now,
+            updatedAt = now
+        )
+    }
+
+    @Test
+    fun `clusters expand linked roots into their whole lines in shelf order`() {
+        val hub = card("hub", "10", front = "Efficient shapes", links = listOf("c2", "c1"))
+        val c1 = card("c1", "21", front = "Bees build hexagons")
+        val c1a = card("c1a", "21a", front = "Hexagons pack tightly")
+        val c2 = card("c2", "30", front = "Spheres minimize area")
+        val c2a = card("c2a", "30a", front = "Soap bubbles")
+        val c2a1 = card("c2a1", "30a1", front = "Triple junctions")
+        val unrelated = card("u", "5", front = "Unrelated note")
+
+        val clusters = LumenStructureMap.clusters(
+            hub,
+            listOf(hub, unrelated, c2a, c1a, c1, c2a1, c2)
+        )
+
+        // Roots in shelf order (21 before 30), regardless of link order.
+        assertEquals(listOf("21", "30"), clusters.map { it.root.indexNumber })
+        assertEquals(listOf("21", "21a"), clusters[0].steps.map { it.card.indexNumber })
+        assertEquals(listOf("30", "30a", "30a1"), clusters[1].steps.map { it.card.indexNumber })
+        // Unlinked cards are not part of the map, even though they share the box.
+        assertTrue(clusters.none { it.root.id == "u" })
+    }
+
+    @Test
+    fun `render lists the hub heading then each cluster indented under it`() {
+        val hub = card("hub", "10", front = "Efficient shapes", links = listOf("c1"))
+        val c1 = card("c1", "21", front = "Bees build hexagons")
+        val c1a = card("c1a", "21a", front = "Hexagons pack tightly")
+        val text = LumenStructureMap.render(
+            hub,
+            LumenStructureMap.clusters(hub, listOf(hub, c1, c1a))
+        )
+        assertTrue(text.contains("10  Efficient shapes"))
+        assertTrue(text.contains("  21  Bees build hexagons"))
+        assertTrue(text.contains("    21a  Hexagons pack tightly"))
+    }
+
+    @Test
+    fun `a hub with no links has no clusters`() {
+        val hub = card("hub", "10", front = "Empty hub")
+        val other = card("c1", "21")
+        assertTrue(LumenStructureMap.clusters(hub, listOf(hub, other)).isEmpty())
+        assertEquals("10  Empty hub", LumenStructureMap.render(hub, emptyList()))
+    }
+
+    @Test
+    fun `clusters from a hub in one box can point into another box`() {
+        val hub = card("hub", "10", box = 1, front = "Cross-box hub", links = listOf("c2"))
+        val c2 = card("c2", "1", box = 2, front = "Other line")
+        val clusters = LumenStructureMap.clusters(hub, listOf(hub, c2))
+        assertEquals(listOf("1"), clusters.map { it.root.indexNumber })
     }
 }

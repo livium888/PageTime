@@ -1,9 +1,11 @@
 package com.pagetime.app.data
 
+import android.content.Context
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
 import com.pagetime.app.data.local.LumenCardEntity
+import com.pagetime.app.data.local.SettingsRepository
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
 import io.github.openspacedrepetition.Scheduler
@@ -56,14 +58,23 @@ class LumenRepository(
     private val geminiClient: GeminiLearningClient,
     private val aiUsageRepository: AiUsageRepository? = null,
     private val bookDao: com.pagetime.app.data.local.BookDao? = null,
+    private val settingsRepository: SettingsRepository? = null,
+    private val localLlmProvider: LlmProvider? = null,
+    private val debugLog: (String) -> Unit = {},
+    private val modelStore: () -> LumenModelStore = { throw UnsupportedOperationException("modelStore not provided") },
+    private val captureDiagContext: () -> Context = { throw UnsupportedOperationException("captureDiagContext not provided") },
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
         .build()
 ) {
+    fun diagContext(): Context = captureDiagContext()
     fun observeAll(): Flow<List<LumenCardEntity>> = dao.observeAll()
 
     fun observeBox(box: Int): Flow<List<LumenCardEntity>> = dao.observeBox(box)
+
+    /** Structure maps (hub notes) across every box, newest first. */
+    fun observeHubs(): Flow<List<LumenCardEntity>> = dao.observeHubs()
 
     fun observeDueCount(now: () -> Long = { System.currentTimeMillis() }): Flow<Int> =
         dao.observeDueCount(now())
@@ -80,37 +91,95 @@ class LumenRepository(
 
     /**
      * Drafts a card from the passage around the current reading position.
-     * AI is best-effort: if no key is configured or the call fails, the card is
-     * still drafted from the raw passage so capture never blocks reading.
+     * The source is chosen by the user's AI provider setting: Gemini, the
+     * offline model, or the plain on-device draft. AI is always best-effort —
+     * if nothing is configured or a call fails, the card is still drafted from
+     * the raw passage so capture never blocks reading.
      */
-    suspend fun draft(book: BookEntity, passage: String): LumenDraft {
+    suspend fun draft(
+        book: BookEntity,
+        passage: String,
+    ): LumenDraft {
         val clean = passage.trim()
         require(clean.isNotBlank()) { "Nothing to capture — move to a spot with text first" }
 
-        if (geminiClient.hasKey()) {
-            try {
-                val call: suspend () -> String = {
-                    geminiClient.draftLumenCard(clean, book.title)
-                }
-                val result = if (aiUsageRepository != null) {
-                    aiUsageRepository.track(
-                        bookId = book.id,
-                        operation = AiUsageRepository.OPERATION_LUMEN,
-                        model = geminiClient.currentModel(),
-                        inputCharacters = clean.length,
-                        outputItems = { it.length },
-                        block = call
+        val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
+        val source =
+            LumenDraftRouter.sourceFor(
+                provider = provider,
+                geminiConfigured = geminiClient.hasKey(),
+                localModelAvailable = localLlmProvider?.isAvailable == true,
+            )
+        when (source) {
+            LumenDraftSource.LOCAL -> {
+                val local = localLlmProvider ?: return fallbackDraft(clean)
+                val state = CaptureDiagnostic.evaluate(local, modelStore())
+                CaptureDiagnostic.recordPreCapture(
+                    context = captureDiagContext(),
+                    modelState = state,
+                    captureKind = "LumenCard",
+                    promptPreview = clean.take(120),
+                )
+                if (state != CaptureDiagnostic.ModelState.ready) {
+                    CaptureDiagnostic.recordFailure(
+                        context = captureDiagContext(),
+                        captureKind = "LumenCard",
+                        reason = "Not attempting offline model: ${state}"
                     )
-                } else {
-                    call()
+                    return fallbackDraft(clean)
                 }
-                LumenCapture.parseDraft(result)?.let { (front, back) ->
-                    return LumenDraft(front, back, clean, usedAi = true)
+                CaptureDiagnostic.recordGenerating(captureDiagContext(), "LumenCard", clean.take(120))
+                val parsed =
+                    LumenLocalDraft.generate(
+                        call = { request -> local.generate(request) },
+                        passage = clean,
+                        bookTitle = book.title,
+                        debugLog = debugLog,
+                    )
+                if (parsed != null) {
+                    return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
                 }
-            } catch (_: Exception) {
-                // Fall through to the on-device draft. Capture must never fail.
+                CaptureDiagnostic.recordFailure(
+                    context = captureDiagContext(),
+                    captureKind = "LumenCard",
+                    reason = "Offline model returned unusable draft; used fallback",
+                )
             }
+            LumenDraftSource.GEMINI -> {
+                try {
+                    val call: suspend () -> String = {
+                        geminiClient.draftLumenCard(clean, book.title)
+                    }
+                    val result =
+                        if (aiUsageRepository != null) {
+                            aiUsageRepository.track(
+                                bookId = book.id,
+                                operation = AiUsageRepository.OPERATION_LUMEN,
+                                model = geminiClient.currentModel(),
+                                inputCharacters = clean.length,
+                                outputItems = { it.length },
+                                block = call,
+                            )
+                        } else {
+                            call()
+                        }
+                    val parsed =
+                        LumenCapture.parseDraft(result)?.takeIf { (front, _) ->
+                            !LumenCapture.isPassageEcho(front, clean)
+                        }
+                    if (parsed != null) {
+                        return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
+                    }
+                } catch (_: Exception) {
+                    // Fall through to the on-device draft. Capture must never fail.
+                }
+            }
+            LumenDraftSource.FALLBACK -> Unit
         }
+        return fallbackDraft(clean)
+    }
+
+    private fun fallbackDraft(clean: String): LumenDraft {
         val (front, back) = LumenCapture.fallbackDraft(clean)
         return LumenDraft(front, back, clean, usedAi = false)
     }
@@ -132,9 +201,9 @@ class LumenRepository(
         afterIndex: String? = null
     ): LumenCardEntity {
         val now = System.currentTimeMillis()
-        val address = LumenAddress.nextAddress(
-            dao.indexNumbersInBox(box.coerceAtLeast(1)), afterIndex
-        )
+        val existingIndexes = dao.indexNumbersInBox(box.coerceAtLeast(1))
+        val resolvedAfterIndex = LumenAddress.resolveExisting(existingIndexes, afterIndex)
+        val address = LumenAddress.nextAddress(existingIndexes, resolvedAfterIndex)
         val card = LumenCardEntity(
             id = UUID.randomUUID().toString(),
             bookId = book.id,
@@ -164,11 +233,10 @@ class LumenRepository(
     suspend fun saveManual(box: Int, front: String, back: String, behindCardId: String? = null): LumenCardEntity {
         val now = System.currentTimeMillis()
         val boxNumber = box.coerceAtLeast(1)
+        val existingIndexes = dao.indexNumbersInBox(boxNumber)
         val behind = behindCardId?.let { dao.get(it) }?.takeIf { it.box == boxNumber }
-        val address = LumenAddress.nextAddress(
-            dao.indexNumbersInBox(boxNumber),
-            behind?.indexNumber
-        )
+        val resolvedBehind = behind?.let { LumenAddress.resolveExisting(existingIndexes, it.indexNumber) }
+        val address = LumenAddress.nextAddress(existingIndexes, resolvedBehind)
         val card = LumenCardEntity(
             id = UUID.randomUUID().toString(),
             bookId = "",
@@ -220,15 +288,30 @@ class LumenRepository(
         )
     }
 
+    /**
+     * Marks or unmarks a card as a structure map (hub note). The card itself
+     * does not change — the flag only tells the Register to surface it as an
+     * entry point into the cluster it links to.
+     */
+    suspend fun setHub(cardId: String, isHub: Boolean) {
+        val existing = dao.get(cardId) ?: return
+        if (existing.isHub == isHub) return
+        dao.upsert(
+            existing.copy(
+                isHub = isHub,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
     /** Re-files a card directly behind another card in the same box. */
     suspend fun fileBehind(cardId: String, behindCardId: String) {
         val card = dao.get(cardId) ?: return
         val behind = dao.get(behindCardId) ?: return
         if (card.id == behind.id || card.box != behind.box) return
-        val address = LumenAddress.nextAddress(
-            dao.indexNumbersInBox(card.box).filterNot { it == card.indexNumber },
-            behind.indexNumber
-        )
+        val existingIndexes = dao.indexNumbersInBox(card.box).filterNot { it == card.indexNumber }
+        val resolvedBehind = LumenAddress.resolveExisting(existingIndexes, behind.indexNumber)
+        val address = LumenAddress.nextAddress(existingIndexes, resolvedBehind)
         dao.upsert(card.copy(indexNumber = address, updatedAt = System.currentTimeMillis()))
     }
 
@@ -388,7 +471,15 @@ class LumenRepository(
         card.front to card.back.ifBlank { card.quote }
 
     /**
-     * The literature box: all captured cards grouped by their source book with
+     * Lossless backup of the whole box as JSON: every slip with its snippets,
+     * links, keywords, hub flag, and FSRS state, addresses verbatim.
+     */
+    suspend fun exportJson(): String {
+        val all = dao.observeAll().first()
+        return LumenBoxExport.toJson(all)
+    }
+
+    /** The literature box: all captured cards grouped by their source book with
      * real titles, one bibliographic slip per source. Pure-local — no AI.
      */
     suspend fun sources(): List<LumenSources.Source> {
@@ -525,17 +616,160 @@ object LumenCapture {
         return front to ""
     }
 
-    /** Parses the Gemini JSON reply ({front, back}); tolerates code fences. */
-    fun parseDraft(raw: String): Pair<String, String>? = runCatching {
-        val cleaned = raw.trim()
-            .removePrefix("```json").removePrefix("```")
-            .removeSuffix("```")
-            .trim()
-        val root = JSONObject(cleaned)
-        val front = root.optString("front").trim()
-        val back = root.optString("back").trim()
-        if (front.isBlank()) null else front to back
-    }.getOrNull()
+    /**
+     * Parses the model's reply into (front, back). Accepts strict JSON, JSON
+     * wrapped in prose or code fences, a plain "Front:"/"Back:" label
+     * format, and truncated/sloppy JSON — small on-device models rarely emit
+     * textbook JSON, and landing a real card is better than silently degrading
+     * to the raw-passage draft. Returns null only when nothing usable is
+     * present.
+     */
+    fun parseDraft(raw: String): Pair<String, String>? {
+        if (raw.isBlank()) return null
+        val cleaned =
+            raw.trim()
+                .removePrefix("```json")
+                .removePrefix("```")
+                .removeSuffix("```")
+                .trim()
+
+        // 1. The JSON object, whether it is the whole reply or buried in prose.
+        val root =
+            runCatching { JSONObject(cleaned) }.getOrNull()
+                ?: run {
+                    val start = cleaned.indexOf('{')
+                    val end = cleaned.lastIndexOf('}')
+                    if (start in 0 until end) {
+                        runCatching { JSONObject(cleaned.substring(start, end + 1)) }.getOrNull()
+                    } else {
+                        null
+                    }
+                }
+        if (root != null) {
+            val front = cleanField(root.optString("front"), maxLength = 120)
+            if (front.isBlank()) return null
+            return front to cleanField(root.optString("back"), maxLength = 400)
+        }
+
+        // 2. Labeled lines: "Front: ..." / "Back: ..." (small models often
+        //    answer in plain text when they cannot produce JSON).
+        val frontMarker = Regex("(?i)\\bfront\\s*[:\\-]").find(cleaned)
+        if (frontMarker != null) {
+            val frontStart = frontMarker.range.last + 1
+            val backMarker =
+                Regex("(?i)\\bback\\s*[:\\-]").find(cleaned, frontStart)
+            if (backMarker != null) {
+                val front = cleanField(cleaned.substring(frontStart, backMarker.range.first), maxLength = 120)
+                val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = 400)
+                if (front.isNotBlank()) return front to back
+            }
+        }
+
+        // 3. Truncated or sloppy JSON: the token cap cut the reply mid-object
+        //    or quotes got mangled. Extracting the string values directly
+        //    salvages everything the model did manage to write.
+        val frontRaw = jsonStringValue(cleaned, "front", truncated = true) ?: return null
+        val front = cleanField(frontRaw, maxLength = 120)
+        if (front.isBlank()) return null
+        val frontMatch =
+            Regex("""(?i)["']front["']\s*:\s*["']""").find(cleaned) ?: return null
+        val remainder = cleaned.substring(frontMatch.range.last + 1)
+        val backRaw =
+            jsonStringValue(remainder, "back", truncated = true).orEmpty()
+        return front to cleanField(backRaw, maxLength = 400)
+    }
+
+    /**
+     * Extracts a JSON string value for [key] from [source] even when the
+     * enclosing object is broken. [truncated] also allows a value cut off at
+     * the end of the reply (no closing quote). Returns null when the key is
+     * absent. Handles double- and single-quoted keys and values.
+     */
+    private fun jsonStringValue(source: String, key: String, truncated: Boolean): String? {
+        val full =
+            Regex("""(?i)["']$key["']\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""")
+                .find(source)
+        if (full != null) {
+            return unescapeJson(full.groupValues[1].ifEmpty { full.groupValues[2] })
+        }
+        if (!truncated) return null
+        val cut =
+            Regex("""(?i)["']$key["']\s*:\s*(["'])(.*)$""", RegexOption.DOT_MATCHES_ALL)
+                .find(source)
+                ?: return null
+        return unescapeJson(cut.groupValues[2])
+    }
+
+    private fun unescapeJson(value: String): String =
+        value.replace("\\\\", "\\")
+            .replace("\\\"", "\"")
+            .replace("\\n", " ")
+            .replace("\\t", " ")
+
+    /**
+     * True when [front] is a long verbatim chunk of [passage] — the model
+     * echoing the source instead of writing its own idea. Only exact,
+     * contiguous text of at least [minLength] chars counts, so paraphrases
+     * and short quoted terms pass. Used to reject copy-paste cards.
+     */
+    fun isPassageEcho(front: String, passage: String, minLength: Int = 24): Boolean {
+        val normalizedFront = normalizeWhitespace(front).lowercase()
+        if (normalizedFront.length < minLength) return false
+        return normalizeWhitespace(passage).lowercase().contains(normalizedFront)
+    }
+
+    private fun normalizeWhitespace(value: String): String =
+        value.replace(Regex("\\s+"), " ").trim()
+
+    /** Trims quotes/emphasis markers, collapses whitespace, and caps length. */
+    private fun cleanField(value: String, maxLength: Int): String {
+        val cleaned =
+            value.trim()
+                .trim('"', '\'', '*', '`')
+                .replace(Regex("\\s+"), " ")
+                .trim()
+        if (cleaned.length <= maxLength) return cleaned
+        return cleaned.take(maxLength - 1).trimEnd() + "…"
+    }
+}
+
+/**
+ * Pure driver for the on-device model's capture attempts. Tries the full
+ * prompt once, then one short retry when the reply was unusable (unparseable
+ * or a verbatim copy of the passage). A small model's first attempt is
+ * sometimes a dud — a second, stricter chance is cheap and lands a real card
+ * instead of the raw-passage draft. Android-free for unit tests.
+ */
+object LumenLocalDraft {
+    suspend fun generate(
+        call: suspend (LlmRequest) -> Result<LlmResult>,
+        passage: String,
+        bookTitle: String,
+        debugLog: (String) -> Unit = {},
+    ): Pair<String, String>? {
+        suspend fun attempt(prompt: String, maxTokens: Int): Pair<String, String>? {
+            val raw =
+                runCatching { call(LlmRequest(prompt, maxOutputTokens = maxTokens)) }
+                    .getOrNull()
+                    ?.getOrNull()
+                    ?.text
+                    ?: return null
+            val parsed =
+                LumenCapture.parseDraft(raw)?.takeIf { (front, _) ->
+                    !LumenCapture.isPassageEcho(front, passage)
+                }
+            if (parsed == null) {
+                debugLog("discarded local draft (unparseable or passage echo): ${raw.take(240)}")
+            }
+            return parsed
+        }
+
+        // Native inference is deliberately attempted once per capture. Loading
+        // the 521 MB model twice in quick succession can exhaust smaller phones
+        // and kill the process. The first prompt is already JSON-primed; if it
+        // fails, the caller uses the safe non-AI draft.
+        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = 384)
+    }
 }
 
 /**
@@ -597,7 +831,8 @@ object LumenAddress {
         // Children alternate by depth, like Luhmann's real addresses (21/2a7):
         // behind a number-ending slip the child is lettered (21 → 21a, 21b),
         // behind a letter-ending slip the child is numbered (21a → 21a1).
-        val nextChild = nextChildVariant(base, taken)
+        val canonicalBase = taken.firstOrNull { normalize(it) == normalize(base) } ?: base
+        val nextChild = nextChildVariant(canonicalBase, taken)
         if (nextChild != null) return nextChild
         // 26 direct letters exhausted: branch deeper (21z → 21z1).
         var m = 1
@@ -614,19 +849,24 @@ object LumenAddress {
      * null when the alphabet is exhausted.
      */
     private fun nextChildVariant(base: String, taken: Set<String>): String? {
-        val siblings = taken.filter { it.length > base.length && it.startsWith(base) }
+        // Only direct children belong to this insertion point. Descendants such
+        // as 1a1 must not be mistaken for another child of 1a (or of 1).
+        val normalizedBase = normalize(base)
+        val directChildren = taken.filter { isDirectChildOf(normalize(it), normalizedBase) }
         return if (base.lastOrNull()?.isLetter() == true) {
-            val highest = siblings
+            val highest = directChildren
                 .map { it.substring(base.length) }
-                .filter { it.isNotEmpty() && it.all { c -> c.isDigit() } }
                 .mapNotNull { it.toIntOrNull() }
                 .maxOrNull()
             "$base${(highest ?: 0) + 1}"
         } else {
-            val highest = siblings
+            val highest = directChildren
                 .map { it.substring(base.length) }
-                .filter { it.length == 1 && it[0] in 'a'..'z' }
-                .maxOrNull()
+                .singleOrNull { it.length == 1 && it[0] in 'a'..'z' }
+                ?: directChildren
+                    .map { it.substring(base.length) }
+                    .filter { it.length == 1 && it[0] in 'a'..'z' }
+                    .maxOrNull()
             when (highest) {
                 null -> base + "a"
                 "z" -> null
@@ -635,10 +875,59 @@ object LumenAddress {
         }
     }
 
+    private fun isDirectChildOf(candidate: String, base: String): Boolean {
+        if (!candidate.startsWith(base) || candidate.length <= base.length) return false
+        val remainder = candidate.substring(base.length)
+        return if (base.lastOrNull()?.isLetter() == true) {
+            remainder.isNotEmpty() && remainder.all(Char::isDigit)
+        } else {
+            remainder.length == 1 && remainder[0] in 'a'..'z'
+        }
+    }
+
+    /** Normalizes picker input so 1A, 1a, and 1a1 resolve to the stored address. */
+    fun normalize(address: String): String = address.trim().lowercase()
+
+    /** Resolves a user-selected address case-insensitively against persisted cards. */
+    fun resolveExisting(existing: List<String>, selected: String?): String? {
+        val normalized = selected?.let(::normalize)?.takeIf { it.isNotBlank() } ?: return null
+        return existing.firstOrNull { normalize(it) == normalized }
+    }
+
     /** The part after the box's leading number, e.g. "2a7" from "21/2a7". */
     fun relativePart(indexNumber: String): String {
         val idx = indexNumber.indexOf('/')
         return if (idx >= 0) indexNumber.substring(idx + 1) else indexNumber
+    }
+
+    /**
+     * Cards in true Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210).
+     * Files straight into the list the way Luhmann physically stacked slips —
+     * never the lexicographic string order a database would give you (which
+     * would put 10 before 2 and scatter deep branches). Room/DAO string sorts
+     * can't do this, so any long-lived box view should route through here.
+     */
+    fun shelfOrder(cards: List<LumenCardEntity>): List<LumenCardEntity> =
+        cards.sortedWith(compareBy(COMPARATOR) { it.indexNumber })
+
+    /**
+     * How deep [indexNumber] sits in its line: the number of cards above it
+     * that are its proper ancestors. A main slip (21, 22…) has depth 0, a
+     * direct child letter is depth 1 (21a), a grandchild 2 (21a1), and so on.
+     * Blank addresses and Luhmann siblings (210 is not a child of 21) are
+     * handled exactly like [isDescendantOf]. Used to reveal the branch tree in
+     * the slip-box list instead of a flat count.
+     */
+    fun branchDepth(
+        indexNumber: String,
+        all: List<LumenCardEntity>
+    ): Int {
+        val address = indexNumber.trim()
+        if (address.isEmpty()) return 0
+        return all.count { other ->
+            val anc = other.indexNumber.trim()
+            anc.isNotEmpty() && anc != address && isDescendantOf(address, anc)
+        }
     }
 
     /**
@@ -659,6 +948,32 @@ object LumenAddress {
             next.isLetter()
         } else {
             true
+        }
+    }
+
+    /**
+     * The line a card sits on, top-down: its ancestor addresses with each
+     * step labelled by that card's front line, ending with [indexNumber]
+     * itself. [all] lets each step resolve to a real card's title; ancestors
+     * that are only implied (their parent slip was deleted) are skipped, so
+     * the branch is shown as it actually exists. Used when filing so picking
+     * "behind" a card reads as branching a line (21 → 21a → 21a1), not just
+     * choosing a bare address. A blank address yields an empty list.
+     */
+    fun threadPath(
+        indexNumber: String,
+        all: List<LumenCardEntity>
+    ): List<Pair<String, String>> {
+        val address = indexNumber.trim()
+        if (address.isEmpty()) return emptyList()
+        val byAddress = all.associateBy { it.indexNumber.trim() }
+        val ancestors = all
+            .mapNotNull { it.indexNumber.trim().takeIf(String::isNotEmpty) }
+            .filter { it != address && isDescendantOf(address, it) }
+            .distinct()
+            .sortedBy { it.length }
+        return (ancestors + address).map { addr ->
+            addr to (byAddress[addr]?.front ?: "")
         }
     }
 }

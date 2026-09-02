@@ -25,6 +25,7 @@ jsoup = "1.17.2"
 detekt = "1.23.7"
 ktlint = "12.1.1"
 orgJson = "20240303"
+mediapipeTasksGenai = "0.10.35"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -60,6 +61,7 @@ turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine
 fsrs = { group = "io.github.open-spaced-repetition", name = "fsrs", version.ref = "fsrs" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
+mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeTasksGenai" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

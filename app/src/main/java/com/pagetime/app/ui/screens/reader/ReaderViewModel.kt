@@ -1,6 +1,7 @@
 package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
+import android.util.Log
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -11,8 +12,11 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.ConceptMap
+import com.pagetime.app.data.CaptureDiagnostic
 import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenDraft
+import com.pagetime.app.data.local.LumenCardEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -333,6 +338,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     @Volatile
     private var latestTxtFraction: Float = 0f
 
+    /** Exact character offset of the current plain-text page's first char. */
+    @Volatile
+    private var latestTxtPageOffset: Int = 0
+
     /** No writes until the Compose scroll restore has applied the saved fraction. */
     @Volatile
     private var txtRestoreComplete = false
@@ -352,6 +361,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageStartOffset: Int = 0
     ) {
         if (pageCount <= 0) return
+        latestTxtPageOffset = pageStartOffset
         val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
         _progress.value = fraction
         if (!userInitiated || !txtRestoreComplete) return
@@ -379,6 +389,22 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _lumenCapturing = MutableStateFlow(false)
     val lumenCapturing = _lumenCapturing.asStateFlow()
 
+    private val _captureDiagnostic = MutableStateFlow<CaptureDiagnostic.Record?>(null)
+    val captureDiagnostic = _captureDiagnostic.asStateFlow()
+
+
+
+    /** Where the freshly captured card could continue the line (box 1). */
+    private val _lumenFileSuggestions = MutableStateFlow<List<LumenCardEntity>>(emptyList())
+    val lumenFileSuggestions = _lumenFileSuggestions.asStateFlow()
+
+    /**
+     * The whole slip box at capture time, so the dialog can render each
+     * suggested card's branch path (its address chain) when filing behind.
+     */
+    private val _lumenBoxCards = MutableStateFlow<List<LumenCardEntity>>(emptyList())
+    val lumenBoxCards = _lumenBoxCards.asStateFlow()
+
     private var pendingLumenContext: PendingLumenContext? = null
 
     private data class PendingLumenContext(
@@ -394,7 +420,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun captureLumenCard() {
         val b = _book.value ?: return
-        if (_lumenCapturing.value || _lumenDraft.value != null) return
+        // Clear any stuck state from a prior interrupted capture rather than
+        // silently bailing out — a cancelled coroutine can leave _lumenCapturing
+        // true forever, making every later capture a no-op (spinner spins, no
+        // dialog). The draft dialog is the real gate; if it's already open we
+        // just don't start another capture.
+        if (_lumenDraft.value != null || _lumenCapturing.value) return
         _lumenCapturing.value = true
         viewModelScope.launch {
             try {
@@ -402,15 +433,26 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 val chapterIndex: Int?
                 if (b.format == "epub") {
                     chapterIndex = currentChapterIndex() ?: 0
-                    val context = container.learningContextExtractor.extract(
+                    // Centered on the current locator so the passage follows the
+                    // page the user is actually reading (two pages → two passages).
+                    // Falls back to the chapter tail if the window cannot be read.
+                    val centered = container.learningContextExtractor.captureEpub(
                         book = b,
                         chapterIndex = chapterIndex,
-                        checkpoint = null,
                         currentLocatorJson = latestLocator?.toJSON()?.toString(),
-                        currentTextOffset = null,
-                        maxCharacters = 4_000
+                        progressionOverride = latestLocator?.locations?.progression?.toFloat()
                     )
-                    passage = context.recentText.takeLast(1_500)
+                    passage = centered.ifBlank {
+                        // No key/href parse failure: reuse the chapter-tail context.
+                        container.learningContextExtractor.extract(
+                            book = b,
+                            chapterIndex = chapterIndex,
+                            checkpoint = null,
+                            currentLocatorJson = latestLocator?.toJSON()?.toString(),
+                            currentTextOffset = null,
+                            maxCharacters = 4_000
+                        ).recentText.takeLast(1_500)
+                    }
                 } else {
                     chapterIndex = null
                     passage = LumenCapture.captureWindow(
@@ -418,7 +460,29 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                         latestTxtOffset()
                     )
                 }
+                // Capture diagnostics: if every page yields the same card, this
+                // line shows whether the passage itself is frozen (same length /
+                // start text) or the AI is at fault.
+                val positionInfo =
+                    when (b.format) {
+                        "epub" -> {
+                            val locator = latestLocator
+                            "href=${locator?.href} progression=${locator?.locations?.progression} " +
+                                "position=${locator?.locations?.position}"
+                        }
+                        else -> "fraction=$latestTxtFraction pageOffset=$latestTxtPageOffset"
+                    }
+                Log.d(
+                    "LumenCapture",
+                    "format=${b.format} chapter=$chapterIndex $positionInfo " +
+                        "passageLen=${passage.length} " +
+                        "passageStart=${passage.take(80).replace(Regex("\\s+"), " ")}",
+                )
                 val draft = lumenRepo.draft(b, passage)
+                Log.d(
+                    "LumenCapture",
+                    "usedAi=${draft.usedAi} front=${draft.front.take(60)} quoteLen=${draft.quote.length}",
+                )
                 pendingLumenContext = PendingLumenContext(
                     draft = draft,
                     locatorJson = if (b.format == "epub") {
@@ -427,18 +491,43 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     chapterIndex = chapterIndex,
                     fraction = if (b.format == "txt") latestTxtFraction else 0f
                 )
+                // Where should this new slip continue the line? Ranked locally
+                // against the whole box — Luhmann filed behind the thought it
+                // continued, never at random.
+                val boxCards = lumenRepo.observeAll().first()
+                _lumenBoxCards.value = boxCards
+                _lumenFileSuggestions.value = LumenConnections.filingCandidates(
+                    cards = boxCards,
+                    front = draft.front,
+                    back = draft.back,
+                    quote = draft.quote,
+                    bookId = b.id,
+                    box = 1
+                )
                 _lumenDraft.value = draft
+                _captureDiagnostic.value = CaptureDiagnostic.Record.successful(
+                    modelState = CaptureDiagnostic.ModelState.generating,
+                    captureKind = "LumenCard",
+                    usedAi = draft.usedAi,
+                )
             } catch (error: CancellationException) {
                 throw error
-            } catch (error: Exception) {
-                _error.value = error.message ?: "Couldn't capture a card here"
+            } catch (error: Throwable) {
+                Log.e("LumenCapture", "Lumen capture failed", error)
+                _error.value = "Couldn't create a Lumen card here. Try again."
+                _captureDiagnostic.value = CaptureDiagnostic.Record.failed(
+                    modelState = CaptureDiagnostic.ModelState.fallbackNoModel,
+                    captureKind = "LumenCard",
+                    reason = error.message ?: "unknown error",
+                )
             } finally {
                 _lumenCapturing.value = false
+                _captureDiagnostic.value = null
             }
         }
     }
 
-    fun saveLumenCard(front: String, back: String) {
+    fun saveLumenCard(front: String, back: String, afterIndex: String? = null) {
         val b = _book.value ?: return
         val pending = pendingLumenContext ?: return
         viewModelScope.launch {
@@ -450,7 +539,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     quote = pending.draft.quote,
                     sourceLocatorJson = pending.locatorJson,
                     sourceChapterIndex = pending.chapterIndex,
-                    sourceFraction = pending.fraction
+                    sourceFraction = pending.fraction,
+                    afterIndex = afterIndex
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -458,6 +548,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _error.value = error.message ?: "Couldn't save the card"
             } finally {
                 _lumenDraft.value = null
+                _lumenFileSuggestions.value = emptyList()
+                _lumenBoxCards.value = emptyList()
                 pendingLumenContext = null
             }
         }
@@ -465,10 +557,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     fun dismissLumenDraft() {
         _lumenDraft.value = null
+        _lumenFileSuggestions.value = emptyList()
+        _lumenBoxCards.value = emptyList()
         pendingLumenContext = null
     }
 
-    // endregion
+    /** Returns the last on-device capture diagnostic log, newest first. */
+    fun lastCaptureLog(): List<String> = CaptureDiagnostic.recentLog(container.lumenRepository.diagContext())
+
+    /** Copies the last capture log to the device clipboard. */
+    fun copyCaptureLogToClipboard(context: android.content.Context) {
+        val log = lastCaptureLog().joinToString("\n")
+        if (log.isBlank()) return
+        try {
+            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("PageTime capture log", log))
+        } catch (t: Throwable) {
+            Log.e("ReaderViewModel", "Failed to copy capture log", t)
+        }
+    }
 
     fun setLearningCheckpoint() {
         val b = _book.value ?: return
@@ -492,8 +599,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    private fun latestTxtOffset(): Int =
-        ((latestTxtFraction.coerceIn(0f, 1f)) * (_textContent.value?.length ?: 0)).toInt()
+    private fun latestTxtOffset(): Int {
+        val contentLength = _textContent.value?.length ?: 0
+        if (contentLength == 0) return 0
+        // The exact page-start offset when known, else the fraction estimate.
+        return if (latestTxtPageOffset > 0) latestTxtPageOffset
+        else (latestTxtFraction.coerceIn(0f, 1f) * contentLength).toInt()
+    }
 
     fun clearLearningCheckpoint() {
         persistenceScope.launch {
@@ -637,7 +749,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private suspend fun saveLocator() {
         val b = _book.value ?: return
         val locator = latestLocator ?: return
-        settingsRepository.saveLocator(b.id, locator.toJSON().toString())
+        val locatorJson = locator.toJSON().toString()
+        settingsRepository.saveLocator(b.id, locatorJson)
+
+        // Keep the in-memory restore locator current. The Readium navigator is
+        // recreated from this whenever the reader screen leaves and re-enters
+        // composition (e.g. viewing Lumen cards then coming back), so a stale
+        // session-open value here is what made the book appear to "jump back"
+        // a few pages. Syncing it on every save makes re-entry resume the exact
+        // spot the reader was actually at.
+        _initialLocatorJson.value = locatorJson
 
         // Keep the legacy DB progress roughly in sync (library UI shows it).
         val publication = _publication.value ?: return

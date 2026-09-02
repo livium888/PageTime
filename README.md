@@ -38,6 +38,16 @@ For GitHub Actions/private builds, `GEMINI_API_KEY` can still be supplied as a r
 
 For a public release, move the Gemini request behind a small authenticated server because any API key packaged in an Android APK can be extracted. The manually entered key is encrypted at rest, but the app still sends it directly to Google's API from the device.
 
+## Offline AI (no cloud key)
+
+Lumen card capture — the AI draft shown when you capture a card while reading — can run without any API key. **Settings → AI provider** picks where those requests go:
+
+- **Offline model** — runs on this device, never sends book text anywhere. Works when a model is installed; without one, capture falls back to the plain on-device draft.
+- **Gemini** (default) — uses the configured Google Gemini API key, matching earlier behavior.
+- **Ask every time** — prefers Gemini when a key is configured, otherwise uses the local model.
+
+The offline model is **Qwen 2.5 0.5B Instruct (q8)**, an open Apache-2.0 model served by the litert-community Hugging Face org and executed on-device through Google's MediaPipe `tasks-genai` runtime. It is a single ~521 MB `.task` file downloaded once over Wi-Fi from **Settings → Offline model** and never bundled into the APK, so the app itself stays small until you opt in. When Settings opens, the app compares the installed file's size and ETag against a cheap HEAD request to the model host; if the model changed, **Settings → Offline model** shows *Update available* with a one-tap update — never automatic. Updates download to a temporary file and only replace the installed model after the size check passes, so a failed update leaves the working model untouched. Both providers share the same capture prompt and output contract, so switching providers does not change card quality expectations. Capture is always best-effort: if the selected provider fails or is unconfigured, the card is still drafted from the raw passage so reading is never blocked.
+
 ## Requirements
 
 - Android Studio (latest stable) or JDK 17 + the Android SDK.
@@ -67,7 +77,7 @@ PageTime needs three special permissions, all configured from
    launch PageTime reconciles this audit trail against its balance ledger and
    retroactively charges any blocked-app time the live ticker missed.
 
-Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB or plain-text file. Create a Gemini API key from Google AI Studio and add it under **Settings → Explain Back with Gemini** if you want explanation feedback.
+Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB or plain-text file. Create a Gemini API key from Google AI Studio and add it under **Settings → Explain Back with Gemini** if you want explanation feedback, or switch **Settings → AI provider** to *Offline model* to draft Lumen cards entirely on-device without a key.
 
 ## Honest limitations
 

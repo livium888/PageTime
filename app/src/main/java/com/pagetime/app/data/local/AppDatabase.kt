@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExplanationEntity::class,
         LumenCardEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -161,6 +161,13 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE lumen_cards ADD COLUMN lastRating INTEGER")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_lumen_cards_box ON lumen_cards(box)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_lumen_cards_dueAt ON lumen_cards(dueAt)")
+            }
+        }
+
+        /** Structure maps: a card can be marked as a hub note for a cluster. */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE lumen_cards ADD COLUMN isHub INTEGER NOT NULL DEFAULT 0")
             }
         }
 

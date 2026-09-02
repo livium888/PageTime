@@ -173,6 +173,7 @@ class MediaPipeLlmProvider(
                 "(available=${freeNativeMemoryMb()}MB)")
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelStore.modelFile.absolutePath)
+                .setPreferredBackend(LlmInference.Backend.CPU)
                 .setMaxTokens(512)
                 .setMaxTopK(40)
                 .build()

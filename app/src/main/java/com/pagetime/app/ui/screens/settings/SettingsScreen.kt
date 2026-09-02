@@ -66,6 +66,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
+import com.pagetime.app.BuildConfig
 import com.pagetime.app.ui.SectionHeader
 import com.pagetime.app.ui.formatMinutes
 
@@ -250,7 +251,28 @@ fun SettingsScreen(
             )
 
             SectionHeader("Support")
+            AppVersionCard()
             CrashDiagnosticsCard(crashLogText = crashLogText)
+        }
+    }
+}
+
+/**
+ * The installed build's version. Every Actions artifact carries the same file
+ * name, so this is the only way to tell a fresh install from a stale download
+ * without reading the APK.
+ */
+@Composable
+private fun AppVersionCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Installed build", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Version ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

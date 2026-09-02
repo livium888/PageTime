@@ -21,7 +21,7 @@ android {
         // Monotonic so every build is a valid update over the previous one.
         // Minutes since epoch (~8.5M now) always increases and fits in an Int.
         versionCode = (System.currentTimeMillis() / 60_000L).toInt()
-        versionName = "1.0"
+        versionName = "1.5-tombstone"
         buildConfigField(
             "String",
             "GEMINI_API_KEY",

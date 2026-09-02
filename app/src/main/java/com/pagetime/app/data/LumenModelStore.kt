@@ -463,12 +463,12 @@ class LumenModelStore(
     }
 
     companion object {
-        const val MODEL_FILE_NAME = "Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task"
+        const val MODEL_FILE_NAME = "gemma3-1b-it-int4.task"
         const val MODEL_URL =
-            "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/" +
+            "https://huggingface.co/MiCkSoftware/Gemma3-1B-IT-LiteRT/resolve/main/" +
                 "$MODEL_FILE_NAME?download=true"
-        const val MODEL_LABEL = "Qwen 2.5 0.5B Instruct (q8)"
-        const val EXPECTED_MODEL_BYTES = 546_660_344L
+        const val MODEL_LABEL = "Gemma 3 1B Instruct (int4)"
+        const val EXPECTED_MODEL_BYTES = 554_661_243L
 
         /** Shown when the installed/downloaded file fails the structural check. */
         const val DAMAGED_MESSAGE =

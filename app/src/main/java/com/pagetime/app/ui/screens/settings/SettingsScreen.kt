@@ -365,10 +365,10 @@ private fun OfflineModelSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Offline model", style = MaterialTheme.typography.titleMedium)
             Text(
-                "${LumenModelStore.MODEL_LABEL} — an open Apache-2.0 model that runs " +
-                    "entirely on this device. Book text and prompts never leave the phone. " +
-                    "Download once over Wi-Fi (~${LumenModelStore.MODEL_SIZE_MB} MB); the app " +
-                    "itself stays small either way.",
+                "${LumenModelStore.MODEL_LABEL} — Google's Gemma model built for this " +
+                    "runtime, running entirely on this device. Book text and prompts never " +
+                    "leave the phone. Download once over Wi-Fi (~${LumenModelStore.MODEL_SIZE_MB} MB); " +
+                    "the app itself stays small either way.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

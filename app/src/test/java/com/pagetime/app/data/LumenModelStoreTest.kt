@@ -131,12 +131,14 @@ class LumenModelStoreTest {
                 store(
                     expectedBytes = 1_000,
                     downloader = FakeModelDownloader(bytes = 1_000),
-                    integrityCheck = { false }, // pretend the installed file is damaged
+                    // The installed file is damaged; a freshly downloaded .part
+                    // file is intact, so the retry may complete.
+                    integrityCheck = { file -> file.name.endsWith(".part") },
                 )
 
             assertTrue(
-                modelStore.status.value is LumenModelStatus.Failed,
                 "A damaged installed file should be reported, not Ready",
+                modelStore.status.value is LumenModelStatus.Failed,
             )
             modelStore.download()
 

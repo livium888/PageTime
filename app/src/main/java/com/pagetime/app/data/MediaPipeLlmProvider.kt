@@ -68,6 +68,15 @@ class MediaPipeLlmProvider(
         get() = modelStore.modelFile.length()
 
     init {
+        // Detect a native death from a previous process: a surviving tombstone
+        // marker means the last run died inside a native phase. This records
+        // the phase into the capture diagnostic log and auto-disables offline
+        // inference so the app survives instead of crash-looping.
+        runCatching { NativeTombstone.checkOnProcessStart(context) }
+        if (NativeTombstone.offlineDisabledByTombstone) {
+            nativeFailed = true
+            Log.e(TAG, "Offline inference disabled: ${NativeTombstone.lastDeathSummary}")
+        }
         // Observe the store's status so a model replacement (re-download) or
         // corruption is detected even when no capture is in flight. The store
         // emits on a background dispatcher; reset() is lightweight and safe to
@@ -112,7 +121,10 @@ class MediaPipeLlmProvider(
     override suspend fun generate(request: LlmRequest): Result<LlmResult> {
         if (nativeFailed) {
             return Result.failure(
-                IllegalStateException("Offline model disabled after a previous failure")
+                IllegalStateException(
+                    NativeTombstone.lastDeathSummary
+                        ?: "Offline model disabled after a previous failure"
+                )
             )
         }
         return try {
@@ -163,7 +175,9 @@ class MediaPipeLlmProvider(
                     "Generating (model=${modelStore.modelFile.name}, " +
                         "remaining=${freeNativeMemoryMb()}MB)"
                 )
+                NativeTombstone.enterPhase(context, NativeTombstone.Phase.GENERATE)
                 val text = model.generateResponse(prompt).trim()
+                NativeTombstone.exitPhase(context)
                 check(text.isNotBlank()) { "The offline model returned an empty response" }
                 LlmResult(text, LlmProviderKind.OFFLINE)
             }
@@ -196,7 +210,13 @@ class MediaPipeLlmProvider(
                 .setMaxTokens(512)
                 .setMaxTopK(40)
                 .build()
+            // Tombstone around the native load: if the process dies inside
+            // createFromOptions, the marker survives and the next launch knows
+            // exactly which phase killed it, then auto-disables offline AI so
+            // the app keeps working via the non-AI fallback.
+            NativeTombstone.enterPhase(context, NativeTombstone.Phase.CREATE)
             val model = LlmInference.createFromOptions(context, options)
+            NativeTombstone.exitPhase(context)
             cachedModel = model
             loadedModelSize = modelStore.modelFile.length()
             Log.d(TAG, "Model loaded and kept resident (size=${loadedModelSize}B)")

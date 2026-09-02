@@ -1,31 +1,33 @@
 package com.pagetime.app.data
 
 import android.app.ActivityManager
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.util.Log
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
 
 /**
  * On-device LLM inference via MediaPipe's tasks-genai runtime, powered by the
  * weights managed by [LumenModelStore].
  *
- * The model is loaded once per session and reused across requests, then
- * released when the session ends. The previous per-request load/close cycle
- * repeatedly allocated and freed ~800 MB of contiguous native memory, which on
- * many Android devices triggered a native OOM (SIGABRT/SIGSEGV) that Kotlin
- * try/catch cannot catch and that leaves no Java crash log.
- *
- * Session-scoped caching keeps one loaded instance alive, so a second card
- * capture in the same session skips the expensive native load entirely.
+ * The model is loaded once and kept resident for the app session, then
+ * released when the model is replaced/deleted or the OS reports memory
+ * pressure. The previous behavior closed the native model after every
+ * request: the first load succeeded, the freed ~600 MB block got
+ * fragmented by continued app activity, and the SECOND load aborted the
+ * process inside MediaPipe (uncatchable SIGABRT, no Java crash log) —
+ * exactly the "first capture works, every capture after crashes" report.
+ * Holding the model resident removes the repeated load cycle entirely.
  *
  * Memory preflight: loading the model needs ~800 MB of contiguous native memory.
  * If the device cannot provide that, we skip the native call entirely and let
@@ -48,9 +50,7 @@ class MediaPipeLlmProvider(
     @Volatile
     private var cachedModel: LlmInference? = null
 
-    /** How many in-flight requests are using the cached model. */
-    @Volatile
-    private var modelRefCount = 0
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Set after the first native crash/OOM — disables offline inference for the rest of the session. */
     @Volatile
@@ -72,7 +72,7 @@ class MediaPipeLlmProvider(
         // corruption is detected even when no capture is in flight. The store
         // emits on a background dispatcher; reset() is lightweight and safe to
         // call from any context.
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+        scope.launch {
             modelStore.status.collect { status ->
                 when (status) {
                     is LumenModelStatus.Ready -> {
@@ -85,6 +85,26 @@ class MediaPipeLlmProvider(
                 }
             }
         }
+        // Release the resident model when the OS is genuinely running low, so
+        // holding it never starves the rest of the system. The next capture
+        // reloads lazily — one load, not a load/close cycle per request.
+        runCatching {
+            context.applicationContext.registerComponentCallbacks(
+                object : ComponentCallbacks2 {
+                    override fun onConfigurationChanged(newConfig: Configuration) = Unit
+                    override fun onLowMemory() = dropForMemoryPressure()
+                    override fun onTrimMemory(level: Int) {
+                        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                            dropForMemoryPressure()
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    private fun dropForMemoryPressure() {
+        scope.launch { dropCachedModel("memory pressure") }
     }
 
     override fun hasEnoughMemory(): Boolean = hasEnoughNativeMemory()
@@ -102,14 +122,16 @@ class MediaPipeLlmProvider(
         } catch (error: Throwable) {
             Log.e(TAG, "Offline model failed", error)
             nativeFailed = true
-            releaseModel()
+            scope.launch { dropCachedModel("failure") }
             Result.failure(error)
         }
     }
 
     /**
-     * Loads the runtime once per session, runs the request against the cached
-     * model, and releases the model when the last in-flight request returns.
+     * Runs the request against the resident model, loading it first if it was
+     * dropped (memory pressure, re-download). The model stays loaded after the
+     * request returns — see the class doc for why the per-request close was
+     * removed.
      */
     private suspend fun infer(request: LlmRequest): LlmResult =
         inferenceMutex.withLock {
@@ -123,33 +145,32 @@ class MediaPipeLlmProvider(
                 require(modelStore.isModelFileIntact()) {
                     "The offline model file is damaged. Delete and re-download it in Settings."
                 }
-                require(hasEnoughNativeMemory()) {
-                    "Not enough memory to load the offline model. Close other apps and try again."
+                if (hasEnoughNativeMemory() == false && cachedModel == null) {
+                    // Only refuse when we would have to do a fresh load; if the
+                    // model is already resident, running it costs no new memory.
+                    throw IllegalStateException(
+                        "Not enough memory to load the offline model. Close other apps and try again."
+                    )
                 }
 
                 val model = acquireModel()
-                try {
-                    val prompt = buildString {
-                        request.systemInstruction?.let { append(it).append("\n\n") }
-                        append(request.prompt)
-                    }
-                    Log.d(
-                        TAG,
-                        "Generating (model=${modelStore.modelFile.name}, " +
-                            "remaining=${freeNativeMemoryMb()}MB)"
-                    )
-                    val text = model.generateResponse(prompt).trim()
-                    check(text.isNotBlank()) { "The offline model returned an empty response" }
-                    LlmResult(text, LlmProviderKind.OFFLINE)
-                } finally {
-                    releaseModel()
+                val prompt = buildString {
+                    request.systemInstruction?.let { append(it).append("\n\n") }
+                    append(request.prompt)
                 }
+                Log.d(
+                    TAG,
+                    "Generating (model=${modelStore.modelFile.name}, " +
+                        "remaining=${freeNativeMemoryMb()}MB)"
+                )
+                val text = model.generateResponse(prompt).trim()
+                check(text.isNotBlank()) { "The offline model returned an empty response" }
+                LlmResult(text, LlmProviderKind.OFFLINE)
             }
         }
 
     /**
-     * Returns the cached model, loading it on first use. Subsequent callers
-     * increment the reference count without reloading.
+     * Returns the resident model, loading it on first use (or after a drop).
      */
     private suspend fun acquireModel(): LlmInference =
         modelMutex.withLock {
@@ -158,15 +179,13 @@ class MediaPipeLlmProvider(
                 modelStore.isModelFileIntact() &&
                 modelStore.modelFile.length() == loadedModelSize
             ) {
-                modelRefCount++
-                Log.d(TAG, "Reuse cached model (refCount=$modelRefCount)")
+                Log.d(TAG, "Reuse resident model")
                 return cachedModel!!
             }
             // Discard any stale handle whose backing file was replaced or
             // re-downloaded.
             cachedModel?.close()
             cachedModel = null
-            modelRefCount = 0
             loadedModelSize = -1
 
             Log.d(TAG, "Loading model from ${modelStore.modelFile.absolutePath} " +
@@ -179,22 +198,22 @@ class MediaPipeLlmProvider(
                 .build()
             val model = LlmInference.createFromOptions(context, options)
             cachedModel = model
-            modelRefCount = 1
             loadedModelSize = modelStore.modelFile.length()
-            Log.d(TAG, "Model loaded (refCount=$modelRefCount, size=${loadedModelSize}B)")
+            Log.d(TAG, "Model loaded and kept resident (size=${loadedModelSize}B)")
             model
         }
 
-    /** Decrements the ref count and closes the cached model when the last user returns. */
-    private suspend fun releaseModel() {
+    /**
+     * Closes and forgets the resident model without clearing the failure flag.
+     * Used when the OS is under memory pressure; the next capture reloads.
+     */
+    private suspend fun dropCachedModel(reason: String) {
         modelMutex.withLock {
-            if (modelRefCount <= 0) return
-            modelRefCount--
-            if (modelRefCount == 0) {
-                cachedModel?.close()
-                cachedModel = null
-                Log.d(TAG, "Model released")
-            }
+            if (cachedModel == null) return
+            cachedModel?.close()
+            cachedModel = null
+            loadedModelSize = -1
+            Log.d(TAG, "Resident model dropped ($reason)")
         }
     }
 
@@ -204,11 +223,7 @@ class MediaPipeLlmProvider(
      * model, and from [generate] when a native failure is detected.
      */
     private suspend fun reset() {
-        modelMutex.withLock {
-            cachedModel?.close()
-            cachedModel = null
-            modelRefCount = 0
-        }
+        dropCachedModel("model store change")
         nativeFailed = false
         Log.d(TAG, "MediaPipeLlmProvider reset")
     }

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.CopyAll
 import androidx.compose.material.icons.outlined.Brightness5
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.MenuBook
@@ -607,6 +608,8 @@ fun ReaderScreen(
             draft = draft,
             suggestions = lumenFileSuggestions,
             boxCards = vm.lumenBoxCards.collectAsStateWithLifecycle().value,
+            captureDiagnostic = vm.captureDiagnostic.collectAsStateWithLifecycle().value,
+            captureLog = vm.lastCaptureLog(),
             onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
@@ -1713,12 +1716,15 @@ private fun MenuHeader(title: String) {
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun LumenDraftDialog(
     draft: LumenDraft,
     suggestions: List<LumenCardEntity>,
     boxCards: List<LumenCardEntity>,
+    captureDiagnostic: com.pagetime.app.data.CaptureDiagnostic.Record?,
+    captureLog: List<String>,
     onSave: (front: String, back: String, afterIndex: String?) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     var front by remember(draft) { mutableStateOf(draft.front) }
     var back by remember(draft) { mutableStateOf(draft.back) }
@@ -1766,6 +1772,21 @@ private fun LumenDraftDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
+                if (captureDiagnostic != null) {
+                    Text(
+                        when (captureDiagnostic.modelState) {
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.ready -> "Offline model: ready"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.notInstalled -> "Offline model: not installed"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.damaged -> "Offline model: damaged"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.notEnoughMemory -> "Offline model: not enough memory"
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.generating -> "Offline model: generating..."
+                            com.pagetime.app.data.CaptureDiagnostic.ModelState.fallbackNoModel -> "Offline model: not used"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = MaterialTheme.shapes.small,
@@ -1788,6 +1809,10 @@ private fun LumenDraftDialog(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(2.dp))
+                                    if (captureLog.isNotEmpty()) {
+                        CopyCaptureLogButton(captureLog)
+                        Spacer(Modifier.height(8.dp))
+                    }
                     Box {
                         TextButton(
                             onClick = { filingMenu = true },
@@ -1988,4 +2013,30 @@ private fun ThreadPathText(address: String, boxCards: List<LumenCardEntity>) {
         maxLines = 2,
         overflow = TextOverflow.Ellipsis
     )
+}
+
+@Composable
+private fun CopyCaptureLogButton(captureLog: List<String>) {
+    val context = LocalContext.current
+    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+    Button(
+        onClick = {
+            try {
+                clipboard?.setPrimaryClip(
+                    android.content.ClipData.newPlainText("PageTime capture log", captureLog.joinToString("\n"))
+                )
+            } catch (t: Throwable) {
+                // Clipboard access failed; no-op.
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            Icons.Outlined.CopyAll,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("Copy capture log")
+    }
 }

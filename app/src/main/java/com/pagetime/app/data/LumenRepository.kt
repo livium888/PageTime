@@ -68,6 +68,7 @@ class LumenRepository(
         .enableFuzzing(false)
         .build()
 ) {
+    fun diagContext(): Context = captureDiagContext()
     fun observeAll(): Flow<List<LumenCardEntity>> = dao.observeAll()
 
     fun observeBox(box: Int): Flow<List<LumenCardEntity>> = dao.observeBox(box)

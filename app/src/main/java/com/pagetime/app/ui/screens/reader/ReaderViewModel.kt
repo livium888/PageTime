@@ -563,7 +563,19 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     }
 
     /** Returns the last on-device capture diagnostic log, newest first. */
+    fun lastCaptureLog(): List<String> = CaptureDiagnostic.recentLog(container.lumenRepository.diagContext())
 
+    /** Copies the last capture log to the device clipboard. */
+    fun copyCaptureLogToClipboard(context: android.content.Context) {
+        val log = lastCaptureLog().joinToString("\n")
+        if (log.isBlank()) return
+        try {
+            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("PageTime capture log", log))
+        } catch (t: Throwable) {
+            Log.e("ReaderViewModel", "Failed to copy capture log", t)
+        }
+    }
 
     fun setLearningCheckpoint() {
         val b = _book.value ?: return

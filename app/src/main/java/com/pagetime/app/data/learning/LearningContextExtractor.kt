@@ -8,6 +8,8 @@ import com.pagetime.app.data.library.EpubParser
 import java.io.File
 import java.util.zip.ZipFile
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
 /** Builds bounded, source-grounded text windows for learning requests. */
@@ -15,7 +17,7 @@ class LearningContextExtractor(
     private val context: Context,
     private val epubParser: EpubParser
 ) {
-    fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 40_000): LearningContext =
+    suspend fun extract(book: BookEntity, chapterIndex: Int, maxCharacters: Int = 40_000): LearningContext =
         extract(
             book,
             chapterIndex,
@@ -29,7 +31,7 @@ class LearningContextExtractor(
      * Uses the checkpoint as a content boundary. No checkpoint means chapter start.
      * This method never navigates the reader; it only changes the text sent to AI.
      */
-    fun extract(
+    suspend fun extract(
         book: BookEntity,
         chapterIndex: Int,
         checkpoint: LearningCheckpoint?,
@@ -38,10 +40,16 @@ class LearningContextExtractor(
         maxCharacters: Int = 40_000
     ): LearningContext {
         require(maxCharacters in 2_000..80_000)
-        return if (book.format == "epub") {
-            extractEpub(book, chapterIndex, checkpoint, currentLocatorJson, maxCharacters)
-        } else {
-            extractText(book, chapterIndex, checkpoint, currentTextOffset, maxCharacters)
+        // Extraction unzips the book, parses chapter HTML and reads whole text
+        // files. That is blocking work, so it is confined to the IO dispatcher
+        // here rather than left to each caller to remember — running it on the
+        // main dispatcher freezes the reader until the parse finishes.
+        return withContext(Dispatchers.IO) {
+            if (book.format == "epub") {
+                extractEpub(book, chapterIndex, checkpoint, currentLocatorJson, maxCharacters)
+            } else {
+                extractText(book, chapterIndex, checkpoint, currentTextOffset, maxCharacters)
+            }
         }
     }
 

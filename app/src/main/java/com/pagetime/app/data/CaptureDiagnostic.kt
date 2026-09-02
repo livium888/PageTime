@@ -63,7 +63,9 @@ object CaptureDiagnostic {
         modelState: ModelState,
         attemptedGeneration: Boolean,
         bookTitle: String?,
-        passageLength: Int
+        passageLength: Int,
+        promptTokens: Int? = null,
+        tokenBudget: Int? = null
     ) {
         val line = buildString {
             append(lineToNow())
@@ -72,6 +74,10 @@ object CaptureDiagnostic {
             append(" attemptedGeneration=$attemptedGeneration")
             if (bookTitle != null) append(" bookTitle=$bookTitle")
             append(" passageLength=$passageLength")
+            if (promptTokens != null && tokenBudget != null) {
+                append(" promptTokens=$promptTokens/$tokenBudget")
+                if (promptTokens > tokenBudget) append(" OVER_BUDGET")
+            }
         }
         writeLine(context, line)
     }
@@ -136,11 +142,18 @@ object CaptureDiagnostic {
         return ModelState.ready
     }
 
+    /**
+     * [passage] is the whole captured passage, never a preview. Its length is
+     * what decides whether the prompt fits the model's token budget, and
+     * logging a truncated preview's length instead reported a constant 120 on
+     * every capture — hiding the one value that mattered while the offline
+     * model was aborting the process on an over-budget prompt.
+     */
     fun recordPreCapture(
         context: Context,
         modelState: ModelState,
         captureKind: String,
-        promptPreview: String
+        passage: String
     ) {
         logCapture(
             context = context,
@@ -148,18 +161,30 @@ object CaptureDiagnostic {
             modelState = modelState,
             attemptedGeneration = modelState == ModelState.ready,
             bookTitle = null,
-            passageLength = promptPreview.length
+            passageLength = passage.length
         )
     }
 
-    fun recordGenerating(context: Context, captureKind: String, promptPreview: String) {
+    /**
+     * Logged with the prompt actually handed to the model, so the token count
+     * is the real one rather than a reconstruction that can drift from it.
+     */
+    fun recordGenerating(
+        context: Context,
+        captureKind: String,
+        passage: String,
+        prompt: String,
+        replyTokens: Int
+    ) {
         logCapture(
             context = context,
             kind = captureKind,
             modelState = ModelState.generating,
             attemptedGeneration = true,
             bookTitle = null,
-            passageLength = promptPreview.length
+            passageLength = passage.length,
+            promptTokens = LlmTokenBudget.estimateTokens(prompt),
+            tokenBudget = LlmTokenBudget.inputBudget(replyTokens)
         )
     }
 

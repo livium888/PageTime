@@ -118,7 +118,7 @@ class LumenRepository(
                     context = captureDiagContext(),
                     modelState = state,
                     captureKind = "LumenCard",
-                    promptPreview = clean.take(120),
+                    passage = clean,
                 )
                 if (state != CaptureDiagnostic.ModelState.ready) {
                     CaptureDiagnostic.recordFailure(
@@ -128,13 +128,21 @@ class LumenRepository(
                     )
                     return fallbackDraft(clean)
                 }
-                CaptureDiagnostic.recordGenerating(captureDiagContext(), "LumenCard", clean.take(120))
                 val parsed =
                     LumenLocalDraft.generate(
                         call = { request -> local.generate(request) },
                         passage = clean,
                         bookTitle = book.title,
                         debugLog = debugLog,
+                        onPromptBuilt = { prompt ->
+                            CaptureDiagnostic.recordGenerating(
+                                context = captureDiagContext(),
+                                captureKind = "LumenCard",
+                                passage = clean,
+                                prompt = prompt,
+                                replyTokens = LumenLocalDraft.REPLY_TOKENS,
+                            )
+                        },
                     )
                 if (parsed != null) {
                     return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
@@ -741,13 +749,20 @@ object LumenCapture {
  * instead of the raw-passage draft. Android-free for unit tests.
  */
 object LumenLocalDraft {
+    /** Tokens reserved for the reply; the rest of the budget belongs to the prompt. */
+    const val REPLY_TOKENS = 384
+
     suspend fun generate(
         call: suspend (LlmRequest) -> Result<LlmResult>,
         passage: String,
         bookTitle: String,
         debugLog: (String) -> Unit = {},
+        onPromptBuilt: (String) -> Unit = {},
     ): Pair<String, String>? {
         suspend fun attempt(prompt: String, maxTokens: Int): Pair<String, String>? {
+            // Reported from here so the diagnostic records the prompt actually
+            // sent, including any future retry that builds a different one.
+            onPromptBuilt(prompt)
             val raw =
                 runCatching { call(LlmRequest(prompt, maxOutputTokens = maxTokens)) }
                     .getOrNull()
@@ -768,7 +783,7 @@ object LumenLocalDraft {
         // the 521 MB model twice in quick succession can exhaust smaller phones
         // and kill the process. The first prompt is already JSON-primed; if it
         // fails, the caller uses the safe non-AI draft.
-        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = 384)
+        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = REPLY_TOKENS)
     }
 }
 

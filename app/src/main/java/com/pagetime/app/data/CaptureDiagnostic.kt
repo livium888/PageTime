@@ -188,6 +188,30 @@ object CaptureDiagnostic {
         )
     }
 
+    /**
+     * What the inference actually cost and whether it landed a card. Duration is
+     * the number to tune the passage cap against: more context makes a better
+     * card and costs seconds, and neither is knowable without measuring.
+     */
+    fun recordInference(
+        context: Context,
+        captureKind: String,
+        durationMs: Long,
+        attempts: Int,
+        usedAi: Boolean,
+        rejection: String?
+    ) {
+        val line = buildString {
+            append(lineToNow())
+            append(" kind=$captureKind INFERENCE")
+            append(" durationMs=$durationMs")
+            append(" attempts=$attempts")
+            append(" usedAi=$usedAi")
+            if (rejection != null) append(" rejection=$rejection")
+        }
+        writeLine(context, line)
+    }
+
     fun recordFailure(context: Context, captureKind: String, reason: String) {
         val file = logFile(context)
         if (file.exists()) {

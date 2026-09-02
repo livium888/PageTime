@@ -65,33 +65,61 @@ class LumenLocalDraftTest {
             ok("""{"front":"Fiction bonds large groups","back":"Shared stories let many people cooperate."}""")
         }
 
-        val parsed = LumenLocalDraft.generate(call, passage, "Sapiens")
+        val outcome = LumenLocalDraft.generate(call, passage, "Sapiens")
 
-        assertEquals("Fiction bonds large groups", parsed!!.first)
-        assertEquals(1, calls)
+        assertEquals("Fiction bonds large groups", outcome.card!!.first)
+        assertEquals("A usable first reply needs no retry", 1, calls)
+        assertEquals(1, outcome.attempts)
     }
 
     @Test
-    fun `rejects a passage echo without performing another native inference`() = runTest {
+    fun `a dud first reply is re-asked with the stricter prompt`() = runTest {
+        // The whole point of the retry: a small model's first answer is often a
+        // copy of the passage, and the second, starker ask usually lands.
+        val prompts = mutableListOf<String>()
+        val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
+            prompts += request.prompt
+            if (prompts.size == 1) {
+                ok("""{"front": "However, this arena is extraordinarily large", "back": "copy"}""")
+            } else {
+                ok("""{"front":"Fiction lets strangers cooperate","back":"Shared stories bind large groups."}""")
+            }
+        }
+
+        val outcome = LumenLocalDraft.generate(call, passage, "Sapiens")
+
+        assertEquals("Fiction lets strangers cooperate", outcome.card!!.first)
+        assertEquals(2, outcome.attempts)
+        assertNull("A landed card carries no rejection", outcome.rejection)
+        assertEquals(2, prompts.size)
+        assertTrue("The retry must use the stricter prompt", prompts[0] != prompts[1])
+    }
+
+    @Test
+    fun `reports the passage echo when both attempts copy the passage`() = runTest {
         var calls = 0
         val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
             calls++
             ok("""Here is your card: {"front": "However, this arena is extraordinarily large", "back": "copy"}""")
         }
 
-        val parsed = LumenLocalDraft.generate(call, passage, "Sapiens")
+        val outcome = LumenLocalDraft.generate(call, passage, "Sapiens")
 
-        assertNull(parsed)
-        assertEquals(1, calls)
+        assertNull(outcome.card)
+        assertEquals(LumenLocalDraft.Rejection.PASSAGE_ECHO, outcome.rejection)
+        assertEquals(2, calls)
     }
 
     @Test
-    fun `returns null when a provider call fails`() = runTest {
+    fun `reports no reply when the provider call fails`() = runTest {
         val call: suspend (LlmRequest) -> Result<LlmResult> = {
             Result.failure(IllegalStateException("runtime exploded"))
         }
 
-        assertNull(LumenLocalDraft.generate(call, passage, "Sapiens"))
+        val outcome = LumenLocalDraft.generate(call, passage, "Sapiens")
+
+        assertNull(outcome.card)
+        assertEquals(LumenLocalDraft.Rejection.NO_REPLY, outcome.rejection)
     }
 
     @Test
@@ -101,10 +129,11 @@ class LumenLocalDraftTest {
             ok("""{"front":"However, this arena is extraordinarily large","back":"echo"}""")
         }
 
-        assertNull(
+        val outcome =
             LumenLocalDraft.generate(call, passage, "Sapiens", debugLog = { logged += it })
-        )
-        assertEquals(1, logged.size)
-        assertTrue(logged.single().startsWith("discarded local draft"))
+
+        assertNull(outcome.card)
+        assertEquals("Both attempts are logged", 2, logged.size)
+        assertTrue(logged.all { it.startsWith("discarded local draft") })
     }
 }

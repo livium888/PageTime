@@ -555,6 +555,31 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
+    /**
+     * Asks the model for another draft of the same passage. The capture window
+     * is already held in the pending context, so this re-runs inference only —
+     * no re-extraction, and the reader never loses their place.
+     */
+    fun retryLumenCard() {
+        val b = _book.value ?: return
+        val pending = pendingLumenContext ?: return
+        if (_lumenCapturing.value) return
+        _lumenCapturing.value = true
+        viewModelScope.launch {
+            try {
+                val draft = lumenRepo.draft(b, pending.draft.quote)
+                pendingLumenContext = pending.copy(draft = draft)
+                _lumenDraft.value = draft
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _error.value = error.message ?: "Couldn't draft this card again"
+            } finally {
+                _lumenCapturing.value = false
+            }
+        }
+    }
+
     fun dismissLumenDraft() {
         _lumenDraft.value = null
         _lumenFileSuggestions.value = emptyList()

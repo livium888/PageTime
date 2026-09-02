@@ -1,5 +1,6 @@
 package com.pagetime.app.data
 
+import android.content.Context
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
@@ -60,6 +61,8 @@ class LumenRepository(
     private val settingsRepository: SettingsRepository? = null,
     private val localLlmProvider: LlmProvider? = null,
     private val debugLog: (String) -> Unit = {},
+    private val modelStore: () -> LumenModelStore = { throw UnsupportedOperationException("modelStore not provided") },
+    private val captureDiagContext: () -> Context = { throw UnsupportedOperationException("captureDiagContext not provided") },
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
@@ -109,6 +112,22 @@ class LumenRepository(
         when (source) {
             LumenDraftSource.LOCAL -> {
                 val local = localLlmProvider ?: return fallbackDraft(clean)
+                val state = CaptureDiagnostic.evaluate(local, modelStore())
+                CaptureDiagnostic.recordPreCapture(
+                    context = captureDiagContext(),
+                    modelState = state,
+                    captureKind = "LumenCard",
+                    promptPreview = clean.take(120),
+                )
+                if (state != CaptureDiagnostic.ModelState.ready) {
+                    CaptureDiagnostic.recordFailure(
+                        context = captureDiagContext(),
+                        captureKind = "LumenCard",
+                        reason = "Not attempting offline model: ${state}"
+                    )
+                    return fallbackDraft(clean)
+                }
+                CaptureDiagnostic.recordGenerating(captureDiagContext(), "LumenCard", clean.take(120))
                 val parsed =
                     LumenLocalDraft.generate(
                         call = { request -> local.generate(request) },
@@ -119,6 +138,11 @@ class LumenRepository(
                 if (parsed != null) {
                     return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
                 }
+                CaptureDiagnostic.recordFailure(
+                    context = captureDiagContext(),
+                    captureKind = "LumenCard",
+                    reason = "Offline model returned unusable draft; used fallback",
+                )
             }
             LumenDraftSource.GEMINI -> {
                 try {

@@ -43,6 +43,11 @@ interface LlmProvider {
     val isAvailable: Boolean
 
     suspend fun generate(request: LlmRequest): Result<LlmResult>
+
+    /** MediaPipe-backed providers only. Returns true when the device reports
+     * enough free native memory to safely load the model. Never called by a
+     * provider whose inference does not use native memory. */
+    fun hasEnoughMemory(): Boolean
 }
 
 /**
@@ -53,6 +58,8 @@ interface LlmProvider {
 class OfflineLlmProvider : LlmProvider {
     override val kind: LlmProviderKind = LlmProviderKind.OFFLINE
     override val isAvailable: Boolean = false
+
+    override fun hasEnoughMemory(): Boolean = false
 
     override suspend fun generate(request: LlmRequest): Result<LlmResult> =
         Result.failure(

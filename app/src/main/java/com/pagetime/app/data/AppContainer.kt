@@ -125,6 +125,8 @@ class AppContainer(context: Context) {
         settingsRepository = settingsRepository,
         localLlmProvider = localLlmProvider,
         debugLog = { message -> Log.d("LumenDraft", message) },
+        modelStore = { lumenModelStore },
+        captureDiagContext = { appContext },
     )
 
     val learningRepository = LearningRepository(

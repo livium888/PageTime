@@ -12,6 +12,7 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.ConceptMap
+import com.pagetime.app.data.CaptureDiagnostic
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenDraft
@@ -388,6 +389,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _lumenCapturing = MutableStateFlow(false)
     val lumenCapturing = _lumenCapturing.asStateFlow()
 
+    private val _captureDiagnostic = MutableStateFlow<CaptureDiagnostic.Record?>(null)
+    val captureDiagnostic = _captureDiagnostic.asStateFlow()
+
+
+
     /** Where the freshly captured card could continue the line (box 1). */
     private val _lumenFileSuggestions = MutableStateFlow<List<LumenCardEntity>>(emptyList())
     val lumenFileSuggestions = _lumenFileSuggestions.asStateFlow()
@@ -499,13 +505,24 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     box = 1
                 )
                 _lumenDraft.value = draft
+                _captureDiagnostic.value = CaptureDiagnostic.Record.successful(
+                    modelState = CaptureDiagnostic.ModelState.generating,
+                    captureKind = "LumenCard",
+                    usedAi = draft.usedAi,
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 Log.e("LumenCapture", "Lumen capture failed", error)
                 _error.value = "Couldn't create a Lumen card here. Try again."
+                _captureDiagnostic.value = CaptureDiagnostic.Record.failed(
+                    modelState = CaptureDiagnostic.ModelState.fallbackNoModel,
+                    captureKind = "LumenCard",
+                    reason = error.message ?: "unknown error",
+                )
             } finally {
                 _lumenCapturing.value = false
+                _captureDiagnostic.value = null
             }
         }
     }
@@ -545,7 +562,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pendingLumenContext = null
     }
 
-    // endregion
+    /** Returns the last on-device capture diagnostic log, newest first. */
+
 
     fun setLearningCheckpoint() {
         val b = _book.value ?: return

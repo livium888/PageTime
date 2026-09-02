@@ -54,7 +54,8 @@ class MediaPipeLlmProvider(
 
     /** Set after the first native crash/OOM — disables offline inference for the rest of the session. */
     @Volatile
-    private var nativeFailed = false
+    var nativeFailed = false
+        private set
 
     /**
      * Tracks the model file's size at the last load, so a re-download that
@@ -85,6 +86,8 @@ class MediaPipeLlmProvider(
             }
         }
     }
+
+    override fun hasEnoughMemory(): Boolean = hasEnoughNativeMemory()
 
     override suspend fun generate(request: LlmRequest): Result<LlmResult> {
         if (nativeFailed) {

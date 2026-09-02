@@ -131,6 +131,12 @@ class MediaPipeLlmProvider(
             Result.success(infer(request))
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (tooLong: PromptTooLongException) {
+            // Refused before the native call, so the engine was never touched:
+            // a request that does not fit is not a broken model, and must not
+            // disable offline inference for the rest of the session.
+            Log.w(TAG, "Prompt rejected before inference: ${tooLong.message}")
+            Result.failure(tooLong)
         } catch (error: Throwable) {
             Log.e(TAG, "Offline model failed", error)
             nativeFailed = true
@@ -165,11 +171,25 @@ class MediaPipeLlmProvider(
                     )
                 }
 
-                val model = acquireModel()
                 val prompt = buildString {
                     request.systemInstruction?.let { append(it).append("\n\n") }
                     append(request.prompt)
                 }
+                // MediaPipe counts input and output against one budget and
+                // aborts the process natively when the input overflows it —
+                // an uncatchable SIGABRT that never reaches the crash logger.
+                // Measure before handing anything to native code.
+                val inputTokens = LlmTokenBudget.estimateTokens(prompt)
+                val inputBudget = LlmTokenBudget.inputBudget(request.maxOutputTokens)
+                if (inputTokens > inputBudget) {
+                    throw PromptTooLongException(
+                        "Prompt needs ~$inputTokens tokens but only $inputBudget are left for " +
+                            "input (budget ${LlmTokenBudget.MAX_TOKENS}, reply " +
+                            "${request.maxOutputTokens}). Shorten the captured passage."
+                    )
+                }
+
+                val model = acquireModel()
                 Log.d(
                     TAG,
                     "Generating (model=${modelStore.modelFile.name}, " +
@@ -207,7 +227,10 @@ class MediaPipeLlmProvider(
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelStore.modelFile.absolutePath)
                 .setPreferredBackend(LlmInference.Backend.CPU)
-                .setMaxTokens(512)
+                // Input AND output share this budget. It has to hold the whole
+                // capture prompt plus the reply, or the native runtime aborts
+                // the process the moment the input alone overflows it.
+                .setMaxTokens(LlmTokenBudget.MAX_TOKENS)
                 .setMaxTopK(40)
                 .build()
             // Tombstone around the native load: if the process dies inside
@@ -276,3 +299,10 @@ class MediaPipeLlmProvider(
         private const val MIN_MEMORY_MB = 800L
     }
 }
+
+/**
+ * Thrown when a request would not fit the on-device model's token budget.
+ * Raised before any native call, so the model is left untouched and the caller
+ * simply falls back to the non-AI draft.
+ */
+class PromptTooLongException(message: String) : IllegalArgumentException(message)

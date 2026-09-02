@@ -10,6 +10,33 @@ package com.pagetime.app.data
  * expected JSON so the model completes it instead of continuing the book text.
  */
 object LumenAiPrompts {
+    /**
+     * Longest passage a capture prompt may carry. The on-device runtime spends
+     * one token budget on input and output together, so an unbounded passage
+     * pushes the input past that budget — where MediaPipe aborts the process
+     * instead of returning an error. Keeping the passage bounded keeps every
+     * normal capture inside the budget with room for the reply.
+     */
+    const val MAX_PASSAGE_CHARS = 2_400
+
+    /**
+     * The passage is centered on the reading position, so when it has to be
+     * shortened the middle is what the reader is actually looking at. Ends on
+     * a sentence boundary where one is close by, so the model sees whole
+     * thoughts rather than a clipped clause.
+     */
+    fun trimPassage(passage: String): String {
+        if (passage.length <= MAX_PASSAGE_CHARS) return passage
+        val start = (passage.length - MAX_PASSAGE_CHARS) / 2
+        val slice = passage.substring(start, start + MAX_PASSAGE_CHARS)
+        val lastStop = slice.lastIndexOfAny(charArrayOf('.', '!', '?'))
+        return if (lastStop >= MAX_PASSAGE_CHARS / 2) {
+            slice.take(lastStop + 1).trim()
+        } else {
+            slice.trim()
+        }
+    }
+
     fun cardDraft(
         passage: String,
         bookTitle: String,
@@ -18,7 +45,7 @@ object LumenAiPrompts {
             |Book: "$bookTitle"
             |
             |Passage:
-            |$passage
+            |${trimPassage(passage)}
             |
             |Above is a passage from the book. Name its single most important
             |idea in your own words. Do NOT copy any sentence from the passage.
@@ -55,7 +82,7 @@ object LumenAiPrompts {
             |Book: "$bookTitle"
             |
             |Passage:
-            |$passage
+            |${trimPassage(passage)}
             |
             |Name the single most important idea in your own words. Never copy
             |the passage. front is a short title (at most 8 words). back is

@@ -1,5 +1,7 @@
 package com.pagetime.app.data
 
+import kotlin.math.ceil
+
 /** Provider selected for optional AI-assisted learning features. */
 enum class LlmProviderKind(
     val key: String,
@@ -25,6 +27,36 @@ enum class LlmProviderKind(
     companion object {
         fun fromKey(key: String?): LlmProviderKind = entries.firstOrNull { it.key == key } ?: GEMINI
     }
+}
+
+/**
+ * Token budget for the on-device runtime.
+ *
+ * MediaPipe spends a single budget on input and output together, and when the
+ * input alone overflows it the native runtime aborts the process — a SIGABRT
+ * that no Kotlin catch, and no uncaught-exception handler, ever sees. Every
+ * prompt is therefore measured against this budget before it reaches native
+ * code. Android-free so the invariant can be unit-tested.
+ */
+object LlmTokenBudget {
+    /** Total tokens the engine is built with: input + output share it. */
+    const val MAX_TOKENS = 1_536
+
+    /** English runs ~4 chars/token; 3.5 keeps the estimate conservative. */
+    private const val CHARS_PER_TOKEN = 3.5
+
+    /**
+     * Cheap upper bound on the tokens [text] occupies. Deliberately
+     * pessimistic: over-estimating costs one fallback draft, while
+     * under-estimating costs the whole process.
+     */
+    fun estimateTokens(text: String): Int = ceil(text.length / CHARS_PER_TOKEN).toInt()
+
+    /** Tokens left for the prompt once [maxOutputTokens] are reserved for the reply. */
+    fun inputBudget(maxOutputTokens: Int): Int = MAX_TOKENS - maxOutputTokens
+
+    fun fits(prompt: String, maxOutputTokens: Int): Boolean =
+        estimateTokens(prompt) <= inputBudget(maxOutputTokens)
 }
 
 data class LlmRequest(

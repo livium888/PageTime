@@ -49,18 +49,19 @@ class LumenModelStoreTest {
     /**
      * Size-behavior tests use a bypassing integrity check (their fake files are
      * zero-filled, not real zips). The real structural check has its own test
-     * file, and the two tests at the bottom exercise the store's wiring of it.
+     * file, and the store-wiring tests exercise it.
      */
     private fun store(
         expectedBytes: Long,
         downloader: LumenModelDownloader,
         fetcher: suspend (String) -> LumenRemoteModelInfo? = { null },
+        integrityCheck: (File) -> Boolean = { true },
     ) = LumenModelStore(
         directory = directory,
         downloader = downloader,
         expectedBytes = expectedBytes,
         remoteInfoFetcher = fetcher,
-        integrityCheck = { true },
+        integrityCheck = integrityCheck,
     )
 
     @Test
@@ -120,6 +121,31 @@ class LumenModelStoreTest {
         }
 
     @Test
+    fun `retry download replaces a corrupt installed model`() =
+        runTest {
+            directory.mkdirs()
+            directory
+                .resolve(LumenModelStore.MODEL_FILE_NAME)
+                .writeBytes(ByteArray(1_000)) // wrong size + not a zip
+            val modelStore =
+                store(
+                    expectedBytes = 1_000,
+                    downloader = FakeModelDownloader(bytes = 1_000),
+                    integrityCheck = { false }, // pretend the installed file is damaged
+                )
+
+            assertTrue(
+                modelStore.status.value is LumenModelStatus.Failed,
+                "A damaged installed file should be reported, not Ready",
+            )
+            modelStore.download()
+
+            assertTrue(modelStore.isInstalled())
+            assertEquals(1_000L, modelStore.modelFile.length())
+            assertEquals(LumenModelStatus.Ready(1_000), modelStore.status.value)
+        }
+
+    @Test
     fun `delete removes the model and reports NotDownloaded`() =
         runTest {
             val modelStore =
@@ -172,6 +198,39 @@ class LumenModelStoreTest {
             modelStore.download()
 
             assertEquals(0, downloadAttempts)
+            assertEquals(LumenModelStatus.Ready(1_000), modelStore.status.value)
+        }
+
+    @Test
+    fun `retry download does not skip when the installed file is missing`() =
+        runTest {
+            directory.mkdirs()
+            // No model file at all — the store should perform the download,
+            // not wrongly skip because nothing is installed.
+            var downloadAttempts = 0
+            val downloader =
+                object : LumenModelDownloader {
+                    override suspend fun download(
+                        url: String,
+                        target: File,
+                        onProgress: suspend (downloaded: Long, total: Long) -> Unit,
+                    ): Result<File> {
+                        downloadAttempts++
+                        target.parentFile?.mkdirs()
+                        target.outputStream().use { it.write(ByteArray(1_000)) }
+                        return Result.success(target)
+                    }
+                }
+            val modelStore = store(
+                expectedBytes = 1_000,
+                downloader = downloader,
+                integrityCheck = { true },
+            )
+
+            modelStore.download()
+
+            assertEquals(1, downloadAttempts)
+            assertTrue(modelStore.isInstalled())
             assertEquals(LumenModelStatus.Ready(1_000), modelStore.status.value)
         }
 

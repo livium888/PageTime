@@ -89,6 +89,7 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
                         val source = body.source()
                         val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
                         var downloaded = 0L
+                        var lastProgressAt = 0L
                         while (true) {
                             // Safety net for a server that never ends the body:
                             // stop once the declared size is reached; the store's
@@ -98,7 +99,14 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
                             if (read == -1) break
                             output.write(buffer, 0, read)
                             downloaded += read
-                            if (downloaded % PROGRESS_STEP == 0L) onProgress(downloaded, total)
+                            val now = System.currentTimeMillis()
+                            // Report at least every 250 ms so the UI does not look
+                            // stuck at 0 MB on slow connections for the first chunk.
+                            val elapsed = now - lastProgressAt
+                            if (downloaded >= total * PROGRESS_MIN_FRACTION || elapsed >= PROGRESS_MIN_INTERVAL_MS) {
+                                onProgress(downloaded, total)
+                                lastProgressAt = now
+                            }
                         }
                         onProgress(downloaded, total)
                     }
@@ -110,6 +118,11 @@ class OkHttpLumenModelDownloader : LumenModelDownloader {
     private companion object {
         const val PROGRESS_STEP = 512 * 1024L
         const val DOWNLOAD_BUFFER_SIZE = 64 * 1024
+        // Fire progress at least every 250 ms so a slow start (0 MB for several
+        // seconds) does not look frozen on the UI.
+        const val PROGRESS_MIN_INTERVAL_MS = 250L
+        // Also fire on the first ~2% so the UI immediately shows movement.
+        const val PROGRESS_MIN_FRACTION = 0.02
     }
 }
 

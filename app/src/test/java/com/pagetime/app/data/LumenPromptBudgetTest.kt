@@ -55,6 +55,22 @@ class LumenPromptBudgetTest {
     }
 
     @Test
+    fun `the instructions leave the passage its full allowance`() {
+        // Every character of instruction is a character of book the model does
+        // not get to read. The prompt earns its length or it comes back out.
+        val scaffold = LumenAiPrompts.cardDraft("", "A Book").length
+        assertTrue(
+            "Capture instructions have grown to $scaffold chars",
+            scaffold <= 1_400
+        )
+        val strict = LumenAiPrompts.cardDraftStrict("", "A Book").length
+        assertTrue(
+            "The retry must stay leaner than the first ask ($strict vs $scaffold)",
+            strict < scaffold
+        )
+    }
+
+    @Test
     fun `a passage within the cap is left untouched`() {
         val passage = "A short captured passage that needs no trimming at all."
         assertTrue(LumenAiPrompts.trimPassage(passage) == passage)

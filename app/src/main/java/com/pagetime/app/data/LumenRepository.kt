@@ -21,7 +21,12 @@ data class LumenDraft(
     val front: String,
     val back: String,
     val quote: String,
-    val usedAi: Boolean
+    val usedAi: Boolean,
+    /**
+     * Why the AI draft was not used, when one was attempted and rejected.
+     * Null when AI was never tried, or when its card is the one shown.
+     */
+    val aiRejection: String? = null
 )
 
 /** One dated entry in a card's append-only evolution history. */
@@ -128,7 +133,8 @@ class LumenRepository(
                     )
                     return fallbackDraft(clean)
                 }
-                val parsed =
+                val startedAt = System.currentTimeMillis()
+                val outcome =
                     LumenLocalDraft.generate(
                         call = { request -> local.generate(request) },
                         passage = clean,
@@ -144,14 +150,27 @@ class LumenRepository(
                             )
                         },
                     )
-                if (parsed != null) {
-                    return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
+                // How long inference really takes is the budget for tuning the
+                // passage cap: a bigger passage buys a better card and costs
+                // seconds, and neither is knowable without measuring it.
+                CaptureDiagnostic.recordInference(
+                    context = captureDiagContext(),
+                    captureKind = "LumenCard",
+                    durationMs = System.currentTimeMillis() - startedAt,
+                    attempts = outcome.attempts,
+                    usedAi = outcome.card != null,
+                    rejection = outcome.rejection?.name,
+                )
+                val card = outcome.card
+                if (card != null) {
+                    return LumenDraft(card.first, card.second, clean, usedAi = true)
                 }
                 CaptureDiagnostic.recordFailure(
                     context = captureDiagContext(),
                     captureKind = "LumenCard",
                     reason = "Offline model returned unusable draft; used fallback",
                 )
+                return fallbackDraft(clean, outcome.rejection?.explanation)
             }
             LumenDraftSource.GEMINI -> {
                 try {
@@ -187,9 +206,9 @@ class LumenRepository(
         return fallbackDraft(clean)
     }
 
-    private fun fallbackDraft(clean: String): LumenDraft {
+    private fun fallbackDraft(clean: String, aiRejection: String? = null): LumenDraft {
         val (front, back) = LumenCapture.fallbackDraft(clean)
-        return LumenDraft(front, back, clean, usedAi = false)
+        return LumenDraft(front, back, clean, usedAi = false, aiRejection = aiRejection)
     }
 
     /**
@@ -752,38 +771,64 @@ object LumenLocalDraft {
     /** Tokens reserved for the reply; the rest of the budget belongs to the prompt. */
     const val REPLY_TOKENS = 384
 
+    /** Why a reply from the on-device model could not be used, in the reader's words. */
+    enum class Rejection(val explanation: String) {
+        NO_REPLY("the model didn't answer"),
+        UNPARSEABLE("the model's reply wasn't a usable card"),
+        PASSAGE_ECHO("the model copied the passage instead of writing its own card"),
+    }
+
+    data class Outcome(
+        val card: Pair<String, String>?,
+        val rejection: Rejection?,
+        val attempts: Int,
+    )
+
+    private data class Attempt(val card: Pair<String, String>?, val rejection: Rejection?)
+
     suspend fun generate(
         call: suspend (LlmRequest) -> Result<LlmResult>,
         passage: String,
         bookTitle: String,
         debugLog: (String) -> Unit = {},
         onPromptBuilt: (String) -> Unit = {},
-    ): Pair<String, String>? {
-        suspend fun attempt(prompt: String, maxTokens: Int): Pair<String, String>? {
+    ): Outcome {
+        suspend fun attempt(prompt: String): Attempt {
             // Reported from here so the diagnostic records the prompt actually
-            // sent, including any future retry that builds a different one.
+            // sent, including the stricter retry below.
             onPromptBuilt(prompt)
             val raw =
-                runCatching { call(LlmRequest(prompt, maxOutputTokens = maxTokens)) }
+                runCatching { call(LlmRequest(prompt, maxOutputTokens = REPLY_TOKENS)) }
                     .getOrNull()
                     ?.getOrNull()
                     ?.text
-                    ?: return null
+                    ?: return Attempt(null, Rejection.NO_REPLY)
             val parsed =
-                LumenCapture.parseDraft(raw)?.takeIf { (front, _) ->
-                    !LumenCapture.isPassageEcho(front, passage)
-                }
-            if (parsed == null) {
-                debugLog("discarded local draft (unparseable or passage echo): ${raw.take(240)}")
+                LumenCapture.parseDraft(raw)
+                    ?: run {
+                        debugLog("discarded local draft (unparseable): ${raw.take(240)}")
+                        return Attempt(null, Rejection.UNPARSEABLE)
+                    }
+            if (LumenCapture.isPassageEcho(parsed.first, passage)) {
+                debugLog("discarded local draft (passage echo): ${raw.take(240)}")
+                return Attempt(null, Rejection.PASSAGE_ECHO)
             }
-            return parsed
+            return Attempt(parsed, null)
         }
 
-        // Native inference is deliberately attempted once per capture. Loading
-        // the 521 MB model twice in quick succession can exhaust smaller phones
-        // and kill the process. The first prompt is already JSON-primed; if it
-        // fails, the caller uses the safe non-AI draft.
-        return attempt(LumenAiPrompts.cardDraft(passage, bookTitle), maxTokens = REPLY_TOKENS)
+        val first = attempt(LumenAiPrompts.cardDraft(passage, bookTitle))
+        if (first.card != null) return Outcome(first.card, null, attempts = 1)
+
+        // One stricter retry. This was disabled while every request reloaded the
+        // 521 MB model, where a second load could exhaust the phone. The model
+        // is resident now, so a retry costs one more inference and no reload —
+        // and a small model's first answer is often a dud worth re-asking.
+        val second = attempt(LumenAiPrompts.cardDraftStrict(passage, bookTitle))
+        return Outcome(
+            card = second.card,
+            rejection = if (second.card == null) second.rejection ?: first.rejection else null,
+            attempts = 2,
+        )
     }
 }
 

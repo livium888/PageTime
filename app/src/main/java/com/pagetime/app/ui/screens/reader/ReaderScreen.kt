@@ -610,6 +610,8 @@ fun ReaderScreen(
             boxCards = vm.lumenBoxCards.collectAsStateWithLifecycle().value,
             captureDiagnostic = vm.captureDiagnostic.collectAsStateWithLifecycle().value,
             captureLog = vm.lastCaptureLog(),
+            redrafting = lumenCapturing,
+            onRetry = vm::retryLumenCard,
             onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
@@ -1723,6 +1725,8 @@ private fun LumenDraftDialog(
     boxCards: List<LumenCardEntity>,
     captureDiagnostic: com.pagetime.app.data.CaptureDiagnostic.Record?,
     captureLog: List<String>,
+    redrafting: Boolean,
+    onRetry: () -> Unit,
     onSave: (front: String, back: String, afterIndex: String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1749,10 +1753,33 @@ private fun LumenDraftDialog(
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (!draft.usedAi) {
                     Text(
-                        "Drafted on-device (no AI key or offline) — edit freely.",
+                        if (draft.aiRejection != null) {
+                            "The offline model didn't land a card — ${draft.aiRejection}. " +
+                                "This draft is straight from the passage; edit it, or ask again."
+                        } else {
+                            "Drafted on-device (no AI key or offline) — edit freely."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (draft.aiRejection != null) {
+                        TextButton(
+                            onClick = onRetry,
+                            enabled = !redrafting,
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            if (redrafting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Asking again…")
+                            } else {
+                                Text("Try again")
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                 }
                 OutlinedTextField(

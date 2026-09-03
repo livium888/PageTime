@@ -55,7 +55,7 @@ class FsrsCardCodecTest {
 
         val reviewed = scheduler.reviewCard(
             decoded,
-            LearningRating.GOOD.toFsrs(),
+            LumenRating.GOOD.toFsrs(),
             now
         ).card()
         assertTrue(reviewed.due.isAfter(now))
@@ -77,7 +77,7 @@ class FsrsCardCodecTest {
 
         val reviewed = scheduler.reviewCard(
             decoded,
-            LearningRating.AGAIN.toFsrs(),
+            LumenRating.AGAIN.toFsrs(),
             now
         ).card()
         assertTrue(reviewed.due.isAfter(now))

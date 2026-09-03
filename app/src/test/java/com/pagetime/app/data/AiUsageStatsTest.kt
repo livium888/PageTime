@@ -18,7 +18,7 @@ class AiUsageStatsTest {
     }
 
     @Test
-    fun `stats separate cards concepts failures and input`() {
+    fun `stats separate the operations, failures and input`() {
         val now = Instant.parse("2026-08-26T12:00:00Z")
         val today = now.atZone(ZoneId.systemDefault())
             .toLocalDate()
@@ -29,7 +29,7 @@ class AiUsageStatsTest {
             listOf(
                 AiUsageEntity(
                     bookId = "book",
-                    operation = AiUsageRepository.OPERATION_CARDS,
+                    operation = AiUsageRepository.OPERATION_LUMEN,
                     model = "flash",
                     status = AiUsageRepository.STATUS_SUCCESS,
                     inputCharacters = 4_000,
@@ -57,7 +57,7 @@ class AiUsageStatsTest {
                 ),
                 AiUsageEntity(
                     bookId = "book",
-                    operation = AiUsageRepository.OPERATION_CARDS,
+                    operation = AiUsageRepository.OPERATION_LUMEN,
                     model = "flash",
                     status = AiUsageRepository.STATUS_FAILED,
                     inputCharacters = 1_000,
@@ -70,15 +70,13 @@ class AiUsageStatsTest {
         assertEquals(4, stats.totalCalls)
         assertEquals(3, stats.successfulCalls)
         assertEquals(1, stats.failedCalls)
-        assertEquals(2, stats.cardCalls)
+        assertEquals(2, stats.lumenCalls)
         assertEquals(1, stats.conceptCalls)
         assertEquals(1, stats.reformatCalls)
-        assertEquals(3, stats.cardsGenerated)
         assertEquals(5, stats.conceptsFound)
         assertEquals(4, stats.relationshipsFound)
         assertEquals(15_000L, stats.inputCharacters)
         assertEquals(3, stats.todayCalls)
         assertEquals(14_000L, stats.todayInputCharacters)
-        assertEquals(3, stats.todayCardsGenerated)
     }
 }

@@ -99,14 +99,12 @@ fun AiUsageScreen(
             UsageSummaryCard(
                 title = "Today",
                 calls = stats.todayCalls,
-                inputTokens = stats.todayEstimatedInputTokens,
-                cards = stats.todayCardsGenerated
+                inputTokens = stats.todayEstimatedInputTokens
             )
             UsageSummaryCard(
                 title = "All time",
                 calls = stats.totalCalls,
-                inputTokens = stats.estimatedInputTokens,
-                cards = stats.cardsGenerated
+                inputTokens = stats.estimatedInputTokens
             )
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -114,11 +112,9 @@ fun AiUsageScreen(
                     Text("What Gemini has produced", style = MaterialTheme.typography.titleMedium)
                     UsageRow("Successful requests", stats.successfulCalls.toString())
                     UsageRow("Failed requests", stats.failedCalls.toString())
-                    UsageRow("Card analyses", stats.cardCalls.toString())
                     UsageRow("Concept-map analyses", stats.conceptCalls.toString())
                     UsageRow("Transcript reformats", stats.reformatCalls.toString())
                     UsageRow("Lumen card drafts", stats.lumenCalls.toString())
-                    UsageRow("Cards generated", stats.cardsGenerated.toString())
                     UsageRow("Concepts found", stats.conceptsFound.toString())
                     UsageRow("Relationships found", stats.relationshipsFound.toString())
                 }
@@ -156,14 +152,13 @@ fun AiUsageScreen(
 }
 
 @Composable
-private fun UsageSummaryCard(title: String, calls: Int, inputTokens: Long, cards: Int) {
+private fun UsageSummaryCard(title: String, calls: Int, inputTokens: Long) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 UsageMetric(calls.toString(), "API calls")
                 UsageMetric(formatNumber(inputTokens), "est. input tokens")
-                UsageMetric(cards.toString(), "cards")
             }
         }
     }

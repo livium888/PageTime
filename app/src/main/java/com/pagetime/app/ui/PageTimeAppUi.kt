@@ -4,17 +4,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -40,8 +36,8 @@ import androidx.navigation.compose.rememberNavController
 import com.pagetime.app.BookImportViewModel
 import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
-import com.pagetime.app.ui.screens.review.ReviewScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
+import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
@@ -63,7 +59,6 @@ private data class BottomTab(
 
 private val tabs = listOf(
     BottomTab("library", "Library", Icons.Outlined.MenuBook, Icons.Filled.MenuBook),
-    BottomTab("review", "Review", Icons.Outlined.School, Icons.Filled.School),
     BottomTab("lumen", "Lumen", Icons.Outlined.Style, Icons.Filled.Style),
     BottomTab("search", "Discover", Icons.Outlined.Search, Icons.Filled.Search),
     BottomTab("settings", "Settings", Icons.Outlined.Settings, Icons.Filled.Settings)
@@ -74,9 +69,7 @@ fun PageTimeAppUi(openReader: Boolean) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val learningBadgeViewModel: LearningBadgeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val dueCount by learningBadgeViewModel.dueCount.collectAsStateWithLifecycle()
-    val showBottomBar = currentRoute in setOf("library", "review", "lumen", "search", "settings")
+    val showBottomBar = currentRoute in setOf("library", "lumen", "search", "settings")
     val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -129,21 +122,10 @@ fun PageTimeAppUi(openReader: Boolean) {
                                 }
                             },
                             icon = {
-                                if (tab.route == "review" && dueCount > 0) {
-                                    BadgedBox(
-                                        badge = { Badge { Text(dueCount.coerceAtMost(99).toString()) } }
-                                    ) {
-                                        Icon(
-                                            if (selected) tab.filled else tab.outlined,
-                                            contentDescription = tab.label
-                                        )
-                                    }
-                                } else {
-                                    Icon(
-                                        if (selected) tab.filled else tab.outlined,
-                                        contentDescription = tab.label
-                                    )
-                                }
+                                Icon(
+                                    if (selected) tab.filled else tab.outlined,
+                                    contentDescription = tab.label
+                                )
                             },
                             label = { Text(tab.label) },
                             colors = NavigationBarItemDefaults.colors(
@@ -167,14 +149,18 @@ fun PageTimeAppUi(openReader: Boolean) {
             composable("library") {
                 LibraryScreen(
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
-                    onOpenConcepts = { bookId -> navController.navigate("lumen") },
+                    onOpenConcepts = { bookId -> navController.navigate("concepts/$bookId") },
                     onDiscover = { navController.navigate("search") }
                 )
             }
-            composable("review") {
-                ReviewScreen(
+            // The concept map screen was written, and then never given a route:
+            // every "open concepts" callback navigated to the Lumen box instead,
+            // while the maps themselves went on being generated — and paid for
+            // in Gemini calls — with no way to look at them.
+            composable("concepts/{bookId}") { entry ->
+                ConceptMapScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
+                    initialBookId = entry.arguments?.getString("bookId")?.takeIf { it.isNotBlank() }
                 )
             }
             composable("lumen") {
@@ -208,7 +194,7 @@ fun PageTimeAppUi(openReader: Boolean) {
                 ReaderScreen(
                     bookId = bookId,
                     onBack = { navController.popBackStack() },
-                    onOpenConcepts = { conceptBookId -> navController.navigate("lumen") },
+                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
                     onOpenLumenCards = { navController.navigate("lumen") },
                     onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
                         val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")

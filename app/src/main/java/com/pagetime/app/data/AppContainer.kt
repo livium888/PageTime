@@ -81,16 +81,20 @@ class AppContainer(context: Context) {
     val internetArchiveApi = InternetArchiveApi()
     val openLibraryApi = OpenLibraryApi()
     val standardEbooksApi = StandardEbooksApi()
+
+    /** The catalogues Discover offers, as a list rather than a switch. */
+    val bookCatalogs = com.pagetime.app.data.catalog.BookCatalogs(
+        standardEbooks = standardEbooksApi,
+        gutenberg = gutenbergApi,
+        openLibrary = openLibraryApi,
+        internetArchive = internetArchiveApi,
+    )
     val epubParser = EpubParser()
     val youtubeSearchApi = YouTubeSearchApi()
 
     val libraryRepository = LibraryRepository(
         bookDao = bookDao,
         downloader = BookDownloader(appContext),
-        gutenbergApi = gutenbergApi,
-        internetArchiveApi = internetArchiveApi,
-        openLibraryApi = openLibraryApi,
-        standardEbooksApi = standardEbooksApi,
         epubParser = epubParser,
         settingsRepository = settingsRepository,
         context = appContext,

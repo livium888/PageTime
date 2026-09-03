@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.catalog.BookCatalog
+import com.pagetime.app.data.catalog.CatalogHealth
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import kotlinx.coroutines.CancellationException
@@ -18,13 +20,29 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/** Catalog sources available from the Discover screen. */
-enum class BookSource {
-    STANDARD_EBOOKS,
-    GUTENBERG,
-    OPEN_LIBRARY,
-    INTERNET_ARCHIVE,
-    YOUTUBE
+/**
+ * A chip in Discover: one of the book catalogues, or the video importer.
+ *
+ * Videos are not a catalogue — nothing about them is a book page, and the load
+ * path skips them entirely — so they sit beside the catalogues rather than
+ * being forced to implement one.
+ */
+sealed interface DiscoverSource {
+    val id: String
+    val label: String
+    val searchHint: String
+
+    data class Books(val catalog: BookCatalog) : DiscoverSource {
+        override val id: String get() = catalog.id
+        override val label: String get() = catalog.label
+        override val searchHint: String get() = "Search ${catalog.label}\u2026"
+    }
+
+    data object Videos : DiscoverSource {
+        override val id = "youtube"
+        override val label = "YouTube"
+        override val searchHint = "Search YouTube videos\u2026"
+    }
 }
 
 class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
@@ -37,11 +55,26 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     val searchingAll = _searchingAll.asStateFlow()
     val books = _books.asStateFlow()
 
-    // Default to Standard Ebooks — it's the most reliable source (dedicated
-    // servers, high-quality EPUBs, rarely rate-limited) so first-run download
-    // always works. Users can switch to Gutenberg or Open Library if they want.
-    private val _source = MutableStateFlow(BookSource.STANDARD_EBOOKS)
+    private val catalogs = container.bookCatalogs
+
+    /** Every chip, catalogues first and videos last. */
+    val sources: List<DiscoverSource> =
+        catalogs.all.map { DiscoverSource.Books(it) } + DiscoverSource.Videos
+
+    // Defaults to whichever catalogue the registry leads with — Standard Ebooks,
+    // the most reliable of them, so a first run always works.
+    private val _source = MutableStateFlow<DiscoverSource>(DiscoverSource.Books(catalogs.default))
     val source = _source.asStateFlow()
+
+    /**
+     * Why the shelf looks the way it does. Kept apart from [error], which is
+     * the transient message a download or an import puts in a snackbar: a
+     * catalogue that did not answer is a state of the screen, not a passing
+     * notice, and the two were the same field for long enough that a dead
+     * source and an empty search were drawn identically.
+     */
+    private val _health = MutableStateFlow<CatalogHealth>(CatalogHealth.Working)
+    val health = _health.asStateFlow()
 
     private val _query = MutableStateFlow("")
     val query = _query.asStateFlow()
@@ -95,22 +128,38 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             if (q.isBlank()) return@launch
             _searchingAll.value = true
             _loading.value = true
-            _error.value = null
             try {
-                val results = listOf(
-                    async { runCatching { repo.searchGutenberg(q, 1).books } },
-                    async { runCatching { repo.searchOpenLibrary(q, 1).books } },
-                    async { runCatching { repo.searchStandardEbooks(q, 1).books } },
-                    async { runCatching { repo.searchInternetArchive(q, 1).books } }
-                ).awaitAll().flatMap { it.getOrElse { emptyList() } }
+                // Every catalogue is asked, and which ones failed is kept. This
+                // used to be getOrElse { emptyList() }, so a catalogue that was
+                // down contributed nothing and said nothing, and a search of
+                // four sources that reached two looked exactly like a search of
+                // four that found little.
+                val outcomes = catalogs.all
+                    .map { catalog -> catalog to async { runCatching { catalog.search(q, 1).books } } }
+                    .map { (catalog, job) -> catalog to job.await() }
+                val silent = outcomes.filter { it.second.isFailure }.map { it.first.label }
+                val results = outcomes
+                    .mapNotNull { it.second.getOrNull() }
+                    .flatten()
                     .filter { it.language == "en" }
                     .distinctBy { it.id }
                 _books.value = results
-                _source.value = BookSource.STANDARD_EBOOKS
+                _source.value = DiscoverSource.Books(catalogs.default)
                 _hasMore.value = false
                 nextPage = null
-                if (results.isEmpty()) {
-                    _error.value = "No English downloadable results found across the catalogs"
+                _health.value = when {
+                    results.isNotEmpty() && silent.isEmpty() -> CatalogHealth.Working
+                    results.isNotEmpty() -> CatalogHealth.PartlyReachable(silent)
+                    silent.size == catalogs.all.size ->
+                        CatalogHealth.Unreachable(
+                            "Every catalogue",
+                            "None of them answered. Check your connection."
+                        )
+                    else -> CatalogHealth.NothingMatched(
+                        label = "Every catalogue",
+                        query = q,
+                        note = if (silent.isEmpty()) "" else "${silent.joinToString(", ")} did not answer."
+                    )
                 }
             } finally {
                 _loading.value = false
@@ -119,13 +168,14 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun onSourceChange(value: BookSource) {
+    fun onSourceChange(value: DiscoverSource) {
         if (value == _source.value) return
         _source.value = value
         _books.value = emptyList()
         _youtubeResults.value = emptyList()
         _categoryShelves.value = emptyList()
-        if (value == BookSource.YOUTUBE && _query.value.isBlank()) {
+        _health.value = CatalogHealth.Working
+        if (value is DiscoverSource.Videos && _query.value.isBlank()) {
             loadYouTubeBrowse()
         } else {
             reload()
@@ -137,14 +187,12 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         queryJob?.cancel()
         queryJob = viewModelScope.launch {
             delay(400)
-            if (value.isBlank()) {
-                _books.value = emptyList()
-                _youtubeResults.value = emptyList()
-                _hasMore.value = false
-                nextPage = null
-                _error.value = "Enter a search query"
-            } else if (_source.value == BookSource.YOUTUBE) {
-                searchYouTube()
+            // Clearing the box goes back to browsing. It used to say "Enter a
+            // search query" instead, on catalogues that browse perfectly well
+            // without one — a blank shelf with a message that was not true of
+            // the source the reader was looking at.
+            if (_source.value is DiscoverSource.Videos) {
+                if (value.isBlank()) loadYouTubeBrowse() else searchYouTube()
             } else {
                 reload()
             }
@@ -162,50 +210,58 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun load(reset: Boolean) {
         loadJob?.cancel()
-        // YouTube uses its own search path (searchYouTube) — skip book loading.
-        if (_source.value == BookSource.YOUTUBE) return
+        // Videos have their own search path (searchYouTube) — no book loading.
+        val catalog = (_source.value as? DiscoverSource.Books)?.catalog ?: return
+        val q = _query.value.trim()
+        if (q.isBlank() && !catalog.browsable) {
+            // Not a failure and not an empty result: this catalogue has no
+            // browse endpoint at all, which the reader can act on if told.
+            _books.value = emptyList()
+            _hasMore.value = false
+            nextPage = null
+            _health.value = CatalogHealth.NeedsQuery(catalog.label, catalog.note)
+            return
+        }
         loadJob = viewModelScope.launch {
             val page = if (reset) 1 else (nextPage ?: return@launch)
             if (reset) {
                 _loading.value = true
                 _loadingMore.value = false
-                _error.value = null
             } else {
                 _loadingMore.value = true
             }
             try {
-                val q = _query.value.trim()
-                val src = _source.value
                 runCatching {
-                    when (src) {
-                        BookSource.GUTENBERG -> {
-                            if (q.isBlank()) repo.browseGutenberg(page) else repo.searchGutenberg(q, page)
-                        }
-                        BookSource.OPEN_LIBRARY -> {
-                            if (q.isBlank()) repo.browseOpenLibrary(page) else repo.searchOpenLibrary(q, page)
-                        }
-                        BookSource.STANDARD_EBOOKS -> {
-                            if (q.isBlank()) repo.browseStandardEbooks(page) else repo.searchStandardEbooks(q, page)
-                        }
-                        BookSource.INTERNET_ARCHIVE -> {
-                            if (q.isBlank()) error("Search Internet Archive by title or author")
-                            else repo.searchInternetArchive(q, page)
-                        }
-                        BookSource.YOUTUBE -> error("unreachable")
-                    }
+                    if (q.isBlank()) catalog.browse(page) else catalog.search(q, page)
                 }
                     .onSuccess { result ->
                         // Dedupe by id: LazyColumn uses id as its item key and throws
                         // on duplicates, which can happen with hash-based source ids
                         // or overlapping pages.
                         val merged = if (reset) result.books else _books.value + result.books
-                        _books.value = merged.distinctBy { it.id }
+                        val books = merged.distinctBy { it.id }
+                        _books.value = books
                         _hasMore.value = result.hasNextPage
                         nextPage = if (result.hasNextPage) page + 1 else null
+                        _health.value = if (books.isNotEmpty()) {
+                            CatalogHealth.Working
+                        } else {
+                            CatalogHealth.NothingMatched(catalog.label, q, catalog.note)
+                        }
                     }
                     .onFailure { t ->
                         if (t is CancellationException) throw t
-                        _error.value = t.message ?: "Failed to load books"
+                        // The distinction the screen was missing: this source
+                        // did not answer, which is not the same as having
+                        // nothing to show.
+                        if (reset) {
+                            _health.value = CatalogHealth.Unreachable(
+                                catalog.label,
+                                t.message ?: "It did not answer."
+                            )
+                        } else {
+                            _error.value = t.message ?: "Could not load more from ${catalog.label}"
+                        }
                     }
             } finally {
                 _loading.value = false
@@ -225,7 +281,6 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             _loading.value = true
-            _error.value = null
             _categoryShelves.value = emptyList()
             try {
                 val (results, _) = youtubeApi.search(q)
@@ -233,13 +288,18 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                 _books.value = emptyList()
                 _hasMore.value = false
                 nextPage = null
-                if (results.isEmpty()) {
-                    _error.value = "No YouTube videos found for this query"
+                _health.value = if (results.isNotEmpty()) {
+                    CatalogHealth.Working
+                } else {
+                    CatalogHealth.NothingMatched("YouTube", q, "Transcripts become readable books.")
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = e.message ?: "YouTube search failed"
+                _health.value = CatalogHealth.Unreachable(
+                    "YouTube",
+                    e.message ?: "It did not answer."
+                )
             } finally {
                 _loading.value = false
             }
@@ -251,19 +311,23 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _loading.value = true
-            _error.value = null
             _youtubeResults.value = emptyList()
             _categoryShelves.value = emptyList()
             try {
                 val shelves = youtubeApi.browseCategories()
                 _categoryShelves.value = shelves
-                if (shelves.isEmpty()) {
-                    _error.value = "Could not load categories. Try searching instead."
+                _health.value = if (shelves.isNotEmpty()) {
+                    CatalogHealth.Working
+                } else {
+                    CatalogHealth.Unreachable("YouTube", "Could not load categories. Try searching instead.")
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = e.message ?: "Failed to load categories"
+                _health.value = CatalogHealth.Unreachable(
+                    "YouTube",
+                    e.message ?: "Could not load categories."
+                )
             } finally {
                 _loading.value = false
             }

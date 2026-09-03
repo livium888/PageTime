@@ -6,10 +6,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LlmProviderKind
+import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.GenerationMode
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
@@ -89,6 +92,48 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setGenerationMode(mode: GenerationMode) {
         viewModelScope.launch { container.settingsRepository.setGenerationMode(mode) }
+    }
+
+    /**
+     * The capture prompt as the reader would edit it: their own when they have
+     * tailored one, otherwise the built-in text so the editor opens on
+     * something real to change rather than a blank field.
+     */
+    private val _lumenPrompt = MutableStateFlow(LumenAiPrompts.DEFAULT_CARD_TEMPLATE)
+    val lumenPrompt: StateFlow<String> = _lumenPrompt.asStateFlow()
+
+    /** True when the stored prompt is the reader's, not the shipped one. */
+    private val _lumenPromptIsCustom = MutableStateFlow(false)
+    val lumenPromptIsCustom: StateFlow<Boolean> = _lumenPromptIsCustom.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val stored = container.settingsRepository.lumenPromptTemplate()
+            if (stored != null) {
+                _lumenPrompt.value = stored
+                _lumenPromptIsCustom.value = true
+            }
+        }
+    }
+
+    /** Saves a tailored prompt. Rejected templates never reach storage. */
+    fun setLumenPrompt(template: String) {
+        if (LumenAiPrompts.templateProblem(template) != null) return
+        viewModelScope.launch {
+            val custom = template != LumenAiPrompts.DEFAULT_CARD_TEMPLATE
+            container.settingsRepository.setLumenPromptTemplate(if (custom) template else null)
+            _lumenPrompt.value = template
+            _lumenPromptIsCustom.value = custom
+        }
+    }
+
+    /** Drops the reader's prompt so app updates to the built-in one apply again. */
+    fun resetLumenPrompt() {
+        viewModelScope.launch {
+            container.settingsRepository.setLumenPromptTemplate(null)
+            _lumenPrompt.value = LumenAiPrompts.DEFAULT_CARD_TEMPLATE
+            _lumenPromptIsCustom.value = false
+        }
     }
 
     fun setHelpEnabled(value: Boolean) {

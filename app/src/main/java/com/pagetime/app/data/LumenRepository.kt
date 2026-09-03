@@ -140,6 +140,8 @@ class LumenRepository(
                         passage = clean,
                         bookTitle = book.title,
                         debugLog = debugLog,
+                        template = settingsRepository?.lumenPromptTemplate()
+                            ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
                         onPromptBuilt = { prompt ->
                             CaptureDiagnostic.recordGenerating(
                                 context = captureDiagContext(),
@@ -792,6 +794,7 @@ object LumenLocalDraft {
         bookTitle: String,
         debugLog: (String) -> Unit = {},
         onPromptBuilt: (String) -> Unit = {},
+        template: String = LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
     ): Outcome {
         suspend fun attempt(prompt: String): Attempt {
             // Reported from here so the diagnostic records the prompt actually
@@ -816,13 +819,15 @@ object LumenLocalDraft {
             return Attempt(parsed, null)
         }
 
-        val first = attempt(LumenAiPrompts.cardDraft(passage, bookTitle))
+        val first = attempt(LumenAiPrompts.cardDraft(passage, bookTitle, template))
         if (first.card != null) return Outcome(first.card, null, attempts = 1)
 
         // One stricter retry. This was disabled while every request reloaded the
         // 521 MB model, where a second load could exhaust the phone. The model
         // is resident now, so a retry costs one more inference and no reload —
         // and a small model's first answer is often a dud worth re-asking.
+        // Deliberately the built-in prompt, not the reader's: when a tailored
+        // template produces nothing usable, the retry is the way back to a card.
         val second = attempt(LumenAiPrompts.cardDraftStrict(passage, bookTitle))
         return Outcome(
             card = second.card,

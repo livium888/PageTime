@@ -53,15 +53,22 @@ object LumenAiPrompts {
         }
     }
 
-    fun cardDraft(
-        passage: String,
-        bookTitle: String,
-    ): String =
+    /** Placeholder replaced with the captured passage, after trimming. */
+    const val PASSAGE_TOKEN = "{{passage}}"
+
+    /** Placeholder replaced with the book's title. */
+    const val BOOK_TOKEN = "{{book}}"
+
+    /**
+     * The prompt shipped with the app, and the text a reader edits when they
+     * tailor capture in Settings.
+     */
+    val DEFAULT_CARD_TEMPLATE: String =
         """
-            |Book: "$bookTitle"
+            |Book: "$BOOK_TOKEN"
             |
             |Passage:
-            |${trimPassage(passage)}
+            |$PASSAGE_TOKEN
             |
             |Write one permanent note about the passage above, the way a slip
             |box keeps a thought: a single idea, in your own words, that still
@@ -91,6 +98,45 @@ object LumenAiPrompts {
             |{"front": "...", "back": "..."}
             |{"front": "
             """.trimMargin()
+
+    /**
+     * Fills a template's placeholders. The passage is trimmed here rather than
+     * by the caller, so a hand-written template is bounded by the same cap as
+     * the built-in one and cannot push the prompt past the model's budget.
+     */
+    fun render(template: String, passage: String, bookTitle: String): String =
+        template
+            .replace(BOOK_TOKEN, bookTitle)
+            .replace(PASSAGE_TOKEN, trimPassage(passage))
+
+    /**
+     * Why [template] cannot be used, or null when it is fine. A template
+     * without the passage placeholder would send the model instructions about
+     * a passage it never sees, so that one is refused rather than warned about.
+     */
+    fun templateProblem(template: String): String? =
+        when {
+            template.isBlank() -> "The prompt is empty."
+            !template.contains(PASSAGE_TOKEN) ->
+                "The prompt must contain $PASSAGE_TOKEN, or the model never sees the passage."
+            else -> null
+        }
+
+    /**
+     * Tokens [template] would cost on the widest capture the reader can make.
+     * Compared against [LlmTokenBudget.inputBudget] this is what says whether a
+     * tailored prompt still leaves the model room to answer.
+     */
+    fun worstCaseTokens(template: String): Int =
+        LlmTokenBudget.estimateTokens(
+            render(template, "w".repeat(MAX_PASSAGE_CHARS), "A Reasonably Long Book Title")
+        )
+
+    fun cardDraft(
+        passage: String,
+        bookTitle: String,
+        template: String = DEFAULT_CARD_TEMPLATE,
+    ): String = render(template, passage, bookTitle)
 
     /**
      * Shorter, starker second attempt used when the first reply was unusable.

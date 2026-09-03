@@ -112,6 +112,7 @@ class SettingsRepository(private val context: Context) {
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
+        val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
 
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
@@ -330,6 +331,20 @@ class SettingsRepository(private val context: Context) {
             helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
             llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
+    }
+
+    /**
+     * The reader's own capture prompt, or null while the built-in one is in
+     * use. Stored only when it differs from the default, so an app update that
+     * improves the built-in prompt reaches everyone who never tailored theirs.
+     */
+    suspend fun lumenPromptTemplate(): String? =
+        context.dataStore.data.first()[Keys.LUMEN_PROMPT]?.takeIf { it.isNotBlank() }
+
+    suspend fun setLumenPromptTemplate(value: String?) {
+        context.dataStore.edit { prefs ->
+            if (value.isNullOrBlank()) prefs.remove(Keys.LUMEN_PROMPT) else prefs[Keys.LUMEN_PROMPT] = value
+        }
     }
 
     /** Whether the slip box should explain actions before running them. */

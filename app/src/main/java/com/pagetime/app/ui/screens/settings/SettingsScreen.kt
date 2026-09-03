@@ -67,6 +67,9 @@ import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
 import com.pagetime.app.BuildConfig
+import com.pagetime.app.data.LumenLocalDraft
+import com.pagetime.app.data.LlmTokenBudget
+import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.ui.SectionHeader
 import com.pagetime.app.ui.formatMinutes
 
@@ -86,6 +89,8 @@ fun SettingsScreen(
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
     val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
+    val lumenPrompt by viewModel.lumenPrompt.collectAsStateWithLifecycle()
+    val lumenPromptIsCustom by viewModel.lumenPromptIsCustom.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
     val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
     val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
@@ -184,6 +189,12 @@ fun SettingsScreen(
             )
 
             SectionHeader("Slip box")
+            CapturePromptCard(
+                prompt = lumenPrompt,
+                isCustom = lumenPromptIsCustom,
+                onSave = viewModel::setLumenPrompt,
+                onReset = viewModel::resetLumenPrompt
+            )
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -262,6 +273,104 @@ fun SettingsScreen(
  * name, so this is the only way to tell a fresh install from a stale download
  * without reading the APK.
  */
+/**
+ * Lets the reader tailor the prompt the offline model is given for a capture.
+ * The passage is still trimmed and the prompt still measured before it reaches
+ * the model, so a hand-written prompt can produce a poor card but cannot push
+ * the request past the budget that used to kill the process.
+ */
+@Composable
+private fun CapturePromptCard(
+    prompt: String,
+    isCustom: Boolean,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit
+) {
+    var draft by remember(prompt) { mutableStateOf(prompt) }
+    var expanded by remember { mutableStateOf(false) }
+    val problem = LumenAiPrompts.templateProblem(draft)
+    val tokens = remember(draft) { LumenAiPrompts.worstCaseTokens(draft) }
+    val budget = LlmTokenBudget.inputBudget(LumenLocalDraft.REPLY_TOKENS)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Card capture prompt", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (isCustom) "Yours" else "The built-in prompt",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Hide" else "Edit")
+                }
+            }
+            if (expanded) {
+                Text(
+                    "What the offline model is asked for when you capture a card. " +
+                        "${LumenAiPrompts.PASSAGE_TOKEN} is replaced with the passage you " +
+                        "are reading and ${LumenAiPrompts.BOOK_TOKEN} with the book's title.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    minLines = 8,
+                    maxLines = 20,
+                    isError = problem != null,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    when {
+                        problem != null -> problem
+                        tokens > budget ->
+                            "About $tokens tokens on a full page, over the $budget the model " +
+                                "can read. Long captures will fall back to a plain draft."
+                        else ->
+                            "About $tokens tokens on a full page, of $budget the model can read."
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color =
+                        if (problem != null || tokens > budget) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onSave(draft) },
+                        enabled = problem == null && draft != prompt
+                    ) {
+                        Text("Save")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onReset()
+                            draft = LumenAiPrompts.DEFAULT_CARD_TEMPLATE
+                        },
+                        enabled = isCustom || draft != LumenAiPrompts.DEFAULT_CARD_TEMPLATE
+                    ) {
+                        Text("Restore default")
+                    }
+                }
+                Text(
+                    "The retry that runs when a reply is unusable always uses the built-in " +
+                        "prompt, so a tailored one that misfires still lands a card.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun AppVersionCard() {
     Card(modifier = Modifier.fillMaxWidth()) {

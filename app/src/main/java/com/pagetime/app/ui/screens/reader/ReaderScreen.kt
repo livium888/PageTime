@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -221,6 +222,7 @@ fun ReaderScreen(
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
     val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
+    val lumenPartialFront by vm.lumenPartialFront.collectAsStateWithLifecycle()
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
@@ -547,7 +549,7 @@ fun ReaderScreen(
         // of ten seconds with nothing to say the app had heard them. The
         // dialog owns this once it opens, so the notice steps aside for it.
         if (lumenCapturing && lumenDraft == null) {
-            CapturingNotice()
+            CapturingNotice(partialFront = lumenPartialFront)
         }
 
         if (showMapMoment) {
@@ -1399,7 +1401,7 @@ private fun ResumeNotice(text: String) {
  * guessing, and a bare spinner is what the reader already had.
  */
 @Composable
-private fun CapturingNotice() {
+private fun CapturingNotice(partialFront: String) {
     var elapsedMs by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
         val startedAt = System.currentTimeMillis()
@@ -1430,10 +1432,25 @@ private fun CapturingNotice() {
                     color = MaterialTheme.colorScheme.inverseOnSurface
                 )
                 Spacer(Modifier.width(10.dp))
-                Text(
-                    text = "Writing a card… ${"%.1f".format(elapsedMs / 1000.0)}s",
-                    style = MaterialTheme.typography.labelLarge
-                )
+                Column {
+                    Text(
+                        text = "Writing a card… ${"%.1f".format(elapsedMs / 1000.0)}s",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    // The claim as it is written, when the model streams. It is
+                    // not the finished card and must not read like one, so it
+                    // stays a quiet second line under the count.
+                    if (partialFront.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = partialFront,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 260.dp)
+                        )
+                    }
+                }
             }
         }
     }

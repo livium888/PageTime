@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.util.Log
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 
@@ -118,7 +121,10 @@ class MediaPipeLlmProvider(
 
     override fun hasEnoughMemory(): Boolean = hasEnoughNativeMemory()
 
-    override suspend fun generate(request: LlmRequest): Result<LlmResult> {
+    override suspend fun generate(
+        request: LlmRequest,
+        onPartial: ((String) -> Unit)?,
+    ): Result<LlmResult> {
         if (nativeFailed) {
             return Result.failure(
                 IllegalStateException(
@@ -128,7 +134,7 @@ class MediaPipeLlmProvider(
             )
         }
         return try {
-            Result.success(infer(request))
+            Result.success(infer(request, onPartial))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (tooLong: PromptTooLongException) {
@@ -151,7 +157,10 @@ class MediaPipeLlmProvider(
      * request returns — see the class doc for why the per-request close was
      * removed.
      */
-    private suspend fun infer(request: LlmRequest): LlmResult =
+    private suspend fun infer(
+        request: LlmRequest,
+        onPartial: ((String) -> Unit)?,
+    ): LlmResult =
         inferenceMutex.withLock {
             withContext(Dispatchers.Default) {
                 require(isAvailable) {
@@ -196,10 +205,59 @@ class MediaPipeLlmProvider(
                         "remaining=${freeNativeMemoryMb()}MB)"
                 )
                 NativeTombstone.enterPhase(context, NativeTombstone.Phase.GENERATE)
-                val text = model.generateResponse(prompt).trim()
+                val text =
+                    if (onPartial == null) {
+                        model.generateResponse(prompt)
+                    } else {
+                        streamResponse(model, prompt, onPartial)
+                    }.trim()
                 NativeTombstone.exitPhase(context)
                 check(text.isNotBlank()) { "The offline model returned an empty response" }
                 LlmResult(text, LlmProviderKind.OFFLINE)
+            }
+        }
+
+    /**
+     * Where the engine's partial results go while a streaming request is in
+     * flight. Null between requests, so a late callback from a finished
+     * generation lands nowhere instead of on the next reader's card.
+     */
+    @Volatile
+    private var activeStream: ((String, Boolean) -> Unit)? = null
+
+    /**
+     * Runs the prompt so the reply arrives as it is written rather than in one
+     * lump at the end.
+     *
+     * A capture takes several seconds and the runtime returns a finished reply,
+     * so there is nothing honest to show in between — unless the reply is asked
+     * for a token at a time, which is what this does. The total wait is the
+     * same; what changes is that the reader watches a card appear rather than a
+     * spinner.
+     *
+     * The async call's return value is deliberately ignored: completion comes
+     * from the listener's done flag, which is the one signal every version of
+     * this runtime agrees on.
+     */
+    private suspend fun streamResponse(
+        model: LlmInference,
+        prompt: String,
+        onPartial: (String) -> Unit,
+    ): String =
+        withTimeout(STREAM_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                val whole = StringBuilder()
+                activeStream = { partial, done ->
+                    whole.append(partial)
+                    val soFar = whole.toString()
+                    runCatching { onPartial(soFar) }
+                    if (done) {
+                        activeStream = null
+                        if (continuation.isActive) continuation.resume(soFar)
+                    }
+                }
+                continuation.invokeOnCancellation { activeStream = null }
+                model.generateResponseAsync(prompt)
             }
         }
 
@@ -227,6 +285,11 @@ class MediaPipeLlmProvider(
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelStore.modelFile.absolutePath)
                 .setPreferredBackend(LlmInference.Backend.CPU)
+                // The listener belongs to the engine, and the engine is
+                // resident for the session — so it forwards to whichever
+                // request is in flight rather than to one request. Only one
+                // ever is: inferenceMutex serialises them.
+                .setResultListener { partial, done -> activeStream?.invoke(partial, done) }
                 // Input AND output share this budget. It has to hold the whole
                 // capture prompt plus the reply, or the native runtime aborts
                 // the process the moment the input alone overflows it.
@@ -296,6 +359,14 @@ class MediaPipeLlmProvider(
 
     companion object {
         private const val TAG = "MediaPipeLlm"
+
+        /**
+         * A streaming request completes when the runtime says it is done. If
+         * that signal never arrives the coroutine would wait forever, so it is
+         * bounded — generously, because a slow phone on a full capture window
+         * is slow, not stuck.
+         */
+        private const val STREAM_TIMEOUT_MS = 120_000L
         private const val MIN_MEMORY_MB = 800L
     }
 }

@@ -38,11 +38,21 @@ class OpdsCatalog(
     private suspend fun fetch(query: String?, page: Int): BookPage = withContext(Dispatchers.IO) {
         val url = buildString {
             append(feed.url)
-            append(if (feed.url.contains('?')) '&' else '?')
-            append("per-page=").append(feed.pageSize)
-            append("&page=").append(page)
+            var separator = if (feed.url.contains('?')) '&' else '?'
+            feed.pageSizeParam?.let {
+                append(separator).append(it).append('=').append(feed.pageSize)
+                separator = '&'
+            }
+            // OpenSearch counts its start index from one, not zero, so an
+            // offset-paged feed is asked for item 1, 26, 51 rather than 0, 25,
+            // 50. Taken from the spec because no catalogue here can be reached
+            // to check; a feed that disagrees now says so through CatalogHealth
+            // rather than silently serving page one forever.
+            val position = if (feed.pageIsOffset) (page - 1) * feed.pageSize + 1 else page
+            append(separator).append(feed.pageParam).append('=').append(position)
             if (!query.isNullOrBlank()) {
-                append("&query=").append(URLEncoder.encode(query.trim(), "UTF-8"))
+                append('&').append(feed.queryParam).append('=')
+                append(URLEncoder.encode(query.trim(), "UTF-8"))
             }
         }
         val request = Request.Builder()

@@ -53,8 +53,36 @@ data class OpdsFeed(
      */
     val idPrefix: String? = null,
 
+    /**
+     * Take the book's id from the digits at the end of the entry id rather than
+     * from a hash of it.
+     *
+     * Project Gutenberg needs this. Its books have real numbers — Pride and
+     * Prejudice is 1342 — and the app already stores them that way from the
+     * gutendex route. Hashing the entry URL instead would give the same book a
+     * different id depending on which route fetched it, so a book already on
+     * the reader's shelf would show as undownloaded whenever the fallback
+     * served it.
+     */
+    val numericEntryIds: Boolean = false,
+
     /** Keep only entries in this language; null keeps all of them. */
     val language: String? = "en",
+
+    /**
+     * How this feed names its query and paging parameters.
+     *
+     * OPDS standardises the feed, not the URL that asks for it. Standard Ebooks
+     * takes per-page and page; Project Gutenberg takes a start_index counted in
+     * items and no page size at all. Assuming one house's spelling was the
+     * quiet reason a second feed could only ever return its first page.
+     */
+    val queryParam: String = "query",
+    val pageParam: String = "page",
+    val pageSizeParam: String? = "per-page",
+
+    /** True when [pageParam] carries an item offset rather than a page number. */
+    val pageIsOffset: Boolean = false,
 
     /**
      * Ranking hints for a feed offering several EPUBs of the same book.

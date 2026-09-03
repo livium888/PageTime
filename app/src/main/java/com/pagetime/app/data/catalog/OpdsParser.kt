@@ -190,6 +190,10 @@ object OpdsParser {
      * would make books they already have look undownloaded.
      */
     private fun idOf(entryId: String, feed: OpdsFeed): Long {
+        if (feed.numericEntryIds) {
+            entryId.takeLastWhile { it.isDigit() }.toLongOrNull()
+                ?.let { return feed.idOffset + it }
+        }
         val key = feed.idPrefix?.let { entryId.removePrefix(it) } ?: entryId
         return feed.idOffset + (key.hashCode().toLong() and 0xFFFFFF)
     }

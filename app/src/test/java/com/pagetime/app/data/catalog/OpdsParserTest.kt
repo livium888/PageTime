@@ -2,6 +2,7 @@ package com.pagetime.app.data.catalog
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -237,5 +238,47 @@ class OpdsParserTest {
         assertTrue(OpdsCatalog(standardEbooks).browsable)
         assertFalse(OpdsCatalog(standardEbooks.copy(browseQuery = null)).browsable)
         assertNull(standardEbooks.copy(browseQuery = null).browseQuery)
+    }
+
+    @Test
+    fun `Gutenberg entries keep their real numbers`() {
+        // Gutenberg books have real ids — Pride and Prejudice is 1342 — and the
+        // app already stores them that way from the gutendex route. Hashing the
+        // entry URL instead would give the same book two ids depending on which
+        // route fetched it, so a book already on the shelf would read as
+        // undownloaded whenever the fallback served it.
+        val page = parse(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <entry>
+                <id>https://www.gutenberg.org/ebooks/1342</id>
+                <title>Pride and Prejudice</title>
+                <link rel="http://opds-spec.org/acquisition" type="application/epub+zip"
+                      href="https://www.gutenberg.org/ebooks/1342.epub.images"/>
+              </entry>
+            </feed>
+            """,
+            BookCatalogs.GUTENBERG_OPDS
+        )
+        assertEquals(1342L, page.books.first().id)
+    }
+
+    @Test
+    fun `an entry with no number falls back to the hash rather than colliding on zero`() {
+        val page = parse(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <entry>
+                <id>urn:no-digits-here</id><title>A Book</title>
+                <link rel="http://opds-spec.org/acquisition" type="application/epub+zip"
+                      href="https://example.org/a.epub"/>
+              </entry>
+            </feed>
+            """,
+            BookCatalogs.GUTENBERG_OPDS
+        )
+        assertNotEquals(0L, page.books.first().id)
     }
 }

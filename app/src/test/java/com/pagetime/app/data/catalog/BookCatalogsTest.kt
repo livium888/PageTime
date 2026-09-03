@@ -42,9 +42,12 @@ class BookCatalogsTest {
         // Internet Archive has no "show me anything" endpoint. That used to
         // live as error("Search Internet Archive by title or author") inside a
         // when-branch, so the only way to discover it was to throw.
-        val archive = catalogs.byId("internetarchive")
-        assertFalse(archive.browsable)
-        assertTrue(catalogs.all.filter { it.id != "internetarchive" }.all { it.browsable })
+        assertFalse(catalogs.byId("internetarchive").browsable)
+        // Wikisource has no most-read or newest to lead with, so a browse mode
+        // would be an arbitrary slice presented as a front page.
+        assertFalse(catalogs.byId("wikisource").browsable)
+        val searchOnly = setOf("internetarchive", "wikisource")
+        assertTrue(catalogs.all.filter { it.id !in searchOnly }.all { it.browsable })
     }
 
     @Test

@@ -77,13 +77,21 @@ class AppContainer(context: Context) {
     val aiUsageRepository = AiUsageRepository(aiUsageDao)
     val readiumEngine = ReadiumEngine(appContext)
     val gutenbergApi = GutenbergApi()
-    val internetArchiveApi = InternetArchiveApi()
-    val openLibraryApi = OpenLibraryApi()
+    /**
+     * Shared by both archive.org-backed catalogues, so a page of results uses
+     * one connection pool rather than two.
+     */
+    private val internetArchiveFiles =
+        com.pagetime.app.data.internetarchive.InternetArchiveFiles()
+
+    val internetArchiveApi = InternetArchiveApi(files = internetArchiveFiles)
+    val openLibraryApi = OpenLibraryApi(files = internetArchiveFiles)
     /** The catalogues Discover offers, as a list rather than a switch. */
     val bookCatalogs = com.pagetime.app.data.catalog.BookCatalogs(
         gutenberg = gutenbergApi,
         openLibrary = openLibraryApi,
         internetArchive = internetArchiveApi,
+        wikisource = com.pagetime.app.data.wikisource.WikisourceApi(),
     )
     val epubParser = EpubParser()
     val youtubeSearchApi = YouTubeSearchApi()

@@ -71,6 +71,7 @@ class AiUsageStatsTest {
         assertEquals(3, stats.successfulCalls)
         assertEquals(1, stats.failedCalls)
         assertEquals(2, stats.lumenCalls)
+        assertEquals(0, stats.glossCalls)
         assertEquals(1, stats.conceptCalls)
         assertEquals(1, stats.reformatCalls)
         assertEquals(5, stats.conceptsFound)

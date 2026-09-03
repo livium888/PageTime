@@ -127,6 +127,13 @@ class AppContainer(context: Context) {
         captureDiagContext = { appContext },
     )
 
+    val glossRepository = GlossRepository(
+        geminiClient = geminiLearningClient,
+        settingsRepository = settingsRepository,
+        localLlmProvider = localLlmProvider,
+        aiUsageRepository = aiUsageRepository,
+    )
+
     val conceptMapRepository = ConceptMapRepository(
         database = database,
         conceptDao = conceptDao,

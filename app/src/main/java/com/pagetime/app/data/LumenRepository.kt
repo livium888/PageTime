@@ -606,6 +606,14 @@ object LumenCapture {
     const val DEFAULT_RADIUS_CHARS = 1_800
 
     /**
+     * A selection at least this long is the passage. Below it the reader has
+     * pointed at a place rather than handed over something to think about, so
+     * the window moves to the selection instead of shrinking to it — a single
+     * sentence has nothing to build a claim from.
+     */
+    const val MIN_SELECTION_PASSAGE_CHARS = 400
+
+    /**
      * The passage around [offset], trimmed outward to whole-sentence boundaries
      * where one exists within a small slack, clamped to the text bounds.
      */

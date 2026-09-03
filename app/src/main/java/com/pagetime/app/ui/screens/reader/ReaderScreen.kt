@@ -1000,8 +1000,8 @@ private fun ReadiumNavigatorHost(
                         scope.launch {
                             val selection = runCatching { navigator.currentSelection() }.getOrNull()
                             val text = selection?.locator?.text
-                            val term = text?.highlight.orEmpty()
-                            if (term.isNotBlank()) {
+                            val term = text?.highlight?.trim().orEmpty()
+                            if (selection != null && term.isNotBlank()) {
                                 if (item.itemId == MENU_EXPLAIN) {
                                     currentOnExplain(
                                         term,

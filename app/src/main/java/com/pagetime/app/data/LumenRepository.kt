@@ -820,8 +820,12 @@ object LumenCapture {
      * enclosing object is broken. [truncated] also allows a value cut off at
      * the end of the reply (no closing quote). Returns null when the key is
      * absent. Handles double- and single-quoted keys and values.
+     *
+     * Shared with [WordGloss]: small models break JSON the same way whatever
+     * they are asked for, and one salvage routine that is exercised by every
+     * capture beats a second one that is only exercised by word lookups.
      */
-    private fun jsonStringValue(source: String, key: String, truncated: Boolean): String? {
+    internal fun jsonStringValue(source: String, key: String, truncated: Boolean): String? {
         val full =
             Regex("""(?i)["']$key["']\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""")
                 .find(source)

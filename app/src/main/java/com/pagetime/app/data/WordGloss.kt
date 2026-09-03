@@ -1,19 +1,26 @@
 package com.pagetime.app.data
 
 /**
- * What a word means *here*.
+ * What a word means, and what it means *here*.
  *
- * Android already has "Define" in the text-selection menu, and a small model is
- * worse than a dictionary at dictionary work: definitions and etymologies are
- * recalled facts, which is exactly where a 1B model invents most confidently
- * and where the reader has no way to catch it. So this deliberately does not
- * ask for a definition.
+ * Two questions, because two readers ask them. Someone still learning English
+ * needs the plain meaning first — they do not know the word at all, and being
+ * told "in this sentence it is the approval sense" helps nobody who has never
+ * met the word. Someone fluent knows the word and wants to know which of its
+ * senses is on the page. Answering only the second was a design for the second
+ * reader alone.
  *
- * What a dictionary cannot do is say which of five senses is meant in the
- * sentence in front of you. That answer is grounded in text the model was
- * handed rather than recalled from training, which is both the more useful
- * question and the one least likely to be fabricated. The rules below rule out
- * origins and etymology for the same reason: they are unbounded by the passage.
+ * The four fields exist because a small model fills named slots far more
+ * reliably than it follows instructions about what to include — the same
+ * lesson the card's "idea" and "because" fields taught. Asking for a
+ * definition in prose got a definition sometimes; asking for a field called
+ * "meaning" gets one.
+ *
+ * Etymology and origins stay banned. They are recalled facts rather than
+ * anything the passage supports, they are where a small model invents most
+ * confidently, and a reader cannot catch a wrong one. Everything asked for
+ * here is either grounded in the passage or is ordinary vocabulary a model
+ * this size knows well.
  */
 object WordGloss {
 
@@ -23,8 +30,8 @@ object WordGloss {
     /** Context kept either side. Readium hands back about 200 characters each way. */
     const val MAX_CONTEXT_CHARS = 240
 
-    /** Longest explanation kept, so a rambling reply cannot fill the screen. */
-    const val MAX_GLOSS_CHARS = 400
+    /** Longest any single field is kept, so a rambling reply cannot fill the screen. */
+    const val MAX_FIELD_CHARS = 300
 
     /**
      * Why [term] cannot be explained, or null when it can. A selection spanning
@@ -56,9 +63,9 @@ object WordGloss {
     }
 
     fun prompt(term: String, before: String, after: String, bookTitle: String): String {
+        val word = term.trim()
         val context = normalize(
-            before.takeLast(MAX_CONTEXT_CHARS) + " ⟦" + term.trim() + "⟧ " +
-                after.take(MAX_CONTEXT_CHARS)
+            before.takeLast(MAX_CONTEXT_CHARS) + " ⟦" + word + "⟧ " + after.take(MAX_CONTEXT_CHARS)
         )
         return """
             |Book: "$bookTitle"
@@ -66,49 +73,88 @@ object WordGloss {
             |Passage, with the reader's selection marked ⟦like this⟧:
             |$context
             |
-            |The reader does not know what ⟦${term.trim()}⟧ means here.
+            |The reader does not know the word ⟦$word⟧. They may still be
+            |learning English, so explain it the way you would to someone who
+            |has never met the word.
             |
-            |Say, in at most three sentences:
-            |- what it means in THIS passage, in plain words
-            |- why the writer used it here, or what it is doing in the sentence
+            |Fill in these four fields:
+            |- kind: the part of speech here — noun, verb, adjective, adverb,
+            |  phrase. One word.
+            |- meaning: what the word means in general, in ONE short sentence.
+            |  Use the simplest words you can. Someone reading your explanation
+            |  must not need a second dictionary to understand it.
+            |- here: what it means in THIS passage, in one sentence. If the
+            |  passage does not make the sense clear, say so plainly.
+            |- example: one short, everyday sentence using the word in the same
+            |  sense. Your own sentence, not one from the passage.
             |
             |Rules:
-            |- Explain the sense used here. If the word has other senses, ignore
-            |  them; the reader is looking at this one.
             |- Never give etymology, origins, or which language it came from.
-            |- Never list several senses. One reading, the one on the page.
-            |- If the passage does not make the meaning clear, say exactly that
-            |  rather than choosing a meaning it does not support.
-            |- Plain prose. No headings, no bullets, no quotation marks.
+            |- Never list several senses. The general meaning, then this one.
+            |- Plain words throughout. Short sentences.
+            |
+            |Example:
+            |Word: ⟦sanction⟧ in "the council voted to sanction the new library"
+            |{"kind": "verb", "meaning": "To officially allow or approve
+            |something.", "here": "The council formally gave permission for the
+            |library to go ahead.", "example": "The school sanctioned a trip to
+            |the museum."}
+            |
+            |Reply with ONLY the JSON object, nothing else:
+            |{"kind": "...", "meaning": "...", "here": "...", "example": "..."}
+            |{"kind": "
             """.trimMargin()
     }
 
     /**
-     * The model's answer, tidied for display. Small models like to open with
-     * "Sure!" or restate the question, and both are noise above an answer the
-     * reader is trying to read quickly.
+     * The model's reply as fields. Falls back to treating the whole reply as
+     * the meaning: a model that answered in prose still answered, and dropping
+     * that on the floor would leave the reader with nothing over a formatting
+     * problem.
      */
-    fun cleanGloss(raw: String): String? {
-        var text = raw.trim()
+    fun parse(raw: String): GlossParts? {
+        val cleaned = raw.trim()
+            .removePrefix("```json")
             .removePrefix("```")
             .removeSuffix("```")
             .trim()
-            .trim('"')
+        if (cleaned.isBlank()) return null
+
+        // Whether the reply is shaped like the answer, not whether the fields
+        // came back filled. A model that returns {"meaning":""} answered in the
+        // right shape and said nothing; treating that as prose would hand the
+        // reader the JSON punctuation as a definition.
+        val answered = FIELDS.any { LumenCapture.jsonStringValue(cleaned, it, truncated = true) != null }
+        if (answered) {
+            return GlossParts(
+                kind = field(cleaned, "kind")?.lowercase()?.take(24),
+                meaning = field(cleaned, "meaning"),
+                here = field(cleaned, "here"),
+                example = field(cleaned, "example"),
+            )
+        }
+        // No recognisable fields at all: the whole reply is the answer it managed.
+        val prose = clean(cleaned.trim('{', '}', '"'))
+        return prose?.let { GlossParts(kind = null, meaning = it, here = null, example = null) }
+    }
+
+    private val FIELDS = listOf("kind", "meaning", "here", "example")
+
+    private fun field(source: String, key: String): String? =
+        clean(LumenCapture.jsonStringValue(source, key, truncated = true).orEmpty())
+
+    private fun clean(value: String): String? {
+        var text = normalize(value).trim().trim('"', '\'')
         LEAD_INS.forEach { lead ->
             if (text.startsWith(lead, ignoreCase = true)) {
                 text = text.removeRange(0, lead.length).trimStart(' ', ':', ',', '-', '—')
             }
         }
-        text = normalize(text)
         if (text.isBlank()) return null
-        // Stripping "In this passage," leaves the answer starting mid-sentence,
-        // which reads as a fragment even though nothing is missing.
         text = text.replaceFirstChar { it.uppercaseChar() }
-        if (text.length <= MAX_GLOSS_CHARS) return text
-        // Cut at a sentence end rather than mid-word, so a long answer reads as
-        // finished rather than truncated.
-        val cut = text.take(MAX_GLOSS_CHARS).lastIndexOfAny(charArrayOf('.', '!', '?'))
-        return if (cut > MAX_GLOSS_CHARS / 2) text.take(cut + 1) else text.take(MAX_GLOSS_CHARS).trimEnd() + "…"
+        if (text.length <= MAX_FIELD_CHARS) return text
+        val cut = text.take(MAX_FIELD_CHARS).lastIndexOfAny(charArrayOf('.', '!', '?'))
+        return if (cut > MAX_FIELD_CHARS / 2) text.take(cut + 1) else text.take(MAX_FIELD_CHARS).trimEnd() + "…"
     }
 
     private val LEAD_INS = listOf(
@@ -120,10 +166,20 @@ object WordGloss {
     private fun normalize(value: String): String = value.replace(Regex("\\s+"), " ").trim()
 }
 
+/** The fields a reply managed to fill. Any of them may be missing. */
+data class GlossParts(
+    val kind: String?,
+    val meaning: String?,
+    val here: String?,
+    val example: String?,
+) {
+    val isEmpty: Boolean get() = meaning == null && here == null && example == null
+}
+
 /** An explanation of a selected term, with the sentence it was read in. */
 data class Gloss(
     val term: String,
     val sentence: String,
-    val explanation: String,
+    val parts: GlossParts,
     val source: LlmProviderKind?,
 )

@@ -1524,12 +1524,13 @@ private fun CapturingNotice() {
 }
 
 /**
- * What a selected term means in the sentence it was read in.
+ * What a selected term means, and what it means here.
  *
- * The sentence is shown above the answer on purpose. This is a model's reading,
- * not a dictionary entry, and the one defence against a confident wrong answer
- * is that the reader can check it against the words it claims to explain
- * without leaving the page.
+ * The plain meaning leads, because the reader who taps a word most often does
+ * not know it at all — being told which of its senses is on the page helps
+ * nobody who has never met it. The sentence sits under the word so the reading
+ * can be checked against the words it claims to explain, without leaving the
+ * page.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1543,14 +1544,27 @@ private fun GlossSheet(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 24.dp, end = 24.dp, bottom = 40.dp)
         ) {
-            Text(
-                term,
-                style = MaterialTheme.typography.headlineSmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    term,
+                    style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                gloss?.parts?.kind?.let { kind ->
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        kind,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 3.dp)
+                    )
+                }
+            }
             if (gloss != null && gloss.sentence.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -1559,7 +1573,7 @@ private fun GlossSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(24.dp))
             when {
                 error != null -> Text(
                     error,
@@ -1573,17 +1587,18 @@ private fun GlossSheet(
                         strokeWidth = 2.dp
                     )
                     Spacer(Modifier.width(12.dp))
-                    Text("Reading it in context…", style = MaterialTheme.typography.bodyMedium)
+                    Text("Looking it up…", style = MaterialTheme.typography.bodyMedium)
                 }
 
                 else -> {
+                    GlossPart("MEANS", gloss.parts.meaning)
+                    GlossPart("HERE", gloss.parts.here)
+                    gloss.parts.example?.let { example ->
+                        GlossPart("FOR EXAMPLE", "\u201C$example\u201D")
+                    }
+                    Spacer(Modifier.height(20.dp))
                     Text(
-                        gloss.explanation,
-                        style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 28.sp)
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "How the model reads this passage — not a dictionary definition.",
+                        "Written by the AI, not taken from a dictionary.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1591,6 +1606,21 @@ private fun GlossSheet(
             }
         }
     }
+}
+
+/** One labelled part of an explanation; absent parts take no room. */
+@Composable
+private fun GlossPart(label: String, text: String?) {
+    if (text.isNullOrBlank()) return
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        letterSpacing = 1.sp
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(text, style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 28.sp))
+    Spacer(Modifier.height(20.dp))
 }
 
 @Composable

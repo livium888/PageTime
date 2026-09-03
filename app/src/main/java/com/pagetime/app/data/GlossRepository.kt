@@ -22,8 +22,8 @@ class GlossRepository(
     private val aiUsageRepository: AiUsageRepository? = null,
 ) {
 
-    /** Tokens reserved for the answer. Three sentences need far less than a card. */
-    private val replyTokens = 192
+    /** Tokens reserved for the answer. Four short fields need far less than a card. */
+    private val replyTokens = 256
 
     suspend fun explain(
         term: String,
@@ -83,9 +83,9 @@ class GlossRepository(
         raw: String,
         kind: LlmProviderKind,
     ): Gloss {
-        val explanation = WordGloss.cleanGloss(raw)
+        val parts = WordGloss.parse(raw)?.takeIf { !it.isEmpty }
             ?: throw IllegalStateException("The model had nothing to say about that word.")
-        return Gloss(term.trim(), sentence, explanation, kind)
+        return Gloss(term.trim(), sentence, parts, kind)
     }
 
     private companion object {

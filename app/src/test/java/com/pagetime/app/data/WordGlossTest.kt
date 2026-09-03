@@ -8,16 +8,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A word explanation is worth having only if it is the one thing a dictionary
- * cannot give: the sense used in the sentence on screen. These pin the parts
- * that make that true — the passage reaches the model, the answer is bounded,
- * and the sentence the reader can check it against is rebuilt correctly.
+ * A word lookup has to serve two readers: someone who has never met the word,
+ * and someone who knows it but not which sense is on the page. These pin both
+ * answers, the passage reaching the model, and the fallbacks that keep a reply
+ * useful when the model does not format it the way it was asked to.
  */
 class WordGlossTest {
 
     private val before = "The senate voted to lift the embargo. Whether to "
     private val term = "sanction"
     private val after = " the treaty divided the chamber for a decade after."
+
+    private val reply =
+        """{"kind":"verb","meaning":"To officially allow or approve something.",""" +
+            """"here":"Whether to formally approve the treaty.",""" +
+            """"example":"The school sanctioned a trip to the museum."}"""
 
     @Test
     fun `the prompt carries the passage and marks the selection`() {
@@ -29,13 +34,67 @@ class WordGlossTest {
     }
 
     @Test
-    fun `the prompt rules out the answers a small model invents`() {
+    fun `the prompt asks for a plain meaning a learner can read`() {
         val prompt = WordGloss.prompt(term, before, after, "A Book")
 
-        // Etymology and origins are recalled facts, unbounded by the passage,
-        // and the reader cannot catch a wrong one.
+        // The reader who taps a word often does not know it at all, so the
+        // general meaning is asked for first and in the simplest words.
+        assertTrue(prompt.contains("still\n") || prompt.contains("learning English"))
+        assertTrue(prompt.contains("must not need a second dictionary"))
+        assertTrue("A learner needs the part of speech", prompt.contains("kind:"))
+        assertTrue("And an example to fix it in place", prompt.contains("example:"))
+    }
+
+    @Test
+    fun `the prompt still rules out what a small model invents`() {
+        val prompt = WordGloss.prompt(term, before, after, "A Book")
+
         assertTrue(prompt.contains("Never give etymology"))
-        assertTrue("A list of senses is what a dictionary already does", prompt.contains("Never list several senses"))
+        assertTrue(prompt.contains("Never list several senses"))
+    }
+
+    @Test
+    fun `all four fields are read back`() {
+        val parts = WordGloss.parse(reply)!!
+
+        assertEquals("verb", parts.kind)
+        assertEquals("To officially allow or approve something.", parts.meaning)
+        assertEquals("Whether to formally approve the treaty.", parts.here)
+        assertEquals("The school sanctioned a trip to the museum.", parts.example)
+        assertFalse(parts.isEmpty)
+    }
+
+    @Test
+    fun `a reply cut off mid-object keeps what arrived`() {
+        val parts = WordGloss.parse(
+            """{"kind":"verb","meaning":"To officially allow or approve something.","here":"Whether to"""
+        )!!
+
+        assertEquals("verb", parts.kind)
+        assertEquals("To officially allow or approve something.", parts.meaning)
+        assertNotNull(parts.here)
+    }
+
+    @Test
+    fun `a model that answers in prose still answers`() {
+        // Dropping a real answer over a formatting problem would leave the
+        // reader with nothing.
+        val parts = WordGloss.parse("It means to officially approve something.")!!
+
+        assertEquals("It means to officially approve something.", parts.meaning)
+        assertNull(parts.kind)
+    }
+
+    @Test
+    fun `a chatty opening is not part of the answer`() {
+        val parts = WordGloss.parse("""{"meaning":"Sure! It means to approve."}""")!!
+        assertEquals("It means to approve.", parts.meaning)
+    }
+
+    @Test
+    fun `an answer stripped of its lead-in still starts like a sentence`() {
+        val parts = WordGloss.parse("""{"meaning":"In this passage, it means to approve."}""")!!
+        assertEquals("It means to approve.", parts.meaning)
     }
 
     @Test
@@ -56,38 +115,24 @@ class WordGlossTest {
     }
 
     @Test
-    fun `a chatty opening is not part of the answer`() {
-        assertEquals(
-            "It means to formally approve the treaty.",
-            WordGloss.cleanGloss("Sure! It means to formally approve the treaty.")
-        )
-        assertEquals(
-            "It means to formally approve.",
-            WordGloss.cleanGloss("In this passage, it means to formally approve.")
-        )
+    fun `a rambling field is cut at a sentence end`() {
+        val long = "This is a full sentence that says something. ".repeat(20)
+        val parts = WordGloss.parse("""{"meaning":"$long"}""")!!
+
+        assertTrue("Kept ${parts.meaning!!.length}", parts.meaning!!.length <= WordGloss.MAX_FIELD_CHARS)
+        assertTrue("A cut answer should still read as finished", parts.meaning!!.endsWith("."))
     }
 
     @Test
-    fun `a rambling answer is cut at a sentence end`() {
-        val long = ("This is a full sentence that says something. ".repeat(20))
-        val cleaned = WordGloss.cleanGloss(long)!!
-
-        assertTrue("Kept ${cleaned.length} chars", cleaned.length <= WordGloss.MAX_GLOSS_CHARS)
-        assertTrue("A cut answer should still read as finished", cleaned.endsWith("."))
+    fun `an empty reply is no answer`() {
+        assertNull(WordGloss.parse(""))
+        assertNull(WordGloss.parse("   \n  "))
+        assertTrue(WordGloss.parse("""{"meaning":""}""")?.isEmpty ?: true)
     }
 
     @Test
-    fun `an empty answer is no answer`() {
-        assertNull(WordGloss.cleanGloss(""))
-        assertNull(WordGloss.cleanGloss("   \n  "))
-        assertNull(WordGloss.cleanGloss("Sure!"))
-    }
-
-    @Test
-    fun `code fences and stray quotes are stripped`() {
-        assertEquals(
-            "It means to formally approve.",
-            WordGloss.cleanGloss("```\"It means to formally approve.\"```")
-        )
+    fun `a code fence is not part of the answer`() {
+        val fenced = "```json\n" + """{"meaning":"To approve."}""" + "\n```"
+        assertEquals("To approve.", WordGloss.parse(fenced)!!.meaning)
     }
 }

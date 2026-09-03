@@ -106,7 +106,6 @@ class LumenRepository(
     suspend fun draft(
         book: BookEntity,
         passage: String,
-        onPartial: (String) -> Unit = {},
     ): LumenDraft {
         val clean = passage.trim()
         require(clean.isNotBlank()) { "Nothing to capture — move to a spot with text first" }
@@ -147,7 +146,7 @@ class LumenRepository(
                 val startedAt = System.currentTimeMillis()
                 val outcome =
                     LumenLocalDraft.generate(
-                        call = { request -> local.generate(request, onPartial) },
+                        call = { request -> local.generate(request) },
                         passage = clean,
                         bookTitle = book.title,
                         debugLog = debugLog,
@@ -806,33 +805,6 @@ object LumenCapture {
         if (first.isBlank()) return second
         val ended = if (first.last() in charArrayOf('.', '!', '?')) first else "$first."
         return cleanField("$ended $second", maxLength = MAX_BACK_CHARS)
-    }
-
-    /**
-     * The card's title as it stands in a reply still being written, or null
-     * while there is nothing readable yet.
-     *
-     * A capture streams JSON, and JSON appearing character by character is not
-     * something to show a reader. This pulls the front out of the half-written
-     * object so the wait shows the claim forming instead of punctuation. It is
-     * a preview and nothing depends on it, so anything ambiguous returns null
-     * rather than a guess.
-     */
-    fun previewFront(partial: String): String? {
-        val cleaned = partial.trim().removePrefix("```json").removePrefix("```").trim()
-        if (cleaned.isBlank()) return null
-        jsonStringValue(cleaned, "front", truncated = true)?.let { front ->
-            return cleanFront(front).takeIf { it.isNotBlank() }
-        }
-        // The prompt primes the reply with the opening of the object, so a
-        // model that continues it rather than restating it begins mid-value:
-        // the front runs to the first closing quote.
-        if (!cleaned.startsWith("{") && !cleaned.contains("\"front\"")) {
-            val end = cleaned.indexOf('"')
-            val head = if (end >= 0) cleaned.take(end) else cleaned
-            return cleanFront(head).takeIf { it.isNotBlank() }
-        }
-        return null
     }
 
     /**

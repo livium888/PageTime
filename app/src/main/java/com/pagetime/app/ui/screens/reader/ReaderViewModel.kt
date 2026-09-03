@@ -389,13 +389,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _lumenCapturing = MutableStateFlow(false)
     val lumenCapturing = _lumenCapturing.asStateFlow()
 
-    /**
-     * The card's title as it is being written, when the provider streams.
-     * Empty while there is nothing readable yet, and between captures.
-     */
-    private val _lumenPartialFront = MutableStateFlow("")
-    val lumenPartialFront = _lumenPartialFront.asStateFlow()
-
     private val _captureDiagnostic = MutableStateFlow<CaptureDiagnostic.Record?>(null)
     val captureDiagnostic = _captureDiagnostic.asStateFlow()
 
@@ -485,7 +478,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                         "passageLen=${passage.length} " +
                         "passageStart=${passage.take(80).replace(Regex("\\s+"), " ")}",
                 )
-                val draft = lumenRepo.draft(b, passage, onPartial = ::publishPartialFront)
+                val draft = lumenRepo.draft(b, passage)
                 Log.d(
                     "LumenCapture",
                     "usedAi=${draft.usedAi} front=${draft.front.take(60)} quoteLen=${draft.quote.length}",
@@ -529,7 +522,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 )
             } finally {
                 _lumenCapturing.value = false
-                _lumenPartialFront.value = ""
                 _captureDiagnostic.value = null
             }
         }
@@ -575,7 +567,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _lumenCapturing.value = true
         viewModelScope.launch {
             try {
-                val draft = lumenRepo.draft(b, pending.draft.quote, onPartial = ::publishPartialFront)
+                val draft = lumenRepo.draft(b, pending.draft.quote)
                 pendingLumenContext = pending.copy(draft = draft)
                 _lumenDraft.value = draft
             } catch (error: CancellationException) {
@@ -584,19 +576,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _error.value = error.message ?: "Couldn't draft this card again"
             } finally {
                 _lumenCapturing.value = false
-                _lumenPartialFront.value = ""
             }
         }
-    }
-
-    /**
-     * Called from the model's own thread as the reply arrives. The reply is
-     * JSON, so only the part a reader would recognise is published; anything
-     * unreadable yet leaves the last good title in place rather than blanking
-     * the line on every token.
-     */
-    private fun publishPartialFront(partial: String) {
-        LumenCapture.previewFront(partial)?.let { _lumenPartialFront.value = it }
     }
 
     fun dismissLumenDraft() {

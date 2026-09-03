@@ -85,16 +85,7 @@ interface LlmProvider {
     val kind: LlmProviderKind
     val isAvailable: Boolean
 
-    /**
-     * [onPartial] receives the reply as it is produced, whole-text so far,
-     * whenever the provider can stream. A provider that cannot simply never
-     * calls it; the returned result is the same either way, so no caller has
-     * to care which kind it got.
-     */
-    suspend fun generate(
-        request: LlmRequest,
-        onPartial: ((String) -> Unit)? = null,
-    ): Result<LlmResult>
+    suspend fun generate(request: LlmRequest): Result<LlmResult>
 
     /** MediaPipe-backed providers only. Returns true when the device reports
      * enough free native memory to safely load the model. Never called by a
@@ -113,10 +104,7 @@ class OfflineLlmProvider : LlmProvider {
 
     override fun hasEnoughMemory(): Boolean = false
 
-    override suspend fun generate(
-        request: LlmRequest,
-        onPartial: ((String) -> Unit)?,
-    ): Result<LlmResult> =
+    override suspend fun generate(request: LlmRequest): Result<LlmResult> =
         Result.failure(
             IllegalStateException(
                 "No offline model is installed. Download a compatible model in AI settings first.",

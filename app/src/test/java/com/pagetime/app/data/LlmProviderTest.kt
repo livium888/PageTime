@@ -23,9 +23,7 @@ class LlmProviderTest {
     @Test
     fun `offline provider fails clearly until model is installed`() =
         runTest {
-            // Typed as the interface: the streaming callback is optional there,
-            // and callers hold providers by interface.
-            val provider: LlmProvider = OfflineLlmProvider()
+            val provider = OfflineLlmProvider()
             assertFalse(provider.isAvailable)
             val result = provider.generate(LlmRequest("make a card"))
             assertTrue(result.isFailure)

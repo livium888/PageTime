@@ -176,8 +176,11 @@ class LumenRepository(
             }
             LumenDraftSource.GEMINI -> {
                 try {
+                    val template =
+                        settingsRepository?.lumenPromptTemplate()
+                            ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE
                     val call: suspend () -> String = {
-                        geminiClient.draftLumenCard(clean, book.title)
+                        geminiClient.draftLumenCard(clean, book.title, template)
                     }
                     val result =
                         if (aiUsageRepository != null) {
@@ -675,7 +678,7 @@ object LumenCapture {
                     }
                 }
         if (root != null) {
-            val front = cleanField(root.optString("front"), maxLength = 120)
+            val front = cleanFront(root.optString("front"))
             if (front.isBlank()) return null
             return front to cleanField(root.optString("back"), maxLength = 400)
         }
@@ -688,7 +691,7 @@ object LumenCapture {
             val backMarker =
                 Regex("(?i)\\bback\\s*[:\\-]").find(cleaned, frontStart)
             if (backMarker != null) {
-                val front = cleanField(cleaned.substring(frontStart, backMarker.range.first), maxLength = 120)
+                val front = cleanFront(cleaned.substring(frontStart, backMarker.range.first))
                 val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = 400)
                 if (front.isNotBlank()) return front to back
             }
@@ -698,7 +701,7 @@ object LumenCapture {
         //    or quotes got mangled. Extracting the string values directly
         //    salvages everything the model did manage to write.
         val frontRaw = jsonStringValue(cleaned, "front", truncated = true) ?: return null
-        val front = cleanField(frontRaw, maxLength = 120)
+        val front = cleanFront(frontRaw)
         if (front.isBlank()) return null
         val frontMatch =
             Regex("""(?i)["']front["']\s*:\s*["']""").find(cleaned) ?: return null
@@ -751,6 +754,39 @@ object LumenCapture {
         value.replace(Regex("\\s+"), " ").trim()
 
     /** Trims quotes/emphasis markers, collapses whitespace, and caps length. */
+    /**
+     * A front is a claim, and a claim that runs on stops being one. The prompt
+     * asks for at most this many words; a small model treats that as a
+     * suggestion, so it is enforced here rather than hoped for.
+     */
+    const val MAX_FRONT_WORDS = 8
+
+    /**
+     * Cuts an over-long front back to a claim. The cut prefers a natural clause
+     * boundary — a title that ends before "because" still reads as a claim,
+     * where one chopped at the word count reads as a fragment. Falls back to a
+     * hard cut only when no boundary lands somewhere usable.
+     */
+    fun trimFront(front: String): String {
+        val trimmed = front.trim()
+        val words = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.size <= MAX_FRONT_WORDS) return trimmed
+
+        val boundary =
+            Regex("[,;:—–(]|\\b(because|which|while|whereas|so that|in order)\\b")
+                .find(trimmed)
+                ?.range
+                ?.first
+        if (boundary != null) {
+            val head = trimmed.take(boundary).trim().trimEnd(',', ';', ':', '-')
+            val headWords = head.split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (headWords.size in 3..MAX_FRONT_WORDS) return head
+        }
+        return words.take(MAX_FRONT_WORDS).joinToString(" ").trimEnd(',', ';', ':', '-')
+    }
+
+    private fun cleanFront(value: String): String = trimFront(cleanField(value, maxLength = 120))
+
     private fun cleanField(value: String, maxLength: Int): String {
         val cleaned =
             value.trim()

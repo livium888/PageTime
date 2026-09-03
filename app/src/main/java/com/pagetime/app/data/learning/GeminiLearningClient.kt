@@ -499,8 +499,17 @@ class GeminiLearningClient(
      * One small call: drafts a Lumen card (front + back) from a captured
      * passage around the reader's position. Returns strict JSON {front, back}.
      */
-    suspend fun draftLumenCard(passage: String, bookTitle: String): String = withContext(Dispatchers.IO) {
-        val prompt = com.pagetime.app.data.LumenAiPrompts.cardDraft(passage, bookTitle)
+    /**
+     * [template] is the reader's capture prompt when they have tailored one.
+     * Both providers render the same template, so a prompt edited in Settings
+     * applies whichever one drafts the card.
+     */
+    suspend fun draftLumenCard(
+        passage: String,
+        bookTitle: String,
+        template: String = com.pagetime.app.data.LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
+    ): String = withContext(Dispatchers.IO) {
+        val prompt = com.pagetime.app.data.LumenAiPrompts.cardDraft(passage, bookTitle, template)
 
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject()

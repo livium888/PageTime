@@ -82,6 +82,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -538,6 +539,15 @@ fun ReaderScreen(
 
         if (resumeNotice != null) {
             ResumeNotice(text = resumeNotice!!)
+        }
+
+        // Until now the only sign a capture was running was the spinner on the
+        // menu item that started it — and starting it closes the menu, so the
+        // reader tapped and then watched an unchanged page for the better part
+        // of ten seconds with nothing to say the app had heard them. The
+        // dialog owns this once it opens, so the notice steps aside for it.
+        if (lumenCapturing && lumenDraft == null) {
+            CapturingNotice()
         }
 
         if (showMapMoment) {
@@ -1378,6 +1388,56 @@ private fun ResumeNotice(text: String) {
     }
 }
 
+
+/**
+ * Shown while a card is being drafted.
+ *
+ * It counts elapsed seconds rather than showing a percentage because there is
+ * no percentage to show: the runtime is asked for a reply and returns a
+ * finished one, so nothing between the two is knowable. A number that moves is
+ * the honest version of "still working" — a fake progress bar would be
+ * guessing, and a bare spinner is what the reader already had.
+ */
+@Composable
+private fun CapturingNotice() {
+    var elapsedMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val startedAt = System.currentTimeMillis()
+        while (true) {
+            elapsedMs = System.currentTimeMillis() - startedAt
+            delay(100)
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 72.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 4.dp
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.inverseOnSurface
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "Writing a card… ${"%.1f".format(elapsedMs / 1000.0)}s",
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun CenteredMessage(

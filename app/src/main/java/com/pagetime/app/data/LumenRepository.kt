@@ -595,8 +595,15 @@ class LumenRepository(
  * snippet (de)serialization, and draft parsing. Android-free for unit tests.
  */
 object LumenCapture {
-    /** ~250 words on each side of the position (~5.5 chars/word). */
-    const val DEFAULT_RADIUS_CHARS = 1_375
+    /**
+     * ~330 words on each side of the position (~5.5 chars/word).
+     *
+     * Was 1,375, which is about one phone page either way. That is enough text
+     * to name what a page is about and not enough to say why it holds, so the
+     * note came back thin however the prompt was worded. The wider budget the
+     * engine is built with pays for the extra page.
+     */
+    const val DEFAULT_RADIUS_CHARS = 1_800
 
     /**
      * The passage around [offset], trimmed outward to whole-sentence boundaries
@@ -744,7 +751,11 @@ object LumenCapture {
         if (root != null) {
             val front = cleanFront(root.optString("front"))
             if (front.isBlank()) return null
-            return front to cleanField(root.optString("back"), maxLength = 400)
+            return front to note(
+                idea = root.optString("idea"),
+                because = root.optString("because"),
+                back = root.optString("back"),
+            )
         }
 
         // 2. Labeled lines: "Front: ..." / "Back: ..." (small models often
@@ -756,7 +767,7 @@ object LumenCapture {
                 Regex("(?i)\\bback\\s*[:\\-]").find(cleaned, frontStart)
             if (backMarker != null) {
                 val front = cleanFront(cleaned.substring(frontStart, backMarker.range.first))
-                val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = 400)
+                val back = cleanField(cleaned.substring(backMarker.range.last + 1), maxLength = MAX_BACK_CHARS)
                 if (front.isNotBlank()) return front to back
             }
         }
@@ -770,9 +781,30 @@ object LumenCapture {
         val frontMatch =
             Regex("""(?i)["']front["']\s*:\s*["']""").find(cleaned) ?: return null
         val remainder = cleaned.substring(frontMatch.range.last + 1)
-        val backRaw =
-            jsonStringValue(remainder, "back", truncated = true).orEmpty()
-        return front to cleanField(backRaw, maxLength = 400)
+        return front to note(
+            idea = jsonStringValue(remainder, "idea", truncated = true).orEmpty(),
+            because = jsonStringValue(remainder, "because", truncated = true).orEmpty(),
+            back = jsonStringValue(remainder, "back", truncated = true).orEmpty(),
+        )
+    }
+
+    /**
+     * The note as the reader reads it, from whichever shape the model replied
+     * in. The prompt asks for the two sentences as two named fields because a
+     * small model fills a slot far more reliably than it counts sentences, but
+     * a single "back" is still accepted — a reader who tailored the prompt
+     * before the schema changed keeps the card they were getting.
+     */
+    private fun note(idea: String, because: String, back: String): String {
+        val first = cleanField(idea, maxLength = MAX_BACK_CHARS)
+        val second = cleanField(because, maxLength = MAX_BACK_CHARS)
+        if (first.isBlank() && second.isBlank()) {
+            return cleanField(back, maxLength = MAX_BACK_CHARS)
+        }
+        if (second.isBlank()) return first
+        if (first.isBlank()) return second
+        val ended = if (first.last() in charArrayOf('.', '!', '?')) first else "$first."
+        return cleanField("$ended $second", maxLength = MAX_BACK_CHARS)
     }
 
     /**
@@ -895,6 +927,13 @@ object LumenCapture {
 
     /** Shorter than this and the note is a fragment, not an explanation. */
     private const val MIN_BACK_CHARS = 30
+
+    /**
+     * Longest note kept. 400 cut two full sentences often enough to matter,
+     * and a cut note ends in an ellipsis, which reads as a fragment and costs
+     * a retry that could never have helped.
+     */
+    private const val MAX_BACK_CHARS = 600
 
     /**
      * How much of two fronts' wording has to coincide before they are the same

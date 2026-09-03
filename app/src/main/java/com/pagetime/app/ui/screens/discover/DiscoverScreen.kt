@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.pagetime.app.data.catalog.CatalogHealth
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import androidx.compose.foundation.layout.height
@@ -72,6 +73,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val hasMore by viewModel.hasMore.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val health by viewModel.health.collectAsStateWithLifecycle()
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
     val youtubeResults by viewModel.youtubeResults.collectAsStateWithLifecycle()
@@ -122,17 +124,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     value = query,
                     onValueChange = viewModel::onQueryChange,
                     modifier = Modifier.weight(1f),
-                    placeholder = {
-                        Text(
-                            when (source) {
-                                BookSource.GUTENBERG -> "Project Gutenberg…"
-                                BookSource.OPEN_LIBRARY -> "Open Library…"
-                                BookSource.STANDARD_EBOOKS -> "Standard Ebooks…"
-                                BookSource.INTERNET_ARCHIVE -> "Internet Archive…"
-                                BookSource.YOUTUBE -> "Search YouTube videos…"
-                            }
-                        )
-                    },
+                    placeholder = { Text(source.searchHint) },
                     leadingIcon = {
                         Icon(Icons.Outlined.Search, contentDescription = null)
                     },
@@ -141,7 +133,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                 )
                 OutlinedButton(
                     onClick = {
-                        if (source == BookSource.YOUTUBE) viewModel.searchYouTube()
+                        if (source is DiscoverSource.Videos) viewModel.searchYouTube()
                         else viewModel.searchAllSources()
                     },
                     enabled = query.isNotBlank() && !loading && !searchingAll,
@@ -169,21 +161,11 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     .padding(horizontal = 16.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                BookSource.entries.forEach { s ->
+                viewModel.sources.forEach { s ->
                     FilterChip(
-                        selected = source == s,
+                        selected = source.id == s.id,
                         onClick = { viewModel.onSourceChange(s) },
-                        label = {
-                            Text(
-                                when (s) {
-                                    BookSource.GUTENBERG -> "Gutenberg"
-                                    BookSource.OPEN_LIBRARY -> "Open Library"
-                                    BookSource.STANDARD_EBOOKS -> "Standard Ebooks"
-                                    BookSource.INTERNET_ARCHIVE -> "Internet Archive"
-                                    BookSource.YOUTUBE -> "YouTube"
-                                }
-                            )
-                        },
+                        label = { Text(s.label) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                             selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -197,23 +179,14 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     CircularProgressIndicator()
                 }
 
-                error != null && (books.isEmpty() && youtubeResults.isEmpty()) -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            error ?: "",
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(24.dp),
-                            textAlign = TextAlign.Center
-                        )
-                        TextButton(onClick = {
-                            if (source == BookSource.YOUTUBE) viewModel.searchYouTube()
-                            else viewModel.retry()
-                        }) { Text("Retry") }
+                books.isEmpty() && youtubeResults.isEmpty() && categoryShelves.isEmpty() &&
+                    health != CatalogHealth.Working -> EmptyShelf(
+                    health = health,
+                    onRetry = {
+                        if (source is DiscoverSource.Videos) viewModel.searchYouTube()
+                        else viewModel.retry()
                     }
-                }
+                )
 
                 else -> LazyColumn(
                     state = listState,
@@ -221,7 +194,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (source == BookSource.YOUTUBE) {
+                    if (source is DiscoverSource.Videos) {
                         if (categoryShelves.isNotEmpty() && youtubeResults.isEmpty()) {
                             // Show browse categories when no search query
                             items(categoryShelves, key = { it.title }) { shelf ->
@@ -557,6 +530,83 @@ private fun CategoryVideoCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * What the shelf shows when it holds no books.
+ *
+ * The point of this composable is that those are different situations. A
+ * catalogue that answered and had nothing, a catalogue that needs a query
+ * first, and a catalogue that did not answer at all were previously one blank
+ * list with one message — so a source whose feed had quietly died was
+ * indistinguishable from a search that genuinely found nothing, and the reader
+ * had no way to tell whether to change their words or their source.
+ */
+@Composable
+private fun EmptyShelf(health: CatalogHealth, onRetry: () -> Unit) {
+    val title: String
+    val detail: String
+    val isFault: Boolean
+    when (health) {
+        is CatalogHealth.Unreachable -> {
+            title = "${health.label} didn\u2019t answer"
+            detail = health.detail
+            isFault = true
+        }
+
+        is CatalogHealth.NothingMatched -> {
+            title =
+                if (health.query.isBlank()) "${health.label} returned nothing"
+                else "Nothing in ${health.label} matched \u201C${health.query}\u201D"
+            detail = health.note
+            isFault = false
+        }
+
+        is CatalogHealth.NeedsQuery -> {
+            title = "${health.label} needs something to look for"
+            detail = health.note
+            isFault = false
+        }
+
+        is CatalogHealth.PartlyReachable -> {
+            title = "Some catalogues didn\u2019t answer"
+            detail = health.silent.joinToString(", ")
+            isFault = true
+        }
+
+        CatalogHealth.Working -> return
+    }
+
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 32.dp)
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (isFault) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+            if (detail.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+            // Only a fault is worth retrying. Offering "Retry" on a search that
+            // simply matched nothing invites the reader to run it again and get
+            // the same nothing.
+            if (isFault) {
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onRetry) { Text("Try again") }
             }
         }
     }

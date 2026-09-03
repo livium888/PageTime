@@ -4,13 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.pagetime.app.data.download.BookDownloader
-import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutendexBook
-import com.pagetime.app.data.gutenberg.GutenbergApi
-import com.pagetime.app.data.internetarchive.InternetArchiveApi
 import com.pagetime.app.data.library.EpubParser
-import com.pagetime.app.data.openlibrary.OpenLibraryApi
-import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.SettingsRepository
@@ -25,10 +20,6 @@ import java.util.UUID
 class LibraryRepository(
     private val bookDao: BookDao,
     private val downloader: BookDownloader,
-    private val gutenbergApi: GutenbergApi,
-    private val internetArchiveApi: InternetArchiveApi,
-    private val openLibraryApi: OpenLibraryApi,
-    private val standardEbooksApi: StandardEbooksApi,
     private val epubParser: EpubParser,
     private val settingsRepository: SettingsRepository,
     private val context: Context,
@@ -52,24 +43,6 @@ class LibraryRepository(
         }
         return bookDao.getMostRecent()
     }
-
-    suspend fun browseGutenberg(page: Int): BookPage = gutenbergApi.browse(page)
-
-    suspend fun searchGutenberg(query: String, page: Int): BookPage =
-        gutenbergApi.search(query, page)
-
-    suspend fun searchInternetArchive(query: String, page: Int): BookPage =
-        internetArchiveApi.search(query, page)
-
-    suspend fun browseOpenLibrary(page: Int): BookPage = openLibraryApi.browse(page = page)
-
-    suspend fun searchOpenLibrary(query: String, page: Int): BookPage =
-        openLibraryApi.search(query, page)
-
-    suspend fun browseStandardEbooks(page: Int): BookPage = standardEbooksApi.browse(page)
-
-    suspend fun searchStandardEbooks(query: String, page: Int): BookPage =
-        standardEbooksApi.search(query, page)
 
     /**
      * Downloads a book (preferring EPUB, falling back to plain text) and imports it.

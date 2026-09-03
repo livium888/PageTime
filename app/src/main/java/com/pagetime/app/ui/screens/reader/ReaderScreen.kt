@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -1880,18 +1881,42 @@ private fun LumenDraftDialog(
                             onDismissRequest = { filingMenu = false },
                             modifier = Modifier.heightIn(max = 520.dp)
                         ) {
-                            Column(Modifier.verticalScroll(rememberScrollState())) {
-                                DropdownMenuItem(
-                                    text = { Text("End of box") },
-                                    onClick = {
-                                        fileBehind = null
-                                        filingMenu = false
+                            // Every row shows its branch, and working that out
+                            // walks the whole box. Built eagerly inside a
+                            // scrolling Column, opening this menu measured one
+                            // row per card in the box and walked the box once
+                            // per row — quadratic work in a single frame, redone
+                            // on every keystroke in the search field. A lazy
+                            // list builds only the rows on screen, and the shelf
+                            // order and the filtered list are computed once per
+                            // change instead of once per composition.
+                            val inBox = remember(boxCards) { boxCards.filter { it.box == 1 } }
+                            val shelf = remember(inBox) { LumenAddress.shelfOrder(inBox) }
+                            val browse =
+                                remember(shelf, filingSearch) {
+                                    val query = filingSearch.trim().lowercase()
+                                    shelf.filter { card ->
+                                        query.isEmpty() ||
+                                            card.indexNumber.lowercase().contains(query) ||
+                                            card.front.lowercase().contains(query)
                                     }
-                                )
+                                }
+                            LazyColumn(modifier = Modifier.heightIn(max = 480.dp)) {
+                                item {
+                                    DropdownMenuItem(
+                                        text = { Text("End of box") },
+                                        onClick = {
+                                            fileBehind = null
+                                            filingMenu = false
+                                        }
+                                    )
+                                }
                                 if (suggestions.isNotEmpty()) {
-                                    HorizontalDivider()
-                                    MenuHeader("SUGGESTED FOR THIS IDEA")
-                                    suggestions.forEach { card ->
+                                    item {
+                                        HorizontalDivider()
+                                        MenuHeader("SUGGESTED FOR THIS IDEA")
+                                    }
+                                    items(suggestions, key = { "suggested-${it.id}" }) { card ->
                                         DropdownMenuItem(
                                             text = { FilingItem(card = card, boxCards = boxCards) },
                                             onClick = {
@@ -1901,27 +1926,22 @@ private fun LumenDraftDialog(
                                         )
                                     }
                                 }
-                                val inBox = boxCards.filter { it.box == 1 }
-                                if (LumenAddress.shelfOrder(inBox).isNotEmpty()) {
-                                    HorizontalDivider()
-                                    MenuHeader("BROWSE ALL LINES")
-                                    OutlinedTextField(
-                                        value = filingSearch,
-                                        onValueChange = { filingSearch = it },
-                                        placeholder = { Text("Search address or title…") },
-                                        singleLine = true,
-                                        textStyle = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                                    )
-                                    val query = filingSearch.trim().lowercase()
-                                    val browse = LumenAddress.shelfOrder(inBox).filter { card ->
-                                        query.isEmpty() ||
-                                            card.indexNumber.lowercase().contains(query) ||
-                                            card.front.lowercase().contains(query)
+                                if (shelf.isNotEmpty()) {
+                                    item {
+                                        HorizontalDivider()
+                                        MenuHeader("BROWSE ALL LINES")
+                                        OutlinedTextField(
+                                            value = filingSearch,
+                                            onValueChange = { filingSearch = it },
+                                            placeholder = { Text("Search address or title…") },
+                                            singleLine = true,
+                                            textStyle = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        )
                                     }
-                                    browse.forEach { card ->
+                                    items(browse, key = { "browse-${it.id}" }) { card ->
                                         DropdownMenuItem(
                                             text = { FilingItem(card = card, boxCards = boxCards) },
                                             onClick = {
@@ -1931,12 +1951,14 @@ private fun LumenDraftDialog(
                                         )
                                     }
                                     if (browse.isEmpty()) {
-                                        Text(
-                                            "No note in the box matches that search.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(16.dp)
-                                        )
+                                        item {
+                                            Text(
+                                                "No note in the box matches that search.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(16.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2010,7 +2032,10 @@ private fun FilingItem(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
  */
 @Composable
 private fun FilingTargetText(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
-    val path = LumenAddress.threadPath(card.indexNumber, boxCards)
+    val path =
+        remember(card.indexNumber, boxCards) {
+            LumenAddress.threadPath(card.indexNumber, boxCards)
+        }
     Column {
         Text(
             path.map { it.first }.joinToString(" → "),
@@ -2032,7 +2057,10 @@ private fun FilingTargetText(card: LumenCardEntity, boxCards: List<LumenCardEnti
 /** Muted "in {branch}" breadcrumb under a candidate's front in the menu. */
 @Composable
 private fun ThreadPathText(address: String, boxCards: List<LumenCardEntity>) {
-    val ancestors = LumenAddress.threadPath(address, boxCards).dropLast(1)
+    // Walking the branch indexes the whole box, so it is done once per row
+    // rather than on every recomposition of that row.
+    val ancestors =
+        remember(address, boxCards) { LumenAddress.threadPath(address, boxCards).dropLast(1) }
     Text(
         text = if (ancestors.isEmpty()) {
             "new main line — ${LumenAddress.relativePart(address)}"

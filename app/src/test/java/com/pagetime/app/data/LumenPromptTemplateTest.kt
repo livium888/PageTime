@@ -66,7 +66,10 @@ class LumenPromptTemplateTest {
         val prompts = mutableListOf<String>()
         val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
             prompts += request.prompt
-            ok("""{"front":"A claim worth keeping","back":"Because it explains something."}""")
+            ok(
+                """{"front":"A claim worth keeping","back":"Because it explains why the idea holds. """ +
+                    """Without that reason the claim is only an assertion."}"""
+            )
         }
 
         LumenLocalDraft.generate(

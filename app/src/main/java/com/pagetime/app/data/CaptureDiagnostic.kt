@@ -199,7 +199,8 @@ object CaptureDiagnostic {
         durationMs: Long,
         attempts: Int,
         usedAi: Boolean,
-        rejection: String?
+        rejection: String?,
+        backProblem: String? = null
     ) {
         val line = buildString {
             append(lineToNow())
@@ -208,6 +209,7 @@ object CaptureDiagnostic {
             append(" attempts=$attempts")
             append(" usedAi=$usedAi")
             if (rejection != null) append(" rejection=$rejection")
+            if (backProblem != null) append(" back=$backProblem")
         }
         writeLine(context, line)
     }

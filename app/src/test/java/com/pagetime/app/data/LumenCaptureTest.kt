@@ -222,11 +222,40 @@ class LumenCaptureTest {
     }
 
     @Test
-    fun `parseDraft caps a runaway front`() {
+    fun `parseDraft caps a runaway front to a claim`() {
+        // The prompt asks for at most eight words and a small model treats that
+        // as a suggestion, so the cap is enforced on the way in.
         val longFront = "word ".repeat(40).trim()
+
         val (front, _) = LumenCapture.parseDraft("""{"front":"$longFront","back":"B"}""")!!
-        assertTrue(front.length <= 120)
-        assertTrue(front.endsWith("…"))
+
+        assertEquals(LumenCapture.MAX_FRONT_WORDS, front.split(" ").size)
+        assertTrue("A word-boundary cut needs no ellipsis", !front.endsWith("…"))
+    }
+
+    @Test
+    fun `a front cut keeps the opening clause when there is one`() {
+        val rambling =
+            "Fiction lets strangers cooperate, because shared stories bind large groups together"
+
+        assertEquals("Fiction lets strangers cooperate", LumenCapture.trimFront(rambling))
+    }
+
+    @Test
+    fun `a front cut falls back to the word count without a clause boundary`() {
+        val rambling = "Shared stories quietly bind very large groups of complete strangers together"
+
+        val front = LumenCapture.trimFront(rambling)
+
+        assertEquals(LumenCapture.MAX_FRONT_WORDS, front.split(" ").size)
+        assertTrue(rambling.startsWith(front))
+    }
+
+    @Test
+    fun `a front already short enough is left alone`() {
+        val claim = "Fiction lets strangers cooperate"
+
+        assertEquals(claim, LumenCapture.trimFront(claim))
     }
 
     @Test

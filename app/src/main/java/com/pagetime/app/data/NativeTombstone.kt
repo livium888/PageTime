@@ -21,7 +21,6 @@ import java.io.File
 object NativeTombstone {
 
     private const val MARKER_FILE = "native-tombstone.marker"
-    private const val DISABLED_FILE = "offline-llm-disabled.flag"
 
     /** Phases in the order they occur inside [MediaPipeLlmProvider]. */
     enum class Phase(val label: String) {
@@ -55,7 +54,6 @@ object NativeTombstone {
         val phase = marker.readText().trim().ifEmpty { "unknown phase" }
         lastDeathSummary = "Previous run died during $phase"
         offlineDisabledByTombstone = true
-        runCatching { disabledFile(appContext).writeText("1") }
         marker.delete()
         // Record the death into the capture diagnostic log so the user can
         // copy and paste it — this is the evidence that was missing all along.
@@ -94,22 +92,7 @@ object NativeTombstone {
         }
     }
 
-    /** Clears the auto-disable flag so the next capture may try the model again. */
-    fun clearDisabled(context: Context) {
-        try {
-            disabledFile(context.applicationContext).delete()
-        } catch (_: Exception) {
-            // Best-effort.
-        }
-        offlineDisabledByTombstone = false
-    }
-
-    /** True when the auto-disable flag is set (persisted across process restarts). */
-    fun isDisabledByFlag(context: Context): Boolean = disabledFile(context.applicationContext).exists()
-
     private fun markerFile(context: Context): File =
         File(context.getDir("diagnostics", Context.MODE_PRIVATE), MARKER_FILE)
 
-    private fun disabledFile(context: Context): File =
-        File(context.getDir("diagnostics", Context.MODE_PRIVATE), DISABLED_FILE)
 }

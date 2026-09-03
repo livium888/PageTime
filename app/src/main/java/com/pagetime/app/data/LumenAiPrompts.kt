@@ -78,8 +78,9 @@ object LumenAiPrompts {
             |- front: the idea stated as a claim, at most 8 words. A claim, not
             |  a topic label: "Fiction lets strangers cooperate", never
             |  "Fiction".
-            |- back: 1-2 full sentences explaining the idea and why it holds,
-            |  written as your own thought rather than a report about a book.
+            |- back: two sentences. The first says what the idea is; the
+            |  second says why it holds or why it matters. Write them as your
+            |  own thought, not as a report about a book.
             |- Never copy a phrase from the passage.
             |- Never mention the passage, the book, the author, or "the text".
             |  The note has to stand on its own.
@@ -90,9 +91,9 @@ object LumenAiPrompts {
             |Passage: The mitochondria is the powerhouse of the cell. It turns
             |nutrients into energy that the cell can use.
             |Card: {"front": "Mitochondria convert nutrients into usable energy",
-            |"back": "A cell cannot spend nutrients as they arrive, so the
-            |mitochondria convert them into a usable form — which is what makes
-            |it the cell's powerhouse."}
+            |"back": "A cell cannot spend nutrients in the form they arrive in.
+            |The mitochondria convert them into a currency it can spend, which
+            |is why the organelle is called the cell's powerhouse."}
             |
             |Reply with ONLY the JSON object, nothing else:
             |{"front": "...", "back": "..."}
@@ -155,9 +156,9 @@ object LumenAiPrompts {
             |
             |Name the single most important idea in your own words. front is
             |that idea as a claim, at most 8 words, never a bare topic. back is
-            |1-2 sentences explaining it. Never copy the passage. Never mention
-            |the book or the text — the note stands alone. Reply with ONLY this
-            |JSON:
+            |two sentences: what the idea is, then why it holds. Never copy the
+            |passage. Never mention the book or the text — the note stands
+            |alone. Reply with ONLY this JSON:
             |{"front": "...", "back": "..."}
             |{"front": "
             """.trimMargin()

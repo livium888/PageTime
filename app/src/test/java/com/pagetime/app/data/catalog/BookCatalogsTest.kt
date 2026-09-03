@@ -3,7 +3,6 @@ package com.pagetime.app.data.catalog
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.internetarchive.InternetArchiveApi
 import com.pagetime.app.data.openlibrary.OpenLibraryApi
-import com.pagetime.app.data.standardebooks.StandardEbooksApi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,7 +15,6 @@ import org.junit.Test
 class BookCatalogsTest {
 
     private val catalogs = BookCatalogs(
-        standardEbooks = StandardEbooksApi(),
         gutenberg = GutenbergApi(),
         openLibrary = OpenLibraryApi(),
         internetArchive = InternetArchiveApi(),

@@ -4,7 +4,6 @@ import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.internetarchive.InternetArchiveApi
 import com.pagetime.app.data.openlibrary.OpenLibraryApi
-import com.pagetime.app.data.standardebooks.StandardEbooksApi
 
 /**
  * The catalogues the app ships with, in the order the chips appear.
@@ -13,19 +12,13 @@ import com.pagetime.app.data.standardebooks.StandardEbooksApi
  * hand-made EPUBs, rarely rate-limited, so a first run always works.
  */
 class BookCatalogs(
-    standardEbooks: StandardEbooksApi,
     gutenberg: GutenbergApi,
     openLibrary: OpenLibraryApi,
     internetArchive: InternetArchiveApi,
+    standardEbooks: BookCatalog = OpdsCatalog(STANDARD_EBOOKS),
 ) {
     val all: List<BookCatalog> = listOf(
-        object : BookCatalog {
-            override val id = "standardebooks"
-            override val label = "Standard Ebooks"
-            override val note = "Hand-made editions of public-domain classics."
-            override suspend fun browse(page: Int) = standardEbooks.browse(page)
-            override suspend fun search(query: String, page: Int) = standardEbooks.search(query, page)
-        },
+        standardEbooks,
         object : BookCatalog {
             override val id = "gutenberg"
             override val label = "Gutenberg"
@@ -56,4 +49,32 @@ class BookCatalogs(
     val default: BookCatalog get() = all.first()
 
     fun byId(id: String?): BookCatalog = all.firstOrNull { it.id == id } ?: default
+
+    companion object {
+        /**
+         * Standard Ebooks, the first catalogue moved onto the shared OPDS
+         * client — chosen deliberately, because it is a source known to work,
+         * so the parser is proved against a real feed before anything new is
+         * trusted to it.
+         *
+         * The feed needs a query: without one it redirects to an HTML page, so
+         * browsing asks for "the", which most of the catalogue matches. The
+         * edition hints matter — Standard Ebooks publishes an "advanced" EPUB
+         * that not every reader can open alongside the recommended compatible
+         * one. And the id prefix is load-bearing: ids are persisted and the
+         * download list is matched by them, so hashing the whole URL rather
+         * than the path would make every book the reader already has look
+         * undownloaded.
+         */
+        val STANDARD_EBOOKS = OpdsFeed(
+            id = "standardebooks",
+            label = "Standard Ebooks",
+            note = "Hand-made editions of public-domain classics.",
+            url = "https://standardebooks.org/feeds/atom/all",
+            browseQuery = "the",
+            idOffset = 30_000_000L,
+            idPrefix = "https://standardebooks.org/ebooks/",
+            preferEditions = listOf("compatible", "Recommended"),
+        )
+    }
 }

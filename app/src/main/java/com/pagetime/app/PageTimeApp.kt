@@ -38,6 +38,9 @@ class PageTimeApp : Application(), ImageLoaderFactory {
     private fun installCrashLogger() {
         val crashDir = File(filesDir, "crash")
         crashDir.mkdirs()
+        // Kept so the platform still gets to handle the crash. Replacing it
+        // outright is what made every crash look like the app quietly closing.
+        val platform = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
@@ -55,7 +58,15 @@ class PageTimeApp : Application(), ImageLoaderFactory {
             } catch (_: Throwable) {
                 // The crash logger must never make things worse.
             } finally {
-                // Keep the default behavior (crash) so the system restarts the app.
+                // Hand the crash back to the platform handler, which is what
+                // shows "PageTime keeps stopping", files the report, and lets
+                // the system restart the app. Killing the process here instead
+                // did none of that: the app vanished to the home screen with no
+                // dialog and no report, which reads as a native death and hid
+                // every ordinary Kotlin crash behind that appearance. The kill
+                // stays only as the fallback for when there is no platform
+                // handler to hand to — the process must not survive.
+                platform?.uncaughtException(thread, throwable)
                 android.os.Process.killProcess(android.os.Process.myPid())
             }
         }

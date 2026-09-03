@@ -496,21 +496,14 @@ class GeminiLearningClient(
 
 
     /**
-     * One small call: drafts a Lumen card (front + back) from a captured
-     * passage around the reader's position. Returns strict JSON {front, back}.
+     * One small call: drafts a Lumen card (front + back) from a prompt the
+     * caller has already rendered, and returns strict JSON {front, back}. The
+     * caller owns the prompt because it owns the reader's tailored template and
+     * the re-ask prompts, which carry their own passage and the idea to avoid;
+     * a convenience overload that rendered the default template here is how the
+     * tailored prompt got silently ignored on this path once already.
      */
-    /**
-     * [template] is the reader's capture prompt when they have tailored one.
-     * Both providers render the same template, so a prompt edited in Settings
-     * applies whichever one drafts the card.
-     */
-    suspend fun draftLumenCard(
-        passage: String,
-        bookTitle: String,
-        template: String = com.pagetime.app.data.LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
-    ): String = withContext(Dispatchers.IO) {
-        val prompt = com.pagetime.app.data.LumenAiPrompts.cardDraft(passage, bookTitle, template)
-
+    suspend fun draftLumenCardFromPrompt(prompt: String): String = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject()
                 .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))

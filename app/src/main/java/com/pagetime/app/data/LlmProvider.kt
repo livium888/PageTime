@@ -39,8 +39,19 @@ enum class LlmProviderKind(
  * code. Android-free so the invariant can be unit-tested.
  */
 object LlmTokenBudget {
-    /** Total tokens the engine is built with: input + output share it. */
-    const val MAX_TOKENS = 1_536
+    /**
+     * Total tokens the engine is built with: input + output share it.
+     *
+     * 1,536 was the size that first stopped the crash, chosen to be obviously
+     * safe rather than to be right. It bought the passage about 2,400
+     * characters, which is roughly two phone pages — enough for a claim, and
+     * thin for the reason behind it. 2,048 buys another 1,200 characters of
+     * book at the cost of a slightly larger KV cache and a second or two of
+     * inference, and a load that cannot be allocated still fails into the
+     * plain draft rather than the crash, because the budget is measured before
+     * native code is reached either way.
+     */
+    const val MAX_TOKENS = 2_048
 
     /** English runs ~4 chars/token; 3.5 keeps the estimate conservative. */
     private const val CHARS_PER_TOKEN = 3.5

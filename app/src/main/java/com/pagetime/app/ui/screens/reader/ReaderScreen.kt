@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -81,6 +82,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -537,6 +539,15 @@ fun ReaderScreen(
 
         if (resumeNotice != null) {
             ResumeNotice(text = resumeNotice!!)
+        }
+
+        // Until now the only sign a capture was running was the spinner on the
+        // menu item that started it — and starting it closes the menu, so the
+        // reader tapped and then watched an unchanged page for the better part
+        // of ten seconds with nothing to say the app had heard them. The
+        // dialog owns this once it opens, so the notice steps aside for it.
+        if (lumenCapturing && lumenDraft == null) {
+            CapturingNotice()
         }
 
         if (showMapMoment) {
@@ -1378,6 +1389,56 @@ private fun ResumeNotice(text: String) {
 }
 
 
+/**
+ * Shown while a card is being drafted.
+ *
+ * It counts elapsed seconds rather than showing a percentage because there is
+ * no percentage to show: the runtime is asked for a reply and returns a
+ * finished one, so nothing between the two is knowable. A number that moves is
+ * the honest version of "still working" — a fake progress bar would be
+ * guessing, and a bare spinner is what the reader already had.
+ */
+@Composable
+private fun CapturingNotice() {
+    var elapsedMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val startedAt = System.currentTimeMillis()
+        while (true) {
+            elapsedMs = System.currentTimeMillis() - startedAt
+            delay(100)
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 72.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 4.dp
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.inverseOnSurface
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "Writing a card… ${"%.1f".format(elapsedMs / 1000.0)}s",
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun CenteredMessage(
     icon: @Composable () -> Unit,
@@ -1752,8 +1813,9 @@ private fun LumenDraftDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 // Three cases worth saying out loud: no AI at all, AI that
-                // produced nothing usable, and an AI card whose note is thin
-                // even after the retry. Only the first has nothing to re-ask.
+                // produced nothing usable, and an AI card that needs the
+                // reader's eye — a thin note, or the same idea as a card they
+                // already have. Only the first has nothing to re-ask.
                 if (!draft.usedAi || draft.aiShortfall != null) {
                     Text(
                         when {
@@ -1763,7 +1825,7 @@ private fun LumenDraftDialog(
                                 "The offline model didn't land a card — ${draft.aiShortfall}. " +
                                     "This draft is straight from the passage; edit it, or ask again."
                             else ->
-                                "The note is thin — ${draft.aiShortfall}. Edit it, or ask again."
+                                "Check this one — ${draft.aiShortfall}. Edit it, or ask again."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1879,18 +1941,42 @@ private fun LumenDraftDialog(
                             onDismissRequest = { filingMenu = false },
                             modifier = Modifier.heightIn(max = 520.dp)
                         ) {
-                            Column(Modifier.verticalScroll(rememberScrollState())) {
-                                DropdownMenuItem(
-                                    text = { Text("End of box") },
-                                    onClick = {
-                                        fileBehind = null
-                                        filingMenu = false
+                            // Every row shows its branch, and working that out
+                            // walks the whole box. Built eagerly inside a
+                            // scrolling Column, opening this menu measured one
+                            // row per card in the box and walked the box once
+                            // per row — quadratic work in a single frame, redone
+                            // on every keystroke in the search field. A lazy
+                            // list builds only the rows on screen, and the shelf
+                            // order and the filtered list are computed once per
+                            // change instead of once per composition.
+                            val inBox = remember(boxCards) { boxCards.filter { it.box == 1 } }
+                            val shelf = remember(inBox) { LumenAddress.shelfOrder(inBox) }
+                            val browse =
+                                remember(shelf, filingSearch) {
+                                    val query = filingSearch.trim().lowercase()
+                                    shelf.filter { card ->
+                                        query.isEmpty() ||
+                                            card.indexNumber.lowercase().contains(query) ||
+                                            card.front.lowercase().contains(query)
                                     }
-                                )
+                                }
+                            LazyColumn(modifier = Modifier.heightIn(max = 480.dp)) {
+                                item {
+                                    DropdownMenuItem(
+                                        text = { Text("End of box") },
+                                        onClick = {
+                                            fileBehind = null
+                                            filingMenu = false
+                                        }
+                                    )
+                                }
                                 if (suggestions.isNotEmpty()) {
-                                    HorizontalDivider()
-                                    MenuHeader("SUGGESTED FOR THIS IDEA")
-                                    suggestions.forEach { card ->
+                                    item {
+                                        HorizontalDivider()
+                                        MenuHeader("SUGGESTED FOR THIS IDEA")
+                                    }
+                                    items(suggestions, key = { "suggested-${it.id}" }) { card ->
                                         DropdownMenuItem(
                                             text = { FilingItem(card = card, boxCards = boxCards) },
                                             onClick = {
@@ -1900,27 +1986,22 @@ private fun LumenDraftDialog(
                                         )
                                     }
                                 }
-                                val inBox = boxCards.filter { it.box == 1 }
-                                if (LumenAddress.shelfOrder(inBox).isNotEmpty()) {
-                                    HorizontalDivider()
-                                    MenuHeader("BROWSE ALL LINES")
-                                    OutlinedTextField(
-                                        value = filingSearch,
-                                        onValueChange = { filingSearch = it },
-                                        placeholder = { Text("Search address or title…") },
-                                        singleLine = true,
-                                        textStyle = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                                    )
-                                    val query = filingSearch.trim().lowercase()
-                                    val browse = LumenAddress.shelfOrder(inBox).filter { card ->
-                                        query.isEmpty() ||
-                                            card.indexNumber.lowercase().contains(query) ||
-                                            card.front.lowercase().contains(query)
+                                if (shelf.isNotEmpty()) {
+                                    item {
+                                        HorizontalDivider()
+                                        MenuHeader("BROWSE ALL LINES")
+                                        OutlinedTextField(
+                                            value = filingSearch,
+                                            onValueChange = { filingSearch = it },
+                                            placeholder = { Text("Search address or title…") },
+                                            singleLine = true,
+                                            textStyle = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        )
                                     }
-                                    browse.forEach { card ->
+                                    items(browse, key = { "browse-${it.id}" }) { card ->
                                         DropdownMenuItem(
                                             text = { FilingItem(card = card, boxCards = boxCards) },
                                             onClick = {
@@ -1930,12 +2011,14 @@ private fun LumenDraftDialog(
                                         )
                                     }
                                     if (browse.isEmpty()) {
-                                        Text(
-                                            "No note in the box matches that search.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(16.dp)
-                                        )
+                                        item {
+                                            Text(
+                                                "No note in the box matches that search.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(16.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2009,7 +2092,10 @@ private fun FilingItem(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
  */
 @Composable
 private fun FilingTargetText(card: LumenCardEntity, boxCards: List<LumenCardEntity>) {
-    val path = LumenAddress.threadPath(card.indexNumber, boxCards)
+    val path =
+        remember(card.indexNumber, boxCards) {
+            LumenAddress.threadPath(card.indexNumber, boxCards)
+        }
     Column {
         Text(
             path.map { it.first }.joinToString(" → "),
@@ -2031,7 +2117,10 @@ private fun FilingTargetText(card: LumenCardEntity, boxCards: List<LumenCardEnti
 /** Muted "in {branch}" breadcrumb under a candidate's front in the menu. */
 @Composable
 private fun ThreadPathText(address: String, boxCards: List<LumenCardEntity>) {
-    val ancestors = LumenAddress.threadPath(address, boxCards).dropLast(1)
+    // Walking the branch indexes the whole box, so it is done once per row
+    // rather than on every recomposition of that row.
+    val ancestors =
+        remember(address, boxCards) { LumenAddress.threadPath(address, boxCards).dropLast(1) }
     Text(
         text = if (ancestors.isEmpty()) {
             "new main line — ${LumenAddress.relativePart(address)}"

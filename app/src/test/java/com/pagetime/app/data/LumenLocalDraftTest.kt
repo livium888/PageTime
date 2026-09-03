@@ -62,7 +62,10 @@ class LumenLocalDraftTest {
         val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
             calls++
             assertTrue(request.prompt.contains("Passage:"))
-            ok("""{"front":"Fiction bonds large groups","back":"Shared stories let many people cooperate."}""")
+            ok(
+                """{"front":"Fiction bonds large groups","back":"Shared stories let many people cooperate. """ +
+                    """No other animal can coordinate at that scale."}"""
+            )
         }
 
         val outcome = LumenLocalDraft.generate(call, passage, "Sapiens")

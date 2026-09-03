@@ -816,8 +816,13 @@ object LumenCapture {
      * only means one fewer retry, where under-counting would re-ask the model
      * about backs that were already fine.
      */
-    fun sentenceCount(text: String): Int =
-        Regex("[.!?](\\s+[\"'(\\p{Lu}]|\\s*\\$)").findAll(text.trim()).count()
+    fun sentenceCount(text: String): Int = SENTENCE_END.findAll(text.trim()).count()
+
+    /**
+     * A full stop, question mark or bang that either ends the text or is
+     * followed by the opening of another sentence.
+     */
+    private val SENTENCE_END = Regex("""[.!?](\s+["'(\p{Lu}]|\s*${'$'})""")
 
     fun backProblem(front: String, back: String): BackProblem? {
         val trimmed = back.trim()

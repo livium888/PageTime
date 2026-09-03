@@ -150,7 +150,10 @@ class AppContainer(context: Context) {
         conceptDao = conceptDao,
         explanationDao = explanationDao,
         geminiClient = geminiLearningClient,
-        contextExtractor = learningContextExtractor
+        contextExtractor = learningContextExtractor,
+        settingsRepository = settingsRepository,
+        localLlmProvider = localLlmProvider,
+        aiUsageRepository = aiUsageRepository
     )
 
     private val powerManager =

@@ -186,8 +186,15 @@ class ExplainBackViewModel(
                 evaluationsForConcept += 1
                 _requestsUsed.value += 1
                 val feedbackText = buildString {
-                    append("Accuracy: ${evaluation.accuracy}/5 · Completeness: ${evaluation.completeness}/5 · Clarity: ${evaluation.clarity}/5")
-                    append("\n\n${evaluation.whatTheyGotRight}")
+                    // Only a grader that scored the three dimensions gets to
+                    // show three numbers. The on-device grader returns one
+                    // verdict instead of inventing a breakdown it never worked
+                    // out, and printing "null/5" would be worse than either.
+                    if (evaluation.hasBreakdown) {
+                        append("Accuracy: ${evaluation.accuracy}/5 · Completeness: ${evaluation.completeness}/5 · Clarity: ${evaluation.clarity}/5")
+                        append("\n\n")
+                    }
+                    append(evaluation.whatTheyGotRight)
                     if (evaluation.whatTheyMissed.isNotBlank()) append("\n\nWhat you missed: ${evaluation.whatTheyMissed}")
                     if (evaluation.suggestedImprovement.isNotBlank()) append("\n\n💡 ${evaluation.suggestedImprovement}")
                     if (evaluation.simplerVersion.isNotBlank()) append("\n\n📖 A clearer version:\n${evaluation.simplerVersion}")
@@ -207,7 +214,7 @@ class ExplainBackViewModel(
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
                 if (throwable is kotlinx.coroutines.CancellationException) throw throwable
-                _error.value = throwable.message ?: "Gemini could not evaluate this explanation"
+                _error.value = throwable.message ?: "The AI could not evaluate this explanation"
                 _messages.value += ChatMessage(
                     text = "Sorry, I couldn't evaluate that. ${throwable.message ?: "Try again."}",
                     isUser = false,

@@ -330,10 +330,14 @@ class GeminiLearningClient(
             .getJSONObject(0).getJSONObject("content")
             .getJSONArray("parts").getJSONObject(0).getString("text")
         val json = JSONObject(text)
+        val accuracy = json.optInt("accuracy", 3)
+        val completeness = json.optInt("completeness", 3)
+        val clarity = json.optInt("clarity", 3)
         ExplanationEvaluation(
-            accuracy = json.optInt("accuracy", 3),
-            completeness = json.optInt("completeness", 3),
-            clarity = json.optInt("clarity", 3),
+            accuracy = accuracy,
+            completeness = completeness,
+            clarity = clarity,
+            overallScore = (accuracy + completeness + clarity) / 3f,
             whatTheyGotRight = json.optString("whatTheyGotRight", ""),
             whatTheyMissed = json.optString("whatTheyMissed", ""),
             suggestedImprovement = json.optString("suggestedImprovement", ""),

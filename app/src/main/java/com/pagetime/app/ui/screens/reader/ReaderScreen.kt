@@ -8,6 +8,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -85,6 +88,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -120,6 +124,7 @@ import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
 import org.json.JSONObject
@@ -139,6 +144,10 @@ import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
 
 private const val NAVIGATOR_TAG = "readium_navigator"
+
+/** Item ids for the two actions added to the text-selection menu. */
+private const val MENU_EXPLAIN = 1
+private const val MENU_CAPTURE = 2
 
 private enum class TapZone { CENTER }
 
@@ -221,6 +230,9 @@ fun ReaderScreen(
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
     val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
+    val gloss by vm.gloss.collectAsStateWithLifecycle()
+    val glossing by vm.glossing.collectAsStateWithLifecycle()
+    val glossError by vm.glossError.collectAsStateWithLifecycle()
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
@@ -374,6 +386,10 @@ fun ReaderScreen(
                 onNavigatorChanged = { navigator = it },
                 onRestoreComplete = {
                     vm.markEpubRestoreComplete()
+                },
+                onExplainSelection = vm::explainSelection,
+                onCaptureSelection = { locatorJson, text ->
+                    vm.captureLumenCard(selectionLocatorJson = locatorJson, selectedText = text)
                 }
             )
 
@@ -611,6 +627,15 @@ fun ReaderScreen(
             settings = settings,
             onApply = vm::applyReaderSettings,
             onDismiss = { showSettings = false }
+        )
+    }
+
+    if (gloss != null || glossing != null || glossError != null) {
+        GlossSheet(
+            term = gloss?.term ?: glossing.orEmpty(),
+            gloss = gloss,
+            error = glossError,
+            onDismiss = vm::dismissGloss
         )
     }
 
@@ -891,10 +916,15 @@ private fun ReadiumNavigatorHost(
     onLocatorChanged: (Locator) -> Unit,
     onTapZone: (TapZone) -> Unit,
     onNavigatorChanged: (EpubNavigatorFragment?) -> Unit,
-    onRestoreComplete: () -> Unit
+    onRestoreComplete: () -> Unit,
+    onExplainSelection: (term: String, before: String, after: String) -> Unit,
+    onCaptureSelection: (locatorJson: String?, text: String) -> Unit
 ) {
     val context = LocalContext.current
     val fragmentManager = (context as? FragmentActivity)?.supportFragmentManager
+    val scope = rememberCoroutineScope()
+    val currentOnExplain by rememberUpdatedState(onExplainSelection)
+    val currentOnCapture by rememberUpdatedState(onCaptureSelection)
 
     val currentOnLocator by rememberUpdatedState(onLocatorChanged)
     val currentOnTapZone by rememberUpdatedState(onTapZone)
@@ -946,12 +976,66 @@ private fun ReadiumNavigatorHost(
             }
         }
 
+        // Selecting text is how a reader points at something. Until now the
+        // navigator was built with no configuration at all, so a selection could
+        // only be copied — which is why capture had to guess the passage from
+        // the reading position, and why two pages in a row produced one card.
+        val selectionActions = object : ActionMode.Callback {
+            override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                menu.add(Menu.NONE, MENU_EXPLAIN, 0, "Explain here")
+                menu.add(Menu.NONE, MENU_CAPTURE, 1, "Capture this")
+                return true
+            }
+
+            override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+
+            override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+                val navigator = fm.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+                    ?: return false
+                when (item.itemId) {
+                    MENU_EXPLAIN, MENU_CAPTURE -> {
+                        // currentSelection() suspends, and the action mode has to
+                        // be told now, so the work is launched and the menu closed
+                        // rather than held open on an unfinished answer.
+                        scope.launch {
+                            val selection = runCatching { navigator.currentSelection() }.getOrNull()
+                            val text = selection?.locator?.text
+                            val term = text?.highlight?.trim().orEmpty()
+                            if (selection != null && term.isNotBlank()) {
+                                if (item.itemId == MENU_EXPLAIN) {
+                                    currentOnExplain(
+                                        term,
+                                        text?.before.orEmpty(),
+                                        text?.after.orEmpty()
+                                    )
+                                } else {
+                                    currentOnCapture(
+                                        selection.locator.toJSON().toString(),
+                                        term
+                                    )
+                                }
+                            }
+                            runCatching { navigator.clearSelection() }
+                        }
+                        mode.finish()
+                        return true
+                    }
+                    else -> return false
+                }
+            }
+
+            override fun onDestroyActionMode(mode: ActionMode) = Unit
+        }
+
         try {
             val navigatorFactory = EpubNavigatorFactory(publication)
             fm.fragmentFactory = navigatorFactory.createFragmentFactory(
                 initialLocator = initialLocator,
                 initialPreferences = readiumPreferences(settings),
-                listener = null
+                listener = null,
+                configuration = EpubNavigatorFragment.Configuration(
+                    selectionActionModeCallback = selectionActions
+                )
             )
             fm.commitNow {
                 add(R.id.readium_container, EpubNavigatorFragment::class.java, Bundle(), NAVIGATOR_TAG)
@@ -1434,6 +1518,76 @@ private fun CapturingNotice() {
                     text = "Writing a card… ${"%.1f".format(elapsedMs / 1000.0)}s",
                     style = MaterialTheme.typography.labelLarge
                 )
+            }
+        }
+    }
+}
+
+/**
+ * What a selected term means in the sentence it was read in.
+ *
+ * The sentence is shown above the answer on purpose. This is a model's reading,
+ * not a dictionary entry, and the one defence against a confident wrong answer
+ * is that the reader can check it against the words it claims to explain
+ * without leaving the page.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GlossSheet(
+    term: String,
+    gloss: com.pagetime.app.data.Gloss?,
+    error: String?,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
+        ) {
+            Text(
+                term,
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (gloss != null && gloss.sentence.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    gloss.sentence,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            when {
+                error != null -> Text(
+                    error,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.error
+                )
+
+                gloss == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text("Reading it in context…", style = MaterialTheme.typography.bodyMedium)
+                }
+
+                else -> {
+                    Text(
+                        gloss.explanation,
+                        style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 28.sp)
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "How the model reads this passage — not a dictionary definition.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

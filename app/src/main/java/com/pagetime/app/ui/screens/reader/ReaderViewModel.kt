@@ -389,6 +389,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _lumenCapturing = MutableStateFlow(false)
     val lumenCapturing = _lumenCapturing.asStateFlow()
 
+    /** The term being explained, and the answer once it lands. */
+    private val _gloss = MutableStateFlow<com.pagetime.app.data.Gloss?>(null)
+    val gloss = _gloss.asStateFlow()
+
+    private val _glossing = MutableStateFlow<String?>(null)
+    val glossing = _glossing.asStateFlow()
+
+    private val _glossError = MutableStateFlow<String?>(null)
+    val glossError = _glossError.asStateFlow()
+
     private val _captureDiagnostic = MutableStateFlow<CaptureDiagnostic.Record?>(null)
     val captureDiagnostic = _captureDiagnostic.asStateFlow()
 
@@ -418,7 +428,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * Captures the passage around the current position and drafts a Lumen
      * card. One small AI call when a key exists; on-device draft otherwise.
      */
-    fun captureLumenCard() {
+    /**
+     * Captures a card.
+     *
+     * [selectionLocatorJson] and [selectedText] arrive when the reader captured
+     * from a text selection rather than from the menu. That distinction is the
+     * root fix for the duplicate cards: without a selection the passage is a
+     * window around the reading position, and two captures a page apart carry
+     * mostly the same text, so the model reasonably names the same idea twice.
+     * With a selection the reader has pointed at the idea, and the window is
+     * centred there instead of on wherever the page happens to sit.
+     *
+     * A long selection is used as the passage outright. A short one is a
+     * pointer, not a passage — a sentence has nothing to build a claim from —
+     * so it moves the window rather than replacing it.
+     */
+    fun captureLumenCard(
+        selectionLocatorJson: String? = null,
+        selectedText: String? = null,
+    ) {
         val b = _book.value ?: return
         // Clear any stuck state from a prior interrupted capture rather than
         // silently bailing out — a cancelled coroutine can leave _lumenCapturing
@@ -431,16 +459,23 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             try {
                 val passage: String
                 val chapterIndex: Int?
-                if (b.format == "epub") {
+                val selection = selectedText?.trim().orEmpty()
+                if (selection.length >= LumenCapture.MIN_SELECTION_PASSAGE_CHARS) {
+                    // The reader selected enough to be the passage itself.
+                    chapterIndex = if (b.format == "epub") currentChapterIndex() ?: 0 else null
+                    passage = selection
+                } else if (b.format == "epub") {
                     chapterIndex = currentChapterIndex() ?: 0
-                    // Centered on the current locator so the passage follows the
-                    // page the user is actually reading (two pages → two passages).
+                    // Centered on the selection when there is one, otherwise on
+                    // the current locator so the passage follows the page the
+                    // user is actually reading (two pages → two passages).
                     // Falls back to the chapter tail if the window cannot be read.
+                    val anchor = selectionLocator(selectionLocatorJson) ?: latestLocator
                     val centered = container.learningContextExtractor.captureEpub(
                         book = b,
                         chapterIndex = chapterIndex,
-                        currentLocatorJson = latestLocator?.toJSON()?.toString(),
-                        progressionOverride = latestLocator?.locations?.progression?.toFloat()
+                        currentLocatorJson = anchor?.toJSON()?.toString(),
+                        progressionOverride = anchor?.locations?.progression?.toFloat()
                     )
                     passage = centered.ifBlank {
                         // No key/href parse failure: reuse the chapter-tail context.
@@ -578,6 +613,58 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _lumenCapturing.value = false
             }
         }
+    }
+
+    /**
+     * Explains the reader's selection in the sentence it sits in.
+     *
+     * The surrounding text comes from the selection itself, so the model is
+     * answering about words that are on screen rather than recalling a
+     * dictionary entry — which is both the more useful question and the one it
+     * is least able to invent.
+     */
+    fun explainSelection(term: String, before: String, after: String) {
+        val b = _book.value ?: return
+        if (_glossing.value != null) return
+        _glossError.value = null
+        _gloss.value = null
+        _glossing.value = term.trim()
+        viewModelScope.launch {
+            try {
+                container.glossRepository
+                    .explain(
+                        term = term,
+                        before = before,
+                        after = after,
+                        bookTitle = b.title,
+                        bookId = b.id,
+                    )
+                    .onSuccess { _gloss.value = it }
+                    .onFailure { error ->
+                        _glossError.value = error.message ?: "Couldn't explain that here."
+                    }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Log.e("LumenCapture", "Gloss failed", error)
+                _glossError.value = error.message ?: "Couldn't explain that here."
+            } finally {
+                _glossing.value = null
+            }
+        }
+    }
+
+    /** The selection's own position, when the capture came from one. */
+    private fun selectionLocator(json: String?): org.readium.r2.shared.publication.Locator? =
+        json?.let {
+            runCatching {
+                org.readium.r2.shared.publication.Locator.fromJSON(org.json.JSONObject(it))
+            }.getOrNull()
+        }
+
+    fun dismissGloss() {
+        _gloss.value = null
+        _glossError.value = null
     }
 
     fun dismissLumenDraft() {

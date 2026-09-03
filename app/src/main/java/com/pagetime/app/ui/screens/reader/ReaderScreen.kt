@@ -145,9 +145,10 @@ import org.readium.r2.shared.publication.indexOfFirstWithHref
 
 private const val NAVIGATOR_TAG = "readium_navigator"
 
-/** Item ids for the two actions added to the text-selection menu. */
+/** Item ids for the actions added to the text-selection menu. */
 private const val MENU_EXPLAIN = 1
-private const val MENU_CAPTURE = 2
+private const val MENU_SIMPLER = 2
+private const val MENU_CAPTURE = 3
 
 private enum class TapZone { CENTER }
 
@@ -230,9 +231,9 @@ fun ReaderScreen(
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
     val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
-    val gloss by vm.gloss.collectAsStateWithLifecycle()
-    val glossing by vm.glossing.collectAsStateWithLifecycle()
-    val glossError by vm.glossError.collectAsStateWithLifecycle()
+    val answer by vm.answer.collectAsStateWithLifecycle()
+    val answering by vm.answering.collectAsStateWithLifecycle()
+    val answerError by vm.answerError.collectAsStateWithLifecycle()
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
@@ -388,6 +389,7 @@ fun ReaderScreen(
                     vm.markEpubRestoreComplete()
                 },
                 onExplainSelection = vm::explainSelection,
+                onSimplifySelection = vm::simplifySelection,
                 onCaptureSelection = { locatorJson, text ->
                     vm.captureLumenCard(selectionLocatorJson = locatorJson, selectedText = text)
                 }
@@ -630,12 +632,12 @@ fun ReaderScreen(
         )
     }
 
-    if (gloss != null || glossing != null || glossError != null) {
-        GlossSheet(
-            term = gloss?.term ?: glossing.orEmpty(),
-            gloss = gloss,
-            error = glossError,
-            onDismiss = vm::dismissGloss
+    if (answer != null || answering != null || answerError != null) {
+        AnswerSheet(
+            heading = answer?.heading ?: answering.orEmpty(),
+            answer = answer,
+            error = answerError,
+            onDismiss = vm::dismissAnswer
         )
     }
 
@@ -918,12 +920,14 @@ private fun ReadiumNavigatorHost(
     onNavigatorChanged: (EpubNavigatorFragment?) -> Unit,
     onRestoreComplete: () -> Unit,
     onExplainSelection: (term: String, before: String, after: String) -> Unit,
+    onSimplifySelection: (passage: String) -> Unit,
     onCaptureSelection: (locatorJson: String?, text: String) -> Unit
 ) {
     val context = LocalContext.current
     val fragmentManager = (context as? FragmentActivity)?.supportFragmentManager
     val scope = rememberCoroutineScope()
     val currentOnExplain by rememberUpdatedState(onExplainSelection)
+    val currentOnSimplify by rememberUpdatedState(onSimplifySelection)
     val currentOnCapture by rememberUpdatedState(onCaptureSelection)
 
     val currentOnLocator by rememberUpdatedState(onLocatorChanged)
@@ -983,7 +987,8 @@ private fun ReadiumNavigatorHost(
         val selectionActions = object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
                 menu.add(Menu.NONE, MENU_EXPLAIN, 0, "Explain here")
-                menu.add(Menu.NONE, MENU_CAPTURE, 1, "Capture this")
+                menu.add(Menu.NONE, MENU_SIMPLER, 1, "Say it simpler")
+                menu.add(Menu.NONE, MENU_CAPTURE, 2, "Capture this")
                 return true
             }
 
@@ -993,7 +998,7 @@ private fun ReadiumNavigatorHost(
                 val navigator = fm.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
                     ?: return false
                 when (item.itemId) {
-                    MENU_EXPLAIN, MENU_CAPTURE -> {
+                    MENU_EXPLAIN, MENU_SIMPLER, MENU_CAPTURE -> {
                         // currentSelection() suspends, and the action mode has to
                         // be told now, so the work is launched and the menu closed
                         // rather than held open on an unfinished answer.
@@ -1002,14 +1007,16 @@ private fun ReadiumNavigatorHost(
                             val text = selection?.locator?.text
                             val term = text?.highlight?.trim().orEmpty()
                             if (selection != null && term.isNotBlank()) {
-                                if (item.itemId == MENU_EXPLAIN) {
-                                    currentOnExplain(
+                                when (item.itemId) {
+                                    MENU_EXPLAIN -> currentOnExplain(
                                         term,
                                         text?.before.orEmpty(),
                                         text?.after.orEmpty()
                                     )
-                                } else {
-                                    currentOnCapture(
+
+                                    MENU_SIMPLER -> currentOnSimplify(term)
+
+                                    else -> currentOnCapture(
                                         selection.locator.toJSON().toString(),
                                         term
                                     )
@@ -1524,19 +1531,24 @@ private fun CapturingNotice() {
 }
 
 /**
- * What a selected term means, and what it means here.
+ * The answer to a question about something the reader selected.
  *
- * The plain meaning leads, because the reader who taps a word most often does
- * not know it at all — being told which of its senses is on the page helps
- * nobody who has never met it. The sentence sits under the word so the reading
- * can be checked against the words it claims to explain, without leaving the
- * page.
+ * One sheet for both questions — what does this word mean, and what is this
+ * sentence saying — because they differ only in their labels. The parts arrive
+ * already ordered and already filtered, so a part the model did not manage
+ * takes no room rather than leaving a heading with nothing under it.
+ *
+ * The text being asked about stays on screen above the answer in both cases.
+ * For a word that is the sentence it was read in; for a rewrite it is the
+ * original. It is not decoration: the reader who most needs either answer is
+ * the one least able to judge it, and having both in view is the only check
+ * they can actually make.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GlossSheet(
-    term: String,
-    gloss: com.pagetime.app.data.Gloss?,
+private fun AnswerSheet(
+    heading: String,
+    answer: com.pagetime.app.data.ReaderAnswer?,
     error: String?,
     onDismiss: () -> Unit
 ) {
@@ -1549,26 +1561,29 @@ private fun GlossSheet(
         ) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
-                    term,
+                    heading,
                     style = MaterialTheme.typography.headlineSmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-                gloss?.parts?.kind?.let { kind ->
+                answer?.badge?.let { badge ->
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        kind,
+                        badge,
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(bottom = 3.dp)
                     )
                 }
             }
-            if (gloss != null && gloss.sentence.isNotBlank()) {
+            // The text being asked about, kept on screen with the answer. For a
+            // word this is the sentence it was read in; for a rewrite it is the
+            // original, which is the only check a reader can make on it.
+            if (answer != null && answer.quoted.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    gloss.sentence,
+                    answer.quoted,
                     style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1581,24 +1596,20 @@ private fun GlossSheet(
                     color = MaterialTheme.colorScheme.error
                 )
 
-                gloss == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                answer == null -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp
                     )
                     Spacer(Modifier.width(12.dp))
-                    Text("Looking it up…", style = MaterialTheme.typography.bodyMedium)
+                    Text("Working on it\u2026", style = MaterialTheme.typography.bodyMedium)
                 }
 
                 else -> {
-                    GlossPart("MEANS", gloss.parts.meaning)
-                    GlossPart("HERE", gloss.parts.here)
-                    gloss.parts.example?.let { example ->
-                        GlossPart("FOR EXAMPLE", "\u201C$example\u201D")
-                    }
+                    answer.parts.forEach { part -> AnswerPart(part.label, part.text) }
                     Spacer(Modifier.height(20.dp))
                     Text(
-                        "Written by the AI, not taken from a dictionary.",
+                        answer.footnote,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1608,10 +1619,10 @@ private fun GlossSheet(
     }
 }
 
-/** One labelled part of an explanation; absent parts take no room. */
+/** One labelled part of an answer. */
 @Composable
-private fun GlossPart(label: String, text: String?) {
-    if (text.isNullOrBlank()) return
+private fun AnswerPart(label: String, text: String) {
+    if (text.isBlank()) return
     Text(
         label,
         style = MaterialTheme.typography.labelSmall,

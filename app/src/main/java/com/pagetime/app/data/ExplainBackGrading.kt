@@ -102,7 +102,7 @@ object ExplainBackGrading {
             |anything else you know about the subject.
             |
             |Fill in these five fields:
-            |- verdict: one word, exactly one of: solid, partly, off.
+            |- verdict: one word, exactly one of: ${Verdict.entries.joinToString(", ") { it.key }}.
             |  solid = they have understood it. partly = right in places,
             |  missing something that matters. off = they have the wrong idea.
             |- right: one sentence naming something they genuinely got right.

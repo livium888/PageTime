@@ -601,9 +601,15 @@ object LumenCapture {
      * Was 1,375, which is about one phone page either way. That is enough text
      * to name what a page is about and not enough to say why it holds, so the
      * note came back thin however the prompt was worded. The wider budget the
-     * engine is built with pays for the extra page.
+     * engine is built with pays for the extra pages.
+     *
+     * Widening this has a second effect worth naming: the wider the window,
+     * the more two captures near each other overlap, and overlapping captures
+     * are what made the model name the same idea twice. Selecting the passage
+     * is the answer to that — a selection replaces the window rather than
+     * widening it — and repeatOf() still catches the rest.
      */
-    const val DEFAULT_RADIUS_CHARS = 1_800
+    const val DEFAULT_RADIUS_CHARS = 2_700
 
     /**
      * A selection at least this long is the passage. Below it the reader has

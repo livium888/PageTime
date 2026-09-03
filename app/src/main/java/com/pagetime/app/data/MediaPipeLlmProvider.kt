@@ -296,7 +296,13 @@ class MediaPipeLlmProvider(
 
     companion object {
         private const val TAG = "MediaPipeLlm"
-        private const val MIN_MEMORY_MB = 800L
+        /**
+         * Free memory required before a fresh load. The weights dominate it,
+         * but the KV cache scales with [LlmTokenBudget.MAX_TOKENS], so this
+         * floor rises when that budget does. A resident model is exempt:
+         * running one already loaded costs no new allocation.
+         */
+        private const val MIN_MEMORY_MB = 900L
     }
 }
 

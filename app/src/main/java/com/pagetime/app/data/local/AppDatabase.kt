@@ -5,6 +5,15 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+/**
+ * learning_cards and learning_review_logs are still registered and still
+ * migrated, and nothing in the app reads them any more. The cards were made by
+ * a generator that was disabled when the app moved to Explain Back, so no new
+ * ones can exist; the tables are kept rather than dropped because an install
+ * from before that change may still hold a reader's cards, and a migration
+ * that destroys them cannot be undone. The DAOs are gone with the code that
+ * used them.
+ */
 @Database(
     entities = [
         BookEntity::class,
@@ -26,8 +35,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun usageEventDao(): UsageEventDao
-    abstract fun learningCardDao(): LearningCardDao
-    abstract fun learningReviewLogDao(): LearningReviewLogDao
     abstract fun learningGenerationDao(): LearningGenerationDao
     abstract fun conceptDao(): ConceptDao
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao

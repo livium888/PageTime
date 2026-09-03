@@ -68,8 +68,6 @@ class AppContainer(context: Context) {
     private val bookDao = database.bookDao()
     private val blockedAppDao = database.blockedAppDao()
     private val usageEventDao = database.usageEventDao()
-    private val learningCardDao = database.learningCardDao()
-    private val learningReviewLogDao = database.learningReviewLogDao()
     private val learningGenerationDao = database.learningGenerationDao()
     private val conceptDao = database.conceptDao()
     private val conceptRelationshipDao = database.conceptRelationshipDao()
@@ -127,18 +125,6 @@ class AppContainer(context: Context) {
         debugLog = { message -> Log.d("LumenDraft", message) },
         modelStore = { lumenModelStore },
         captureDiagContext = { appContext },
-    )
-
-    val learningRepository = LearningRepository(
-        database = database,
-        cardDao = learningCardDao,
-        reviewLogDao = learningReviewLogDao,
-        generationDao = learningGenerationDao,
-        bookDao = bookDao,
-        settingsRepository = settingsRepository,
-        geminiClient = geminiLearningClient,
-        contextExtractor = learningContextExtractor,
-        aiUsageRepository = aiUsageRepository
     )
 
     val conceptMapRepository = ConceptMapRepository(

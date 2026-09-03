@@ -41,8 +41,14 @@ object LumenAiPrompts {
      * pushes the input past that budget — where MediaPipe aborts the process
      * instead of returning an error. Keeping the passage bounded keeps every
      * normal capture inside the budget with room for the reply.
+     *
+     * Sized to leave real headroom rather than to spend the budget: at 3,072
+     * tokens a capture has about 9,400 characters of input, and this cap plus
+     * the instructions asks for well under three quarters of it. The margin is
+     * the point — the estimate is a character count, not a tokeniser, and the
+     * penalty for being wrong is the process rather than the answer.
      */
-    const val MAX_PASSAGE_CHARS = 3_600
+    const val MAX_PASSAGE_CHARS = 5_400
 
     /**
      * The passage is centered on the reading position, so when it has to be

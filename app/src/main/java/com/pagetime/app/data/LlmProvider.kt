@@ -43,15 +43,24 @@ object LlmTokenBudget {
      * Total tokens the engine is built with: input + output share it.
      *
      * 1,536 was the size that first stopped the crash, chosen to be obviously
-     * safe rather than to be right. It bought the passage about 2,400
-     * characters, which is roughly two phone pages — enough for a claim, and
-     * thin for the reason behind it. 2,048 buys another 1,200 characters of
-     * book at the cost of a slightly larger KV cache and a second or two of
-     * inference, and a load that cannot be allocated still fails into the
-     * plain draft rather than the crash, because the budget is measured before
-     * native code is reached either way.
+     * safe rather than to be right. 2,048 was the first step past it, taken
+     * while it was still unknown whether a larger budget would survive on a
+     * real phone. It does: captures at 2,048 have been running without a
+     * native abort, which is the only evidence that was ever going to settle
+     * it.
+     *
+     * 3,072 buys roughly 3,400 more characters of input. Most of that goes to
+     * the passage a capture carries, and the rest makes room for the two asks
+     * that carry two texts at once rather than one — explain-back, which holds
+     * the source and the reader's own explanation together, and the plain
+     * English rewrite.
+     *
+     * The cost is a larger KV cache, so [MediaPipeLlmProvider] asks for more
+     * free memory before a fresh load. A load that still cannot be allocated
+     * fails into the non-AI fallback rather than the crash, because the budget
+     * is measured before native code is reached either way.
      */
-    const val MAX_TOKENS = 2_048
+    const val MAX_TOKENS = 3_072
 
     /** English runs ~4 chars/token; 3.5 keeps the estimate conservative. */
     private const val CHARS_PER_TOKEN = 3.5

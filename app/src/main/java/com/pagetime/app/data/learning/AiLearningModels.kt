@@ -32,16 +32,25 @@ data class AiGenerationResult(
 )
 
 /**
- * AI evaluation of a Feynman-style explanation.  Each score is 1–5.
+ * AI evaluation of a Feynman-style explanation.
+ *
+ * The three dimensions are 1–5 and optional. A grader that judged the answer
+ * on all three fills them; the on-device grader does not, because a 1B model
+ * asked for three independent five-point scores returns three plausible
+ * numbers it never worked out. It gives one verdict instead, which is why
+ * [overallScore] is carried rather than averaged — an overall mark always
+ * exists, and the breakdown behind it sometimes does not.
  */
 data class ExplanationEvaluation(
-    val accuracy: Int,
-    val completeness: Int,
-    val clarity: Int,
+    val accuracy: Int?,
+    val completeness: Int?,
+    val clarity: Int?,
+    val overallScore: Float,
     val whatTheyGotRight: String,
     val whatTheyMissed: String,
     val suggestedImprovement: String,
     val simplerVersion: String
 ) {
-    val overallScore: Float get() = (accuracy + completeness + clarity) / 3f
+    /** True when the grader scored the three dimensions separately. */
+    val hasBreakdown: Boolean get() = accuracy != null && completeness != null && clarity != null
 }

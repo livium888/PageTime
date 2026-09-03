@@ -61,6 +61,7 @@ class AiUsageRepository(private val dao: AiUsageDao) {
         const val OPERATION_REFORMAT = "reformat"
         const val OPERATION_LUMEN = "lumen"
         const val OPERATION_GLOSS = "gloss"
+        const val OPERATION_EXPLAIN = "explain"
         const val STATUS_PENDING = "pending"
         const val STATUS_SUCCESS = "success"
         const val STATUS_FAILED = "failed"
@@ -75,6 +76,7 @@ data class AiUsageStats(
     val reformatCalls: Int = 0,
     val lumenCalls: Int = 0,
     val glossCalls: Int = 0,
+    val explainCalls: Int = 0,
     val conceptsFound: Int = 0,
     val relationshipsFound: Int = 0,
     val inputCharacters: Long = 0,
@@ -99,7 +101,8 @@ data class AiUsageStats(
                 AiUsageRepository.OPERATION_CONCEPTS,
                 AiUsageRepository.OPERATION_REFORMAT,
                 AiUsageRepository.OPERATION_LUMEN,
-                AiUsageRepository.OPERATION_GLOSS
+                AiUsageRepository.OPERATION_GLOSS,
+                AiUsageRepository.OPERATION_EXPLAIN
             )
             val analyzed = events.filter { it.operation in trackedOps }
             val today = analyzed.filter { it.createdAt >= todayStart }
@@ -111,6 +114,7 @@ data class AiUsageStats(
                 reformatCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_REFORMAT },
                 lumenCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_LUMEN },
                 glossCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_GLOSS },
+                explainCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_EXPLAIN },
                 conceptsFound = analyzed
                     .filter { it.operation == AiUsageRepository.OPERATION_CONCEPTS }
                     .sumOf { it.outputItems },

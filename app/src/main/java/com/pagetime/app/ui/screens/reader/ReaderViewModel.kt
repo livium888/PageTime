@@ -16,6 +16,7 @@ import com.pagetime.app.data.CaptureDiagnostic
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenDraft
+import com.pagetime.app.data.asAnswer
 import com.pagetime.app.data.local.LumenCardEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -390,14 +391,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     val lumenCapturing = _lumenCapturing.asStateFlow()
 
     /** The term being explained, and the answer once it lands. */
-    private val _gloss = MutableStateFlow<com.pagetime.app.data.Gloss?>(null)
-    val gloss = _gloss.asStateFlow()
+    /** The finished answer about a selection: a word explained, or a rewrite. */
+    private val _answer = MutableStateFlow<com.pagetime.app.data.ReaderAnswer?>(null)
+    val answer = _answer.asStateFlow()
 
-    private val _glossing = MutableStateFlow<String?>(null)
-    val glossing = _glossing.asStateFlow()
+    /** The heading to show while an answer is still being written. */
+    private val _answering = MutableStateFlow<String?>(null)
+    val answering = _answering.asStateFlow()
 
-    private val _glossError = MutableStateFlow<String?>(null)
-    val glossError = _glossError.asStateFlow()
+    private val _answerError = MutableStateFlow<String?>(null)
+    val answerError = _answerError.asStateFlow()
 
     private val _captureDiagnostic = MutableStateFlow<CaptureDiagnostic.Record?>(null)
     val captureDiagnostic = _captureDiagnostic.asStateFlow()
@@ -625,31 +628,64 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun explainSelection(term: String, before: String, after: String) {
         val b = _book.value ?: return
-        if (_glossing.value != null) return
-        _glossError.value = null
-        _gloss.value = null
-        _glossing.value = term.trim()
+        askAboutSelection(term.trim(), "Couldn't explain that here.") {
+            container.glossRepository
+                .explain(
+                    term = term,
+                    before = before,
+                    after = after,
+                    bookTitle = b.title,
+                    bookId = b.id,
+                )
+                .map { it.asAnswer() }
+        }
+    }
+
+    /**
+     * Says the reader's selection again in simpler words.
+     *
+     * The original stays on screen above the rewrite. That is not decoration:
+     * the reader most likely to need this is the one least able to judge
+     * whether the rewrite is faithful, and putting the two side by side is the
+     * only check they can actually make.
+     */
+    fun simplifySelection(passage: String) {
+        val b = _book.value ?: return
+        askAboutSelection("In plain English", "Couldn't say that more simply.") {
+            container.glossRepository
+                .simplify(passage = passage, bookTitle = b.title, bookId = b.id)
+                .map { it.asAnswer() }
+        }
+    }
+
+    /**
+     * Runs one selection question into the answer sheet. Only one at a time:
+     * the sheet shows a single answer, and a second request would replace the
+     * first mid-flight with no way to tell which one arrived.
+     */
+    private fun askAboutSelection(
+        heading: String,
+        whenItFails: String,
+        request: suspend () -> Result<com.pagetime.app.data.ReaderAnswer>,
+    ) {
+        if (_answering.value != null) return
+        _answerError.value = null
+        _answer.value = null
+        _answering.value = heading
         viewModelScope.launch {
             try {
-                container.glossRepository
-                    .explain(
-                        term = term,
-                        before = before,
-                        after = after,
-                        bookTitle = b.title,
-                        bookId = b.id,
-                    )
-                    .onSuccess { _gloss.value = it }
+                request()
+                    .onSuccess { _answer.value = it }
                     .onFailure { error ->
-                        _glossError.value = error.message ?: "Couldn't explain that here."
+                        _answerError.value = error.message ?: whenItFails
                     }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                Log.e("LumenCapture", "Gloss failed", error)
-                _glossError.value = error.message ?: "Couldn't explain that here."
+                Log.e("LumenCapture", "Selection question failed", error)
+                _answerError.value = error.message ?: whenItFails
             } finally {
-                _glossing.value = null
+                _answering.value = null
             }
         }
     }
@@ -662,9 +698,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             }.getOrNull()
         }
 
-    fun dismissGloss() {
-        _gloss.value = null
-        _glossError.value = null
+    fun dismissAnswer() {
+        _answer.value = null
+        _answerError.value = null
     }
 
     fun dismissLumenDraft() {

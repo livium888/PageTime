@@ -4,7 +4,8 @@ import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.SettingsRepository
 
 /**
- * Explains a selected term using whichever model the reader has configured.
+ * Answers the two questions a reader asks about text they pointed at: what does
+ * this word mean, and what is this sentence saying.
  *
  * Deliberately not part of [LumenRepository]: a word the reader did not follow
  * is not a slip, and nothing here is filed, scheduled or addressed. It shares
@@ -35,7 +36,56 @@ class GlossRepository(
         WordGloss.termProblem(term)?.let { return Result.failure(IllegalArgumentException(it)) }
 
         val sentence = WordGloss.sentenceAround(before, term, after)
-        val prompt = WordGloss.prompt(term, before, after, bookTitle)
+        return ask(
+            prompt = WordGloss.prompt(term, before, after, bookTitle),
+            replyTokens = replyTokens,
+            bookId = bookId,
+        ) { raw, kind ->
+            val parts = WordGloss.parse(raw)?.takeIf { !it.isEmpty }
+                ?: throw IllegalStateException("The model had nothing to say about that word.")
+            Gloss(term.trim(), sentence, parts, kind)
+        }
+    }
+
+    /**
+     * Says [passage] again in words the reader can follow.
+     *
+     * The safest ask in the app: the model is rewriting text it was handed
+     * rather than recalling anything, and the original stays on screen beside
+     * the answer, so a reader who cannot judge the rewrite on its own can still
+     * see whether the two say the same thing.
+     */
+    suspend fun simplify(
+        passage: String,
+        bookTitle: String,
+        bookId: String?,
+    ): Result<PlainReading> {
+        PlainEnglish.passageProblem(passage)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        val original = passage.trim()
+        return ask(
+            prompt = PlainEnglish.prompt(original, bookTitle),
+            replyTokens = PlainEnglish.REPLY_TOKENS,
+            bookId = bookId,
+        ) { raw, kind ->
+            val parts = PlainEnglish.parse(raw)
+                ?: throw IllegalStateException("The model did not manage a simpler version.")
+            PlainReading(original, parts, kind)
+        }
+    }
+
+    /**
+     * Runs [prompt] on the reader's chosen provider and hands the reply to
+     * [read]. Both asks share this: the routing, the usage tracking, and the
+     * refusal to invent an answer when no model is configured.
+     */
+    private suspend fun <T> ask(
+        prompt: String,
+        replyTokens: Int,
+        bookId: String?,
+        read: (raw: String, kind: LlmProviderKind) -> T,
+    ): Result<T> {
         val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
         val source =
             LumenDraftRouter.sourceFor(
@@ -63,29 +113,18 @@ class GlossRepository(
                         } else {
                             call()
                         }
-                    gloss(term, sentence, raw, LlmProviderKind.GEMINI)
+                    read(raw, LlmProviderKind.GEMINI)
                 }
 
             LumenDraftSource.LOCAL -> {
                 val local = localLlmProvider
                     ?: return Result.failure(IllegalStateException(NO_MODEL))
                 local.generate(LlmRequest(prompt, maxOutputTokens = replyTokens))
-                    .mapCatching { gloss(term, sentence, it.text, LlmProviderKind.OFFLINE) }
+                    .mapCatching { read(it.text, LlmProviderKind.OFFLINE) }
             }
 
             LumenDraftSource.FALLBACK -> Result.failure(IllegalStateException(NO_MODEL))
         }
-    }
-
-    private fun gloss(
-        term: String,
-        sentence: String,
-        raw: String,
-        kind: LlmProviderKind,
-    ): Gloss {
-        val parts = WordGloss.parse(raw)?.takeIf { !it.isEmpty }
-            ?: throw IllegalStateException("The model had nothing to say about that word.")
-        return Gloss(term.trim(), sentence, parts, kind)
     }
 
     private companion object {

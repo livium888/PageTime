@@ -218,7 +218,7 @@ fun ExplainBackScreen(
                 }            }
 
             Text(
-                "Gemini checks this concept at most twice · $requestsUsed request${if (requestsUsed == 1) "" else "s"} used",
+                "Marked at most twice per concept · $requestsUsed request${if (requestsUsed == 1) "" else "s"} used",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)

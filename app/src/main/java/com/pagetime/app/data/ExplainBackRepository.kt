@@ -1,6 +1,7 @@
 package com.pagetime.app.data
 
 import com.pagetime.app.data.local.ConceptDao
+import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.local.ExplanationDao
 import com.pagetime.app.data.local.ExplanationEntity
 import com.pagetime.app.data.learning.ConceptRangeMatcher
@@ -10,12 +11,28 @@ import com.pagetime.app.data.learning.LearningContextExtractor
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
-/** Drives the Feynman explain-back flow and persists source-grounded evaluations. */
+/**
+ * Drives the Feynman explain-back flow and persists source-grounded evaluations.
+ *
+ * Grading runs wherever the reader's chosen provider says, through the same
+ * router as every other AI ask in the app. It used to call Gemini directly, so
+ * the flow accepted an explanation and then threw "Gemini API key is not
+ * configured" at anyone without one — including a reader with the offline model
+ * installed and working.
+ *
+ * Like the word lookup and unlike a capture, this fails rather than falling
+ * back. A card has a useful non-AI form; there is no non-AI way to tell someone
+ * what their explanation missed, and a fabricated mark would be worse than
+ * saying no grader is available.
+ */
 class ExplainBackRepository(
     private val conceptDao: ConceptDao,
     private val explanationDao: ExplanationDao,
     private val geminiClient: GeminiLearningClient,
-    private val contextExtractor: LearningContextExtractor
+    private val contextExtractor: LearningContextExtractor,
+    private val settingsRepository: SettingsRepository? = null,
+    private val localLlmProvider: LlmProvider? = null,
+    private val aiUsageRepository: AiUsageRepository? = null
 ) {
     fun observeExplanations(bookId: String): Flow<List<ExplanationEntity>> =
         explanationDao.observeForBook(bookId)
@@ -76,10 +93,12 @@ class ExplainBackRepository(
         }.orEmpty()
         val compactKeyPoints = (keyPoints + memoryHint).filter { it.isNotBlank() }.take(4)
 
-        val evaluation = geminiClient.evaluateExplanation(
+        val evaluation = grade(
+            bookId = bookId,
             conceptLabel = conceptLabel,
             keyPoints = compactKeyPoints,
-            sourceExcerpt = sourceText.take(12_000),
+            anchor = concept?.sourceQuote,
+            sourceText = sourceText,
             userExplanation = userExplanation,
             bookTitle = bookTitle,
             chapterTitle = chapterTitle ?: ""
@@ -111,6 +130,70 @@ class ExplainBackRepository(
         return evaluation
     }
 
+    /**
+     * Marks the explanation with whichever grader the reader has configured.
+     *
+     * The two graders are handed different amounts of the chapter. Gemini takes
+     * 12,000 characters because it can; the device spends one token budget on
+     * the passage, the reader's answer and the reply together, so the local
+     * prompt takes a window centred on the quote the concept came from.
+     */
+    private suspend fun grade(
+        bookId: String,
+        conceptLabel: String,
+        keyPoints: List<String>,
+        anchor: String?,
+        sourceText: String,
+        userExplanation: String,
+        bookTitle: String,
+        chapterTitle: String
+    ): ExplanationEvaluation {
+        val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
+        val source = LumenDraftRouter.sourceFor(
+            provider = provider,
+            geminiConfigured = geminiClient.hasKey(),
+            localModelAvailable = localLlmProvider?.isAvailable == true
+        )
+        return when (source) {
+            LumenDraftSource.GEMINI -> geminiClient.evaluateExplanation(
+                conceptLabel = conceptLabel,
+                keyPoints = keyPoints,
+                sourceExcerpt = sourceText.take(12_000),
+                userExplanation = userExplanation,
+                bookTitle = bookTitle,
+                chapterTitle = chapterTitle
+            )
+
+            LumenDraftSource.LOCAL -> {
+                val local = localLlmProvider ?: error(NO_GRADER)
+                val prompt = ExplainBackGrading.prompt(
+                    conceptLabel = conceptLabel,
+                    keyPoints = keyPoints,
+                    source = sourceText,
+                    userExplanation = userExplanation,
+                    anchor = anchor
+                )
+                val call: suspend () -> String = {
+                    local.generate(
+                        LlmRequest(prompt, maxOutputTokens = ExplainBackGrading.REPLY_TOKENS)
+                    ).getOrThrow().text
+                }
+                val raw = aiUsageRepository?.track(
+                    bookId = bookId,
+                    operation = AiUsageRepository.OPERATION_EXPLAIN,
+                    model = LlmProviderKind.OFFLINE.key,
+                    inputCharacters = prompt.length,
+                    outputItems = { it.length },
+                    block = call
+                ) ?: call()
+                ExplainBackGrading.parse(raw)
+                    ?: error("The offline model did not return a usable mark. Try again.")
+            }
+
+            LumenDraftSource.FALLBACK -> error(NO_GRADER)
+        }
+    }
+
     suspend fun deleteExplanation(id: String) = explanationDao.deleteById(id)
 
     suspend fun countMastered(bookId: String): Int = explanationDao.countMastered(bookId)
@@ -127,10 +210,12 @@ class ExplainBackRepository(
         return buildString {
             appendLine("$emoji Score: ${String.format("%.1f", overall)}/5.0")
             appendLine()
-            appendLine("Accuracy: ${ev.accuracy}/5")
-            appendLine("Completeness: ${ev.completeness}/5")
-            appendLine("Clarity: ${ev.clarity}/5")
-            appendLine()
+            if (ev.hasBreakdown) {
+                appendLine("Accuracy: ${ev.accuracy}/5")
+                appendLine("Completeness: ${ev.completeness}/5")
+                appendLine("Clarity: ${ev.clarity}/5")
+                appendLine()
+            }
             if (ev.whatTheyGotRight.isNotBlank()) {
                 appendLine("What you got right:")
                 appendLine(ev.whatTheyGotRight)
@@ -150,5 +235,11 @@ class ExplainBackRepository(
                 appendLine(ev.simplerVersion)
             }
         }
+    }
+
+    private companion object {
+        const val NO_GRADER =
+            "No AI is set up to mark this. Add a Gemini key or install the offline " +
+                "model in Settings."
     }
 }

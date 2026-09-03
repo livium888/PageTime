@@ -11,12 +11,17 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
@@ -62,6 +67,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -72,8 +78,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -596,20 +605,6 @@ fun LumenCardsScreen(
             onMore = {
                 moreActions = card
                 detailCard = null
-            },
-            onMove = {
-                moving = card
-                detailCard = null
-            },
-            onFileBehind = {
-                runWithHelp(LumenOnboarding.Action.FILE_BEHIND) { filingBehind = card; detailCard = null }
-            },
-            onDelete = {
-                deleting = card
-                detailCard = null
-            },
-            onPullThread = {
-                runWithHelp(LumenOnboarding.Action.PULL_THREAD) { pullingThread = card; detailCard = null }
             },
             onOpenSource = {
                 detailCard = null
@@ -1301,6 +1296,21 @@ private fun MapNodeRow(
     }
 }
 
+/**
+ * A slip, opened.
+ *
+ * This was an AlertDialog, which is the wrong container for it. AlertDialog
+ * takes the platform's default width, caps its height well short of the
+ * screen, and lays its confirm and dismiss slots out as one row — so five
+ * actions competed for a single line while the note itself read through a
+ * short scrolling window. Everything was legible and nothing had room.
+ *
+ * A slip is a thing to read, so it gets the screen: a header that stays put
+ * while the note scrolls under it, one column of text at a comfortable
+ * measure, and an action bar of its own at the bottom. Scrolling is fine.
+ * Crowding is not.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CardDetailDialog(
     card: LumenCardEntity,
@@ -1316,10 +1326,6 @@ private fun CardDetailDialog(
     onLink: () -> Unit,
     onFindConnections: () -> Unit,
     onMore: () -> Unit,
-    onMove: () -> Unit,
-    onFileBehind: () -> Unit,
-    onDelete: () -> Unit,
-    onPullThread: () -> Unit,
     onOpenSource: () -> Unit,
     onOpenLinked: (LumenCardEntity) -> Unit,
     loadLinked: (LumenCardEntity, (List<LumenCardEntity>) -> Unit) -> Unit,
@@ -1333,244 +1339,357 @@ private fun CardDetailDialog(
     val snippets = remember(card.snippetsJson) {
         LumenCapture.snippetsFromJson(card.snippetsJson)
     }
-    AlertDialog(
+    val terms = remember(card.keywords) {
+        card.keywords.split(' ', ',').map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    Dialog(
         onDismissRequest = onClose,
-        shape = MaterialTheme.shapes.large,
-        title = {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onPrevious, enabled = previous != null, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
-                            contentDescription = "Previous slip",
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Text(
-                        card.indexNumber.ifBlank { "?" },
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    IconButton(onClick = onNext, enabled = next != null, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                            contentDescription = "Next slip",
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(50)
-                    ) {
-                        Text(
-                            "BOX ${card.box}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-                // The branch the slip sits on — the archive's branch visualization.
-                if (threadPath.size > 1) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        threadPath.joinToString(" → "),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Permanent address · edit the thought, not the identity",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 3.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.94f)
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                SlipHeader(
+                    card = card,
+                    previous = previous,
+                    next = next,
+                    onPrevious = onPrevious,
+                    onNext = onNext,
+                    threadPath = threadPath,
+                    onClose = onClose
                 )
-            }
-        },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.fillMaxWidth()
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp)
                 ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text(
-                            "THE IDEA",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(24.dp))
+
+                    // The note itself, set like something meant to be read
+                    // rather than a field in a form: the claim large, the
+                    // reasoning under it with real line spacing.
+                    ReferencedText(
+                        text = card.front,
+                        boxCards = boxCards,
+                        style = MaterialTheme.typography.headlineSmall.copy(lineHeight = 34.sp),
+                        onOpenCard = onOpenLinked
+                    )
+                    if (card.back.isNotBlank()) {
+                        Spacer(Modifier.height(16.dp))
                         ReferencedText(
-                            text = card.front,
+                            text = card.back,
                             boxCards = boxCards,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 28.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             onOpenCard = onOpenLinked
                         )
-                        if (card.back.isNotBlank()) {
-                            Spacer(Modifier.height(8.dp))
-                            ReferencedText(
-                                text = card.back,
-                                boxCards = boxCards,
-                                style = MaterialTheme.typography.bodyLarge,
-                                onOpenCard = onOpenLinked
-                            )
-                        }
                     }
-                }
-                if (card.quote.isNotBlank()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "\u201C${card.quote.take(300)}${if (card.quote.length > 300) "…" else ""}\u201D",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    TextButton(onClick = onOpenSource, contentPadding = PaddingValues(0.dp)) {
-                        Icon(
-                            Icons.Outlined.MenuBook,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Jump to source")
-                    }
-                }
-                if (card.keywords.isNotBlank()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "REGISTER TERMS",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        card.keywords,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (linked.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Linked notes",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    linked.forEach { other ->
-                        Text(
-                            "${other.indexNumber.ifBlank { "?" }} — ${other.front}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clickable { onOpenLinked(other) }
-                                .padding(vertical = 4.dp)
-                        )
-                    }
-                }
-                if (mentionSuggestions.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Possible connections",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                    Text(
-                        "Slips that already echo each other in the text but were never linked.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    mentionSuggestions.forEach { mention ->
-                        val pointsAtMe = mention.target.id == card.id
-                        val other = if (pointsAtMe) mention.source else mention.target
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "${other.indexNumber.ifBlank { "?" }} — ${other.front}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+
+                    if (card.quote.isNotBlank()) {
+                        SlipSection("FROM THE BOOK") {
+                            // A rule down the side rather than quote marks, so
+                            // the source is visibly not the reader's own words.
+                            Row(Modifier.height(IntrinsicSize.Min)) {
+                                Box(
+                                    Modifier
+                                        .width(3.dp)
+                                        .fillMaxHeight()
+                                        .background(
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                                            RoundedCornerShape(2.dp)
+                                        )
                                 )
+                                Spacer(Modifier.width(14.dp))
                                 Text(
-                                    if (pointsAtMe) "quotes your title" else "your title quotes it",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    card.quote.replace(Regex("\\s+"), " ").trim(),
+                                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 24.sp),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            TextButton(
-                                onClick = { onLinkMention(mention) },
-                                contentPadding = PaddingValues(horizontal = 8.dp)
-                            ) {
-                                Text("Link")
+                            Spacer(Modifier.height(10.dp))
+                            TextButton(onClick = onOpenSource, contentPadding = PaddingValues(0.dp)) {
+                                Icon(
+                                    Icons.Outlined.MenuBook,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("Jump to the page")
                             }
                         }
                     }
-                }
-                if (snippets.isNotEmpty()) {
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Evolution",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    snippets.forEach { snippet ->
-                        Row(
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Text(
-                                "${formatDate(snippet.addedAt)} — ",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            ReferencedText(
-                                text = snippet.text,
-                                boxCards = boxCards,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                onOpenCard = onOpenLinked
-                            )
+
+                    if (terms.isNotEmpty()) {
+                        SlipSection("REGISTER") {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                terms.forEach { term ->
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Text(
+                                            term,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
+
+                    if (linked.isNotEmpty()) {
+                        SlipSection("LINKED SLIPS") {
+                            linked.forEach { other ->
+                                SlipLinkRow(card = other, onOpen = { onOpenLinked(other) })
+                            }
+                        }
+                    }
+
+                    if (mentionSuggestions.isNotEmpty()) {
+                        SlipSection("POSSIBLE CONNECTIONS") {
+                            Text(
+                                "Slips that already echo each other in the text but were never linked.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            mentionSuggestions.forEach { mention ->
+                                val pointsAtMe = mention.target.id == card.id
+                                val other = if (pointsAtMe) mention.source else mention.target
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "${other.indexNumber.ifBlank { "?" }} · ${other.front}",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            if (pointsAtMe) "quotes your title" else "your title quotes it",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    TextButton(onClick = { onLinkMention(mention) }) { Text("Link") }
+                                }
+                            }
+                        }
+                    }
+
+                    if (snippets.isNotEmpty()) {
+                        SlipSection("HOW IT GREW") {
+                            snippets.forEach { snippet ->
+                                Column(Modifier.padding(bottom = 14.dp)) {
+                                    Text(
+                                        formatDate(snippet.addedAt),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    ReferencedText(
+                                        text = snippet.text,
+                                        boxCards = boxCards,
+                                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 24.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        onOpenCard = onOpenLinked
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(32.dp))
                 }
-            }
-        },
-        confirmButton = {
-            Row {
-                TextButton(onClick = onEdit) {
-                    Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Edit")
-                }
-                TextButton(onClick = onAddContext) { Text("+ Context") }
-            }
-        },
-        dismissButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onLink, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text("Link", maxLines = 1)
-                }
-                TextButton(onClick = onFindConnections, modifier = Modifier.weight(1f)) {
-                    Text("Connect", maxLines = 1)
-                }
-                IconButton(onClick = onMore) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
-                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SlipActionBar(
+                    onEdit = onEdit,
+                    onAddContext = onAddContext,
+                    onLink = onLink,
+                    onFindConnections = onFindConnections,
+                    onMore = onMore
+                )
             }
         }
+    }
+}
+
+/** Address, branch and box: who this slip is, kept in view while the note scrolls. */
+@Composable
+private fun SlipHeader(
+    card: LumenCardEntity,
+    previous: LumenCardEntity?,
+    next: LumenCardEntity?,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    threadPath: List<String>,
+    onClose: () -> Unit
+) {
+    Column(Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp, bottom = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                card.indexNumber.ifBlank { "?" },
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(10.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(50)
+            ) {
+                Text(
+                    "BOX ${card.box}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            // Neighbours on the shelf, then the way out — the three controls
+            // that are about the dialog rather than about the note.
+            IconButton(onClick = onPrevious, enabled = previous != null) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                    contentDescription = "Previous slip"
+                )
+            }
+            IconButton(onClick = onNext, enabled = next != null) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = "Next slip"
+                )
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Outlined.Close, contentDescription = "Close")
+            }
+        }
+        if (threadPath.size > 1) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                threadPath.joinToString("  →  "),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 12.dp)
+            )
+        }
+    }
+}
+
+/**
+ * A titled block of the slip. Sections carry their own space above them so a
+ * slip with only a note is not padded out with the room its missing parts
+ * would have taken.
+ */
+@Composable
+private fun SlipSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Spacer(Modifier.height(28.dp))
+    Text(
+        title,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        letterSpacing = 1.sp
     )
+    Spacer(Modifier.height(10.dp))
+    Column(content = content)
+}
+
+/** One linked slip: its address, then what it says. */
+@Composable
+private fun SlipLinkRow(card: LumenCardEntity, onOpen: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onOpen)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            card.indexNumber.ifBlank { "?" },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .background(
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    RoundedCornerShape(6.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            card.front,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * What you can do to the slip.
+ *
+ * Two rows rather than one. Five actions on a single line is what made the
+ * old dialog read as cramped: each label had to shrink until the buttons
+ * stopped being obvious. Editing the note is the common one and gets a filled
+ * button; linking is next; the rest sit behind the overflow they already used.
+ */
+@Composable
+private fun SlipActionBar(
+    onEdit: () -> Unit,
+    onAddContext: () -> Unit,
+    onLink: () -> Unit,
+    onFindConnections: () -> Unit,
+    onMore: () -> Unit
+) {
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onEdit, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Edit")
+            }
+            OutlinedButton(onClick = onAddContext, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Context")
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onLink) {
+                Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Link")
+            }
+            TextButton(onClick = onFindConnections) { Text("Find connections") }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onMore) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = "More actions")
+            }
+        }
+    }
 }
 
 /**

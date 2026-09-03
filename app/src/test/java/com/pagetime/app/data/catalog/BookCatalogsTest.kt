@@ -5,6 +5,7 @@ import com.pagetime.app.data.internetarchive.InternetArchiveApi
 import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -63,9 +64,12 @@ class BookCatalogsTest {
     fun `an empty shelf distinguishes silence from having nothing to say`() {
         // The distinction the screen was missing. These are separate types so
         // that drawing them the same way has to be a deliberate act.
-        val nothing = CatalogHealth.NothingMatched("Gutenberg", "xyzzy", "note")
-        val silent = CatalogHealth.Unreachable("Gutenberg", "It did not answer.")
-        assertFalse(nothing == silent)
+        // Typed as the interface deliberately: as their own types Kotlin
+        // rejects comparing them at all, which is itself the point — they are
+        // not interchangeable, and the screen has to choose between them.
+        val nothing: CatalogHealth = CatalogHealth.NothingMatched("Gutenberg", "xyzzy", "note")
+        val silent: CatalogHealth = CatalogHealth.Unreachable("Gutenberg", "It did not answer.")
+        assertNotEquals(nothing, silent)
         assertTrue(silent is CatalogHealth.Unreachable)
         assertTrue(nothing is CatalogHealth.NothingMatched)
     }

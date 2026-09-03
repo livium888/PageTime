@@ -41,9 +41,9 @@ class GlossRepository(
             replyTokens = replyTokens,
             bookId = bookId,
         ) { raw, kind ->
-            val parts = WordGloss.parse(raw)?.takeIf { !it.isEmpty }
+            val parts = WordGloss.parse(raw, term)?.takeIf { !it.isEmpty }
                 ?: throw IllegalStateException("The model had nothing to say about that word.")
-            Gloss(term.trim(), sentence, parts, kind)
+            Gloss(WordGloss.cleanTerm(term), sentence, parts, kind)
         }
     }
 

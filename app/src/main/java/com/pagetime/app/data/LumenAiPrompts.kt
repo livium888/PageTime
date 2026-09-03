@@ -162,4 +162,34 @@ object LumenAiPrompts {
             |{"front": "...", "back": "..."}
             |{"front": "
             """.trimMargin()
+
+    /**
+     * The retry used when the first card repeated one the reader already has.
+     * The passage a capture carries is wider than a page, so two captures near
+     * each other legitimately contain the same dominant idea; naming it and
+     * asking for a different one is the only way to get a second card that is
+     * worth filing. Stated as the idea to avoid rather than a rule about
+     * repetition, which a small model can act on.
+     */
+    fun cardDraftDifferent(
+        passage: String,
+        bookTitle: String,
+        alreadyFiled: String,
+    ): String =
+        """
+            |Book: "$bookTitle"
+            |
+            |Passage:
+            |${trimPassage(passage)}
+            |
+            |You have already written this note: "$alreadyFiled"
+            |
+            |Find a DIFFERENT idea in the passage. Not that one, and not a
+            |rewording of it. front is the new idea as a claim, at most 8 words,
+            |never a bare topic. back is two sentences: what the idea is, then
+            |why it holds. Never copy the passage. Never mention the book or the
+            |text. Reply with ONLY this JSON:
+            |{"front": "...", "back": "..."}
+            |{"front": "
+            """.trimMargin()
 }

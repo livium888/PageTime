@@ -56,6 +56,9 @@ object CaptureDiagnostic {
     private const val LOG_FILE_NAME = "lumen-capture-diagnostic.log"
     private const val MAX_LINES = 300
 
+    /** Enough of the passage to tell two captures apart, without quoting a page. */
+    private const val PASSAGE_HEAD_CHARS = 60
+
     /** Writes a short line to app storage right before a live capture attempt. */
     fun logCapture(
         context: Context,
@@ -64,6 +67,7 @@ object CaptureDiagnostic {
         attemptedGeneration: Boolean,
         bookTitle: String?,
         passageLength: Int,
+        passageHead: String? = null,
         promptTokens: Int? = null,
         tokenBudget: Int? = null
     ) {
@@ -74,6 +78,7 @@ object CaptureDiagnostic {
             append(" attemptedGeneration=$attemptedGeneration")
             if (bookTitle != null) append(" bookTitle=$bookTitle")
             append(" passageLength=$passageLength")
+            if (passageHead != null) append(" passageHead=\"$passageHead\"")
             if (promptTokens != null && tokenBudget != null) {
                 append(" promptTokens=$promptTokens/$tokenBudget")
                 if (promptTokens > tokenBudget) append(" OVER_BUDGET")
@@ -161,9 +166,21 @@ object CaptureDiagnostic {
             modelState = modelState,
             attemptedGeneration = modelState == ModelState.ready,
             bookTitle = null,
-            passageLength = passage.length
+            passageLength = passage.length,
+            passageHead = passageHead(passage),
         )
     }
+
+    /**
+     * The opening of the passage, whitespace-collapsed. passageLength alone
+     * cannot answer the question a reader actually asks — "why is every page
+     * giving me the same card?" — because the capture window is a fixed radius,
+     * so its length barely moves. Two log lines with the same head mean the
+     * passage never moved; two different heads mean it did and the model
+     * repeated itself. One of those is a position bug and the other is not.
+     */
+    private fun passageHead(passage: String): String =
+        passage.take(PASSAGE_HEAD_CHARS).replace(Regex("\\s+"), " ").trim()
 
     /**
      * Logged with the prompt actually handed to the model, so the token count
@@ -183,6 +200,7 @@ object CaptureDiagnostic {
             attemptedGeneration = true,
             bookTitle = null,
             passageLength = passage.length,
+            passageHead = passageHead(passage),
             promptTokens = LlmTokenBudget.estimateTokens(prompt),
             tokenBudget = LlmTokenBudget.inputBudget(replyTokens)
         )
@@ -200,7 +218,8 @@ object CaptureDiagnostic {
         attempts: Int,
         usedAi: Boolean,
         rejection: String?,
-        backProblem: String? = null
+        backProblem: String? = null,
+        repeated: Boolean = false
     ) {
         val line = buildString {
             append(lineToNow())
@@ -210,6 +229,7 @@ object CaptureDiagnostic {
             append(" usedAi=$usedAi")
             if (rejection != null) append(" rejection=$rejection")
             if (backProblem != null) append(" back=$backProblem")
+            if (repeated) append(" repeat=SAME_IDEA")
         }
         writeLine(context, line)
     }

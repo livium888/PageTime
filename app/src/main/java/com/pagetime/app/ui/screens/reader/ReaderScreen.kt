@@ -1752,8 +1752,9 @@ private fun LumenDraftDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 // Three cases worth saying out loud: no AI at all, AI that
-                // produced nothing usable, and an AI card whose note is thin
-                // even after the retry. Only the first has nothing to re-ask.
+                // produced nothing usable, and an AI card that needs the
+                // reader's eye — a thin note, or the same idea as a card they
+                // already have. Only the first has nothing to re-ask.
                 if (!draft.usedAi || draft.aiShortfall != null) {
                     Text(
                         when {
@@ -1763,7 +1764,7 @@ private fun LumenDraftDialog(
                                 "The offline model didn't land a card — ${draft.aiShortfall}. " +
                                     "This draft is straight from the passage; edit it, or ask again."
                             else ->
-                                "The note is thin — ${draft.aiShortfall}. Edit it, or ask again."
+                                "Check this one — ${draft.aiShortfall}. Edit it, or ask again."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -27,6 +27,14 @@ interface LumenCardDao {
     @Query("SELECT * FROM lumen_cards WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<LumenCardEntity>
 
+    /**
+     * Fronts of the cards most recently captured from a book, newest first.
+     * Capture reads these to notice when it has just written the reader a card
+     * they already have.
+     */
+    @Query("SELECT front FROM lumen_cards WHERE bookId = :bookId ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun recentFronts(bookId: String, limit: Int): List<String>
+
     /** Highest existing index number in a box, for assigning the next address. */
     @Query("SELECT indexNumber FROM lumen_cards WHERE box = :box")
     suspend fun indexNumbersInBox(box: Int): List<String>

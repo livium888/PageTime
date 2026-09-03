@@ -110,6 +110,14 @@ class LumenRepository(
         val clean = passage.trim()
         require(clean.isNotBlank()) { "Nothing to capture — move to a spot with text first" }
 
+        // The cards this book already has. The capture window is wider than a
+        // phone page, so two captures a page apart carry passages that overlap
+        // heavily and the model names the same idea twice; without these the
+        // duplicate is filed as if it were a new note.
+        val alreadyFiled =
+            runCatching { dao.recentFronts(book.id, RECENT_FRONTS_WINDOW) }
+                .getOrDefault(emptyList())
+
         val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
         val source =
             LumenDraftRouter.sourceFor(
@@ -144,6 +152,7 @@ class LumenRepository(
                         debugLog = debugLog,
                         template = settingsRepository?.lumenPromptTemplate()
                             ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
+                        alreadyFiled = alreadyFiled,
                         onPromptBuilt = { prompt ->
                             CaptureDiagnostic.recordGenerating(
                                 context = captureDiagContext(),
@@ -165,6 +174,7 @@ class LumenRepository(
                     usedAi = outcome.card != null,
                     rejection = outcome.rejection?.name,
                     backProblem = outcome.backProblem?.name,
+                    repeated = outcome.repeatOf != null,
                 )
                 val card = outcome.card
                 if (card != null) {
@@ -173,7 +183,7 @@ class LumenRepository(
                         back = card.second,
                         quote = clean,
                         usedAi = true,
-                        aiShortfall = outcome.backProblem?.explanation,
+                        aiShortfall = shortfall(outcome.backProblem, outcome.repeatOf),
                     )
                 }
                 CaptureDiagnostic.recordFailure(
@@ -188,11 +198,14 @@ class LumenRepository(
                     val template =
                         settingsRepository?.lumenPromptTemplate()
                             ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE
-                    val call: suspend () -> String = {
-                        geminiClient.draftLumenCard(clean, book.title, template)
-                    }
-                    val result =
-                        if (aiUsageRepository != null) {
+                    // Both asks go through here, so the re-ask below is counted
+                    // against the reader's usage like any other call rather than
+                    // being spent invisibly.
+                    suspend fun ask(prompt: String): String {
+                        val call: suspend () -> String = {
+                            geminiClient.draftLumenCardFromPrompt(prompt)
+                        }
+                        return if (aiUsageRepository != null) {
                             aiUsageRepository.track(
                                 bookId = book.id,
                                 operation = AiUsageRepository.OPERATION_LUMEN,
@@ -204,12 +217,37 @@ class LumenRepository(
                         } else {
                             call()
                         }
+                    }
+                    val result = ask(LumenAiPrompts.cardDraft(clean, book.title, template))
                     val parsed =
                         LumenCapture.parseDraft(result)?.takeIf { (front, _) ->
                             !LumenCapture.isPassageEcho(front, clean)
                         }
                     if (parsed != null) {
-                        return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
+                        // Same overlap, same duplicate: ask once for a different
+                        // idea, and keep the first card if that does not land.
+                        val repeat = LumenCapture.repeatOf(parsed.first, alreadyFiled)
+                        if (repeat == null) {
+                            return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
+                        }
+                        val second =
+                            runCatching {
+                                LumenCapture.parseDraft(
+                                    ask(LumenAiPrompts.cardDraftDifferent(clean, book.title, repeat))
+                                )
+                            }.getOrNull()
+                        val fresh =
+                            second?.takeIf { (front, _) ->
+                                !LumenCapture.isPassageEcho(front, clean) &&
+                                    LumenCapture.repeatOf(front, alreadyFiled) == null
+                            }
+                        return LumenDraft(
+                            front = fresh?.first ?: parsed.first,
+                            back = fresh?.second ?: parsed.second,
+                            quote = clean,
+                            usedAi = true,
+                            aiShortfall = if (fresh == null) shortfall(null, repeat) else null,
+                        )
                     }
                 } catch (_: Exception) {
                     // Fall through to the on-device draft. Capture must never fail.
@@ -218,6 +256,23 @@ class LumenRepository(
             LumenDraftSource.FALLBACK -> Unit
         }
         return fallbackDraft(clean)
+    }
+
+    /**
+     * What to tell the reader about a card that was used anyway. A repeat is
+     * named with the card it repeats, because the reader's next move — edit it,
+     * discard it, or read on — depends on which note they already have.
+     */
+    private fun shortfall(
+        backProblem: LumenCapture.BackProblem?,
+        repeatOf: String?,
+    ): String? {
+        val parts =
+            listOfNotNull(
+                repeatOf?.let { "it says the same thing as your card \"$it\"" },
+                backProblem?.explanation,
+            )
+        return parts.joinToString(", and ").ifBlank { null }
     }
 
     private fun fallbackDraft(clean: String, aiShortfall: String? = null): LumenDraft {
@@ -841,6 +896,43 @@ object LumenCapture {
     /** Shorter than this and the note is a fragment, not an explanation. */
     private const val MIN_BACK_CHARS = 30
 
+    /**
+     * How much of two fronts' wording has to coincide before they are the same
+     * idea rather than two ideas about one subject. A front is at most eight
+     * words, so a genuinely different claim shares almost none of them.
+     */
+    private const val REPEAT_OVERLAP = 0.7
+
+    /** Words that carry the claim; the short connectives do not distinguish ideas. */
+    private fun claimWords(front: String): Set<String> =
+        front.lowercase()
+            .split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter { it.length >= 4 }
+            .toSet()
+
+    /**
+     * The card already in the box that [front] repeats, or null when it is a
+     * new idea.
+     *
+     * The capture window is far wider than a phone page, so two captures a page
+     * apart are handed passages that overlap heavily and the model reasonably
+     * names the same idea twice. That is not a card — the reader already has
+     * it — so it is worth noticing rather than filing a duplicate silently.
+     */
+    fun repeatOf(front: String, existing: List<String>): String? {
+        val candidate = normalizeWhitespace(front).lowercase().trimEnd('.', '!', '?')
+        if (candidate.isBlank()) return null
+        val words = claimWords(front)
+        return existing.firstOrNull { other ->
+            val otherNormalized = normalizeWhitespace(other).lowercase().trimEnd('.', '!', '?')
+            if (otherNormalized == candidate) return@firstOrNull true
+            val otherWords = claimWords(other)
+            val smaller = minOf(words.size, otherWords.size)
+            if (smaller < 2) return@firstOrNull false
+            words.intersect(otherWords).size.toDouble() / smaller >= REPEAT_OVERLAP
+        }
+    }
+
 
     private fun cleanField(value: String, maxLength: Int): String {
         val cleaned =
@@ -880,6 +972,11 @@ object LumenLocalDraft {
          * the retry had its chance. Null when the note holds up.
          */
         val backProblem: LumenCapture.BackProblem? = null,
+        /**
+         * The card already in the box that this one repeats, after the retry
+         * had its chance at a different idea. Null when the idea is new.
+         */
+        val repeatOf: String? = null,
     )
 
     private data class Attempt(val card: Pair<String, String>?, val rejection: Rejection?)
@@ -891,6 +988,7 @@ object LumenLocalDraft {
         debugLog: (String) -> Unit = {},
         onPromptBuilt: (String) -> Unit = {},
         template: String = LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
+        alreadyFiled: List<String> = emptyList(),
     ): Outcome {
         suspend fun attempt(prompt: String): Attempt {
             // Reported from here so the diagnostic records the prompt actually
@@ -916,8 +1014,8 @@ object LumenLocalDraft {
         }
 
         val first = attempt(LumenAiPrompts.cardDraft(passage, bookTitle, template))
-        val firstProblem = first.card?.let { LumenCapture.backProblem(it.first, it.second) }
-        if (first.card != null && firstProblem == null) {
+        val firstFlaw = first.card?.let { flawIn(it, alreadyFiled) }
+        if (first.card != null && firstFlaw == null) {
             return Outcome(first.card, null, attempts = 1)
         }
 
@@ -927,26 +1025,61 @@ object LumenLocalDraft {
         // and a small model's first answer is often a dud worth re-asking.
         // Deliberately the built-in prompt, not the reader's: when a tailored
         // template produces nothing usable, the retry is the way back to a card.
-        if (firstProblem != null) {
-            debugLog("re-asking: ${firstProblem.name} in the back of \"${first.card?.first}\"")
+        // A repeated idea is the exception that needs its own ask: the strict
+        // prompt would name the same idea again, so the retry says which one to
+        // avoid.
+        if (firstFlaw != null) {
+            debugLog(
+                "re-asking (${firstFlaw.reason}) after \"${first.card?.first}\""
+            )
         }
-        val second = attempt(LumenAiPrompts.cardDraftStrict(passage, bookTitle))
-        val secondProblem = second.card?.let { LumenCapture.backProblem(it.first, it.second) }
+        val second =
+            attempt(
+                firstFlaw?.repeatOf
+                    ?.let { LumenAiPrompts.cardDraftDifferent(passage, bookTitle, it) }
+                    ?: LumenAiPrompts.cardDraftStrict(passage, bookTitle)
+            )
+        val secondFlaw = second.card?.let { flawIn(it, alreadyFiled) }
 
         // The retry may only improve things. A first card with a thin back is
         // still a card, and handing back the plain-passage draft instead — or a
         // second answer that is no better — would make re-asking a gamble.
         val keepSecond =
-            second.card != null && (first.card == null || secondProblem == null)
+            second.card != null && (first.card == null || secondFlaw == null)
         val card = if (keepSecond) second.card else first.card
+        val flaw = if (keepSecond) secondFlaw else firstFlaw
         return Outcome(
             card = card,
             rejection = if (card == null) second.rejection ?: first.rejection else null,
             attempts = 2,
-            backProblem = if (keepSecond) secondProblem else firstProblem,
+            backProblem = flaw?.backProblem,
+            repeatOf = flaw?.repeatOf,
         )
     }
+
+    /** Everything wrong with a parsed card at once, or null when nothing is. */
+    private data class Flaw(
+        val backProblem: LumenCapture.BackProblem?,
+        val repeatOf: String?,
+    ) {
+        /** Short name for the capture log. */
+        val reason: String
+            get() = backProblem?.name ?: "REPEAT"
+    }
+
+    private fun flawIn(card: Pair<String, String>, alreadyFiled: List<String>): Flaw? {
+        val back = LumenCapture.backProblem(card.first, card.second)
+        val repeat = LumenCapture.repeatOf(card.first, alreadyFiled)
+        return if (back == null && repeat == null) null else Flaw(back, repeat)
+    }
 }
+
+/**
+ * How many of a book's most recent cards a capture is checked against. Far
+ * enough back to catch the same idea returning after a couple of pages, short
+ * enough that an idea genuinely revisited much later still earns a card.
+ */
+private const val RECENT_FRONTS_WINDOW = 12
 
 /**
  * Luhmann-style addressing. A card's address is stable for its lifetime. New

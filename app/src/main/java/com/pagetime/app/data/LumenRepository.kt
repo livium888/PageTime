@@ -23,10 +23,12 @@ data class LumenDraft(
     val quote: String,
     val usedAi: Boolean,
     /**
-     * Why the AI draft was not used, when one was attempted and rejected.
-     * Null when AI was never tried, or when its card is the one shown.
+     * What the AI could not deliver: either why its draft was rejected outright
+     * and this is the plain-passage fallback, or what is still thin about the
+     * AI card being shown. Null when the card holds up, or when AI was never
+     * tried. Either way it is something to tell the reader rather than hide.
      */
-    val aiRejection: String? = null
+    val aiShortfall: String? = null
 )
 
 /** One dated entry in a card's append-only evolution history. */
@@ -162,10 +164,17 @@ class LumenRepository(
                     attempts = outcome.attempts,
                     usedAi = outcome.card != null,
                     rejection = outcome.rejection?.name,
+                    backProblem = outcome.backProblem?.name,
                 )
                 val card = outcome.card
                 if (card != null) {
-                    return LumenDraft(card.first, card.second, clean, usedAi = true)
+                    return LumenDraft(
+                        front = card.first,
+                        back = card.second,
+                        quote = clean,
+                        usedAi = true,
+                        aiShortfall = outcome.backProblem?.explanation,
+                    )
                 }
                 CaptureDiagnostic.recordFailure(
                     context = captureDiagContext(),
@@ -211,9 +220,9 @@ class LumenRepository(
         return fallbackDraft(clean)
     }
 
-    private fun fallbackDraft(clean: String, aiRejection: String? = null): LumenDraft {
+    private fun fallbackDraft(clean: String, aiShortfall: String? = null): LumenDraft {
         val (front, back) = LumenCapture.fallbackDraft(clean)
-        return LumenDraft(front, back, clean, usedAi = false, aiRejection = aiRejection)
+        return LumenDraft(front, back, clean, usedAi = false, aiShortfall = aiShortfall)
     }
 
     /**
@@ -787,6 +796,47 @@ object LumenCapture {
 
     private fun cleanFront(value: String): String = trimFront(cleanField(value, maxLength = 120))
 
+    /**
+     * Why a back is too thin to keep as a permanent note, or null when it holds
+     * up. The front has been enforced since it had a word cap and an echo
+     * check; the back had neither, so anything the model returned — including
+     * nothing — was accepted as a finished card.
+     */
+    enum class BackProblem(val explanation: String) {
+        MISSING("the model left the note itself empty"),
+        FRAGMENT("the model's note was cut off"),
+        RESTATES_FRONT("the note only repeated its own title"),
+        SINGLE_SENTENCE("the note stopped after one sentence"),
+    }
+
+    /**
+     * Sentences a reader would count: a full stop that ends the text, or one
+     * followed by the start of another sentence. Deliberately generous — an
+     * abbreviation like "Dr. Smith" counts as a break here, and over-counting
+     * only means one fewer retry, where under-counting would re-ask the model
+     * about backs that were already fine.
+     */
+    fun sentenceCount(text: String): Int =
+        Regex("[.!?](\\s+[\"'(\\p{Lu}]|\\s*\\$)").findAll(text.trim()).count()
+
+    fun backProblem(front: String, back: String): BackProblem? {
+        val trimmed = back.trim()
+        val normalizedBack = normalizeWhitespace(trimmed).lowercase().trimEnd('.', '!', '?')
+        val normalizedFront = normalizeWhitespace(front).lowercase().trimEnd('.', '!', '?')
+        return when {
+            trimmed.isBlank() -> BackProblem.MISSING
+            trimmed.length < MIN_BACK_CHARS -> BackProblem.FRAGMENT
+            trimmed.last() !in charArrayOf('.', '!', '?', '"', '\'', ')') -> BackProblem.FRAGMENT
+            normalizedBack == normalizedFront -> BackProblem.RESTATES_FRONT
+            sentenceCount(trimmed) < 2 -> BackProblem.SINGLE_SENTENCE
+            else -> null
+        }
+    }
+
+    /** Shorter than this and the note is a fragment, not an explanation. */
+    private const val MIN_BACK_CHARS = 30
+
+
     private fun cleanField(value: String, maxLength: Int): String {
         val cleaned =
             value.trim()
@@ -820,6 +870,11 @@ object LumenLocalDraft {
         val card: Pair<String, String>?,
         val rejection: Rejection?,
         val attempts: Int,
+        /**
+         * What was still thin about the back of the card being returned, after
+         * the retry had its chance. Null when the note holds up.
+         */
+        val backProblem: LumenCapture.BackProblem? = null,
     )
 
     private data class Attempt(val card: Pair<String, String>?, val rejection: Rejection?)
@@ -856,7 +911,10 @@ object LumenLocalDraft {
         }
 
         val first = attempt(LumenAiPrompts.cardDraft(passage, bookTitle, template))
-        if (first.card != null) return Outcome(first.card, null, attempts = 1)
+        val firstProblem = first.card?.let { LumenCapture.backProblem(it.first, it.second) }
+        if (first.card != null && firstProblem == null) {
+            return Outcome(first.card, null, attempts = 1)
+        }
 
         // One stricter retry. This was disabled while every request reloaded the
         // 521 MB model, where a second load could exhaust the phone. The model
@@ -864,11 +922,23 @@ object LumenLocalDraft {
         // and a small model's first answer is often a dud worth re-asking.
         // Deliberately the built-in prompt, not the reader's: when a tailored
         // template produces nothing usable, the retry is the way back to a card.
+        if (firstProblem != null) {
+            debugLog("re-asking: ${firstProblem.name} in the back of \"${first.card?.first}\"")
+        }
         val second = attempt(LumenAiPrompts.cardDraftStrict(passage, bookTitle))
+        val secondProblem = second.card?.let { LumenCapture.backProblem(it.first, it.second) }
+
+        // The retry may only improve things. A first card with a thin back is
+        // still a card, and handing back the plain-passage draft instead — or a
+        // second answer that is no better — would make re-asking a gamble.
+        val keepSecond =
+            second.card != null && (first.card == null || secondProblem == null)
+        val card = if (keepSecond) second.card else first.card
         return Outcome(
-            card = second.card,
-            rejection = if (second.card == null) second.rejection ?: first.rejection else null,
+            card = card,
+            rejection = if (card == null) second.rejection ?: first.rejection else null,
             attempts = 2,
+            backProblem = if (keepSecond) secondProblem else firstProblem,
         )
     }
 }

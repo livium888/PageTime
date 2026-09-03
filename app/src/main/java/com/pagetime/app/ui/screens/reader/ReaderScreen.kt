@@ -1751,18 +1751,24 @@ private fun LumenDraftDialog(
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (!draft.usedAi) {
+                // Three cases worth saying out loud: no AI at all, AI that
+                // produced nothing usable, and an AI card whose note is thin
+                // even after the retry. Only the first has nothing to re-ask.
+                if (!draft.usedAi || draft.aiShortfall != null) {
                     Text(
-                        if (draft.aiRejection != null) {
-                            "The offline model didn't land a card — ${draft.aiRejection}. " +
-                                "This draft is straight from the passage; edit it, or ask again."
-                        } else {
-                            "Drafted on-device (no AI key or offline) — edit freely."
+                        when {
+                            draft.aiShortfall == null ->
+                                "Drafted on-device (no AI key or offline) — edit freely."
+                            !draft.usedAi ->
+                                "The offline model didn't land a card — ${draft.aiShortfall}. " +
+                                    "This draft is straight from the passage; edit it, or ask again."
+                            else ->
+                                "The note is thin — ${draft.aiShortfall}. Edit it, or ask again."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (draft.aiRejection != null) {
+                    if (draft.aiShortfall != null) {
                         TextButton(
                             onClick = onRetry,
                             enabled = !redrafting,

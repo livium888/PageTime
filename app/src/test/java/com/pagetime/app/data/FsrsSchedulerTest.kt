@@ -19,7 +19,7 @@ class FsrsSchedulerTest {
         val newCard = Card.builder().due(now).build()
         assertEquals(now, newCard.due)
 
-        val reviewed = scheduler.reviewCard(newCard, LearningRating.GOOD.toFsrs(), now).card()
+        val reviewed = scheduler.reviewCard(newCard, LumenRating.GOOD.toFsrs(), now).card()
         assertTrue(reviewed.due.isAfter(now))
         assertTrue(Duration.between(now, reviewed.due).toSeconds() > 0)
     }
@@ -28,7 +28,7 @@ class FsrsSchedulerTest {
     fun againDoesNotPretendTheReaderRemembered() {
         val now = Instant.parse("2026-01-01T12:00:00Z")
         val newCard = Card.builder().due(now).build()
-        val reviewed = scheduler.reviewCard(newCard, LearningRating.AGAIN.toFsrs(), now).card()
+        val reviewed = scheduler.reviewCard(newCard, LumenRating.AGAIN.toFsrs(), now).card()
 
         assertTrue(reviewed.due.isAfter(now))
         assertTrue(Duration.between(now, reviewed.due).toMinutes() <= 10)

@@ -626,18 +626,35 @@ object LumenCapture {
      */
     const val MIN_SELECTION_PASSAGE_CHARS = 400
 
-    /** Paragraphs a capture ends with: the one pointed at, and two before it. */
-    const val MAX_CAPTURE_PARAGRAPHS = 3
+    /**
+     * How much text a passage tries to reach, in characters.
+     *
+     * Paragraph COUNT was the first rule and it was the wrong unit. A paragraph
+     * is anything from a line of dialogue to nine hundred words, so three of
+     * them is either nothing to think about or more than the model can hold —
+     * and which one depends entirely on the book, which is not something a
+     * number of paragraphs can know.
+     *
+     * Substance is the thing being measured, so measure it. Paragraphs stay the
+     * unit that gets ADDED, because cutting anywhere else loses the real
+     * beginning and end that made this worth doing; characters decide how many.
+     * In ordinary prose this lands on two or three without being told to.
+     */
+    const val PASSAGE_TARGET_CHARS = 1_200
 
     /**
-     * Never more than this, however short the paragraphs are. Dialogue can run
-     * to a dozen one-line exchanges, and a passage that swallows all of them is
-     * back to being a window with extra steps.
+     * Never grow past this by ADDING a paragraph. One paragraph that is already
+     * longer stands alone rather than being cut, since half a paragraph has
+     * exactly the ragged edge this was meant to remove.
      */
-    const val HARD_MAX_CAPTURE_PARAGRAPHS = 6
+    const val PASSAGE_CEILING_CHARS = 2_400
 
-    /** Below this a passage has no idea in it worth naming. */
-    const val MIN_PASSAGE_CHARS = 320
+    /**
+     * A rail, not the rule. Only bites on text made of one-line paragraphs —
+     * dialogue, verse, a list — where the target would otherwise swallow a page
+     * of exchanges and be a character window again with extra steps.
+     */
+    const val MAX_CAPTURE_PARAGRAPHS = 8
 
     /**
      * The passage around [offset], trimmed outward to whole-sentence boundaries
@@ -661,17 +678,17 @@ object LumenCapture {
      * real beginning and a real end, and two captures at different paragraphs
      * share nothing.
      *
-     * [maxParagraphs] is the ceiling. The floor is [minChars]: three lines of
-     * dialogue are three paragraphs and still too thin to hold an idea, so very
-     * short ones keep pulling until there is something to think about, never
-     * past [hardMaxParagraphs].
+     * How far back it goes is decided by [targetChars] and not by a count of
+     * paragraphs, because a paragraph is anything from a line of dialogue to
+     * nine hundred words. Paragraphs are what gets added; characters are what
+     * says when to stop. [maxParagraphs] only bites on one-line text.
      */
     fun paragraphPassage(
         fullText: String,
         offset: Int?,
+        targetChars: Int = PASSAGE_TARGET_CHARS,
+        ceilingChars: Int = PASSAGE_CEILING_CHARS,
         maxParagraphs: Int = MAX_CAPTURE_PARAGRAPHS,
-        minChars: Int = MIN_PASSAGE_CHARS,
-        hardMaxParagraphs: Int = HARD_MAX_CAPTURE_PARAGRAPHS,
     ): String {
         if (fullText.isBlank()) return ""
         val bounds = paragraphBounds(fullText)
@@ -683,15 +700,21 @@ object LumenCapture {
         // belongs to the one that just ended, which is the one they read.
         val anchorIndex = bounds.indexOfLast { it.first <= at }.coerceAtLeast(0)
 
+        val end = bounds[anchorIndex].second
         var first = anchorIndex
         var taken = 1
-        var chars = bounds[anchorIndex].let { it.second - it.first }
-        while (first > 0 && taken < hardMaxParagraphs && (taken < maxParagraphs || chars < minChars)) {
+        // The anchor paragraph is always kept whole, however long it is: it is
+        // the one the reader pointed at, and trimming it would put back the
+        // ragged edge this exists to remove.
+        while (first > 0 && taken < maxParagraphs) {
+            if (end - bounds[first].first >= targetChars) break
+            // Measured across the whole span, separators included, so what is
+            // counted is what the model will actually be handed.
+            if (end - bounds[first - 1].first > ceilingChars) break
             first--
             taken++
-            chars += bounds[first].let { it.second - it.first }
         }
-        return fullText.substring(bounds[first].first, bounds[anchorIndex].second).trim()
+        return fullText.substring(bounds[first].first, end).trim()
     }
 
     /** Start and end offsets of each non-empty paragraph, in order. */

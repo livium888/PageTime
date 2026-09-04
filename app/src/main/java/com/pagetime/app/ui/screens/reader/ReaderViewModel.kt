@@ -22,9 +22,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import com.pagetime.app.data.LumenDraftSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -138,8 +140,21 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     @Volatile
     private var locatorRestoreComplete = false
 
+    /**
+     * Whether a cloud rewrite can be offered at all. Read once, off the main
+     * thread, because the key lives in DataStore.
+     */
+    private val _geminiAvailable = MutableStateFlow(false)
+    val geminiAvailable: StateFlow<Boolean> = _geminiAvailable.asStateFlow()
+
     init {
         loadBook()
+        // Off the main thread: the key lives in DataStore, and the dialog only
+        // needs the answer by the time a card exists to rewrite.
+        viewModelScope.launch {
+            _geminiAvailable.value =
+                runCatching { container.geminiLearningClient.hasKey() }.getOrDefault(false)
+        }
     }
 
     fun retry() {
@@ -602,6 +617,44 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * is already held in the pending context, so this re-runs inference only —
      * no re-extraction, and the reader never loses their place.
      */
+    /**
+     * Re-asks the CLOUD model for this same passage, whatever the reader's
+     * configured provider is.
+     *
+     * The on-device model answers every capture instantly and for nothing, and
+     * is honestly limited: it paraphrases a passage rather than stating the
+     * idea behind it, and no amount of prompting or decoding changed that. So
+     * it drafts everything, and the passages worth more get one tap.
+     *
+     * Deliberately not automatic. A cloud call costs money and sends the
+     * passage off the device, and doing that for every capture would take both
+     * decisions away from the reader. One tap keeps the cost where the value
+     * is — on the passage they actually cared about.
+     */
+    fun rewriteLumenCardWithGemini() {
+        val b = _book.value ?: return
+        val pending = pendingLumenContext ?: return
+        if (_lumenCapturing.value) return
+        _lumenCapturing.value = true
+        viewModelScope.launch {
+            try {
+                val draft = lumenRepo.draft(
+                    b,
+                    pending.draft.quote,
+                    forceSource = LumenDraftSource.GEMINI,
+                )
+                pendingLumenContext = pending.copy(draft = draft)
+                _lumenDraft.value = draft
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _error.value = error.message ?: "Couldn't rewrite this card"
+            } finally {
+                _lumenCapturing.value = false
+            }
+        }
+    }
+
     fun retryLumenCard() {
         val b = _book.value ?: return
         val pending = pendingLumenContext ?: return

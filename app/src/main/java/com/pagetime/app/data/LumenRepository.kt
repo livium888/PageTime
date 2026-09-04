@@ -106,6 +106,17 @@ class LumenRepository(
     suspend fun draft(
         book: BookEntity,
         passage: String,
+        /**
+         * Overrides the reader's configured provider for this one capture.
+         *
+         * The point of the pairing: the on-device model answers every capture
+         * instantly and for nothing, and the cloud is spent only on the
+         * passages where its answer was not good enough. Neither model is
+         * asked to be what it is not — the small one is fast and free, the
+         * large one can actually state an idea, and the reader decides which
+         * passage deserves which without typing a word.
+         */
+        forceSource: LumenDraftSource? = null,
     ): LumenDraft {
         val clean = passage.trim()
         require(clean.isNotBlank()) { "Nothing to capture — move to a spot with text first" }
@@ -120,7 +131,7 @@ class LumenRepository(
 
         val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
         val source =
-            LumenDraftRouter.sourceFor(
+            forceSource ?: LumenDraftRouter.sourceFor(
                 provider = provider,
                 geminiConfigured = geminiClient.hasKey(),
                 localModelAvailable = localLlmProvider?.isAvailable == true,

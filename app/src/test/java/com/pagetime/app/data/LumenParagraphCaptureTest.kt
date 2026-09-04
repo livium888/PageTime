@@ -188,6 +188,22 @@ class LumenParagraphCaptureTest {
     }
 
     @Test
+    fun `an unsplittable chapter is cut on a sentence, not mid-word`() {
+        // A real capture ended "heard only by Tano", halfway through a name.
+        // Without paragraphs the anchor is an estimate of where the reader got
+        // to, so cutting exactly at it lands mid-word as often as not.
+        val body = "The quick brown fox jumps over the lazy dog. ".repeat(200).trim()
+        val passage = LumenCapture.paragraphPassage(body, 5_000)
+
+        assertTrue("ends on a sentence, got \"${passage.takeLast(30)}\"", passage.endsWith("."))
+        assertTrue("starts on a sentence, got \"${passage.take(30)}\"", passage.startsWith("The"))
+        assertTrue(
+            "stays within the ceiling, got ${passage.length}",
+            passage.length <= LumenCapture.PASSAGE_CEILING_CHARS
+        )
+    }
+
+    @Test
     fun `a short unsplittable chapter is still returned whole`() {
         // The fallback is for chapters too big to hand over, not for every
         // chapter without paragraph markup.

@@ -106,6 +106,7 @@ class AppContainer(context: Context) {
             directory = File(appContext.filesDir, "lumen-model"),
             downloader = OkHttpLumenModelDownloader(),
             remoteInfoFetcher = HfModelRemoteInfoFetcher::fetch,
+            urlProvider = { settingsRepository.lumenModelUrl() ?: LumenModelStore.MODEL_URL },
         )
     val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
 

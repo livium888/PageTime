@@ -9,6 +9,7 @@ import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.data.LumenModelStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -113,6 +114,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 _lumenPrompt.value = stored
                 _lumenPromptIsCustom.value = true
             }
+            container.settingsRepository.lumenModelUrl()?.let { _lumenModelUrl.value = it }
         }
     }
 
@@ -146,6 +148,24 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun downloadOfflineModel() {
         viewModelScope.launch { container.lumenModelStore.download() }
+    }
+
+    /** The model URL in force, built-in when the reader has not set one. */
+    private val _lumenModelUrl = MutableStateFlow(LumenModelStore.MODEL_URL)
+    val lumenModelUrl: StateFlow<String> = _lumenModelUrl.asStateFlow()
+
+    /**
+     * Points the downloader at a different model, or back at the built-in one
+     * when [url] is blank. The installed file is deleted first: the store
+     * decides whether it is current by comparing sizes, and leaving a model
+     * of the old size in place would let a switch look like it did nothing.
+     */
+    fun setLumenModelUrl(url: String?) {
+        viewModelScope.launch {
+            container.settingsRepository.setLumenModelUrl(url)
+            _lumenModelUrl.value = url?.takeIf { it.isNotBlank() } ?: LumenModelStore.MODEL_URL
+            container.lumenModelStore.deleteModel()
+        }
     }
 
     fun checkForModelUpdate() {

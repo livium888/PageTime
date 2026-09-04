@@ -113,6 +113,7 @@ class SettingsRepository(private val context: Context) {
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
+        val LUMEN_MODEL_URL = stringPreferencesKey("lumen_model_url")
 
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
@@ -340,6 +341,23 @@ class SettingsRepository(private val context: Context) {
      */
     suspend fun lumenPromptTemplate(): String? =
         context.dataStore.data.first()[Keys.LUMEN_PROMPT]?.takeIf { it.isNotBlank() }
+
+    /**
+     * Where the offline model is downloaded from, or null for the built-in one.
+     *
+     * Settable because the one fact that cannot be checked from a build server
+     * is whether a given URL serves the file it claims to, and pinning a
+     * guess into the app would make every correction cost a release.
+     */
+    suspend fun lumenModelUrl(): String? =
+        context.dataStore.data.first()[Keys.LUMEN_MODEL_URL]?.takeIf { it.isNotBlank() }
+
+    suspend fun setLumenModelUrl(value: String?) {
+        context.dataStore.edit { prefs ->
+            if (value.isNullOrBlank()) prefs.remove(Keys.LUMEN_MODEL_URL)
+            else prefs[Keys.LUMEN_MODEL_URL] = value.trim()
+        }
+    }
 
     suspend fun setLumenPromptTemplate(value: String?) {
         context.dataStore.edit { prefs ->

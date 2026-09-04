@@ -25,7 +25,6 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -131,27 +130,6 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     singleLine = true,
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
                 )
-                OutlinedButton(
-                    onClick = {
-                        if (source is DiscoverSource.Videos) viewModel.searchYouTube()
-                        else viewModel.searchAllSources()
-                    },
-                    enabled = query.isNotBlank() && !loading && !searchingAll,
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    if (searchingAll) {
-                        androidx.compose.material3.CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Text("Search")
-                    }
-                }
             }
             // Source selector
             Row(
@@ -176,7 +154,19 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
 
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        // Asking five catalogues takes longer than asking one,
+                        // and a bare spinner for that long reads as a hang.
+                        if (searchingAll) {
+                            Spacer(Modifier.height(14.dp))
+                            Text(
+                                "Asking every source\u2026",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 books.isEmpty() && youtubeResults.isEmpty() && categoryShelves.isEmpty() &&
@@ -218,6 +208,11 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                         items(books, key = { it.id }) { book ->
                             BookRow(
                                 book = book,
+                                // Read from the registry: a hardcoded when here
+                                // sent every unlisted source to an else-branch
+                                // that said "Project Gutenberg", so Wikisource
+                                // books were attributed to the wrong library.
+                                sourceLabel = viewModel.sourceLine(book),
                                 downloaded = book.id.toString() in downloadedIds,
                                 downloading = book.id.toString() in downloading,
                                 onDownload = { viewModel.download(book) }
@@ -258,6 +253,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
 @Composable
 private fun BookRow(
     book: GutendexBook,
+    sourceLabel: String,
     downloaded: Boolean,
     downloading: Boolean,
     onDownload: () -> Unit
@@ -309,12 +305,7 @@ private fun BookRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    when (book.source) {
-                        "standardebooks" -> "Source · Standard Ebooks"
-                        "openlibrary" -> "Source · Open Library"
-                        "internetarchive" -> "Source · Internet Archive"
-                        else -> "Source · Project Gutenberg · ${book.downloadCount} downloads"
-                    },
+                    sourceLabel,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

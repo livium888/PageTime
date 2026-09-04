@@ -469,16 +469,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     passage = selection
                 } else if (b.format == "epub") {
                     chapterIndex = currentChapterIndex() ?: 0
-                    // Centered on the selection when there is one, otherwise on
-                    // the current locator so the passage follows the page the
-                    // user is actually reading (two pages → two passages).
-                    // Falls back to the chapter tail if the window cannot be read.
+                    // The passage ends where the reader pointed and runs back
+                    // whole paragraphs from there. Selected text is the exact
+                    // anchor when there is any; the locator is the estimate
+                    // when there is not.
                     val anchor = selectionLocator(selectionLocatorJson) ?: latestLocator
                     val centered = container.learningContextExtractor.captureEpub(
                         book = b,
                         chapterIndex = chapterIndex,
                         currentLocatorJson = anchor?.toJSON()?.toString(),
-                        progressionOverride = anchor?.locations?.progression?.toFloat()
+                        progressionOverride = anchor?.locations?.progression?.toFloat(),
+                        anchorText = selection.takeIf { it.isNotBlank() }
                     )
                     passage = centered.ifBlank {
                         // No key/href parse failure: reuse the chapter-tail context.
@@ -493,7 +494,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     }
                 } else {
                     chapterIndex = null
-                    passage = LumenCapture.captureWindow(
+                    // Same rule as an EPUB: end where the reader is and run
+                    // back whole paragraphs. A reformatted transcript has
+                    // paragraphs too, and one behaviour for both beats two.
+                    passage = LumenCapture.paragraphPassage(
                         _textContent.value.orEmpty(),
                         latestTxtOffset()
                     )

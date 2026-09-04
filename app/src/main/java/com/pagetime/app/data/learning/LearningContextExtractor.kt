@@ -121,9 +121,9 @@ class LearningContextExtractor(
         chapterIndex: Int,
         currentLocatorJson: String?,
         progressionOverride: Float? = null,
-        radiusChars: Int = LumenCapture.DEFAULT_RADIUS_CHARS
+        anchorText: String? = null
     ): String = withContext(Dispatchers.IO) {
-        captureEpubBlocking(book, chapterIndex, currentLocatorJson, progressionOverride, radiusChars)
+        captureEpubBlocking(book, chapterIndex, currentLocatorJson, progressionOverride, anchorText)
     }
 
     /**
@@ -135,7 +135,7 @@ class LearningContextExtractor(
         chapterIndex: Int,
         currentLocatorJson: String?,
         progressionOverride: Float?,
-        radiusChars: Int
+        anchorText: String?
     ): String {
         val extracted = File(context.cacheDir, "epub/${book.id}")
         val parsed = try {
@@ -150,31 +150,73 @@ class LearningContextExtractor(
             chapterRawText(book, chapter.filePath, chapter.title)
         }.getOrElse { return "" }
         if (raw.isBlank()) return ""
-        // Center on the current position. Prefer the locator JSON (it carries the
-        // resource href so the fraction is only trusted for THIS chapter), then
-        // the caller's direct progression (some locators serialize without it),
-        // then the end of chapter as a last resort.
-        val fraction = currentLocatorJson
-            ?.let { locatorFraction(it, chapter.filePath) }
-            ?: progressionOverride
-            ?: 1f
-        val center = (raw.length * fraction.coerceIn(0f, 1f)).toInt().coerceIn(0, raw.length)
-        return LumenCapture.captureWindow(raw, center, radiusChars)
+        // Where the passage ENDS. Text the reader pointed at is exact and is
+        // preferred: found in the chapter, it names the paragraph they just
+        // read. Everything else is an estimate of where they are — the
+        // locator's fraction is measured against Readium's own rendering, not
+        // against this text, so it lands near the right paragraph rather than
+        // on it.
+        val anchor = anchorText?.trim()?.takeIf { it.length >= MIN_ANCHOR_CHARS }
+            ?.let { needle -> raw.indexOf(needle).takeIf { it >= 0 }?.plus(needle.length) }
+            ?: run {
+                val fraction = currentLocatorJson
+                    ?.let { locatorFraction(it, chapter.filePath) }
+                    ?: progressionOverride
+                    ?: 1f
+                (raw.length * fraction.coerceIn(0f, 1f)).toInt().coerceIn(0, raw.length)
+            }
+        return LumenCapture.paragraphPassage(raw, anchor)
     }
 
-    /** Full plain text of a chapter: "<title>\n<body>". */
+    /**
+     * A chapter as paragraphs, blank-line separated, with the title first.
+     *
+     * This used to be Jsoup's `.text()`, which flattens a whole document into
+     * one whitespace-normalised string. Every paragraph boundary in the book
+     * was destroyed on the line before the only code that could have used it —
+     * which is why a capture could only measure in characters and reached back
+     * an arbitrary distance into whatever happened to be there.
+     *
+     * The structure was never missing. An EPUB chapter is XHTML with real <p>
+     * elements and Jsoup has already built the DOM; the text just had to be
+     * read out of it a block at a time.
+     *
+     * Only leaf blocks are taken. A <blockquote> wrapping a <p> would otherwise
+     * contribute its text twice — once as itself and once as its child.
+     */
     private fun chapterRawText(book: BookEntity, filePath: String, title: String): String =
         ZipFile(book.localPath).use { zip ->
             val entry = zip.getEntry(filePath) ?: zip.getEntry(filePath.substringBefore('#'))
             val plain = entry?.let { item ->
                 runCatching {
                     zip.getInputStream(item).use { input ->
-                        Jsoup.parse(input, Charsets.UTF_8.name(), "").text()
+                        paragraphsOf(Jsoup.parse(input, Charsets.UTF_8.name(), ""))
                     }
                 }.getOrNull().orEmpty()
             }.orEmpty()
-            "$title\n$plain"
+            listOf(title, plain).filter { it.isNotBlank() }
+                .joinToString(LumenCapture.PARAGRAPH_BREAK)
         }
+
+    private fun paragraphsOf(document: org.jsoup.nodes.Document): String {
+        val body = document.body() ?: return document.text()
+        val paragraphs = body.select(BLOCK_SELECTOR)
+            // toList() is load-bearing. Elements has its own member filter(),
+            // taking a Jsoup NodeFilter, and in Kotlin a member always wins
+            // over an extension — so filtering an Elements directly binds to
+            // Jsoup's node-walking API rather than the stdlib. A plain List has
+            // no such member and resolves the way it reads.
+            .toList()
+            // Leaf blocks only: a block containing another block is a container,
+            // and its text belongs to the children.
+            .filter { it.select(BLOCK_SELECTOR).isEmpty() }
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() }
+        // A chapter with no block markup at all is still a chapter. Falling back
+        // to the flat text keeps it capturable, as one long paragraph.
+        return if (paragraphs.isEmpty()) body.text()
+        else paragraphs.joinToString(LumenCapture.PARAGRAPH_BREAK)
+    }
 
     private fun checkpointFraction(checkpoint: LearningCheckpoint?, chapterPath: String): Float =
         checkpoint?.locatorJson
@@ -255,5 +297,23 @@ class LearningContextExtractor(
                 }
         }
         return LearningContext(book.id, book.title, 0, "Reading window", content.takeLast(maxCharacters), "epub")
+    }
+
+    private companion object {
+        /**
+         * Shortest selection worth searching the chapter for. A word or two
+         * appears all over a chapter, so the first match would as often as not
+         * be somewhere the reader never was.
+         */
+        const val MIN_ANCHOR_CHARS = 12
+
+        /**
+         * Elements that end a paragraph when a reader looks at the page. Chosen
+         * to match what reads as a break, not what the spec calls a block: a
+         * <div> is excluded because books use it for chapter and section
+         * wrappers far more often than for prose.
+         */
+        const val BLOCK_SELECTOR =
+            "p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, pre"
     }
 }

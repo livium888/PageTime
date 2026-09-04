@@ -627,9 +627,112 @@ object LumenCapture {
     const val MIN_SELECTION_PASSAGE_CHARS = 400
 
     /**
-     * The passage around [offset], trimmed outward to whole-sentence boundaries
-     * where one exists within a small slack, clamped to the text bounds.
+     * How much text a passage tries to reach, in characters.
+     *
+     * Paragraph COUNT was the first rule and it was the wrong unit. A paragraph
+     * is anything from a line of dialogue to nine hundred words, so three of
+     * them is either nothing to think about or more than the model can hold —
+     * and which one depends entirely on the book, which is not something a
+     * number of paragraphs can know.
+     *
+     * Substance is the thing being measured, so measure it. Paragraphs stay the
+     * unit that gets ADDED, because cutting anywhere else loses the real
+     * beginning and end that made this worth doing; characters decide how many.
+     * In ordinary prose this lands on two or three without being told to.
      */
+    const val PASSAGE_TARGET_CHARS = 1_200
+
+    /**
+     * Never grow past this by ADDING a paragraph. One paragraph that is already
+     * longer stands alone rather than being cut, since half a paragraph has
+     * exactly the ragged edge this was meant to remove.
+     */
+    const val PASSAGE_CEILING_CHARS = 2_400
+
+    /**
+     * A rail, not the rule. Only bites on text made of one-line paragraphs —
+     * dialogue, verse, a list — where the target would otherwise swallow a page
+     * of exchanges and be a character window again with extra steps.
+     */
+    const val MAX_CAPTURE_PARAGRAPHS = 8
+
+    /** What separates one paragraph from the next in extracted chapter text. */
+    const val PARAGRAPH_BREAK = "\n\n"
+
+    /**
+     * Paragraphs the reader has just finished, ending at [offset].
+     *
+     * The character window this replaces had no idea where a thought started or
+     * stopped. It measured outwards from a scroll position, so a passage began
+     * mid-clause, ended mid-clause, and reached back a distance that meant
+     * nothing to anyone reading — and because the distance was fixed, two
+     * captures a page apart overlapped almost entirely and the model named the
+     * same idea twice.
+     *
+     * A paragraph is the unit an author actually wrote in. Ending at the
+     * paragraph the reader points to and walking back gives a passage with a
+     * real beginning and a real end, and two captures at different paragraphs
+     * share nothing.
+     *
+     * How far back it goes is decided by [targetChars] and not by a count of
+     * paragraphs, because a paragraph is anything from a line of dialogue to
+     * nine hundred words. Paragraphs are what gets added; characters are what
+     * says when to stop. [maxParagraphs] only bites on one-line text.
+     */
+    fun paragraphPassage(
+        fullText: String,
+        offset: Int?,
+        targetChars: Int = PASSAGE_TARGET_CHARS,
+        ceilingChars: Int = PASSAGE_CEILING_CHARS,
+        maxParagraphs: Int = MAX_CAPTURE_PARAGRAPHS,
+    ): String {
+        if (fullText.isBlank()) return ""
+        val bounds = paragraphBounds(fullText)
+        if (bounds.isEmpty()) return fullText.trim()
+
+        val at = (offset ?: fullText.length).coerceIn(0, fullText.length)
+        // The paragraph the reader pointed at: the last one that starts at or
+        // before the anchor. An anchor in the gap between two paragraphs
+        // belongs to the one that just ended, which is the one they read.
+        val anchorIndex = bounds.indexOfLast { it.first <= at }.coerceAtLeast(0)
+
+        val end = bounds[anchorIndex].second
+        var first = anchorIndex
+        var taken = 1
+        // The anchor paragraph is always kept whole, however long it is: it is
+        // the one the reader pointed at, and trimming it would put back the
+        // ragged edge this exists to remove.
+        while (first > 0 && taken < maxParagraphs) {
+            if (end - bounds[first].first >= targetChars) break
+            // Measured across the whole span, separators included, so what is
+            // counted is what the model will actually be handed.
+            if (end - bounds[first - 1].first > ceilingChars) break
+            first--
+            taken++
+        }
+        return fullText.substring(bounds[first].first, end).trim()
+    }
+
+    /** Start and end offsets of each non-empty paragraph, in order. */
+    private fun paragraphBounds(text: String): List<Pair<Int, Int>> {
+        val bounds = mutableListOf<Pair<Int, Int>>()
+        var start = 0
+        var i = 0
+        while (i < text.length) {
+            if (text[i] == '\n') {
+                if (start < i && text.substring(start, i).isNotBlank()) bounds += start to i
+                // Skip the whole run of newlines so a blank line does not open
+                // an empty paragraph of its own.
+                while (i < text.length && text[i] == '\n') i++
+                start = i
+                continue
+            }
+            i++
+        }
+        if (start < text.length && text.substring(start).isNotBlank()) bounds += start to text.length
+        return bounds
+    }
+
     fun captureWindow(fullText: String, offset: Int?, radiusChars: Int = DEFAULT_RADIUS_CHARS): String {
         if (fullText.isBlank()) return ""
         val center = (offset ?: 0).coerceIn(0, fullText.length)

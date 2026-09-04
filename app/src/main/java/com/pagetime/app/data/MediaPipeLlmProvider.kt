@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.util.Log
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -205,7 +206,33 @@ class MediaPipeLlmProvider(
                         "remaining=${freeNativeMemoryMb()}MB)"
                 )
                 NativeTombstone.enterPhase(context, NativeTombstone.Phase.GENERATE)
-                val text = model.generateResponse(prompt).trim()
+                // Greedy decoding, through an explicit session.
+                //
+                // Every call used to go through generateResponse(prompt), which
+                // runs on the runtime's DEFAULT sampling — and the default
+                // samples. For a reply whose whole job is to fill three named
+                // JSON fields, sampling is not creativity, it is the thing that
+                // wanders: a florid opening clause scores fine token by token
+                // and ruins the card.
+                //
+                // topK = 1 takes the single likeliest token at every step, so
+                // temperature no longer applies and there is nothing to drift.
+                // The seed is fixed for the same reason it is set in a test:
+                // the same passage now produces the same card, so the next time
+                // something changes it will be visible as a change rather than
+                // as noise. Every comparison made in this work so far has been
+                // one sample against one sample of a random process.
+                val text = LlmInferenceSession.createFromOptions(
+                    model,
+                    LlmInferenceSession.LlmInferenceSessionOptions.builder()
+                        .setTopK(GREEDY_TOP_K)
+                        .setTemperature(GREEDY_TEMPERATURE)
+                        .setRandomSeed(FIXED_SEED)
+                        .build(),
+                ).use { session ->
+                    session.addQueryChunk(prompt)
+                    session.generateResponse()
+                }.trim()
                 NativeTombstone.exitPhase(context)
                 if (text.isBlank()) {
                     throw EmptyReplyException("The offline model returned an empty response")
@@ -314,6 +341,24 @@ class MediaPipeLlmProvider(
          * running one already loaded costs no new allocation.
          */
         private const val MIN_MEMORY_MB = 900L
+
+        /**
+         * One token considered at every step, which is greedy decoding. A card
+         * is a form to fill in, not a piece of writing, and the model's job is
+         * to pick the obvious word rather than an interesting one.
+         */
+        private const val GREEDY_TOP_K = 1
+
+        /**
+         * Irrelevant while [GREEDY_TOP_K] is 1 — with a single candidate there
+         * is nothing to weight — but set low rather than left to the runtime's
+         * default, so raising topK later does not silently reintroduce the
+         * wandering this exists to remove.
+         */
+        private const val GREEDY_TEMPERATURE = 0.1f
+
+        /** Fixed so the same passage yields the same card, run to run. */
+        private const val FIXED_SEED = 42
     }
 }
 

@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -234,6 +236,8 @@ fun SettingsScreen(
             OfflineModelSettingsCard(
                 status = lumenModelStatus,
                 downloadStats = viewModel.downloadStats.collectAsStateWithLifecycle().value,
+                modelUrl = viewModel.lumenModelUrl.collectAsStateWithLifecycle().value,
+                onSetModelUrl = viewModel::setLumenModelUrl,
                 onDownload = viewModel::downloadOfflineModel,
                 onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
@@ -488,6 +492,8 @@ private fun LlmProviderSettingsCard(
 private fun OfflineModelSettingsCard(
     status: LumenModelStatus,
     downloadStats: LumenDownloadStats?,
+    modelUrl: String,
+    onSetModelUrl: (String?) -> Unit,
     onDownload: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onDelete: () -> Unit,
@@ -582,6 +588,84 @@ private fun OfflineModelSettingsCard(
                     }
                 }
             }
+
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            ModelSourcePicker(modelUrl = modelUrl, onSetModelUrl = onSetModelUrl)
+        }
+    }
+}
+
+/**
+ * Which weights to download.
+ *
+ * The built-in model can paraphrase a passage but not reliably state the idea
+ * behind it. Parameters are the lever left, so a larger model is offered — and
+ * the address is editable rather than fixed, because whether a given URL
+ * serves the file it claims to is the one thing that cannot be checked from a
+ * build server. A wrong address costs a visible download error: the size is
+ * taken from the server's own headers and the file is structurally checked
+ * before the runtime ever opens it.
+ */
+@Composable
+private fun ModelSourcePicker(
+    modelUrl: String,
+    onSetModelUrl: (String?) -> Unit,
+) {
+    var draft by rememberSaveable(modelUrl) { mutableStateOf(modelUrl) }
+    val isBuiltIn = modelUrl == LumenModelStore.MODEL_URL
+
+    Text("Which model", style = MaterialTheme.typography.titleSmall)
+    Text(
+        if (isBuiltIn) {
+            "Using the built-in ${LumenModelStore.MODEL_LABEL}."
+        } else {
+            "Using a model you chose. Switching deletes the installed weights, " +
+                "so the new one downloads fresh."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        "${LumenModelStore.ALTERNATE_MODEL_LABEL} is roughly double the size and " +
+            "may not fit in this phone's free memory — if it will not load, the app " +
+            "falls back to the plain draft rather than failing the capture. The " +
+            "address below is a best guess and can be corrected: paste the direct " +
+            "link to a MediaPipe .task bundle from the model's page.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { draft = it },
+        label = { Text("Model download URL") },
+        singleLine = false,
+        modifier = Modifier.fillMaxWidth(),
+        textStyle = MaterialTheme.typography.bodySmall,
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = { onSetModelUrl(draft.trim().takeIf { it.isNotBlank() }) },
+            enabled = draft.trim().isNotBlank() && draft.trim() != modelUrl,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Use this model")
+        }
+        OutlinedButton(
+            onClick = { draft = LumenModelStore.ALTERNATE_MODEL_URL },
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Qwen 1.5B")
+        }
+    }
+    if (!isBuiltIn) {
+        OutlinedButton(
+            onClick = { onSetModelUrl(null) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Back to the built-in model")
         }
     }
 }

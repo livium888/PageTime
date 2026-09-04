@@ -108,30 +108,16 @@ object LumenAiPrompts {
             |- Never copy a phrase from the passage.
             |- Never mention the passage, the book, the author, or "the text".
             |  The note has to stand on its own.
-            |- Never name a person, a place or a people from the passage. If it
-            |  tells a story, the note is what the story SHOWS, never what
-            |  happened in it.
             |- One idea only. If the passage holds several, take the one that
             |  matters most.
             |
-            |Example, a passage that states a fact:
+            |Example:
             |Passage: The mitochondria is the powerhouse of the cell. It turns
             |nutrients into energy that the cell can use.
             |Card: {"front": "Mitochondria convert nutrients into usable energy",
             |"idea": "A cell cannot spend nutrients in the form they arrive in.",
             |"because": "They are converted into a currency it can spend, which
             |is why the organelle is called the cell's powerhouse."}
-            |
-            |Example, a passage that tells a story. Note that no one in it is
-            |named on the card, and the card is the principle, not the events:
-            |Passage: A traveller came down from the mountain saying a god had
-            |spoken to him. The elders argued over the words until one of them
-            |declared what they meant, and after that nobody questioned it.
-            |Card: {"front": "Interpreters outrank prophets",
-            |"idea": "A revelation settles nothing until someone with standing
-            |says what it means.",
-            |"because": "Whoever fixes the meaning decides what everyone else is
-            |bound by, so the authority sits with the interpreter."}
             |
             |Reply with ONLY the JSON object, nothing else:
             |{"front": "...", "idea": "...", "because": "..."}

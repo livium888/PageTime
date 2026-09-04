@@ -183,6 +183,12 @@ class BlockController(
             return
         }
 
+        // Corroborated: callers only reach here with the package that is
+        // actually in front, so this is the sighting the enforcement loop reads.
+        // It has to be recorded before the early return below, or a block that
+        // is genuinely still current would age into looking stale.
+        blockedSeenAtMs = android.os.SystemClock.elapsedRealtime()
+
         // Same blocked app still foreground and already being handled → no-op.
         if (packageName == currentBlockedPackage &&
             (spendJob?.isActive == true || enforceJob?.isActive == true)
@@ -192,7 +198,6 @@ class BlockController(
 
         endSpendSession()
         currentBlockedPackage = packageName
-        blockedSeenAtMs = android.os.SystemClock.elapsedRealtime()
         if (balanceSeconds <= 0) {
             startEnforcing()
         } else {

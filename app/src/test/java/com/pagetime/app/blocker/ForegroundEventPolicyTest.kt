@@ -2,6 +2,8 @@ package com.pagetime.app.blocker
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -97,5 +99,40 @@ class ForegroundEventPolicyTest {
     fun `poll does not trust transient system chrome`() {
         assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage("com.android.systemui", SELF))
         assertFalse(ForegroundEventPolicy.isTrustedForegroundPackage("android", SELF))
+    }
+
+    @Test
+    fun `a window event is judged by the window in front, not by its own package`() {
+        // The bug this exists for. A blocked app sent behind the launcher emits
+        // a window-state event on its way out, and goes on emitting them from
+        // the background. Acting on the event's package told the blocker the
+        // reader was still in that app, so the block screen came back over the
+        // home screen — once per event, indefinitely.
+        assertEquals(
+            "com.android.launcher",
+            ForegroundEventPolicy.foregroundForEvent("com.android.launcher", SELF)
+        )
+    }
+
+    @Test
+    fun `an uninspectable window in front is unknown, not a foreground app`() {
+        // Many launchers expose no window an accessibility service can read.
+        // Unknown must never start or extend a block; the enforcement loop's
+        // own staleness check is what ends a block nothing confirms any more.
+        assertNull(ForegroundEventPolicy.foregroundForEvent(null, SELF))
+        assertNull(ForegroundEventPolicy.foregroundForEvent("", SELF))
+    }
+
+    @Test
+    fun `our own overlay in front is never a foreground app`() {
+        // While the block screen is attached it is what holds focus. Reading
+        // that as an app switch would let the overlay dismiss itself.
+        assertNull(ForegroundEventPolicy.foregroundForEvent(SELF, SELF))
+    }
+
+    @Test
+    fun `system chrome in front is unknown`() {
+        assertNull(ForegroundEventPolicy.foregroundForEvent("com.android.systemui", SELF))
+        assertNull(ForegroundEventPolicy.foregroundForEvent("android", SELF))
     }
 }

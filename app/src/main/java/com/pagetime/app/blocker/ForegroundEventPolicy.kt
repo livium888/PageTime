@@ -76,4 +76,21 @@ object ForegroundEventPolicy {
         if (packageName.isNullOrBlank()) return false
         return isForegroundChange(packageName, null, selfPackage)
     }
+
+    /**
+     * What a window-state event should be acted on as, or null for "unknown".
+     *
+     * Deliberately takes the window actually in front and NOT the event's own
+     * package. A window-state event says a window changed; it does not say the
+     * app owning it is the one the reader is looking at. Backgrounded apps emit
+     * these constantly — and a blocked app being sent behind the launcher emits
+     * one on its way out, so acting on the event's package re-asserted the block
+     * over the home screen, repeatedly, for as long as the app kept firing
+     * events from the background.
+     *
+     * So the event is a reason to look, and this is the looking. Same signal as
+     * the poll, which means one authority rather than two that can disagree.
+     */
+    fun foregroundForEvent(activeWindowPackage: String?, selfPackage: String): String? =
+        activeWindowPackage?.takeIf { isTrustedForegroundPackage(it, selfPackage) }
 }

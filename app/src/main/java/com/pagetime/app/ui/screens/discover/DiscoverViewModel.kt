@@ -38,6 +38,22 @@ sealed interface DiscoverSource {
         override val searchHint: String get() = "Search ${catalog.label}\u2026"
     }
 
+    /**
+     * Every catalogue at once.
+     *
+     * This existed already, as a button beside the search box labelled
+     * "Search" — indistinguishable from searching the source that happened to
+     * be selected, so the way to look everywhere was the one thing on the
+     * screen that did not say what it did. It is a source now, and the one the
+     * app opens on, because looking in five places one chip at a time is not a
+     * thing to ask of someone who just wants a book.
+     */
+    data object Everywhere : DiscoverSource {
+        override val id = "everywhere"
+        override val label = "All sources"
+        override val searchHint = "Search every source\u2026"
+    }
+
     data object Videos : DiscoverSource {
         override val id = "youtube"
         override val label = "YouTube"
@@ -57,13 +73,16 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private val catalogs = container.bookCatalogs
 
-    /** Every chip, catalogues first and videos last. */
+    /** Every chip: everywhere first, then each catalogue, then videos. */
     val sources: List<DiscoverSource> =
-        catalogs.all.map { DiscoverSource.Books(it) } + DiscoverSource.Videos
+        listOf(DiscoverSource.Everywhere) +
+            catalogs.all.map { DiscoverSource.Books(it) } +
+            DiscoverSource.Videos
 
-    // Defaults to whichever catalogue the registry leads with — Standard Ebooks,
-    // the most reliable of them, so a first run always works.
-    private val _source = MutableStateFlow<DiscoverSource>(DiscoverSource.Books(catalogs.default))
+    // Opens on searching everywhere. Any single catalogue is a narrower view of
+    // the same question, and picking one first is a choice the reader has no
+    // way to make well until they have seen what each holds.
+    private val _source = MutableStateFlow<DiscoverSource>(DiscoverSource.Everywhere)
     val source = _source.asStateFlow()
 
     /**
@@ -75,6 +94,24 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _health = MutableStateFlow<CatalogHealth>(CatalogHealth.Working)
     val health = _health.asStateFlow()
+
+    /**
+     * The "Source · …" line under a result.
+     *
+     * Matters most when the list is a merged one: a search of everywhere
+     * returns books from five places, and without this the reader cannot tell
+     * which of them they are about to download from.
+     */
+    fun sourceLine(book: com.pagetime.app.data.gutenberg.GutendexBook): String {
+        val label = catalogs.labelForSource(book.source)
+        // Gutenberg is the one catalogue that publishes download counts, and
+        // they are a decent proxy for whether an edition is the well-known one.
+        return if (book.source == "gutenberg" && book.downloadCount > 0) {
+            "Source · $label · ${book.downloadCount} downloads"
+        } else {
+            "Source · $label"
+        }
+    }
 
     private val _query = MutableStateFlow("")
     val query = _query.asStateFlow()
@@ -121,11 +158,22 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         reload()
     }
 
-    fun searchAllSources() {
+    private fun searchEverywhere() {
         loadJob?.cancel()
+        val q = _query.value.trim()
+        if (q.isBlank()) {
+            // Browsing five catalogues at once would be five pages of requests
+            // for a shelf nobody asked for, so this one waits to be asked.
+            _books.value = emptyList()
+            _hasMore.value = false
+            nextPage = null
+            _health.value = CatalogHealth.NeedsQuery(
+                "Searching everywhere",
+                "Type a title or an author and every source is asked at once.",
+            )
+            return
+        }
         loadJob = viewModelScope.launch {
-            val q = _query.value.trim()
-            if (q.isBlank()) return@launch
             _searchingAll.value = true
             _loading.value = true
             try {
@@ -144,7 +192,10 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                     .filter { it.language == "en" }
                     .distinctBy { it.id }
                 _books.value = results
-                _source.value = DiscoverSource.Books(catalogs.default)
+                // Deliberately does not switch the chip to one catalogue. It
+                // used to, so a search of everything ended up looking like a
+                // search of Standard Ebooks, and results from four other places
+                // sat under a label that disowned them.
                 _hasMore.value = false
                 nextPage = null
                 _health.value = when {
@@ -209,6 +260,13 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun load(reset: Boolean) {
+        if (_source.value is DiscoverSource.Everywhere) {
+            // Paging a merged list would mean paging five catalogues in step,
+            // so everywhere-search returns one page and the reader narrows to a
+            // source to go deeper.
+            if (reset) searchEverywhere()
+            return
+        }
         loadJob?.cancel()
         // Videos have their own search path (searchYouTube) — no book loading.
         val catalog = (_source.value as? DiscoverSource.Books)?.catalog ?: return

@@ -71,6 +71,18 @@ class BookCatalogs(
 
     fun byId(id: String?): BookCatalog = all.firstOrNull { it.id == id } ?: default
 
+    /**
+     * What to call the source a book came from.
+     *
+     * Read from the registry rather than a `when` in the screen. That `when`
+     * listed three ids and sent everything else to an else-branch that said
+     * "Project Gutenberg", so the first catalogue added after it was written
+     * had its books attributed to the wrong library — silently, and in the one
+     * place the reader looks to know where a book is from.
+     */
+    fun labelForSource(id: String?): String =
+        all.firstOrNull { it.id == id }?.label ?: id?.takeIf { it.isNotBlank() } ?: "Unknown source"
+
     companion object {
         /**
          * Standard Ebooks, the first catalogue moved onto the shared OPDS

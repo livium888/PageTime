@@ -87,7 +87,12 @@ class OpenLibraryApi(
         // Paging follows the catalogue's own count, not what survived the
         // filter: a page where most books turned out to be unavailable still
         // has pages after it, and stopping there would hide the rest.
-        BookPage(books = books, hasNextPage = offset + PAGE_SIZE < total, total = total.toLong())
+        BookPage(
+            books = books,
+            hasNextPage = offset + PAGE_SIZE < total,
+            total = total.toLong(),
+            considered = candidates.size,
+        )
     }
 
     private fun isEnglish(doc: JSONObject): Boolean {

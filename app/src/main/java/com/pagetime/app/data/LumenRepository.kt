@@ -239,7 +239,14 @@ class LumenRepository(
                         val fresh =
                             second?.takeIf { (front, _) ->
                                 !LumenCapture.isPassageEcho(front, clean) &&
-                                    LumenCapture.repeatOf(front, alreadyFiled) == null
+                                    LumenCapture.repeatOf(front, alreadyFiled) == null &&
+                                    // And different from the card it would
+                                    // replace. The first answer is the model's
+                                    // best idea about the passage; handing the
+                                    // reader a reworded version of it as the
+                                    // "different" one loses the better card and
+                                    // gains nothing.
+                                    LumenCapture.repeatOf(front, listOf(parsed.first)) == null
                             }
                         return LumenDraft(
                             front = fresh?.first ?: parsed.first,
@@ -960,6 +967,21 @@ object LumenCapture {
      */
     private const val REPEAT_OVERLAP = 0.7
 
+    /**
+     * Shared words below which two fronts are about the same subject rather
+     * than making the same claim.
+     *
+     * The ratio alone is measured against the shorter front, so a front with
+     * three claim words needs only two of them to coincide to read as a
+     * repeat — and "Trust enables trade" and "Trust enables cooperation" are
+     * two claims, not one. Every false match here costs a good card: the
+     * capture is re-asked for a DIFFERENT idea, which by construction is the
+     * model's second choice, and the second choice then wins. With twelve
+     * fronts to collide with, that quietly turns a filling box into a box of
+     * runner-up ideas.
+     */
+    private const val MIN_SHARED_CLAIM_WORDS = 3
+
     /** Words that carry the claim; the short connectives do not distinguish ideas. */
     private fun claimWords(front: String): Set<String> =
         front.lowercase()
@@ -986,7 +1008,9 @@ object LumenCapture {
             val otherWords = claimWords(other)
             val smaller = minOf(words.size, otherWords.size)
             if (smaller < 2) return@firstOrNull false
-            words.intersect(otherWords).size.toDouble() / smaller >= REPEAT_OVERLAP
+            val shared = words.intersect(otherWords).size
+            if (shared < MIN_SHARED_CLAIM_WORDS) return@firstOrNull false
+            shared.toDouble() / smaller >= REPEAT_OVERLAP
         }
     }
 
@@ -1101,8 +1125,16 @@ object LumenLocalDraft {
         // The retry may only improve things. A first card with a thin back is
         // still a card, and handing back the plain-passage draft instead — or a
         // second answer that is no better — would make re-asking a gamble.
+        // When the re-ask was for a repeated idea, the second card has to be a
+        // different idea from the first as well as from the box. Without this
+        // the model can reword its own answer, and the reworded runner-up
+        // replaces the better card it was derived from.
+        val secondIsGenuinelyNew =
+            firstFlaw?.repeatOf == null || first.card == null || second.card == null ||
+                LumenCapture.repeatOf(second.card.first, listOf(first.card.first)) == null
         val keepSecond =
-            second.card != null && (first.card == null || secondFlaw == null)
+            second.card != null && (first.card == null || secondFlaw == null) &&
+                secondIsGenuinelyNew
         val card = if (keepSecond) second.card else first.card
         val flaw = if (keepSecond) secondFlaw else firstFlaw
         return Outcome(

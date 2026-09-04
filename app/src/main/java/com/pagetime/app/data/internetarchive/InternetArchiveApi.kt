@@ -31,11 +31,15 @@ class InternetArchiveApi(
     suspend fun search(query: String, page: Int = 1): BookPage = withContext(Dispatchers.IO) {
         val escaped = query.trim().replace("\\", "\\\\").replace("\"", "\\\"")
         // format:(EPUB) is what stops the archive offering its scan-only
-        // majority. NOT access-restricted-item asks it to leave out the lending
-        // books before they are counted, so a page of results is a page of
-        // books rather than a page of things to reject.
-        val fullQuery =
-            "($escaped) AND mediatype:texts AND format:(EPUB) AND NOT access-restricted-item:true"
+        // majority.
+        //
+        // A clause excluding lending items was here too and has been taken out.
+        // It named a field this machine cannot reach the archive to verify, and
+        // an unindexed field in a Lucene query does not warn — it silently
+        // matches nothing, which would empty the whole source. The restriction
+        // is caught in the resolver instead, where it is tested against saved
+        // metadata rather than guessed at.
+        val fullQuery = "($escaped) AND mediatype:texts AND format:(EPUB)"
         val url = "$SEARCH?q=${fullQuery.urlEncode()}" +
             "&fl[]=identifier&fl[]=title&fl[]=creator" +
             "&rows=$PAGE_SIZE&page=$page&output=json"
@@ -71,7 +75,7 @@ class InternetArchiveApi(
         }
 
         val total = response.optInt("numFound", 0)
-        BookPage(books, (page * PAGE_SIZE) < total, total.toLong())
+        BookPage(books, (page * PAGE_SIZE) < total, total.toLong(), considered = candidates.size)
     }
 
     private fun get(url: String): String {

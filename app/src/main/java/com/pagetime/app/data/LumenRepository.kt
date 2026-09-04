@@ -656,10 +656,6 @@ object LumenCapture {
      */
     const val MAX_CAPTURE_PARAGRAPHS = 8
 
-    /**
-     * The passage around [offset], trimmed outward to whole-sentence boundaries
-     * where one exists within a small slack, clamped to the text bounds.
-     */
     /** What separates one paragraph from the next in extracted chapter text. */
     const val PARAGRAPH_BREAK = "\n\n"
 

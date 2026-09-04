@@ -737,7 +737,26 @@ object LumenCapture {
         // to be a paragraph. The count was never the thing worth testing. The
         // size is, and it holds however the text happens to be divided.
         if (end - anchorStart > MAX_WHOLE_PARAGRAPH_CHARS) {
-            val stop = at.coerceIn(anchorStart, end)
+            val here = at.coerceIn(anchorStart, end)
+            // End on a sentence. Without paragraphs the anchor is an estimate
+            // of where the reader has got to, so cutting exactly at it ends
+            // mid-word about as often as not — one real capture stopped at
+            // "heard only by Tano", halfway through a name. That is the ragged
+            // edge the whole paragraph rule exists to remove, and it has to go
+            // here too. findBoundary returns the far end when it finds nothing,
+            // so prose without punctuation still cuts where it did before.
+            val stop = findBoundary(
+                fullText, maxOf(anchorStart, here - 200), here, last = true
+            ).coerceIn(anchorStart, here)
+            // Near the start of the run there is nothing behind to take. Read
+            // forward rather than hand back a sliver of a chapter.
+            if (stop - anchorStart < targetChars / 4) {
+                val ahead = minOf(anchorStart + targetChars, end)
+                val cut = findBoundary(
+                    fullText, maxOf(anchorStart, ahead - 200), ahead, last = true
+                ).coerceIn(anchorStart, end)
+                return fullText.substring(anchorStart, cut).trim()
+            }
             val from = (stop - targetChars).coerceAtLeast(anchorStart)
             val start =
                 if (from <= anchorStart) anchorStart

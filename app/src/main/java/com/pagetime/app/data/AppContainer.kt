@@ -7,9 +7,7 @@ import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
-import com.pagetime.app.data.internetarchive.InternetArchiveApi
 import com.pagetime.app.data.library.EpubParser
-import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
@@ -77,21 +75,9 @@ class AppContainer(context: Context) {
     val aiUsageRepository = AiUsageRepository(aiUsageDao)
     val readiumEngine = ReadiumEngine(appContext)
     val gutenbergApi = GutenbergApi()
-    /**
-     * Shared by both archive.org-backed catalogues, so a page of results uses
-     * one connection pool rather than two.
-     */
-    private val internetArchiveFiles =
-        com.pagetime.app.data.internetarchive.InternetArchiveFiles()
-
-    val internetArchiveApi = InternetArchiveApi(files = internetArchiveFiles)
-    val openLibraryApi = OpenLibraryApi(files = internetArchiveFiles)
     /** The catalogues Discover offers, as a list rather than a switch. */
     val bookCatalogs = com.pagetime.app.data.catalog.BookCatalogs(
         gutenberg = gutenbergApi,
-        openLibrary = openLibraryApi,
-        internetArchive = internetArchiveApi,
-        wikisource = com.pagetime.app.data.wikisource.WikisourceApi(),
     )
     val epubParser = EpubParser()
     val youtubeSearchApi = YouTubeSearchApi()

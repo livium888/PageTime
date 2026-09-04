@@ -59,6 +59,17 @@ class BlockController(
         /** Retry only if an OEM detached the overlay; never redraw an attached one. */
         private const val ENFORCE_INTERVAL_MS = 2_000L
 
+        /**
+         * How long a sighting of the blocked app in front stays good for.
+         *
+         * Only consulted when the overlay has come down and the loop is about
+         * to put it back. The poll runs every two seconds, so a blocked app
+         * genuinely still in front re-confirms itself two or three times inside
+         * this window; a reader who has gone home confirms nothing, and the
+         * block stands down instead of chasing them onto the launcher.
+         */
+        private const val SEEN_IN_FRONT_TTL_MS = 6_000L
+
     }
 
     @Volatile
@@ -85,6 +96,13 @@ class BlockController(
 
     @Volatile
     var currentBlockedPackage: String? = null
+
+    /**
+     * When the blocked app was last PROVEN to be in front, on the monotonic
+     * clock — wall time can jump under the app and would make a sighting look
+     * arbitrarily old or fresh.
+     */
+    private var blockedSeenAtMs = 0L
         private set
 
     /** Last package the service reported, kept so state changes can be re-applied. */
@@ -174,6 +192,7 @@ class BlockController(
 
         endSpendSession()
         currentBlockedPackage = packageName
+        blockedSeenAtMs = android.os.SystemClock.elapsedRealtime()
         if (balanceSeconds <= 0) {
             startEnforcing()
         } else {
@@ -198,7 +217,13 @@ class BlockController(
         // Unknown focus (null, self overlay, keyboard, shade): stand down, change nothing.
         if (!ForegroundEventPolicy.isTrustedForegroundPackage(packageName, selfPackage)) return
         val pkg = packageName ?: return
-        if (pkg == currentBlockedPackage) return
+        if (pkg == currentBlockedPackage) {
+            // The poll can only name a real window, so this is proof the reader
+            // is still in the blocked app — which is what keeps the overlay
+            // eligible to be re-shown if it gets detached.
+            blockedSeenAtMs = android.os.SystemClock.elapsedRealtime()
+            return
+        }
         if (pkg in blockedPackages) {
             // The poll proved a DIFFERENT blocked app took the front (window events
             // were missed). Treat it as a real switch.
@@ -325,11 +350,25 @@ class BlockController(
                         // `showTimeUp()` is idempotent, but calling it repeatedly can
                         // still cause OEM WindowManager focus churn. Only retry when
                         // the overlay has genuinely disappeared.
+                        val attached = svc.isTimeUpShowing()
+                        val seenRecently = android.os.SystemClock.elapsedRealtime() -
+                            blockedSeenAtMs <= SEEN_IN_FRONT_TTL_MS
+                        if (!attached && !seenRecently) {
+                            // The overlay is down and nothing has confirmed the
+                            // blocked app is still in front. That is what going
+                            // home looks like from here, because most launchers
+                            // expose no window this service can inspect — so
+                            // stand down rather than put the block screen back
+                            // over wherever the reader actually is.
+                            standDown()
+                            break
+                        }
                         if (BlockEnforcementPolicy.shouldShowOverlay(
-                                overlayAttached = svc.isTimeUpShowing(),
+                                overlayAttached = attached,
                                 currentBlockedPackage = currentBlockedPackage,
                                 expectedBlockedPackage = pkg,
-                                balanceSeconds = balanceSeconds
+                                balanceSeconds = balanceSeconds,
+                                blockedAppSeenRecently = seenRecently
                             )
                         ) {
                             val shown = withContext(Dispatchers.Main) { svc.showTimeUp() }
@@ -345,6 +384,22 @@ class BlockController(
                 delay(ENFORCE_INTERVAL_MS)
             }
         }
+    }
+
+    /**
+     * Give up the block because there is no longer evidence for it.
+     *
+     * Not a failure and not the reader earning time back: it is the honest
+     * state when the app can no longer tell where they are. The next real
+     * foreground event re-blocks in an instant if they were still in the app,
+     * and the cost of being wrong this way is a moment of unenforced time
+     * rather than a block screen following someone across their phone.
+     */
+    private fun standDown() {
+        endSpendSession()
+        currentBlockedPackage = null
+        lastForegroundPackage = null
+        service?.dismissTimeUp()
     }
 
     private fun stopEnforcing() {

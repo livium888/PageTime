@@ -1,10 +1,7 @@
 package com.pagetime.app.data.catalog
 
 import com.pagetime.app.data.gutenberg.GutenbergApi
-import com.pagetime.app.data.internetarchive.InternetArchiveApi
-import com.pagetime.app.data.openlibrary.OpenLibraryApi
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,11 +12,7 @@ import org.junit.Test
  */
 class BookCatalogsTest {
 
-    private val catalogs = BookCatalogs(
-        gutenberg = GutenbergApi(),
-        openLibrary = OpenLibraryApi(),
-        internetArchive = InternetArchiveApi(),
-    )
+    private val catalogs = BookCatalogs(gutenberg = GutenbergApi())
 
     @Test
     fun `ids are unique, because a chip is matched by id`() {
@@ -38,24 +31,28 @@ class BookCatalogsTest {
     }
 
     @Test
-    fun `a catalogue with no browse mode says so instead of failing`() {
-        // Internet Archive has no "show me anything" endpoint. That used to
-        // live as error("Search Internet Archive by title or author") inside a
-        // when-branch, so the only way to discover it was to throw.
-        assertFalse(catalogs.byId("internetarchive").browsable)
-        // Wikisource has no most-read or newest to lead with, so a browse mode
-        // would be an arbitrary slice presented as a front page.
-        assertFalse(catalogs.byId("wikisource").browsable)
-        val searchOnly = setOf("internetarchive", "wikisource")
-        assertTrue(catalogs.all.filter { it.id !in searchOnly }.all { it.browsable })
+    fun `every catalogue here can be browsed`() {
+        // The two search-only catalogues were the OCR ones, and they are gone.
+        // What remains browses, so a reader opening Discover with an empty box
+        // sees books rather than a prompt.
+        assertTrue(catalogs.all.all { it.browsable })
     }
 
     @Test
     fun `an unknown id falls back to the default rather than crashing`() {
-        // Ids are persisted. A build that drops a catalogue must not leave the
-        // reader on a chip that no longer exists.
-        assertEquals(catalogs.default.id, catalogs.byId("feedbooks").id)
+        // Ids are persisted, and this build drops three catalogues. A reader
+        // whose last chip was Internet Archive must land somewhere real.
+        assertEquals(catalogs.default.id, catalogs.byId("internetarchive").id)
+        assertEquals(catalogs.default.id, catalogs.byId("wikisource").id)
         assertEquals(catalogs.default.id, catalogs.byId(null).id)
+    }
+
+    @Test
+    fun `only human-made catalogues are offered`() {
+        // The entry requirement: somebody read the words. OCR of page scans is
+        // not readable prose, and no work on this side repairs a file that
+        // arrived that way.
+        assertEquals(listOf("standardebooks", "gutenberg"), catalogs.all.map { it.id })
     }
 
     @Test

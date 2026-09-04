@@ -81,6 +81,25 @@ object CaptureDiagnostic {
     private const val MAX_TRANSCRIPT_PROMPT_CHARS = 12_000
     private const val MAX_TRANSCRIPT_REPLY_CHARS = 4_000
 
+    /**
+     * Total and available device RAM in MB, or null when it cannot be read.
+     *
+     * Logged because it is the number that decides whether a larger model is
+     * possible at all. The 1B model in use needs about 900 MB free to load; a
+     * 2B-class bundle is several times that, and no amount of prompt work
+     * substitutes for a model that will not fit. Guessing at a phone's memory
+     * from the other side of a build server is exactly the kind of guess this
+     * log exists to replace.
+     */
+    private fun deviceMemory(context: Context): Pair<Long, Long>? =
+        runCatching {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE)
+                as? android.app.ActivityManager ?: return null
+            val info = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(info)
+            (info.totalMem / (1024 * 1024)) to (info.availMem / (1024 * 1024))
+        }.getOrNull()
+
     /** Writes a short line to app storage right before a live capture attempt. */
     fun logCapture(
         context: Context,
@@ -98,6 +117,9 @@ object CaptureDiagnostic {
             append(" kind=$kind")
             append(" modelState=$modelState")
             append(" attemptedGeneration=$attemptedGeneration")
+            deviceMemory(context)?.let { (total, free) ->
+                append(" ramTotalMb=$total ramFreeMb=$free")
+            }
             if (bookTitle != null) append(" bookTitle=$bookTitle")
             append(" passageLength=$passageLength")
             if (passageHead != null) append(" passageHead=\"$passageHead\"")

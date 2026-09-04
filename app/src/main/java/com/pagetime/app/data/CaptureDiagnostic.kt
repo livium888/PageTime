@@ -56,8 +56,30 @@ object CaptureDiagnostic {
     private const val LOG_FILE_NAME = "lumen-capture-diagnostic.log"
     private const val MAX_LINES = 300
 
+    /** Size at which the rolling log is trimmed back to its newest lines. */
+    private const val MAX_LOG_BYTES = 200_000
+
+    /**
+     * The exact prompt sent and the exact reply received, for the most recent
+     * capture only.
+     *
+     * Kept apart from the rolling log because it is the one thing that answers
+     * "did the model actually see the passage" and the one thing that is too
+     * big to keep three hundred of. The rolling log records that a capture
+     * happened; this records what was said.
+     */
+    private const val TRANSCRIPT_FILE_NAME = "lumen-last-exchange.log"
+
     /** Enough of the passage to tell two captures apart, without quoting a page. */
     private const val PASSAGE_HEAD_CHARS = 60
+
+    /**
+     * Caps on the verbatim transcript. The prompt cap sits above the largest
+     * prompt the app can build, so in practice nothing is cut; it is a guard
+     * against a tailored template, not a budget.
+     */
+    private const val MAX_TRANSCRIPT_PROMPT_CHARS = 12_000
+    private const val MAX_TRANSCRIPT_REPLY_CHARS = 4_000
 
     /** Writes a short line to app storage right before a live capture attempt. */
     fun logCapture(
@@ -94,14 +116,69 @@ object CaptureDiagnostic {
         return file.readLines().takeLast(MAX_LINES).reversed()
     }
 
-    /** Clears the diagnostic log. */
+    /** Clears the diagnostic log and the last verbatim exchange. */
     fun clearLog(context: Context) {
         logFile(context).delete()
+        transcriptFile(context).delete()
     }
 
     fun logFile(context: Context): java.io.File {
         val dir = context.getDir("diagnostics", Context.MODE_PRIVATE)
         return java.io.File(dir, LOG_FILE_NAME)
+    }
+
+    private fun transcriptFile(context: Context): java.io.File {
+        val dir = context.getDir("diagnostics", Context.MODE_PRIVATE)
+        return java.io.File(dir, TRANSCRIPT_FILE_NAME)
+    }
+
+    /**
+     * Records one prompt/reply exchange verbatim, replacing the previous
+     * capture's on the first attempt.
+     *
+     * Every other field in this file is a measurement ABOUT the exchange —
+     * a length, a token count, sixty characters of the passage. None of them
+     * can distinguish a model that read the passage and answered badly from a
+     * model that never received it, which is the difference that decides what
+     * to fix. Only the text itself can, so the text itself is kept.
+     *
+     * [raw] is null when the call returned nothing at all.
+     */
+    fun recordExchange(
+        context: Context,
+        captureKind: String,
+        attempt: Int,
+        prompt: String,
+        raw: String?
+    ) {
+        try {
+            val file = transcriptFile(context)
+            val block = buildString {
+                append("${lineToNow()} kind=$captureKind attempt=$attempt\n")
+                append("--- PROMPT SENT (${prompt.length} chars, ")
+                append("~${LlmTokenBudget.estimateTokens(prompt)} tokens) ---\n")
+                append(prompt.take(MAX_TRANSCRIPT_PROMPT_CHARS))
+                if (prompt.length > MAX_TRANSCRIPT_PROMPT_CHARS) append("\n[...truncated]")
+                append("\n--- MODEL REPLY ")
+                append(if (raw == null) "(none returned)" else "(${raw.length} chars)")
+                append(" ---\n")
+                append(raw.orEmpty().take(MAX_TRANSCRIPT_REPLY_CHARS))
+                if ((raw?.length ?: 0) > MAX_TRANSCRIPT_REPLY_CHARS) append("\n[...truncated]")
+                append("\n")
+            }
+            // The first attempt starts a fresh transcript; the retry appends to
+            // it, so a two-attempt capture is read as one story.
+            if (attempt <= 1) file.writeText(block) else file.appendText(block)
+        } catch (_: Exception) {
+            // Best-effort only; a diagnostic file must not crash the capture.
+        }
+    }
+
+    /** The last capture's verbatim exchange, or an empty list when there is none. */
+    fun lastExchange(context: Context): List<String> {
+        val file = transcriptFile(context)
+        if (!file.exists()) return emptyList()
+        return runCatching { file.readLines() }.getOrDefault(emptyList())
     }
 
     private fun lineToNow(): String {
@@ -115,12 +192,14 @@ object CaptureDiagnostic {
     private fun writeLine(context: Context, line: String) {
         try {
             val file = logFile(context)
-            if (file.length() > 0 && file.length() < 50_000) {
-                file.appendText("$line\n")
-            } else {
-                file.writeText("$line\n")
-            }
-            if (file.length() > 500_000) {
+            // Always append. This used to WIPE the log the moment it passed
+            // 50 KB — so a reader who captured a few times and then went to
+            // copy the log found only the lines written since the last reset,
+            // and the trim below could never run because the file never got
+            // that big. Growth is bounded by trimming to the newest lines,
+            // which is what trimLog was there to do all along.
+            file.appendText("$line\n")
+            if (file.length() > MAX_LOG_BYTES) {
                 trimLog(file)
             }
         } catch (_: Exception) {

@@ -20,5 +20,15 @@ data class GutendexBook(
 data class BookPage(
     val books: List<GutendexBook>,
     val hasNextPage: Boolean,
-    val total: Long
+    val total: Long,
+    /**
+     * How many entries the source offered before this app filtered them.
+     *
+     * A catalogue that returns thirty books of which none can be downloaded is
+     * not the same as one that matched nothing, and both used to arrive here as
+     * an empty list. Keeping the pre-filter count is what lets the shelf tell
+     * the reader which happened — and lets a filter that has quietly started
+     * rejecting everything be seen rather than guessed at.
+     */
+    val considered: Int = 0
 )

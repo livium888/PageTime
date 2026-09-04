@@ -565,6 +565,15 @@ private fun EmptyShelf(health: CatalogHealth, onRetry: () -> Unit) {
             isFault = false
         }
 
+        is CatalogHealth.NoneDownloadable -> {
+            title =
+                if (health.found == 1) "${health.label} found 1 book it can\u2019t hand over"
+                else "${health.label} found ${health.found} books it can\u2019t hand over"
+            detail = "They are page scans or library loans, with no file to download. " +
+                "Try different words, or another source."
+            isFault = false
+        }
+
         is CatalogHealth.NeedsQuery -> {
             title = "${health.label} needs something to look for"
             detail = health.note

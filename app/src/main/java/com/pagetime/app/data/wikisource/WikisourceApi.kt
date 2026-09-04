@@ -79,7 +79,7 @@ class WikisourceApi(
 
         val total = root.optJSONObject("query")
             ?.optJSONObject("searchinfo")?.optInt("totalhits", 0) ?: 0
-        BookPage(books, offset + PAGE_SIZE < total, total.toLong())
+        BookPage(books, offset + PAGE_SIZE < total, total.toLong(), considered = results.length())
     }
 
     /** Asks WS Export to build an EPUB of [title]. */

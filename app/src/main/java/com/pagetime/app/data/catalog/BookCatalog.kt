@@ -60,6 +60,17 @@ sealed interface CatalogHealth {
     /** The catalogue only answers searches, and there is no query yet. */
     data class NeedsQuery(val label: String, val note: String) : CatalogHealth
 
+    /**
+     * The catalogue answered with books, and none of them could be downloaded.
+     *
+     * Distinct from having nothing to show, and the distinction is the whole
+     * point: an archive whose entries are page scans, or lending books, has
+     * plenty to say and nothing to give — while a filter that has quietly
+     * started rejecting everything looks exactly the same from outside. Naming
+     * the number that arrived is what separates the two.
+     */
+    data class NoneDownloadable(val label: String, val found: Int, val note: String) : CatalogHealth
+
     /** The catalogue did not answer. Never to be confused with the two above. */
     data class Unreachable(val label: String, val detail: String) : CatalogHealth
 

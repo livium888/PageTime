@@ -116,4 +116,36 @@ class LumenRepeatTest {
         assertEquals(1, outcome.attempts)
         assertNull(outcome.repeatOf)
     }
+
+    @Test
+    fun `two claim words in common is a shared subject, not a repeated claim`() {
+        // The ratio is measured against the shorter front, so a front with two
+        // claim words needed only those two to coincide to read as a repeat.
+        // Every false match costs a good card: the capture is re-asked for a
+        // DIFFERENT idea, which is by construction the model's second choice,
+        // and the second choice then wins. With twelve fronts to collide with,
+        // a filling box quietly becomes a box of runner-up ideas.
+        assertNull(
+            LumenCapture.repeatOf("Money is memory", listOf("Memory shapes money"))
+        )
+        assertNull(
+            LumenCapture.repeatOf("Trust enables trade", listOf("Trust enables cooperation"))
+        )
+    }
+
+    @Test
+    fun `a genuine repeat is still caught`() {
+        assertNotNull(
+            LumenCapture.repeatOf(
+                "Fiction lets strangers cooperate",
+                listOf("Fiction lets strangers work together"),
+            )
+        )
+        assertNotNull(
+            LumenCapture.repeatOf(
+                "Writing outlives its author",
+                listOf("Writing outlives its author"),
+            )
+        )
+    }
 }

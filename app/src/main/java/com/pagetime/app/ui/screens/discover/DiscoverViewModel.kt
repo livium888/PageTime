@@ -243,10 +243,20 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                         _books.value = books
                         _hasMore.value = result.hasNextPage
                         nextPage = if (result.hasNextPage) page + 1 else null
-                        _health.value = if (books.isNotEmpty()) {
-                            CatalogHealth.Working
-                        } else {
-                            CatalogHealth.NothingMatched(catalog.label, q, catalog.note)
+                        _health.value = when {
+                            books.isNotEmpty() -> CatalogHealth.Working
+                            // Books arrived and every one was filtered out.
+                            // Reporting that as "nothing matched" hides both
+                            // the honest case — an archive of scans with no
+                            // EPUB — and the bug case, a filter rejecting
+                            // everything.
+                            result.considered > 0 -> CatalogHealth.NoneDownloadable(
+                                catalog.label,
+                                result.considered,
+                                catalog.note,
+                            )
+
+                            else -> CatalogHealth.NothingMatched(catalog.label, q, catalog.note)
                         }
                     }
                     .onFailure { t ->

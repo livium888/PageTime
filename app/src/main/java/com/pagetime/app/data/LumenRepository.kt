@@ -700,6 +700,24 @@ object LumenCapture {
         if (bounds.isEmpty()) return fullText.trim()
 
         val at = (offset ?: fullText.length).coerceIn(0, fullText.length)
+
+        // A chapter that would not split is one enormous "paragraph", and
+        // returning it whole is not a capture — it is the file. A real book
+        // did exactly this: 99,589 characters came back as a single paragraph
+        // because its markup used no element this code recognised, and the
+        // passage the model finally saw was whatever sat halfway through the
+        // chapter, nowhere near the reader.
+        //
+        // The paragraph rule has nothing to work with here, so fall back to
+        // the thing it replaced — but anchored, ending where the reader is
+        // rather than centred on a file offset.
+        if (bounds.size == 1 && fullText.length > ceilingChars) {
+            val from = (at - targetChars).coerceAtLeast(0)
+            val start =
+                if (from == 0) 0
+                else findBoundary(fullText, from, minOf(from + 200, at), last = false)
+            return fullText.substring(start.coerceAtMost(at), at).trim()
+        }
         // The paragraph the reader pointed at: the last one that starts at or
         // before the anchor. An anchor in the gap between two paragraphs
         // belongs to the one that just ended, which is the one they read.

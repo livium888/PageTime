@@ -313,7 +313,22 @@ class LearningContextExtractor(
          * <div> is excluded because books use it for chapter and section
          * wrappers far more often than for prose.
          */
+        /**
+         * What counts as a block of prose.
+         *
+         * div is in the list, and has to be. Plenty of commercial EPUBs mark
+         * every paragraph with a styled <div> and never emit a <p> at all —
+         * and for those books this selector matched nothing, paragraphsOf fell
+         * back to flat text, and a whole 99,000-character chapter came back as
+         * a single "paragraph". The capture then had nothing to cut on and
+         * handed the trimmer the entire chapter.
+         *
+         * Nesting is not a problem: the leaf-block filter drops any block that
+         * contains another, so a wrapper div full of paragraphs is excluded and
+         * its children are kept. Only a div with no block inside it — which is
+         * exactly the div-as-paragraph case — survives.
+         */
         const val BLOCK_SELECTOR =
-            "p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, pre"
+            "p, div, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, pre"
     }
 }

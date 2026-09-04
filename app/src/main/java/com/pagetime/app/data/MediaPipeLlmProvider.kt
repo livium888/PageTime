@@ -137,6 +137,15 @@ class MediaPipeLlmProvider(
             // disable offline inference for the rest of the session.
             Log.w(TAG, "Prompt rejected before inference: ${tooLong.message}")
             Result.failure(tooLong)
+        } catch (empty: EmptyReplyException) {
+            // The engine ran and returned nothing. That is a bad answer, not a
+            // broken model, and it must not disable offline inference either:
+            // it used to, because an empty reply threw from the same check as a
+            // genuine native fault. One blank retry then cost the reader the
+            // on-device model for the rest of the session, and every capture
+            // after it silently fell back to the non-AI draft.
+            Log.w(TAG, "Offline model returned nothing; keeping it loaded")
+            Result.failure(empty)
         } catch (error: Throwable) {
             Log.e(TAG, "Offline model failed", error)
             nativeFailed = true
@@ -198,7 +207,9 @@ class MediaPipeLlmProvider(
                 NativeTombstone.enterPhase(context, NativeTombstone.Phase.GENERATE)
                 val text = model.generateResponse(prompt).trim()
                 NativeTombstone.exitPhase(context)
-                check(text.isNotBlank()) { "The offline model returned an empty response" }
+                if (text.isBlank()) {
+                    throw EmptyReplyException("The offline model returned an empty response")
+                }
                 LlmResult(text, LlmProviderKind.OFFLINE)
             }
         }
@@ -312,3 +323,10 @@ class MediaPipeLlmProvider(
  * simply falls back to the non-AI draft.
  */
 class PromptTooLongException(message: String) : IllegalArgumentException(message)
+
+/**
+ * Thrown when the model ran and returned nothing. Distinct from a native fault
+ * so that a blank reply — which a small model produces now and then — costs one
+ * attempt rather than the whole session's offline inference.
+ */
+class EmptyReplyException(message: String) : IllegalStateException(message)

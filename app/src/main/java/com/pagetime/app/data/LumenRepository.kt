@@ -665,6 +665,23 @@ object LumenCapture {
      */
     const val MAX_CAPTURE_PARAGRAPHS = 8
 
+    /**
+     * Longest a single paragraph may be and still be handed over whole.
+     *
+     * The anchor paragraph is otherwise kept whole however long it runs, which
+     * is right for prose — a dense paragraph of nine hundred words is still one
+     * thought, and half of it is the ragged edge this all exists to remove.
+     *
+     * It stops being right when the "paragraph" is a whole chapter. No selector
+     * will ever recognise every book's markup, so some chapter will always come
+     * back as one undivided run; the size is what catches that, whatever the
+     * markup did. The line sits at the prompt's own passage cap because past
+     * that point the passage is cut no matter what — by trimPassage, blindly,
+     * wherever the character count runs out. Cutting it here instead keeps the
+     * cut anchored on the reader and on a sentence.
+     */
+    const val MAX_WHOLE_PARAGRAPH_CHARS = LumenAiPrompts.MAX_PASSAGE_CHARS
+
     /** What separates one paragraph from the next in extracted chapter text. */
     const val PARAGRAPH_BREAK = "\n\n"
 
@@ -701,29 +718,33 @@ object LumenCapture {
 
         val at = (offset ?: fullText.length).coerceIn(0, fullText.length)
 
-        // A chapter that would not split is one enormous "paragraph", and
-        // returning it whole is not a capture — it is the file. A real book
-        // did exactly this: 99,589 characters came back as a single paragraph
-        // because its markup used no element this code recognised, and the
-        // passage the model finally saw was whatever sat halfway through the
-        // chapter, nowhere near the reader.
-        //
-        // The paragraph rule has nothing to work with here, so fall back to
-        // the thing it replaced — but anchored, ending where the reader is
-        // rather than centred on a file offset.
-        if (bounds.size == 1 && fullText.length > ceilingChars) {
-            val from = (at - targetChars).coerceAtLeast(0)
-            val start =
-                if (from == 0) 0
-                else findBoundary(fullText, from, minOf(from + 200, at), last = false)
-            return fullText.substring(start.coerceAtMost(at), at).trim()
-        }
         // The paragraph the reader pointed at: the last one that starts at or
         // before the anchor. An anchor in the gap between two paragraphs
         // belongs to the one that just ended, which is the one they read.
         val anchorIndex = bounds.indexOfLast { it.first <= at }.coerceAtLeast(0)
 
         val end = bounds[anchorIndex].second
+        val anchorStart = bounds[anchorIndex].first
+
+        // A "paragraph" this long is not a paragraph. It is a chapter whose
+        // markup would not split, arriving as one run of text — and handing it
+        // over whole is not a capture, it is the file.
+        //
+        // The guard this replaces counted bounds and asked whether there was
+        // exactly one. There never is: chapterRawText joins the title to the
+        // body with a paragraph break, so an unsplittable chapter arrives as
+        // TWO bounds — a title, and ninety-nine thousand characters pretending
+        // to be a paragraph. The count was never the thing worth testing. The
+        // size is, and it holds however the text happens to be divided.
+        if (end - anchorStart > MAX_WHOLE_PARAGRAPH_CHARS) {
+            val stop = at.coerceIn(anchorStart, end)
+            val from = (stop - targetChars).coerceAtLeast(anchorStart)
+            val start =
+                if (from <= anchorStart) anchorStart
+                else findBoundary(fullText, from, minOf(from + 200, stop), last = false)
+            return fullText.substring(start.coerceAtMost(stop), stop).trim()
+        }
+
         var first = anchorIndex
         var taken = 1
         // The anchor paragraph is always kept whole, however long it is: it is

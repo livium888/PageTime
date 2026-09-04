@@ -154,6 +154,40 @@ class LumenParagraphCaptureTest {
     }
 
     @Test
+    fun `a title in front of an unsplittable chapter does not defeat the guard`() {
+        // The shape that actually occurred, and that the first version of this
+        // guard missed. chapterRawText puts the chapter title in front of the
+        // body, so a chapter that would not split arrives as TWO paragraphs —
+        // a short title and a hundred thousand characters pretending to be
+        // prose. A guard that asked "is there exactly one paragraph?" saw two
+        // and stood down, and the whole chapter went to the model.
+        val title = "CHAPTER 4 Errors: The Fantasy of Infallibility"
+        val body = "word ".repeat(20_000).trim()
+        val chapter = title + LumenCapture.PARAGRAPH_BREAK + body
+        val passage = LumenCapture.paragraphPassage(chapter, chapter.length)
+
+        assertTrue(
+            "must not hand over the chapter, got ${passage.length}",
+            passage.length <= LumenCapture.PASSAGE_CEILING_CHARS
+        )
+        assertTrue("ends at the reader", chapter.trimEnd().endsWith(passage.takeLast(20)))
+    }
+
+    @Test
+    fun `a long paragraph that is still a paragraph is kept whole`() {
+        // The guard must not fire on real prose. A dense paragraph runs to
+        // nine hundred words and is one thought; cutting it is the ragged edge
+        // this exists to remove.
+        val chapter = chapterOf(count = 3, words = 900)
+        val passage = LumenCapture.paragraphPassage(chapter, chapter.length)
+        assertEquals(1, paragraphsIn(passage))
+        assertTrue(
+            "kept whole, got ${passage.length}",
+            passage.length > LumenCapture.PASSAGE_CEILING_CHARS
+        )
+    }
+
+    @Test
     fun `a short unsplittable chapter is still returned whole`() {
         // The fallback is for chapters too big to hand over, not for every
         // chapter without paragraph markup.

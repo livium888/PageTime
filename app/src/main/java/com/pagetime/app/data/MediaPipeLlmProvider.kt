@@ -293,8 +293,29 @@ class MediaPipeLlmProvider(
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
         val freeMb = memInfo.availMem / (1024 * 1024)
-        Log.d(TAG, "Available native memory: ${freeMb}MB")
-        return freeMb > MIN_MEMORY_MB
+        val needMb = requiredMemoryMb()
+        Log.d(TAG, "Available native memory: ${freeMb}MB, need ${needMb}MB")
+        return freeMb > needMb
+    }
+
+    /**
+     * Free memory a load of THIS model needs, scaled to the weights on disk.
+     *
+     * It used to be a flat 900 MB, which was right while the model was fixed
+     * at 529 MB and wrong the moment the reader could choose one. A 1.6 GB
+     * bundle sails past a 900 MB floor on a phone with 1.9 GB free, and then
+     * the native loader aborts the process — uncatchable, no crash log, the
+     * exact failure this preflight exists to prevent.
+     *
+     * The ratio comes from the pairing already known to work: 900 MB demanded
+     * for 529 MB of weights, so about 1.7x. Bigger weights demand
+     * proportionally more, and a model that cannot fit is refused cleanly with
+     * the plain draft as the fallback, rather than taking the app down.
+     */
+    private fun requiredMemoryMb(): Long {
+        val fileMb = modelStore.modelFile.length() / (1024 * 1024)
+        if (fileMb <= 0) return MIN_MEMORY_MB
+        return maxOf(MIN_MEMORY_MB, (fileMb * MEMORY_HEADROOM_RATIO).toLong())
     }
 
     private fun freeNativeMemoryMb(): Int {
@@ -314,6 +335,13 @@ class MediaPipeLlmProvider(
          * running one already loaded costs no new allocation.
          */
         private const val MIN_MEMORY_MB = 900L
+
+        /**
+         * Free memory per byte of weights, from the one configuration measured
+         * to work: 900 MB for a 529 MB model. Used to size the floor for a
+         * model nobody has tried yet.
+         */
+        private const val MEMORY_HEADROOM_RATIO = 1.7
     }
 }
 

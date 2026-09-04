@@ -127,4 +127,37 @@ class LumenParagraphCaptureTest {
         assertEquals("", LumenCapture.paragraphPassage("", 0))
         assertEquals("", LumenCapture.paragraphPassage("   \n\n  ", 3))
     }
+
+    @Test
+    fun `a chapter that will not split is cut at the reader, not handed over whole`() {
+        // The real failure this guards. A book whose markup produced no
+        // recognised blocks came back as one 99,589-character "paragraph", and
+        // the whole chapter was returned as the passage — after which the
+        // trimmer kept its middle and the model was asked about text from
+        // halfway through the file.
+        val flat = "word ".repeat(20_000).trim()
+        val at = flat.length / 2
+        val passage = LumenCapture.paragraphPassage(flat, at)
+
+        assertTrue(
+            "must not return the whole chapter, got ${passage.length}",
+            passage.length < flat.length / 2
+        )
+        assertTrue(
+            "stays within the ceiling, got ${passage.length}",
+            passage.length <= LumenCapture.PASSAGE_CEILING_CHARS
+        )
+        assertTrue(
+            "ends where the reader is",
+            flat.substring(0, at).endsWith(passage.takeLast(20))
+        )
+    }
+
+    @Test
+    fun `a short unsplittable chapter is still returned whole`() {
+        // The fallback is for chapters too big to hand over, not for every
+        // chapter without paragraph markup.
+        val flat = "One long run of text with no breaks in it at all."
+        assertEquals(flat, LumenCapture.paragraphPassage(flat, flat.length))
+    }
 }

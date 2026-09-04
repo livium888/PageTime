@@ -40,14 +40,25 @@ class LumenPromptBudgetTest {
     }
 
     @Test
-    fun `trimming keeps the middle of the passage, where the reader is`() {
+    fun `trimming keeps the end of the passage, where the reader is`() {
+        // This used to keep the MIDDLE, from when a passage was a window
+        // centred on the reading position. A capture is anchored now — it ends
+        // at the paragraph the reader pointed at — so the end is the half
+        // worth keeping and the middle is text they have already left behind.
         val passage = buildString {
             append("A".repeat(4_000))
             append(" MIDDLE MARKER. ")
-            append("Z".repeat(4_000))
+            // Longer than the cap on its own, so the marker really does fall
+            // outside the kept tail rather than surviving by arithmetic.
+            append("Z".repeat(6_000))
+            append(" END MARKER.")
         }
         val trimmed = LumenAiPrompts.trimPassage(passage)
-        assertTrue("Trimmed passage keeps the centre", trimmed.contains("MIDDLE MARKER"))
+        assertTrue("Trimmed passage keeps the end", trimmed.contains("END MARKER"))
+        assertTrue(
+            "Trimmed passage drops the far side of the passage",
+            !trimmed.contains("MIDDLE MARKER")
+        )
         assertTrue(
             "Trimmed passage respects the cap, got ${trimmed.length}",
             trimmed.length <= LumenAiPrompts.MAX_PASSAGE_CHARS

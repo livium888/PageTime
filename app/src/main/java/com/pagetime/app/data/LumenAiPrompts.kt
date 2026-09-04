@@ -51,18 +51,26 @@ object LumenAiPrompts {
     const val MAX_PASSAGE_CHARS = 5_400
 
     /**
-     * The passage is centered on the reading position, so when it has to be
-     * shortened the middle is what the reader is actually looking at. Ends on
-     * a sentence boundary where one is close by, so the model sees whole
-     * thoughts rather than a clipped clause.
+     * Keeps the END of an over-long passage, because that is where the reader
+     * is. Starts on a sentence boundary where one is close by, so the model
+     * opens on a whole thought rather than a clipped clause.
+     *
+     * This used to keep the MIDDLE, on the reasoning that a passage was
+     * centred on the reading position. Captures are anchored now — a passage
+     * ends at the paragraph the reader pointed at — so the middle is simply
+     * the wrong half. When a whole chapter reached this function, keeping the
+     * middle handed the model text from halfway through the file: coherent
+     * prose about something the reader was nowhere near, which is a far more
+     * confusing failure than a truncated passage would have been.
      */
     fun trimPassage(passage: String): String {
         if (passage.length <= MAX_PASSAGE_CHARS) return passage
-        val start = (passage.length - MAX_PASSAGE_CHARS) / 2
-        val slice = passage.substring(start, start + MAX_PASSAGE_CHARS)
-        val lastStop = slice.lastIndexOfAny(charArrayOf('.', '!', '?'))
-        return if (lastStop >= MAX_PASSAGE_CHARS / 2) {
-            slice.take(lastStop + 1).trim()
+        val slice = passage.takeLast(MAX_PASSAGE_CHARS)
+        // Open on a sentence, but only if one starts early enough that the
+        // passage does not lose most of its substance to the search.
+        val firstStop = slice.indexOfAny(charArrayOf('.', '!', '?'))
+        return if (firstStop in 0 until MAX_PASSAGE_CHARS / 4) {
+            slice.substring(firstStop + 1).trim()
         } else {
             slice.trim()
         }

@@ -201,6 +201,12 @@ class LearningContextExtractor(
     private fun paragraphsOf(document: org.jsoup.nodes.Document): String {
         val body = document.body() ?: return document.text()
         val paragraphs = body.select(BLOCK_SELECTOR)
+            // toList() is load-bearing. Elements has its own member filter(),
+            // taking a Jsoup NodeFilter, and in Kotlin a member always wins
+            // over an extension — so filtering an Elements directly binds to
+            // Jsoup's node-walking API rather than the stdlib. A plain List has
+            // no such member and resolves the way it reads.
+            .toList()
             // Leaf blocks only: a block containing another block is a container,
             // and its text belongs to the children.
             .filter { it.select(BLOCK_SELECTOR).isEmpty() }

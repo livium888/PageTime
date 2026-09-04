@@ -69,18 +69,10 @@ class LumenPromptBudgetTest {
     fun `the instructions leave the passage its full allowance`() {
         // Every character of instruction is a character of book the model does
         // not get to read. The prompt earns its length or it comes back out.
-        //
-        // The cap was 1,400 when a passage ran to 5,400 characters and the two
-        // competed for one budget. They no longer do: a capture is anchored to
-        // the reader's page now and lands near 1,100, so a real prompt spends
-        // about 700 tokens of 2,688 and the instructions are not taking the
-        // book's room. What the second worked example buys is the difference
-        // between a card that states a principle and one that retells a story,
-        // which is worth more than characters that were going spare.
         val scaffold = LumenAiPrompts.cardDraft("", "A Book").length
         assertTrue(
             "Capture instructions have grown to $scaffold chars",
-            scaffold <= 2_200
+            scaffold <= 1_400
         )
         val strict = LumenAiPrompts.cardDraftStrict("", "A Book").length
         assertTrue(

@@ -1,22 +1,29 @@
 package com.pagetime.app.data.catalog
 
-import com.pagetime.app.data.gutenberg.BookPage
 import com.pagetime.app.data.gutenberg.GutenbergApi
-import com.pagetime.app.data.internetarchive.InternetArchiveApi
-import com.pagetime.app.data.openlibrary.OpenLibraryApi
-import com.pagetime.app.data.wikisource.WikisourceApi
 
 /**
  * The catalogues the app ships with, in the order the chips appear.
  *
- * Standard Ebooks leads because it is the most reliable: dedicated servers,
- * hand-made EPUBs, rarely rate-limited, so a first run always works.
+ * Both are human-made, and that is now the entry requirement. Standard Ebooks
+ * hand-typesets its editions against a style manual; Project Gutenberg's texts
+ * are transcribed and proofread by people before an EPUB is built from a clean
+ * master. Somebody read every word in both.
+ *
+ * Open Library, the Internet Archive and Wikisource were here and are not any
+ * more. The first two serve EPUBs derived from photographs of paper by OCR, so
+ * what arrives carries running heads and page numbers mid-sentence, words still
+ * broken across the original line, stray footnote digits, and chapters that
+ * begin wherever a scan happened to start. No work on this side improves that:
+ * the damage is in the file before the app ever sees it. Wikisource is the sad
+ * one — a validated work there is excellent, but its quality is per-page and
+ * cannot be told apart from a raw OCR dump through the search API, so listing
+ * it was offering a coin flip.
+ *
+ * A catalogue is worth having when its worst book is still readable.
  */
 class BookCatalogs(
     gutenberg: GutenbergApi,
-    openLibrary: OpenLibraryApi,
-    internetArchive: InternetArchiveApi,
-    wikisource: WikisourceApi = WikisourceApi(),
     standardEbooks: BookCatalog = OpdsCatalog(STANDARD_EBOOKS),
 ) {
     val all: List<BookCatalog> = listOf(
@@ -35,36 +42,6 @@ class BookCatalogs(
             },
             backup = OpdsCatalog(GUTENBERG_OPDS),
         ),
-        object : BookCatalog {
-            override val id = "openlibrary"
-            override val label = "Open Library"
-            override val note = "The Internet Archive's catalogue of everything."
-            override suspend fun browse(page: Int) = openLibrary.browse(page = page)
-            override suspend fun search(query: String, page: Int) = openLibrary.search(query, page)
-        },
-        object : BookCatalog {
-            override val id = "internetarchive"
-            override val label = "Internet Archive"
-            override val note = "Scanned books, findable by title or author."
-            // No browse endpoint: the archive has no "show me anything" mode.
-            override val browsable = false
-            override suspend fun browse(page: Int): BookPage =
-                error("Internet Archive has no browse mode")
-            override suspend fun search(query: String, page: Int) =
-                internetArchive.search(query, page)
-        },
-        object : BookCatalog {
-            override val id = "wikisource"
-            override val label = "Wikisource"
-            override val note = "Hand-transcribed texts, many outside English."
-            // Wikisource has no most-read or newest to lead with, and a broad
-            // search dressed as a front page would be an arbitrary slice.
-            override val browsable = false
-            override suspend fun browse(page: Int): BookPage =
-                error("Wikisource has no browse mode")
-            override suspend fun search(query: String, page: Int) =
-                wikisource.search(query, page)
-        },
     )
 
     val default: BookCatalog get() = all.first()

@@ -69,6 +69,11 @@ object OpdsParser {
             books = books,
             hasNextPage = hasNext(root, feed, total),
             total = total.toLong(),
+            // Entries the feed sent, before the language and EPUB filters here.
+            // A feed answering with books this app then drops entirely is a
+            // state worth being able to name rather than showing as a blank
+            // shelf — the same distinction the archives needed.
+            considered = entries.length,
         )
     }
 

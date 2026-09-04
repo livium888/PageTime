@@ -162,6 +162,15 @@ class LumenRepository(
                                 replyTokens = LumenLocalDraft.REPLY_TOKENS,
                             )
                         },
+                        onExchange = { attempt, prompt, raw ->
+                            CaptureDiagnostic.recordExchange(
+                                context = captureDiagContext(),
+                                captureKind = "LumenCard",
+                                attempt = attempt,
+                                prompt = prompt,
+                                raw = raw,
+                            )
+                        },
                     )
                 // How long inference really takes is the budget for tuning the
                 // passage cap: a bigger passage buys a better card and costs
@@ -1171,19 +1180,26 @@ object LumenLocalDraft {
         bookTitle: String,
         debugLog: (String) -> Unit = {},
         onPromptBuilt: (String) -> Unit = {},
+        onExchange: (Int, String, String?) -> Unit = { _, _, _ -> },
         template: String = LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
         alreadyFiled: List<String> = emptyList(),
     ): Outcome {
+        var attemptNo = 0
         suspend fun attempt(prompt: String): Attempt {
             // Reported from here so the diagnostic records the prompt actually
             // sent, including the stricter retry below.
+            attemptNo++
             onPromptBuilt(prompt)
             val raw =
                 runCatching { call(LlmRequest(prompt, maxOutputTokens = REPLY_TOKENS)) }
                     .getOrNull()
                     ?.getOrNull()
                     ?.text
-                    ?: return Attempt(null, Rejection.NO_REPLY)
+            // Recorded before anything judges it, so a reply the parser threw
+            // away is still visible. A discarded reply is the interesting one:
+            // it is the only evidence of what the model actually did.
+            onExchange(attemptNo, prompt, raw)
+            if (raw == null) return Attempt(null, Rejection.NO_REPLY)
             val parsed =
                 LumenCapture.parseDraft(raw)
                     ?: run {

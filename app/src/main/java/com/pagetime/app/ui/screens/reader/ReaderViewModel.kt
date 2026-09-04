@@ -715,7 +715,22 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     }
 
     /** Returns the last on-device capture diagnostic log, newest first. */
-    fun lastCaptureLog(): List<String> = CaptureDiagnostic.recentLog(container.lumenRepository.diagContext())
+    /**
+     * The capture log a reader copies, newest activity first, followed by the
+     * last capture's verbatim prompt and reply.
+     *
+     * The rolling lines say a capture happened and how big it was. They cannot
+     * say whether the model was given the passage — which is the only question
+     * worth asking when a card comes back with nothing to do with the book —
+     * so the exchange itself goes on the end.
+     */
+    fun lastCaptureLog(): List<String> {
+        val context = container.lumenRepository.diagContext()
+        val rolling = CaptureDiagnostic.recentLog(context)
+        val exchange = CaptureDiagnostic.lastExchange(context)
+        if (exchange.isEmpty()) return rolling
+        return rolling + listOf("", "===== LAST EXCHANGE (verbatim) =====") + exchange
+    }
 
     /** Copies the last capture log to the device clipboard. */
     fun copyCaptureLogToClipboard(context: android.content.Context) {

@@ -626,10 +626,94 @@ object LumenCapture {
      */
     const val MIN_SELECTION_PASSAGE_CHARS = 400
 
+    /** Paragraphs a capture ends with: the one pointed at, and two before it. */
+    const val MAX_CAPTURE_PARAGRAPHS = 3
+
+    /**
+     * Never more than this, however short the paragraphs are. Dialogue can run
+     * to a dozen one-line exchanges, and a passage that swallows all of them is
+     * back to being a window with extra steps.
+     */
+    const val HARD_MAX_CAPTURE_PARAGRAPHS = 6
+
+    /** Below this a passage has no idea in it worth naming. */
+    const val MIN_PASSAGE_CHARS = 320
+
     /**
      * The passage around [offset], trimmed outward to whole-sentence boundaries
      * where one exists within a small slack, clamped to the text bounds.
      */
+    /** What separates one paragraph from the next in extracted chapter text. */
+    const val PARAGRAPH_BREAK = "\n\n"
+
+    /**
+     * Paragraphs the reader has just finished, ending at [offset].
+     *
+     * The character window this replaces had no idea where a thought started or
+     * stopped. It measured outwards from a scroll position, so a passage began
+     * mid-clause, ended mid-clause, and reached back a distance that meant
+     * nothing to anyone reading — and because the distance was fixed, two
+     * captures a page apart overlapped almost entirely and the model named the
+     * same idea twice.
+     *
+     * A paragraph is the unit an author actually wrote in. Ending at the
+     * paragraph the reader points to and walking back gives a passage with a
+     * real beginning and a real end, and two captures at different paragraphs
+     * share nothing.
+     *
+     * [maxParagraphs] is the ceiling. The floor is [minChars]: three lines of
+     * dialogue are three paragraphs and still too thin to hold an idea, so very
+     * short ones keep pulling until there is something to think about, never
+     * past [hardMaxParagraphs].
+     */
+    fun paragraphPassage(
+        fullText: String,
+        offset: Int?,
+        maxParagraphs: Int = MAX_CAPTURE_PARAGRAPHS,
+        minChars: Int = MIN_PASSAGE_CHARS,
+        hardMaxParagraphs: Int = HARD_MAX_CAPTURE_PARAGRAPHS,
+    ): String {
+        if (fullText.isBlank()) return ""
+        val bounds = paragraphBounds(fullText)
+        if (bounds.isEmpty()) return fullText.trim()
+
+        val at = (offset ?: fullText.length).coerceIn(0, fullText.length)
+        // The paragraph the reader pointed at: the last one that starts at or
+        // before the anchor. An anchor in the gap between two paragraphs
+        // belongs to the one that just ended, which is the one they read.
+        val anchorIndex = bounds.indexOfLast { it.first <= at }.coerceAtLeast(0)
+
+        var first = anchorIndex
+        var taken = 1
+        var chars = bounds[anchorIndex].let { it.second - it.first }
+        while (first > 0 && taken < hardMaxParagraphs && (taken < maxParagraphs || chars < minChars)) {
+            first--
+            taken++
+            chars += bounds[first].let { it.second - it.first }
+        }
+        return fullText.substring(bounds[first].first, bounds[anchorIndex].second).trim()
+    }
+
+    /** Start and end offsets of each non-empty paragraph, in order. */
+    private fun paragraphBounds(text: String): List<Pair<Int, Int>> {
+        val bounds = mutableListOf<Pair<Int, Int>>()
+        var start = 0
+        var i = 0
+        while (i < text.length) {
+            if (text[i] == '\n') {
+                if (start < i && text.substring(start, i).isNotBlank()) bounds += start to i
+                // Skip the whole run of newlines so a blank line does not open
+                // an empty paragraph of its own.
+                while (i < text.length && text[i] == '\n') i++
+                start = i
+                continue
+            }
+            i++
+        }
+        if (start < text.length && text.substring(start).isNotBlank()) bounds += start to text.length
+        return bounds
+    }
+
     fun captureWindow(fullText: String, offset: Int?, radiusChars: Int = DEFAULT_RADIUS_CHARS): String {
         if (fullText.isBlank()) return ""
         val center = (offset ?: 0).coerceIn(0, fullText.length)

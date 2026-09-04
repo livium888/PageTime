@@ -626,11 +626,18 @@ private fun ModelSourcePicker(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Text(
-        "${LumenModelStore.ALTERNATE_MODEL_LABEL} is roughly double the size and " +
-            "may not fit in this phone's free memory — if it will not load, the app " +
-            "falls back to the plain draft rather than failing the capture. The " +
-            "address below is a best guess and can be corrected: paste the direct " +
-            "link to a MediaPipe .task bundle from the model's page.",
+        "${LumenModelStore.ALTERNATE_MODEL_LABEL} is the alternative on offer. It is " +
+            "three times the built-in model's weights, and loading needs roughly " +
+            "1.7x the file in FREE memory — about 2.7 GB for this one. Check the " +
+            "free figure in the capture log before spending the download: under it, " +
+            "the model is refused and capture falls back to the plain draft.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        "Any MediaPipe .task bundle works here — paste a direct download link. " +
+            "A wrong address fails visibly: the size is taken from the server and " +
+            "the file is structurally checked before the runtime opens it.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

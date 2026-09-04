@@ -513,9 +513,16 @@ class LumenModelStore(
          * Whether it will LOAD is a separate question the phone answers: this
          * is roughly double the current weights against about 1.6 GB free.
          */
-        const val ALTERNATE_MODEL_LABEL = "Qwen 2.5 1.5B Instruct (int4)"
+        const val ALTERNATE_MODEL_LABEL = "Qwen 2.5 1.5B Instruct (q8, 1.6 GB)"
         const val ALTERNATE_MODEL_URL =
             "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/" +
-                "Qwen2.5-1.5B-Instruct_multi-prefill-seq_q4_ekv1280.task?download=true"
+                "Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task?download=true"
+
+        /**
+         * Roughly what [ALTERNATE_MODEL_URL] weighs, for warning before a
+         * download rather than after one. The real figure still comes from the
+         * server; this is only for the sentence that decides whether to start.
+         */
+        const val ALTERNATE_MODEL_BYTES = 1_717_986_918L
     }
 }

@@ -54,19 +54,27 @@ class AppBlockerService : AccessibilityService() {
         event ?: return
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                val eventPackage = event.packageName?.toString()
-                if (!ForegroundEventPolicy.isForegroundChange(
-                        packageName = eventPackage,
-                        className = event.className?.toString(),
-                        selfPackage = packageName
-                    )
-                ) {
-                    // Transient chrome (shade, keyboard, toast) or our own overlay:
-                    // do nothing. The existing enforcement loop already keeps the
-                    // overlay attached; restarting it here caused visible flashing.
-                    return
-                }
-                controller?.onForegroundPackage(eventPackage)
+                // The event's package names the window that CHANGED, not the app
+                // the reader is looking at. Backgrounded apps emit these
+                // constantly, and a blocked app being sent behind the launcher
+                // emits one on its way out — so believing the event re-asserted
+                // the block over the home screen, and did it again on every
+                // event the app fired from the background. That is the block
+                // screen that kept coming back after pressing Home.
+                //
+                // The event is now only a reason to look, never the answer.
+                // What decides is the window actually in front — the same
+                // signal the poll uses, so there is one authority instead of
+                // two that can disagree.
+                val inFront = ForegroundEventPolicy.foregroundForEvent(
+                    activeWindowPackage = rootInActiveWindow?.packageName?.toString(),
+                    selfPackage = packageName
+                )
+                if (inFront != null) controller?.onForegroundPackage(inFront)
+                // Untrusted means our own overlay, transient chrome, or a window
+                // that cannot be inspected. Unknown changes nothing: the
+                // enforcement loop keeps a real block attached, and its own
+                // staleness check ends one that nothing confirms any more.
             }
             // Something re-stacked the windows — possibly on top of our block screen.
             // Re-assert only when the focused window still names the blocked app;

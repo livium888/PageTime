@@ -649,7 +649,9 @@ fun ReaderScreen(
             captureDiagnostic = vm.captureDiagnostic.collectAsStateWithLifecycle().value,
             captureLog = vm.lastCaptureLog(),
             redrafting = lumenCapturing,
+            geminiAvailable = vm.geminiAvailable.collectAsStateWithLifecycle().value,
             onRetry = vm::retryLumenCard,
+            onRewriteWithGemini = vm::rewriteLumenCardWithGemini,
             onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
@@ -1982,7 +1984,9 @@ private fun LumenDraftDialog(
     captureDiagnostic: com.pagetime.app.data.CaptureDiagnostic.Record?,
     captureLog: List<String>,
     redrafting: Boolean,
+    geminiAvailable: Boolean,
     onRetry: () -> Unit,
+    onRewriteWithGemini: () -> Unit,
     onSave: (front: String, back: String, afterIndex: String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2044,6 +2048,21 @@ private fun LumenDraftDialog(
                         }
                     }
                     Spacer(Modifier.height(8.dp))
+                }
+                // Offered on EVERY card, not just ones the checks flagged. The
+                // cards that most need a better model are the ones that pass
+                // every check: well-formed, on-topic, and a summary of the
+                // passage rather than an idea taken from it. Gating this on
+                // aiShortfall would hide it exactly when it matters.
+                if (geminiAvailable) {
+                    TextButton(
+                        onClick = onRewriteWithGemini,
+                        enabled = !redrafting,
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text(if (redrafting) "Rewriting…" else "Rewrite with Gemini")
+                    }
+                    Spacer(Modifier.height(4.dp))
                 }
                 OutlinedTextField(
                     value = front,

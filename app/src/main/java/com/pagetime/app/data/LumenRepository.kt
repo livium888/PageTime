@@ -1174,6 +1174,69 @@ object LumenCapture {
     private fun normalizeWhitespace(value: String): String =
         value.replace(Regex("\\s+"), " ").trim()
 
+    private const val SOURCE_NOUNS =
+        "(?:passages?|texts?|excerpts?|extracts?|paragraphs?|chapters?|sections?|pages?|" +
+            "books?|articles?|essays?|stories|story|authors?|writers?|narrators?|pieces?|" +
+            "quotes?|readings?|sources?)"
+
+    private const val REPORTING_VERBS =
+        "(?:says?|shows?|reveals?|describes?|describe|discusses|discuss|explains?|explain|" +
+            "argues?|argue|suggests?|suggest|claims?|claim|states?|state|tells?|tell|" +
+            "illustrates?|illustrate|demonstrates?|demonstrate|highlights?|highlight|" +
+            "notes?|mentions?|mention|presents?|present|recounts?|recount|portrays?|portray|" +
+            "depicts?|depict|emphasi[sz]es?|asserts?|assert|contends?|contend|observes?|" +
+            "observe|examines?|examine|explores?|explore|addresses|address|undermines?|" +
+            "undermine|implies|imply|concerns?|concern|outlines?|outline|reflects?|reflect)"
+
+    /**
+     * True when [text] talks ABOUT the source instead of stating an idea:
+     * "This passage reveals...", "The author argues...", "the book shows".
+     *
+     * The prompt has always forbidden this. Nothing enforced it, and a small
+     * model treats a prohibition as a preference — so the commonest bad card
+     * was a fluent sentence narrating the passage back at the reader, which
+     * passed every check because it copies nothing and parses fine. Trimmed to
+     * eight words it becomes a fragment like "This passage reveals an adaptive
+     * tradition where individuals'", which is how a card comes to have nothing
+     * to do with anything.
+     *
+     * A permanent note has to stand alone years later with the book forgotten.
+     * A note that begins "This passage" cannot: it points at something the
+     * reader no longer has.
+     *
+     * DELIBERATELY DEICTIC. It matches "the author", "this passage", "that
+     * chapter" — a source being pointed AT — and not the bare nouns. "Books
+     * outlive their authors" is a fine claim and stays one; "The author argues
+     * that books outlive us" is a report about a text and does not.
+     */
+    fun mentionsSource(text: String): Boolean = SOURCE_REPORT.containsMatchIn(text)
+
+    /**
+     * A source being POINTED AT as the subject of a reporting verb, which is
+     * the shape of every card that narrates instead of claiming.
+     *
+     * The first version of this matched a deictic plus a source noun and
+     * nothing else — "the author", "this passage" — and it was wrong in both
+     * directions when run against real sentences: it missed "These paragraphs
+     * describe a ritual" for want of a plural, and it killed "Readers finish a
+     * book the writer began", which is a perfectly good claim with an
+     * incidental "the writer" in the middle. A check that costs a card every
+     * time it misfires has to be narrower than the intuition behind it.
+     *
+     * What actually damages a card is the source doing the telling. So the
+     * pattern is deictic + source + REPORTING VERB, plus the same anchored at
+     * the start with a copula for "The narrator is unreliable". "The book trade
+     * created copyright" survives, because "trade" is not a verb of reporting.
+     */
+    private val SOURCE_REPORT =
+        Regex(
+            "\\b(?:this|the|that|these|those)\\s+" + SOURCE_NOUNS + "\\s+" + REPORTING_VERBS +
+                "\\b" +
+                "|^\\s*(?:this|the|that|these|those)\\s+" + SOURCE_NOUNS +
+                "\\s+(?:is|are|was|were)\\b",
+            RegexOption.IGNORE_CASE,
+        )
+
     /** Trims quotes/emphasis markers, collapses whitespace, and caps length. */
     /**
      * A front is a claim, and a claim that runs on stops being one. The prompt
@@ -1203,8 +1266,44 @@ object LumenCapture {
             val headWords = head.split(Regex("\\s+")).filter { it.isNotBlank() }
             if (headWords.size in 3..MAX_FRONT_WORDS) return head
         }
-        return words.take(MAX_FRONT_WORDS).joinToString(" ").trimEnd(',', ';', ':', '-')
+        // A hard cut at the word count lands wherever it lands, and "…where
+        // individuals'" or "…the nature of" reads as a sentence someone
+        // interrupted. Dropping trailing connectives costs a word and buys a
+        // phrase that ends.
+        val hard = words.take(MAX_FRONT_WORDS).toMutableList()
+        while (hard.size > 3 && danglesAtEnd(hard.last())) {
+            hard.removeAt(hard.size - 1)
+        }
+        return hard.joinToString(" ").trimEnd(',', ';', ':', '-')
     }
+
+    /**
+     * Whether a front ending on [word] reads as interrupted.
+     *
+     * Two cases, both structural rather than about any particular noun: a
+     * connective, which promises a clause after it, and a possessive, which
+     * promises the thing possessed. "Trust binds people" is a finished claim
+     * and must stay one — an earlier version of this list named nouns from the
+     * example that prompted it, which would have truncated good cards to fix
+     * one bad one.
+     */
+    private fun danglesAtEnd(word: String): Boolean {
+        val bare = word.trimEnd(',', ';', ':', '-', '.').lowercase()
+        if (bare.endsWith("'") || bare.endsWith("\u2019")) return true
+        return bare in DANGLING_TAIL_WORDS
+    }
+
+    /**
+     * Connectives a claim cannot end on. Each promises something after it, so a
+     * front stopping at one reads as truncated rather than terse.
+     */
+    private val DANGLING_TAIL_WORDS =
+        setOf(
+            "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into",
+            "is", "of", "on", "or", "so", "than", "that", "the", "their", "then",
+            "these", "this", "those", "to", "was", "were", "what", "when", "where",
+            "which", "while", "who", "whose", "with",
+        )
 
     private fun cleanFront(value: String): String = trimFront(cleanField(value, maxLength = 120))
 
@@ -1219,6 +1318,7 @@ object LumenCapture {
         FRAGMENT("the model's note was cut off"),
         RESTATES_FRONT("the note only repeated its own title"),
         SINGLE_SENTENCE("the note stopped after one sentence"),
+        MENTIONS_SOURCE("the note describes the passage instead of standing on its own"),
     }
 
     /**
@@ -1245,6 +1345,11 @@ object LumenCapture {
             trimmed.length < MIN_BACK_CHARS -> BackProblem.FRAGMENT
             trimmed.last() !in charArrayOf('.', '!', '?', '"', '\'', ')') -> BackProblem.FRAGMENT
             normalizedBack == normalizedFront -> BackProblem.RESTATES_FRONT
+            // Flagged rather than rejected. A back that mentions the source is
+            // still an explanation the reader can edit; a FRONT that does is
+            // just a pointer at a book they will not have. Different damage,
+            // so different treatment.
+            mentionsSource(trimmed) -> BackProblem.MENTIONS_SOURCE
             sentenceCount(trimmed) < 2 -> BackProblem.SINGLE_SENTENCE
             else -> null
         }
@@ -1342,6 +1447,7 @@ object LumenLocalDraft {
         NO_REPLY("the model didn't answer"),
         UNPARSEABLE("the model's reply wasn't a usable card"),
         PASSAGE_ECHO("the model copied the passage instead of writing its own card"),
+        SELF_REFERENCE("the model wrote about the passage instead of stating an idea"),
     }
 
     data class Outcome(
@@ -1397,6 +1503,13 @@ object LumenLocalDraft {
             if (LumenCapture.isPassageEcho(parsed.first, passage)) {
                 debugLog("discarded local draft (passage echo): ${raw.take(240)}")
                 return Attempt(null, Rejection.PASSAGE_ECHO)
+            }
+            // The front is the card's whole identity, so a front that points at
+            // the source is not a card at all — and unlike a thin back, there
+            // is no version of it worth keeping.
+            if (LumenCapture.mentionsSource(parsed.first)) {
+                debugLog("discarded local draft (writes about the passage): ${raw.take(240)}")
+                return Attempt(null, Rejection.SELF_REFERENCE)
             }
             return Attempt(parsed, null)
         }

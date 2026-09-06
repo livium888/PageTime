@@ -241,14 +241,31 @@ class LumenCaptureTest {
         assertEquals("Fiction lets strangers cooperate", LumenCapture.trimFront(rambling))
     }
 
+    /**
+     * The word count is a CEILING, not a target.
+     *
+     * This test used to assert exactly [LumenCapture.MAX_FRONT_WORDS] words,
+     * and that is what it caught when the rule changed: the eighth word of this
+     * sentence is "of", so the old cut produced "…very large groups of" — a
+     * claim stopped mid-phrase. A front is a title someone reads years later,
+     * and one that ends on a preposition reads as truncated rather than terse.
+     *
+     * So the guarantee is now: at most eight words, still a prefix of what the
+     * model said, and never ending on a word that promises another.
+     */
     @Test
     fun `a front cut falls back to the word count without a clause boundary`() {
         val rambling = "Shared stories quietly bind very large groups of complete strangers together"
 
         val front = LumenCapture.trimFront(rambling)
 
-        assertEquals(LumenCapture.MAX_FRONT_WORDS, front.split(" ").size)
+        assertTrue(
+            "Cut to ${front.split(" ").size} words: $front",
+            front.split(" ").size <= LumenCapture.MAX_FRONT_WORDS,
+        )
+        assertTrue("Cut too far: $front", front.split(" ").size >= 3)
         assertTrue(rambling.startsWith(front))
+        assertEquals("Shared stories quietly bind very large groups", front)
     }
 
     @Test

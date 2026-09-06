@@ -102,6 +102,51 @@ object LumenAiPrompts {
      * a card about the first half of what was captured, which is a degradation
      * rather than a non-sequitur.
      */
+    /**
+     * The passage in the worked example, and the card made from it.
+     *
+     * These are constants rather than inline text so a test can hold the
+     * example to the rules it is supposed to illustrate. That test exists
+     * because the previous example broke them.
+     *
+     * It read:
+     *
+     *     Passage: The mitochondria is the powerhouse of the cell. It turns
+     *              nutrients into energy that the cell can use.
+     *     Card:    {"front": "Mitochondria convert nutrients into usable energy",
+     *              ... "because": "... which is why the organelle is called the
+     *              cell's powerhouse."}
+     *
+     * Two problems, and both taught the model the failure the reader kept
+     * seeing. The front is a REWORDING of the passage's own second sentence,
+     * so the demonstration of "write a permanent note" was a demonstration of
+     * paraphrasing. And it reused nutrients, energy, cell and powerhouse
+     * directly, under a rule three lines above it saying never to copy a
+     * phrase from the passage.
+     *
+     * A small model imitates the example far more readily than it obeys prose.
+     * Shown a paraphrase, it returns paraphrases — "Early Homo sapiens
+     * migrated vastly from Africa" from a passage whose actual subject is that
+     * Sapiens FAILED the first time and something changed internally before
+     * the second.
+     *
+     * This example shares almost no vocabulary with its passage, and names
+     * nothing in it. The passage is about printing; the card never says
+     * "print". That is the move a slip box is for: the specific thing goes in,
+     * the transferable claim comes out.
+     */
+    const val EXAMPLE_PASSAGE: String =
+        "When the printing press reached Europe, its first products were copies " +
+            "of manuscripts that scribes were already making. Decades passed before " +
+            "anyone commissioned work that could not have existed in manuscript at all."
+
+    const val EXAMPLE_CARD: String =
+        """{"front": "New tools imitate what they displace", """ +
+            """"idea": "A technology's earliest uses copy the form it displaced, """ +
+            """because that form is the only model anyone has yet.", """ +
+            """"because": "Its own possibilities become visible only once people """ +
+            """stop asking it to be the older thing."}"""
+
     val DEFAULT_CARD_TEMPLATE: String =
         """
             |Write one permanent note about the passage below, the way a slip
@@ -123,12 +168,8 @@ object LumenAiPrompts {
             |  matters most.
             |
             |Example:
-            |Passage: The mitochondria is the powerhouse of the cell. It turns
-            |nutrients into energy that the cell can use.
-            |Card: {"front": "Mitochondria convert nutrients into usable energy",
-            |"idea": "A cell cannot spend nutrients in the form they arrive in.",
-            |"because": "They are converted into a currency it can spend, which
-            |is why the organelle is called the cell's powerhouse."}
+            |Passage: $EXAMPLE_PASSAGE
+            |Card: $EXAMPLE_CARD
             |
             |Book: "$BOOK_TOKEN"
             |

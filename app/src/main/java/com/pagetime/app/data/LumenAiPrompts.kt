@@ -86,14 +86,25 @@ object LumenAiPrompts {
      * The prompt shipped with the app, and the text a reader edits when they
      * tailor capture in Settings.
      */
+    /**
+     * INSTRUCTIONS FIRST, PASSAGE LAST. This ordering is load-bearing.
+     *
+     * Every token budget in this stack is an estimate — the app asks LiteRT for
+     * 3,072 tokens, and what a given .task bundle actually allows is baked into
+     * the file and not reported back. When an input is clamped it is clamped
+     * from the END. With the passage first, as this template used to have it,
+     * the thing that gets cut is the entire task description: the model is left
+     * holding a slab of book text and no instruction, and free-associates. The
+     * card then has nothing to do with what a card is supposed to be, which
+     * reads as a bad model rather than as a truncated prompt.
+     *
+     * Ordered this way the same clamp costs the tail of the passage instead —
+     * a card about the first half of what was captured, which is a degradation
+     * rather than a non-sequitur.
+     */
     val DEFAULT_CARD_TEMPLATE: String =
         """
-            |Book: "$BOOK_TOKEN"
-            |
-            |Passage:
-            |$PASSAGE_TOKEN
-            |
-            |Write one permanent note about the passage above, the way a slip
+            |Write one permanent note about the passage below, the way a slip
             |box keeps a thought: a single idea, in your own words, that still
             |makes sense years from now with the book long forgotten.
             |
@@ -118,6 +129,11 @@ object LumenAiPrompts {
             |"idea": "A cell cannot spend nutrients in the form they arrive in.",
             |"because": "They are converted into a currency it can spend, which
             |is why the organelle is called the cell's powerhouse."}
+            |
+            |Book: "$BOOK_TOKEN"
+            |
+            |Passage:
+            |$PASSAGE_TOKEN
             |
             |Reply with ONLY the JSON object, nothing else:
             |{"front": "...", "idea": "...", "because": "..."}
@@ -173,17 +189,19 @@ object LumenAiPrompts {
         bookTitle: String,
     ): String =
         """
+            |Name the single most important idea in the passage below, in your
+            |own words. front is that idea as a claim, at most 8 words, never a
+            |bare topic. idea is one sentence saying what it is. because is one
+            |sentence saying why it holds, and is never empty. Never copy the
+            |passage. Never mention the book or the text — the note stands
+            |alone.
+            |
             |Book: "$bookTitle"
             |
             |Passage:
             |${trimPassage(passage)}
             |
-            |Name the single most important idea in your own words. front is
-            |that idea as a claim, at most 8 words, never a bare topic. idea is
-            |one sentence saying what it is. because is one sentence saying why
-            |it holds, and is never empty. Never copy the passage. Never mention
-            |the book or the text — the note stands alone. Reply with ONLY this
-            |JSON:
+            |Reply with ONLY this JSON:
             |{"front": "...", "idea": "...", "because": "..."}
             |{"front": "
             """.trimMargin()
@@ -202,19 +220,20 @@ object LumenAiPrompts {
         alreadyFiled: String,
     ): String =
         """
+            |You have already written this note: "$alreadyFiled"
+            |
+            |Find a DIFFERENT idea in the passage below. Not that one, and not a
+            |rewording of it. front is the new idea as a claim, at most 8 words,
+            |never a bare topic. idea is one sentence saying what it is. because
+            |is one sentence saying why it holds, and is never empty. Never copy
+            |the passage. Never mention the book or the text.
+            |
             |Book: "$bookTitle"
             |
             |Passage:
             |${trimPassage(passage)}
             |
-            |You have already written this note: "$alreadyFiled"
-            |
-            |Find a DIFFERENT idea in the passage. Not that one, and not a
-            |rewording of it. front is the new idea as a claim, at most 8 words,
-            |never a bare topic. idea is one sentence saying what it is. because
-            |is one sentence saying why it holds, and is never empty. Never copy
-            |the passage. Never mention the book or the text. Reply with ONLY
-            |this JSON:
+            |Reply with ONLY this JSON:
             |{"front": "...", "idea": "...", "because": "..."}
             |{"front": "
             """.trimMargin()

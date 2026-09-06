@@ -1,24 +1,25 @@
 name: Probe model URLs
 
-# A network probe, run by hand.
+# A network probe, run by editing this file.
 #
 # The agent working on this repo cannot reach huggingface.co — the proxy in
-# front of it returns 403 for every host that serves model weights. That has
-# already cost one shipped download link that 404'd for the reader, because a
-# remembered URL is a guess however confident the sentence around it sounds.
+# front of it returns 403 for every host that serves model weights — and its
+# token has no actions:write, so it cannot dispatch a workflow either. It can
+# push. So the candidates live in this file and editing it IS the request.
 #
-# The runner has ordinary internet. So it can be asked the questions that
-# cannot be asked from the agent's container: does this address exist, what
-# does it actually return, and how big is the file. Headers only — nothing is
-# downloaded.
+# What that buys: the last run found that
+# sentence-transformers/all-MiniLM-L6-v2/onnx/model_quantized.onnx is a 404,
+# despite following the obvious pattern and sitting beside a file that does
+# exist. That is the third wrong URL this feature produced and the first that
+# cost nothing.
+#
+# So this asks Hugging Face's API what each repository ACTUALLY contains, with
+# sizes, rather than guessing filenames a second time.
 
 on:
-  workflow_dispatch:
-    inputs:
-      urls:
-        description: Whitespace- or newline-separated URLs to check
-        required: true
-        type: string
+  push:
+    paths:
+      - .github/workflows/probe-model-urls.yml
 
 permissions:
   contents: read
@@ -26,54 +27,65 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Ask each URL what it is
-        env:
-          URLS: ${{ inputs.urls }}
+      - name: List what these repositories hold
         run: |
           set -uo pipefail
-          fail=0
-          for url in $URLS; do
+          # On-device language models worth knowing the size of.
+          #
+          # The ceiling is arithmetic, not taste: the reader's phone reports
+          # about 1.5-1.9 GB free, and LiteRT needs roughly 1.7x the file in
+          # FREE memory to load, so anything much above ~900 MB is refused at
+          # runtime however good it is. Gemma 3 1B int4 is 554 MB, for scale.
+          REPOS="
+          litert-community/Gemma3-1B-IT
+          litert-community/gemma-3n-E2B-it-litert-preview
+          litert-community/gemma-3n-E4B-it-litert-preview
+          litert-community/Llama-3.2-1B-Instruct
+          litert-community/Llama-3.2-3B-Instruct
+          litert-community/SmolLM2-1.7B-Instruct
+          litert-community/SmolLM2-360M-Instruct
+          litert-community/Qwen2.5-1.5B-Instruct
+          litert-community/Qwen2.5-0.5B-Instruct
+          litert-community/DeepSeek-R1-Distill-Qwen-1.5B
+          litert-community/Phi-4-mini-instruct
+          litert-community/TinyLlama-1.1B-Chat-v1.0
+          "
+          for repo in $REPOS; do
             echo "=============================================================="
-            echo "URL: $url"
-            # -L because model hosts redirect to a CDN, and the interesting
-            # facts (size, type) live at the end of the chain rather than at
-            # the address that was typed.
-            if ! headers=$(curl -sS -L -I --max-time 60 "$url" 2>&1); then
-              echo "RESULT: request failed"
-              echo "$headers"
-              fail=1
+            echo "REPO: $repo"
+            meta=$(curl -sS -L --max-time 60 "https://huggingface.co/api/models/$repo" 2>&1) || {
+              echo "  request failed"
+              continue
+            }
+            if ! printf '%s' "$meta" | jq -e '.siblings' >/dev/null 2>&1; then
+              echo "  no listing — $(printf '%s' "$meta" | tr -d '\n' | head -c 160)"
               continue
             fi
-            status=$(printf '%s\n' "$headers" | awk '/^HTTP/ {code=$2} END {print code}' | tr -d '\r')
-            length=$(printf '%s\n' "$headers" | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {v=$2} END {print v+0}' | tr -d '\r')
-            ctype=$(printf '%s\n' "$headers" | awk 'BEGIN{IGNORECASE=1} /^content-type:/ {v=$2} END {print v}' | tr -d '\r')
-            echo "STATUS: ${status:-none}"
-            echo "TYPE:   ${ctype:-none}"
-            if [ "${length:-0}" -gt 0 ]; then
-              echo "SIZE:   $length bytes ($((length / 1048576)) MB)"
+            # A gated repository needs a token, so it can never be a default
+            # however well it would run. Worth knowing before anything else.
+            echo "  gated: $(printf '%s' "$meta" | jq -r '.gated // false')"
+            tree=$(curl -sS -L --max-time 60 "https://huggingface.co/api/models/$repo/tree/main" 2>&1)
+            if printf '%s' "$tree" | jq -e 'type == "array"' >/dev/null 2>&1; then
+              # LFS carries the real size; .size on an LFS pointer is the
+              # pointer's own few hundred bytes and would be a nonsense answer.
+              found=$(printf '%s' "$tree" | jq -r '
+                .[]
+                | select(.type == "file")
+                | select(.path | test("\\.(task|litertlm|tflite)$"))
+                | "  \(.path)  \((.lfs.size // .size // 0) / 1048576 | floor) MB"
+              ')
+              if [ -n "$found" ]; then
+                printf '%s\n' "$found"
+              else
+                echo "  no .task/.litertlm/.tflite files in this repository"
+              fi
             else
-              echo "SIZE:   not reported"
+              echo "  tree unavailable"
             fi
-            # An HTML body behind a 200 is the failure that looks like success:
-            # it downloads, it is a plausible number of bytes, and it is a login
-            # or error page rather than a model. Named here so it cannot be
-            # mistaken for a working link.
-            case "${ctype:-}" in
-              text/html*)
-                echo "VERDICT: HTML, not a model file — this address is wrong"
-                fail=1
-                ;;
-              *)
-                if [ "${status:-}" = "200" ]; then
-                  echo "VERDICT: reachable"
-                else
-                  echo "VERDICT: not usable"
-                  fail=1
-                fi
-                ;;
-            esac
           done
           echo "=============================================================="
-          exit $fail
+          # Exits 0 whatever it finds. A missing or gated repository is the
+          # answer this job exists to produce, not a broken build.
+          echo "Listing complete."

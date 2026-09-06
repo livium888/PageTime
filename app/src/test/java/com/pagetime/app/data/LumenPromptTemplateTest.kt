@@ -104,3 +104,67 @@ class LumenPromptTemplateTest {
         assertTrue("The retry is the built-in strict prompt", prompts[1].contains("Reply with ONLY this"))
     }
 }
+
+/**
+ * Prompt ORDER, which no other test covers and which a well-meaning edit could
+ * silently reverse.
+ *
+ * The token budget every prompt is built against is an estimate; what a given
+ * .task bundle actually allows is baked into the file and never reported back.
+ * When an input is clamped it is clamped from the end. So whatever sits last is
+ * what gets sacrificed, and that has to be the passage — losing its tail costs
+ * a card about the first half of what was captured. Losing the INSTRUCTIONS
+ * instead leaves the model holding book text with no task, which is how a
+ * truncated prompt comes to look like a bad model.
+ */
+class LumenPromptOrderTest {
+
+    private fun instructionsPrecedePassage(prompt: String, marker: String) {
+        val passageAt = prompt.indexOf(marker)
+        val rulesAt = prompt.indexOf("front")
+        assertTrue("Prompt does not contain the passage marker", passageAt >= 0)
+        assertTrue("Prompt does not contain its instructions", rulesAt >= 0)
+        assertTrue(
+            "Instructions must come BEFORE the passage so a clamp costs the " +
+                "passage's tail rather than the whole task description",
+            rulesAt < passageAt,
+        )
+    }
+
+    @Test
+    fun `the built-in template puts its instructions first`() {
+        instructionsPrecedePassage(
+            LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
+            LumenAiPrompts.PASSAGE_TOKEN,
+        )
+    }
+
+    @Test
+    fun `the strict retry puts its instructions first`() {
+        instructionsPrecedePassage(
+            LumenAiPrompts.cardDraftStrict("UNIQUE-PASSAGE-MARKER", "A Book"),
+            "UNIQUE-PASSAGE-MARKER",
+        )
+    }
+
+    @Test
+    fun `the different-idea retry puts its instructions first`() {
+        instructionsPrecedePassage(
+            LumenAiPrompts.cardDraftDifferent("UNIQUE-PASSAGE-MARKER", "A Book", "An older note"),
+            "UNIQUE-PASSAGE-MARKER",
+        )
+    }
+
+    /**
+     * The reply instruction is the model's cue to start emitting JSON, so it
+     * has to be the last thing it reads. If the passage came after it, the
+     * model would be told how to answer and then handed more input.
+     */
+    @Test
+    fun `the reply instruction comes after the passage`() {
+        val prompt = LumenAiPrompts.cardDraft("UNIQUE-PASSAGE-MARKER", "A Book")
+        assertTrue(
+            prompt.indexOf("UNIQUE-PASSAGE-MARKER") < prompt.lastIndexOf("Reply with ONLY"),
+        )
+    }
+}

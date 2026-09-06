@@ -105,52 +105,48 @@ object LumenAiPrompts {
     /**
      * The passage in the worked example, and the card made from it.
      *
-     * These are constants rather than inline text so a test can hold the
-     * example to the rules it is supposed to illustrate. That test exists
-     * because the previous example broke them.
+     * REVERTED, and the reason is worth more than the change was.
      *
-     * It read:
+     * This example was replaced with one that demonstrated abstraction: a
+     * passage about early printers, and a card reading "New tools imitate what
+     * they displace" — no vocabulary in common, the specific thing in and the
+     * transferable claim out. The reasoning was sound. The mitochondria card
+     * below IS a rewording of its own passage's second sentence, and it does
+     * reuse words under a rule forbidding exactly that.
      *
-     *     Passage: The mitochondria is the powerhouse of the cell. It turns
-     *              nutrients into energy that the cell can use.
-     *     Card:    {"front": "Mitochondria convert nutrients into usable energy",
-     *              ... "because": "... which is why the organelle is called the
-     *              cell's powerhouse."}
+     * Measured on one passage, held constant, it made cards WORSE:
      *
-     * Two problems, and both taught the model the failure the reader kept
-     * seeing. The front is a REWORDING of the passage's own second sentence,
-     * so the demonstration of "write a permanent note" was a demonstration of
-     * paraphrasing. And it reused nutrients, energy, cell and powerhouse
-     * directly, under a rule three lines above it saying never to copy a
-     * phrase from the passage.
+     *   with this example      "Early Homo sapiens migrated vastly from Africa"
+     *   with the abstract one  "The relentless drive for territorial control
+     *                           led civilizations westward, reshaping
+     *                           landscapes and fundamentally altering human
+     *                           history."
      *
-     * A small model imitates the example far more readily than it obeys prose.
-     * Shown a paraphrase, it returns paraphrases — "Early Homo sapiens
-     * migrated vastly from Africa" from a passage whose actual subject is that
-     * Sapiens FAILED the first time and something changed internally before
-     * the second.
+     * The first is a summary — dull, but specific and true. The second is
+     * vague, internally repetitive across all three fields, and factually
+     * wrong: those Sapiens went to the Middle East, not westward.
      *
-     * This example shares almost no vocabulary with its passage, and names
-     * nothing in it. The passage is about printing; the card never says
-     * "print". That is the move a slip box is for: the specific thing goes in,
-     * the transferable claim comes out.
+     * WHY, AND THIS IS THE PART TO REMEMBER
      *
-     * Kept SHORT because every character of instruction is a character of book
-     * the model does not get to read, and a test caps the whole scaffold at
-     * 1,400 characters. The first draft of this example ran to 1,413 and was
-     * cut rather than the cap raised — the budget was there first and it is
-     * right.
+     * For a model this small, "abstract" and "vague" are the same direction.
+     * A concrete example anchors it to the passage's actual content. An
+     * example that demonstrates generalising teaches it to generalise, and
+     * what a 1B model produces when it generalises is not insight but
+     * adjectives.
+     *
+     * That is now three prompt interventions measured and three failures — a
+     * second worked example, a negative rule, and this. The lever for card
+     * quality is not the prompt.
      */
     const val EXAMPLE_PASSAGE: String =
-        "Early printers sold copies of the manuscripts scribes already made. " +
-            "Only decades later did anyone commission a book no scribe could have produced."
+        "The mitochondria is the powerhouse of the cell. It turns nutrients " +
+            "into energy that the cell can use."
 
     const val EXAMPLE_CARD: String =
-        """{"front": "New tools imitate what they displace", """ +
-            """"idea": "A technology's earliest uses copy the form it replaced, """ +
-            """the only model anyone has.", """ +
-            """"because": "Its own possibilities appear only once people stop """ +
-            """asking it to be the old thing."}"""
+        """{"front": "Mitochondria convert nutrients into usable energy", """ +
+            """"idea": "A cell cannot spend nutrients in the form they arrive in.", """ +
+            """"because": "They are converted into a currency it can spend, which """ +
+            """is why the organelle is called the cell's powerhouse."}"""
 
     val DEFAULT_CARD_TEMPLATE: String =
         """

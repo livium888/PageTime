@@ -63,32 +63,21 @@ class LumenExampleObeysItsOwnRulesTest {
     }
 
     /**
-     * The one that would have caught the mitochondria example, and the whole
-     * point of the exercise.
+     * REMOVED: an assertion that the example's front shares no content word
+     * with its passage.
      *
-     * A permanent note states what transfers, not what the passage said. If
-     * the example's front reuses the passage's own content words, the
-     * demonstration is "reword the main sentence" however the rules are
-     * phrased — and that is precisely what came back from the model.
+     * It encoded a hypothesis — that the example taught rewording because it
+     * reused the passage's words — and the hypothesis was measured and found
+     * false. An example with zero overlap made cards vaguer, not sharper: for
+     * a 1B model, abstraction and vagueness are the same direction, and shared
+     * vocabulary appears to anchor it to real content rather than to teach it
+     * to copy.
      *
-     * Short and common words are ignored: an overlap on "the" or "into" means
-     * nothing, while an overlap on the passage's subject means everything.
+     * A test that asserts a belief rather than a requirement is a trap for
+     * whoever tries the next experiment, so it is gone rather than inverted.
+     * The structural checks below stand on their own: they describe what a
+     * card must BE, not what anyone thinks makes one good.
      */
-    @Test
-    fun `the example front abstracts rather than rewords`() {
-        fun contentWords(text: String) =
-            text.lowercase()
-                .split(Regex("[^\\p{L}]+"))
-                .filter { it.length >= 5 }
-                .toSet()
-
-        val shared = contentWords(front) intersect contentWords(LumenAiPrompts.EXAMPLE_PASSAGE)
-        assertTrue(
-            "The example front reuses the passage's own words $shared, so it " +
-                "demonstrates rewording rather than abstraction: $front",
-            shared.isEmpty(),
-        )
-    }
 
     /** The example has to reach the model, or none of the above matters. */
     @Test

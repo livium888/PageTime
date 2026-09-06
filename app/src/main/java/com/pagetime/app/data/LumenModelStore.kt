@@ -494,5 +494,49 @@ class LumenModelStore(
         /** ~521 MB for display strings. */
         val MODEL_SIZE_MB: Int = (EXPECTED_MODEL_BYTES / 1_048_576).toInt()
 
+        /**
+         * Other builds of the SAME model, listed by Hugging Face's own API
+         * rather than guessed (.github/workflows/probe-model-urls.yml).
+         *
+         * The interesting column in that listing was not the model names — the
+         * alternatives are all either gated (Gemma 3n, Llama 3.2), absent as
+         * .task bundles (SmolLM2 1.7B), or far past what this phone can load
+         * (Qwen 1.5B q8 at 1,494 MB, DeepSeek 1.5B at 1,749 MB, Phi-4-mini at
+         * 3,728 MB). It was the fact that Gemma 3 1B itself ships in six
+         * quantisations, and the built-in one is the most aggressive of them.
+         *
+         * WHY ekv MATTERS MORE THAN THE QUANTISATION
+         *
+         * ekv is the KV cache the bundle was exported with — the total token
+         * budget. This app asks LiteRT for 3,072, and the built-in file states
+         * no ekv at all, so what it actually allows is unknown. A clamp is
+         * invisible: the input is simply cut, from the end. The prompts are
+         * ordered instructions-first for exactly that reason, but a build whose
+         * budget is KNOWN to exceed what is asked for removes the question.
+         */
+        const val ALT_Q4_EKV4096_LABEL = "Gemma 3 1B (q4, 4096-token context, 644 MB)"
+        const val ALT_Q4_EKV4096_URL =
+            "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/" +
+                "Gemma3-1B-IT_seq128_q4_block128_ekv4096.task?download=true"
+
+        /**
+         * The same model at 8-bit instead of 4-bit.
+         *
+         * Quantisation damage falls hardest on small models — there are fewer
+         * parameters for the rounding error to spread across — and int4 on a 1B
+         * is where output starts being fluent without being about the input.
+         * This is the same weights, the same instruction tuning, the same
+         * prompt, with less of that damage.
+         *
+         * It needs roughly 1.7 GB free to load, against the 1.5-1.9 GB this
+         * phone reports. That is genuinely marginal, which is why it is offered
+         * rather than defaulted: refused, it falls back cleanly, and with a
+         * Gemini key the capture is finished in the cloud instead.
+         */
+        const val ALT_Q8_EKV4096_LABEL = "Gemma 3 1B (q8, 4096-token context, 977 MB)"
+        const val ALT_Q8_EKV4096_URL =
+            "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/" +
+                "Gemma3-1B-IT_seq128_q8_ekv4096.task?download=true"
+
     }
 }

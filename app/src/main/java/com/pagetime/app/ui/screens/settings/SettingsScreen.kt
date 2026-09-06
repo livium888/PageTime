@@ -862,6 +862,21 @@ private fun ModelSourcePicker(
         modifier = Modifier.fillMaxWidth(),
         textStyle = MaterialTheme.typography.bodySmall,
     )
+    // Both addresses came from Hugging Face's own file listing rather than
+    // from memory, which is the difference between these buttons and the one
+    // that used to sit here promising a Qwen download that 404'd.
+    OutlinedButton(
+        onClick = { draft = LumenModelStore.ALT_Q4_EKV4096_URL },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(LumenModelStore.ALT_Q4_EKV4096_LABEL)
+    }
+    OutlinedButton(
+        onClick = { draft = LumenModelStore.ALT_Q8_EKV4096_URL },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(LumenModelStore.ALT_Q8_EKV4096_LABEL)
+    }
     Button(
         onClick = { onSetModelUrl(draft.trim().takeIf { it.isNotBlank() }) },
         enabled = draft.trim().isNotBlank() && draft.trim() != modelUrl,

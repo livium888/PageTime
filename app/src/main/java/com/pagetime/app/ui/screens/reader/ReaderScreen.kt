@@ -2132,10 +2132,6 @@ private fun LumenDraftDialog(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(2.dp))
-                                    if (captureLog.isNotEmpty()) {
-                        CopyCaptureLogButton(captureLog)
-                        Spacer(Modifier.height(8.dp))
-                    }
                     Box {
                         TextButton(
                             onClick = { filingMenu = true },
@@ -2252,6 +2248,16 @@ private fun LumenDraftDialog(
                             }
                         }
                     }
+                }
+                // Outside the filing block, which is where this used to live —
+                // so it only appeared when the card happened to have filing
+                // suggestions, and was invisible exactly when a capture went
+                // wrong enough to have none. The log is the only evidence of
+                // what the model was actually shown, so it is offered whenever
+                // there is one.
+                if (captureLog.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    CopyCaptureLogButton(captureLog)
                 }
             }
         },

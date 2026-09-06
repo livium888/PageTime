@@ -114,6 +114,7 @@ class SettingsRepository(private val context: Context) {
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
         val LUMEN_MODEL_URL = stringPreferencesKey("lumen_model_url")
+        val LUMEN_CLOUD_RESCUE = booleanPreferencesKey("lumen_cloud_rescue")
 
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
@@ -357,6 +358,27 @@ class SettingsRepository(private val context: Context) {
             if (value.isNullOrBlank()) prefs.remove(Keys.LUMEN_MODEL_URL)
             else prefs[Keys.LUMEN_MODEL_URL] = value.trim()
         }
+    }
+
+    /**
+     * Whether a capture that the on-device model could not deliver may be
+     * retried against Gemini.
+     *
+     * Only reached after the offline model has actually failed — missing,
+     * unloadable, or having returned something unusable. A card the model
+     * produced is never silently replaced by a cloud one, however thin it is;
+     * that is the reader's tap on "Rewrite with Gemini", because it spends
+     * their quota and they should be the one spending it.
+     *
+     * Defaults to on, and only ever fires when a key is configured — which is
+     * itself a deliberate act. A reader who chose offline for privacy rather
+     * than for cost can turn it off and the passage never leaves the phone.
+     */
+    suspend fun lumenCloudRescue(): Boolean =
+        context.dataStore.data.first()[Keys.LUMEN_CLOUD_RESCUE] ?: true
+
+    suspend fun setLumenCloudRescue(value: Boolean) {
+        context.dataStore.edit { it[Keys.LUMEN_CLOUD_RESCUE] = value }
     }
 
     suspend fun setLumenPromptTemplate(value: String?) {

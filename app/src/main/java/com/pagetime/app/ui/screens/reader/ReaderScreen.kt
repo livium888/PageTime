@@ -2015,6 +2015,20 @@ private fun LumenDraftDialog(
                 // produced nothing usable, and an AI card that needs the
                 // reader's eye — a thin note, or the same idea as a card they
                 // already have. Only the first has nothing to re-ask.
+                // A card the offline model could not produce, finished by
+                // Gemini instead. Said plainly and before anything else: the
+                // reader chose offline, so a passage leaving the phone is
+                // their business, and an offline model quietly failing every
+                // capture is something they would otherwise never notice.
+                if (draft.rescuedOffline) {
+                    Text(
+                        "The offline model couldn't draft this one, so Gemini did. " +
+                            "Turn that off in Settings if you'd rather it never leaves the phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (!draft.usedAi || draft.aiShortfall != null) {
                     Text(
                         when {

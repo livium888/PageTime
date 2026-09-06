@@ -238,6 +238,8 @@ fun SettingsScreen(
                 downloadStats = viewModel.downloadStats.collectAsStateWithLifecycle().value,
                 modelUrl = viewModel.lumenModelUrl.collectAsStateWithLifecycle().value,
                 onSetModelUrl = viewModel::setLumenModelUrl,
+                cloudRescue = viewModel.lumenCloudRescue.collectAsStateWithLifecycle().value,
+                onSetCloudRescue = viewModel::setLumenCloudRescue,
                 onDownload = viewModel::downloadOfflineModel,
                 onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
@@ -494,6 +496,8 @@ private fun OfflineModelSettingsCard(
     downloadStats: LumenDownloadStats?,
     modelUrl: String,
     onSetModelUrl: (String?) -> Unit,
+    cloudRescue: Boolean,
+    onSetCloudRescue: (Boolean) -> Unit,
     onDownload: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onDelete: () -> Unit,
@@ -590,8 +594,48 @@ private fun OfflineModelSettingsCard(
             }
 
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            CloudRescueToggle(enabled = cloudRescue, onChange = onSetCloudRescue)
+
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
             ModelSourcePicker(modelUrl = modelUrl, onSetModelUrl = onSetModelUrl)
         }
+    }
+}
+
+/**
+ * What happens when the on-device model cannot draft a card at all.
+ *
+ * Deliberately narrow, and the wording says so: this is not "use Gemini when
+ * the card is weak". A card the offline model produced is kept whatever its
+ * quality, because replacing it would spend the reader's quota on their behalf
+ * — that is what the "Rewrite with Gemini" button on the card is for. This
+ * fires only when there was no card: no model installed, too little free
+ * memory to load it, or a reply that could not be used.
+ */
+@Composable
+private fun CloudRescueToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Finish failed captures with Gemini", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (enabled) {
+                    "When the offline model can't draft a card, the passage goes to " +
+                        "Gemini instead of falling back to a plain first-sentence card. " +
+                        "Needs a Gemini key, and the card says when it happened."
+                } else {
+                    "Off — a capture the offline model can't do becomes a plain draft " +
+                        "from the passage, and nothing leaves the phone."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = enabled, onCheckedChange = onChange)
     }
 }
 
@@ -626,11 +670,11 @@ private fun ModelSourcePicker(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Text(
-        "${LumenModelStore.ALTERNATE_MODEL_LABEL} is the alternative on offer. It is " +
-            "three times the built-in model's weights, and loading needs roughly " +
-            "1.7x the file in FREE memory — about 2.7 GB for this one. Check the " +
-            "free figure in the capture log before spending the download: under it, " +
-            "the model is refused and capture falls back to the plain draft.",
+        "A bigger model needs roughly 1.7x its file size in FREE memory to load — " +
+            "so a 1.6 GB download wants about 2.7 GB free, which this phone does " +
+            "not reliably have. Check the free figure in the capture log before " +
+            "spending the download: under it, the model is refused and capture " +
+            "falls back to the plain draft.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -649,23 +693,12 @@ private fun ModelSourcePicker(
         modifier = Modifier.fillMaxWidth(),
         textStyle = MaterialTheme.typography.bodySmall,
     )
-    Row(
+    Button(
+        onClick = { onSetModelUrl(draft.trim().takeIf { it.isNotBlank() }) },
+        enabled = draft.trim().isNotBlank() && draft.trim() != modelUrl,
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Button(
-            onClick = { onSetModelUrl(draft.trim().takeIf { it.isNotBlank() }) },
-            enabled = draft.trim().isNotBlank() && draft.trim() != modelUrl,
-            modifier = Modifier.weight(1f),
-        ) {
-            Text("Use this model")
-        }
-        OutlinedButton(
-            onClick = { draft = LumenModelStore.ALTERNATE_MODEL_URL },
-            modifier = Modifier.weight(1f),
-        ) {
-            Text("Qwen 1.5B")
-        }
+        Text("Use this model")
     }
     if (!isBuiltIn) {
         OutlinedButton(

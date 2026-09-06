@@ -115,6 +115,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 _lumenPromptIsCustom.value = true
             }
             container.settingsRepository.lumenModelUrl()?.let { _lumenModelUrl.value = it }
+            _lumenCloudRescue.value = container.settingsRepository.lumenCloudRescue()
         }
     }
 
@@ -144,6 +145,21 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLlmProvider(provider: LlmProviderKind) {
         viewModelScope.launch { container.settingsRepository.setLlmProvider(provider) }
+    }
+
+    /**
+     * Whether a capture the on-device model could not deliver may be retried
+     * against Gemini. Only ever reached after a real offline failure, and only
+     * when a key is configured.
+     */
+    private val _lumenCloudRescue = MutableStateFlow(true)
+    val lumenCloudRescue: StateFlow<Boolean> = _lumenCloudRescue.asStateFlow()
+
+    fun setLumenCloudRescue(value: Boolean) {
+        viewModelScope.launch {
+            container.settingsRepository.setLumenCloudRescue(value)
+            _lumenCloudRescue.value = value
+        }
     }
 
     fun downloadOfflineModel() {

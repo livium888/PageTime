@@ -28,7 +28,22 @@ data class LumenDraft(
      * AI card being shown. Null when the card holds up, or when AI was never
      * tried. Either way it is something to tell the reader rather than hide.
      */
-    val aiShortfall: String? = null
+    val aiShortfall: String? = null,
+    /**
+     * Which model actually produced this draft, or null when none did and the
+     * card is the plain-passage fallback.
+     */
+    val source: LumenDraftSource? = null,
+    /**
+     * True when the reader is set to offline and this card came from Gemini
+     * anyway, because the on-device model could not deliver one.
+     *
+     * Surfaced rather than stored quietly: a reader who chose offline is
+     * entitled to know the passage went to the cloud this once, and a reader
+     * who did not notice the offline model failing would otherwise never learn
+     * that it is broken.
+     */
+    val rescuedOffline: Boolean = false,
 )
 
 /** One dated entry in a card's append-only evolution history. */
@@ -136,154 +151,244 @@ class LumenRepository(
                 geminiConfigured = geminiClient.hasKey(),
                 localModelAvailable = localLlmProvider?.isAvailable == true,
             )
+
+        // A forced source is the reader's explicit choice for this one capture
+        // — the "Rewrite with Gemini" tap — so it is never chained past. Handing
+        // back an on-device card when they asked for the cloud one would look
+        // exactly like the rewrite they requested and be the opposite of it.
+        val mayChain = forceSource == null
+        var localShortfall: String? = null
+
         when (source) {
             LumenDraftSource.LOCAL -> {
-                val local = localLlmProvider ?: return fallbackDraft(clean)
-                val state = CaptureDiagnostic.evaluate(local, modelStore())
-                CaptureDiagnostic.recordPreCapture(
-                    context = captureDiagContext(),
-                    modelState = state,
-                    captureKind = "LumenCard",
-                    passage = clean,
-                )
-                if (state != CaptureDiagnostic.ModelState.ready) {
+                localDraft(book, clean, alreadyFiled) { localShortfall = it }
+                    ?.let { return it }
+                // The whole point of keeping a key configured while reading
+                // offline: the phone answers every capture for nothing, and the
+                // cloud is spent only on the passages the phone could not do at
+                // all. Not on the ones it did thinly — a card the model actually
+                // produced is the reader's to reject with a tap, not mine to
+                // replace with their quota.
+                if (mayChain && cloudRescueAllowed()) {
                     CaptureDiagnostic.recordFailure(
                         context = captureDiagContext(),
                         captureKind = "LumenCard",
-                        reason = "Not attempting offline model: ${state}"
+                        reason = "Offline model could not deliver; retrying on Gemini",
                     )
-                    return fallbackDraft(clean)
+                    geminiDraft(book, clean, alreadyFiled, rescued = true)
+                        ?.let { return it }
                 }
-                val startedAt = System.currentTimeMillis()
-                val outcome =
-                    LumenLocalDraft.generate(
-                        call = { request -> local.generate(request) },
-                        passage = clean,
-                        bookTitle = book.title,
-                        debugLog = debugLog,
-                        template = settingsRepository?.lumenPromptTemplate()
-                            ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
-                        alreadyFiled = alreadyFiled,
-                        onPromptBuilt = { prompt ->
-                            CaptureDiagnostic.recordGenerating(
-                                context = captureDiagContext(),
-                                captureKind = "LumenCard",
-                                passage = clean,
-                                prompt = prompt,
-                                replyTokens = LumenLocalDraft.REPLY_TOKENS,
-                            )
-                        },
-                        onExchange = { attempt, prompt, raw ->
-                            CaptureDiagnostic.recordExchange(
-                                context = captureDiagContext(),
-                                captureKind = "LumenCard",
-                                attempt = attempt,
-                                prompt = prompt,
-                                raw = raw,
-                            )
-                        },
-                    )
-                // How long inference really takes is the budget for tuning the
-                // passage cap: a bigger passage buys a better card and costs
-                // seconds, and neither is knowable without measuring it.
-                CaptureDiagnostic.recordInference(
-                    context = captureDiagContext(),
-                    captureKind = "LumenCard",
-                    durationMs = System.currentTimeMillis() - startedAt,
-                    attempts = outcome.attempts,
-                    usedAi = outcome.card != null,
-                    rejection = outcome.rejection?.name,
-                    backProblem = outcome.backProblem?.name,
-                    repeated = outcome.repeatOf != null,
-                )
-                val card = outcome.card
-                if (card != null) {
-                    return LumenDraft(
-                        front = card.first,
-                        back = card.second,
-                        quote = clean,
-                        usedAi = true,
-                        aiShortfall = shortfall(outcome.backProblem, outcome.repeatOf),
-                    )
-                }
-                CaptureDiagnostic.recordFailure(
-                    context = captureDiagContext(),
-                    captureKind = "LumenCard",
-                    reason = "Offline model returned unusable draft; used fallback",
-                )
-                return fallbackDraft(clean, outcome.rejection?.explanation)
             }
             LumenDraftSource.GEMINI -> {
-                try {
-                    val template =
-                        settingsRepository?.lumenPromptTemplate()
-                            ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE
-                    // Both asks go through here, so the re-ask below is counted
-                    // against the reader's usage like any other call rather than
-                    // being spent invisibly.
-                    suspend fun ask(prompt: String): String {
-                        val call: suspend () -> String = {
-                            geminiClient.draftLumenCardFromPrompt(prompt)
-                        }
-                        return if (aiUsageRepository != null) {
-                            aiUsageRepository.track(
-                                bookId = book.id,
-                                operation = AiUsageRepository.OPERATION_LUMEN,
-                                model = geminiClient.currentModel(),
-                                inputCharacters = clean.length,
-                                outputItems = { it.length },
-                                block = call,
-                            )
-                        } else {
-                            call()
-                        }
-                    }
-                    val result = ask(LumenAiPrompts.cardDraft(clean, book.title, template))
-                    val parsed =
-                        LumenCapture.parseDraft(result)?.takeIf { (front, _) ->
-                            !LumenCapture.isPassageEcho(front, clean)
-                        }
-                    if (parsed != null) {
-                        // Same overlap, same duplicate: ask once for a different
-                        // idea, and keep the first card if that does not land.
-                        val repeat = LumenCapture.repeatOf(parsed.first, alreadyFiled)
-                        if (repeat == null) {
-                            return LumenDraft(parsed.first, parsed.second, clean, usedAi = true)
-                        }
-                        val second =
-                            runCatching {
-                                LumenCapture.parseDraft(
-                                    ask(LumenAiPrompts.cardDraftDifferent(clean, book.title, repeat))
-                                )
-                            }.getOrNull()
-                        val fresh =
-                            second?.takeIf { (front, _) ->
-                                !LumenCapture.isPassageEcho(front, clean) &&
-                                    LumenCapture.repeatOf(front, alreadyFiled) == null &&
-                                    // And different from the card it would
-                                    // replace. The first answer is the model's
-                                    // best idea about the passage; handing the
-                                    // reader a reworded version of it as the
-                                    // "different" one loses the better card and
-                                    // gains nothing.
-                                    LumenCapture.repeatOf(front, listOf(parsed.first)) == null
-                            }
-                        return LumenDraft(
-                            front = fresh?.first ?: parsed.first,
-                            back = fresh?.second ?: parsed.second,
-                            quote = clean,
-                            usedAi = true,
-                            aiShortfall = if (fresh == null) shortfall(null, repeat) else null,
-                        )
-                    }
-                } catch (_: Exception) {
-                    // Fall through to the on-device draft. Capture must never fail.
+                geminiDraft(book, clean, alreadyFiled, rescued = false)
+                    ?.let { return it }
+                // The mirror image, and the one the old code claimed to do in a
+                // comment while actually dropping straight to the plain-passage
+                // card. A phone with no signal is the ordinary case for this
+                // app, not an edge one.
+                if (mayChain && localLlmProvider?.isAvailable == true) {
+                    localDraft(book, clean, alreadyFiled) { localShortfall = it }
+                        ?.let { return it }
                 }
             }
             LumenDraftSource.FALLBACK -> Unit
         }
-        return fallbackDraft(clean)
+        return fallbackDraft(clean, localShortfall)
     }
+
+    /**
+     * Whether a capture the on-device model could not deliver may be retried
+     * against Gemini.
+     *
+     * Two conditions, and both are deliberate acts by the reader: a key had to
+     * be entered, and the rescue setting left on. A reader who chose offline
+     * for privacy rather than for cost turns the setting off and the passage
+     * never leaves the phone.
+     */
+    private suspend fun cloudRescueAllowed(): Boolean =
+        geminiClient.hasKey() && (settingsRepository?.lumenCloudRescue() ?: true)
+
+    /**
+     * The on-device attempt. Returns null when the model was missing, could not
+     * be loaded, or returned something unusable — reporting through [onRejected]
+     * what was wrong with it, so the reader still hears about it even if the
+     * capture is finished by another route.
+     */
+    private suspend fun localDraft(
+        book: BookEntity,
+        clean: String,
+        alreadyFiled: List<String>,
+        onRejected: (String?) -> Unit,
+    ): LumenDraft? {
+        val local = localLlmProvider ?: return null
+        val state = CaptureDiagnostic.evaluate(local, modelStore())
+        CaptureDiagnostic.recordPreCapture(
+            context = captureDiagContext(),
+            modelState = state,
+            captureKind = "LumenCard",
+            passage = clean,
+        )
+        if (state != CaptureDiagnostic.ModelState.ready) {
+            CaptureDiagnostic.recordFailure(
+                context = captureDiagContext(),
+                captureKind = "LumenCard",
+                reason = "Not attempting offline model: ${state}"
+            )
+            return null
+        }
+        val startedAt = System.currentTimeMillis()
+        val outcome =
+            LumenLocalDraft.generate(
+                call = { request -> local.generate(request) },
+                passage = clean,
+                bookTitle = book.title,
+                debugLog = debugLog,
+                template = settingsRepository?.lumenPromptTemplate()
+                    ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
+                alreadyFiled = alreadyFiled,
+                onPromptBuilt = { prompt ->
+                    CaptureDiagnostic.recordGenerating(
+                        context = captureDiagContext(),
+                        captureKind = "LumenCard",
+                        passage = clean,
+                        prompt = prompt,
+                        replyTokens = LumenLocalDraft.REPLY_TOKENS,
+                    )
+                },
+                onExchange = { attempt, prompt, raw ->
+                    CaptureDiagnostic.recordExchange(
+                        context = captureDiagContext(),
+                        captureKind = "LumenCard",
+                        attempt = attempt,
+                        prompt = prompt,
+                        raw = raw,
+                    )
+                },
+            )
+        // How long inference really takes is the budget for tuning the
+        // passage cap: a bigger passage buys a better card and costs
+        // seconds, and neither is knowable without measuring it.
+        CaptureDiagnostic.recordInference(
+            context = captureDiagContext(),
+            captureKind = "LumenCard",
+            durationMs = System.currentTimeMillis() - startedAt,
+            attempts = outcome.attempts,
+            usedAi = outcome.card != null,
+            rejection = outcome.rejection?.name,
+            backProblem = outcome.backProblem?.name,
+            repeated = outcome.repeatOf != null,
+        )
+        val card = outcome.card
+        if (card != null) {
+            return LumenDraft(
+                front = card.first,
+                back = card.second,
+                quote = clean,
+                usedAi = true,
+                aiShortfall = shortfall(outcome.backProblem, outcome.repeatOf),
+                source = LumenDraftSource.LOCAL,
+            )
+        }
+        CaptureDiagnostic.recordFailure(
+            context = captureDiagContext(),
+            captureKind = "LumenCard",
+            reason = "Offline model returned unusable draft",
+        )
+        onRejected(outcome.rejection?.explanation)
+        return null
+    }
+
+    /**
+     * The cloud attempt. Returns null on any failure — no key, no signal, a
+     * reply that would not parse — leaving the caller to decide what comes
+     * next. [rescued] records that this ran only because the on-device model
+     * could not, which is something the reader is told rather than a detail
+     * kept in the log.
+     */
+    private suspend fun geminiDraft(
+        book: BookEntity,
+        clean: String,
+        alreadyFiled: List<String>,
+        rescued: Boolean,
+    ): LumenDraft? {
+        try {
+            val template =
+                settingsRepository?.lumenPromptTemplate()
+                    ?: LumenAiPrompts.DEFAULT_CARD_TEMPLATE
+            // Both asks go through here, so the re-ask below is counted
+            // against the reader's usage like any other call rather than
+            // being spent invisibly.
+            suspend fun ask(prompt: String): String {
+                val call: suspend () -> String = {
+                    geminiClient.draftLumenCardFromPrompt(prompt)
+                }
+                return if (aiUsageRepository != null) {
+                    aiUsageRepository.track(
+                        bookId = book.id,
+                        operation = AiUsageRepository.OPERATION_LUMEN,
+                        model = geminiClient.currentModel(),
+                        inputCharacters = clean.length,
+                        outputItems = { it.length },
+                        block = call,
+                    )
+                } else {
+                    call()
+                }
+            }
+            val result = ask(LumenAiPrompts.cardDraft(clean, book.title, template))
+            val parsed =
+                LumenCapture.parseDraft(result)?.takeIf { (front, _) ->
+                    !LumenCapture.isPassageEcho(front, clean)
+                }
+            if (parsed != null) {
+                // Same overlap, same duplicate: ask once for a different
+                // idea, and keep the first card if that does not land.
+                val repeat = LumenCapture.repeatOf(parsed.first, alreadyFiled)
+                if (repeat == null) {
+                    return LumenDraft(
+                        front = parsed.first,
+                        back = parsed.second,
+                        quote = clean,
+                        usedAi = true,
+                        source = LumenDraftSource.GEMINI,
+                        rescuedOffline = rescued,
+                    )
+                }
+                val second =
+                    runCatching {
+                        LumenCapture.parseDraft(
+                            ask(LumenAiPrompts.cardDraftDifferent(clean, book.title, repeat))
+                        )
+                    }.getOrNull()
+                val fresh =
+                    second?.takeIf { (front, _) ->
+                        !LumenCapture.isPassageEcho(front, clean) &&
+                            LumenCapture.repeatOf(front, alreadyFiled) == null &&
+                            // And different from the card it would
+                            // replace. The first answer is the model's
+                            // best idea about the passage; handing the
+                            // reader a reworded version of it as the
+                            // "different" one loses the better card and
+                            // gains nothing.
+                            LumenCapture.repeatOf(front, listOf(parsed.first)) == null
+                    }
+                return LumenDraft(
+                    front = fresh?.first ?: parsed.first,
+                    back = fresh?.second ?: parsed.second,
+                    quote = clean,
+                    usedAi = true,
+                    aiShortfall = if (fresh == null) shortfall(null, repeat) else null,
+                    source = LumenDraftSource.GEMINI,
+                    rescuedOffline = rescued,
+                )
+            }
+        } catch (_: Exception) {
+            // Swallowed on purpose. The caller decides what to try next, and
+            // a capture must never fail outright.
+        }
+        return null
+    }
+
 
     /**
      * What to tell the reader about a card that was used anyway. A repeat is

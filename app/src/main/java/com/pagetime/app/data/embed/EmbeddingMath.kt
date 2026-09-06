@@ -42,8 +42,11 @@ object EmbeddingMath {
 
         val summed = FloatArray(hiddenSize)
         var counted = 0
-        attentionMask.forEachIndexed { position, keep ->
-            if (keep == 0) return@forEachIndexed
+        // A plain indexed loop rather than forEachIndexed: this runs once per
+        // token per embedding, so it is the one genuinely hot path here, and
+        // it has no business allocating a closure over its accumulators.
+        for (position in attentionMask.indices) {
+            if (attentionMask[position] == 0) continue
             counted++
             val offset = position * hiddenSize
             for (d in 0 until hiddenSize) summed[d] += tokenVectors[offset + d]
@@ -52,7 +55,8 @@ object EmbeddingMath {
         // zero: the caller's normalise step leaves it zero, and a zero vector
         // scores zero against everything rather than matching at random.
         if (counted == 0) return FloatArray(hiddenSize)
-        for (d in 0 until hiddenSize) summed[d] /= counted
+        val divisor = counted.toFloat()
+        for (d in 0 until hiddenSize) summed[d] = summed[d] / divisor
         return summed
     }
 

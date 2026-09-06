@@ -22,6 +22,21 @@ android {
         // Minutes since epoch (~8.5M now) always increases and fits in an Int.
         versionCode = (System.currentTimeMillis() / 60_000L).toInt()
         versionName = "1.6-token-budget"
+        // One ABI, deliberately.
+        //
+        // Native libraries dominate this APK: MediaPipe ships them, and ONNX
+        // Runtime adds 31 MB for arm64 alone — 127 MB across all four ABIs,
+        // against a 66 MB app. Shipping every ABI to every phone spends most
+        // of that on architectures the device cannot run.
+        //
+        // arm64-v8a covers essentially every Android phone since 2017. What is
+        // given up is 32-bit hardware older than that, and the x86 emulator
+        // images used for development rather than by readers. Restricting here
+        // also trims MediaPipe's other-ABI libraries, so the net cost of adding
+        // ONNX is far less than its 31 MB suggests.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
         buildConfigField(
             "String",
             "GEMINI_API_KEY",
@@ -127,6 +142,12 @@ dependencies {
     // MediaPipe tasks-genai: on-device LLM inference for the offline AI provider.
     // Weights are downloaded at runtime (Settings) — never bundled in the APK.
     implementation(libs.mediapipe.tasks.genai)
+
+    // ONNX Runtime: runs the sentence-embedding model for card retrieval.
+    // The -mobile artifact is stale (last release 1.18.0, May 2024); -android
+    // is the maintained one. Weights, like the LLM's, are downloaded at
+    // runtime rather than bundled.
+    implementation(libs.onnxruntime.android)
 
     // Readium: open-source EPUB engine (rendering, pagination/scroll, locators).
     implementation(libs.readium.shared)

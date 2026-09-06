@@ -26,9 +26,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConceptRelationshipEntity::class,
         AiUsageEntity::class,
         ExplanationEntity::class,
-        LumenCardEntity::class
+        LumenCardEntity::class,
+        CardEmbeddingEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -41,6 +42,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiUsageDao(): AiUsageDao
     abstract fun explanationDao(): ExplanationDao
     abstract fun lumenCardDao(): LumenCardDao
+    abstract fun cardEmbeddingDao(): CardEmbeddingDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -172,6 +174,37 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /** Structure maps: a card can be marked as a hub note for a cluster. */
+        /**
+         * Vectors get their own table rather than a column on lumen_cards.
+         *
+         * The model that produced each one is stored beside it, because two
+         * models embed into different spaces and comparing across them returns
+         * numbers rather than errors. Without this column a model change would
+         * silently degrade every comparison; with it, stale vectors can be
+         * found and rebuilt.
+         *
+         * ON DELETE CASCADE so a deleted card cannot leave a vector behind to
+         * match against a note that no longer exists.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS card_embeddings (" +
+                        "cardId TEXT NOT NULL PRIMARY KEY, " +
+                        "model TEXT NOT NULL, " +
+                        "dimensions INTEGER NOT NULL, " +
+                        "vector BLOB NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL, " +
+                        "FOREIGN KEY(cardId) REFERENCES lumen_cards(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_card_embeddings_model " +
+                        "ON card_embeddings(model)"
+                )
+            }
+        }
+
         val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE lumen_cards ADD COLUMN isHub INTEGER NOT NULL DEFAULT 0")

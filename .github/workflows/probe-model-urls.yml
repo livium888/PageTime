@@ -1,0 +1,79 @@
+name: Probe model URLs
+
+# A network probe, run by hand.
+#
+# The agent working on this repo cannot reach huggingface.co — the proxy in
+# front of it returns 403 for every host that serves model weights. That has
+# already cost one shipped download link that 404'd for the reader, because a
+# remembered URL is a guess however confident the sentence around it sounds.
+#
+# The runner has ordinary internet. So it can be asked the questions that
+# cannot be asked from the agent's container: does this address exist, what
+# does it actually return, and how big is the file. Headers only — nothing is
+# downloaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: Whitespace- or newline-separated URLs to check
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ask each URL what it is
+        env:
+          URLS: ${{ inputs.urls }}
+        run: |
+          set -uo pipefail
+          fail=0
+          for url in $URLS; do
+            echo "=============================================================="
+            echo "URL: $url"
+            # -L because model hosts redirect to a CDN, and the interesting
+            # facts (size, type) live at the end of the chain rather than at
+            # the address that was typed.
+            if ! headers=$(curl -sS -L -I --max-time 60 "$url" 2>&1); then
+              echo "RESULT: request failed"
+              echo "$headers"
+              fail=1
+              continue
+            fi
+            status=$(printf '%s\n' "$headers" | awk '/^HTTP/ {code=$2} END {print code}' | tr -d '\r')
+            length=$(printf '%s\n' "$headers" | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {v=$2} END {print v+0}' | tr -d '\r')
+            ctype=$(printf '%s\n' "$headers" | awk 'BEGIN{IGNORECASE=1} /^content-type:/ {v=$2} END {print v}' | tr -d '\r')
+            echo "STATUS: ${status:-none}"
+            echo "TYPE:   ${ctype:-none}"
+            if [ "${length:-0}" -gt 0 ]; then
+              echo "SIZE:   $length bytes ($((length / 1048576)) MB)"
+            else
+              echo "SIZE:   not reported"
+            fi
+            # An HTML body behind a 200 is the failure that looks like success:
+            # it downloads, it is a plausible number of bytes, and it is a login
+            # or error page rather than a model. Named here so it cannot be
+            # mistaken for a working link.
+            case "${ctype:-}" in
+              text/html*)
+                echo "VERDICT: HTML, not a model file — this address is wrong"
+                fail=1
+                ;;
+              *)
+                if [ "${status:-}" = "200" ]; then
+                  echo "VERDICT: reachable"
+                else
+                  echo "VERDICT: not usable"
+                  fail=1
+                fi
+                ;;
+            esac
+          done
+          echo "=============================================================="
+          exit $fail

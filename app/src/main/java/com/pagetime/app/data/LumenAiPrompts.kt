@@ -134,18 +134,23 @@ object LumenAiPrompts {
      * nothing in it. The passage is about printing; the card never says
      * "print". That is the move a slip box is for: the specific thing goes in,
      * the transferable claim comes out.
+     *
+     * Kept SHORT because every character of instruction is a character of book
+     * the model does not get to read, and a test caps the whole scaffold at
+     * 1,400 characters. The first draft of this example ran to 1,413 and was
+     * cut rather than the cap raised — the budget was there first and it is
+     * right.
      */
     const val EXAMPLE_PASSAGE: String =
-        "When the printing press reached Europe, its first products were copies " +
-            "of manuscripts that scribes were already making. Decades passed before " +
-            "anyone commissioned work that could not have existed in manuscript at all."
+        "Early printers sold copies of the manuscripts scribes already made. " +
+            "Only decades later did anyone commission a book no scribe could have produced."
 
     const val EXAMPLE_CARD: String =
         """{"front": "New tools imitate what they displace", """ +
-            """"idea": "A technology's earliest uses copy the form it displaced, """ +
-            """because that form is the only model anyone has yet.", """ +
-            """"because": "Its own possibilities become visible only once people """ +
-            """stop asking it to be the older thing."}"""
+            """"idea": "A technology's earliest uses copy the form it replaced, """ +
+            """the only model anyone has.", """ +
+            """"because": "Its own possibilities appear only once people stop """ +
+            """asking it to be the old thing."}"""
 
     val DEFAULT_CARD_TEMPLATE: String =
         """

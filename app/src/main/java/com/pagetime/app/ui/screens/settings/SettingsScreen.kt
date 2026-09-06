@@ -252,9 +252,13 @@ fun SettingsScreen(
                 selfTest = viewModel.embeddingSelfTest.collectAsStateWithLifecycle().value,
                 selfTestRunning =
                     viewModel.embeddingSelfTestRunning.collectAsStateWithLifecycle().value,
+                pending = viewModel.embeddingPending.collectAsStateWithLifecycle().value,
+                indexing = viewModel.embeddingIndexing.collectAsStateWithLifecycle().value,
                 onDownload = viewModel::downloadEmbeddingModel,
                 onDelete = viewModel::deleteEmbeddingModel,
                 onSelfTest = viewModel::runEmbeddingSelfTest,
+                onIndexAll = viewModel::indexAllCards,
+                onRefreshPending = viewModel::refreshEmbeddingPending,
             )
 
             GeminiSettingsCard(
@@ -523,10 +527,20 @@ private fun EmbeddingModelSettingsCard(
     status: EmbeddingModelStatus,
     selfTest: List<String>,
     selfTestRunning: Boolean,
+    pending: Int,
+    indexing: Boolean,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onSelfTest: () -> Unit,
+    onIndexAll: () -> Unit,
+    onRefreshPending: () -> Unit,
 ) {
+    // Counted when the model becomes ready rather than observed continuously:
+    // it is one COUNT query, and nothing changes it except saving a card or
+    // running the indexer, both of which refresh it themselves.
+    LaunchedEffect(status) {
+        if (status is EmbeddingModelStatus.Ready) onRefreshPending()
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(16.dp),
@@ -578,6 +592,37 @@ private fun EmbeddingModelSettingsCard(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(if (selfTestRunning) "Testing…" else "Test that it works")
+                    }
+                    // Cards saved before the model was installed have no vector
+                    // and are invisible to every search until this is run. Said
+                    // as a count rather than hidden behind a spinner, because
+                    // "why does it not find my old notes" is otherwise an
+                    // unanswerable question.
+                    if (pending > 0 || indexing) {
+                        Text(
+                            if (indexing) {
+                                "Indexing… $pending to go."
+                            } else {
+                                "$pending card${if (pending == 1) "" else "s"} " +
+                                    "saved before this model was installed. Until they are " +
+                                    "indexed they cannot be found by meaning."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            onClick = onIndexAll,
+                            enabled = !indexing,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (indexing) "Indexing…" else "Index them now")
+                        }
+                    } else {
+                        Text(
+                            "Every card is indexed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
                         Text("Delete the model")

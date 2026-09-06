@@ -76,14 +76,60 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _embeddingSelfTestRunning = MutableStateFlow(false)
     val embeddingSelfTestRunning: StateFlow<Boolean> = _embeddingSelfTestRunning.asStateFlow()
 
+    /** Cards with no vector yet, refreshed on demand rather than observed. */
+    private val _embeddingPending = MutableStateFlow(0)
+    val embeddingPending: StateFlow<Int> = _embeddingPending.asStateFlow()
+
+    private val _embeddingIndexing = MutableStateFlow(false)
+    val embeddingIndexing: StateFlow<Boolean> = _embeddingIndexing.asStateFlow()
+
+    fun refreshEmbeddingPending() {
+        viewModelScope.launch {
+            _embeddingPending.value =
+                runCatching { container.cardEmbeddingIndexer.pendingCount() }.getOrDefault(0)
+        }
+    }
+
+    /**
+     * Drains the backfill queue in batches, updating the count as it goes.
+     *
+     * A loop of bounded batches rather than one pass over everything: a reader
+     * who has kept a slip box for a year has hundreds of cards, each needing an
+     * inference, and the count moving is the difference between "working" and
+     * "frozen". Stops when a batch stores nothing, so a card the model cannot
+     * embed cannot spin this forever.
+     */
+    fun indexAllCards() {
+        if (_embeddingIndexing.value) return
+        viewModelScope.launch {
+            _embeddingIndexing.value = true
+            try {
+                while (true) {
+                    val done = runCatching { container.cardEmbeddingIndexer.backfill() }
+                        .getOrDefault(0)
+                    _embeddingPending.value =
+                        runCatching { container.cardEmbeddingIndexer.pendingCount() }
+                            .getOrDefault(0)
+                    if (done == 0 || _embeddingPending.value == 0) break
+                }
+            } finally {
+                _embeddingIndexing.value = false
+            }
+        }
+    }
+
     fun downloadEmbeddingModel() {
-        viewModelScope.launch { container.embeddingModelStore.download() }
+        viewModelScope.launch {
+            container.embeddingModelStore.download()
+            refreshEmbeddingPending()
+        }
     }
 
     fun deleteEmbeddingModel() {
         viewModelScope.launch {
             container.embeddingModelStore.delete()
             _embeddingSelfTest.value = emptyList()
+            _embeddingPending.value = 0
         }
     }
 

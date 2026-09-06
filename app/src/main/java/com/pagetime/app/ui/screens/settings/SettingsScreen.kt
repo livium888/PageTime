@@ -62,6 +62,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.LumenModelStore
+import com.pagetime.app.data.embed.EmbeddingModelStatus
+import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.learning.GeminiModel
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.PageTimeApp
@@ -243,6 +245,20 @@ fun SettingsScreen(
                 onDownload = viewModel::downloadOfflineModel,
                 onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
+            )
+
+            EmbeddingModelSettingsCard(
+                status = viewModel.embeddingModelStatus.collectAsStateWithLifecycle().value,
+                selfTest = viewModel.embeddingSelfTest.collectAsStateWithLifecycle().value,
+                selfTestRunning =
+                    viewModel.embeddingSelfTestRunning.collectAsStateWithLifecycle().value,
+                pending = viewModel.embeddingPending.collectAsStateWithLifecycle().value,
+                indexing = viewModel.embeddingIndexing.collectAsStateWithLifecycle().value,
+                onDownload = viewModel::downloadEmbeddingModel,
+                onDelete = viewModel::deleteEmbeddingModel,
+                onSelfTest = viewModel::runEmbeddingSelfTest,
+                onIndexAll = viewModel::indexAllCards,
+                onRefreshPending = viewModel::refreshEmbeddingPending,
             )
 
             GeminiSettingsCard(
@@ -485,6 +501,159 @@ private fun LlmProviderSettingsCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The retrieval model, and the button that proves it works.
+ *
+ * Separate from the language model on purpose. They are different files with
+ * different jobs — one writes cards, one finds which cards are alike — and a
+ * reader can want either without the other. Deleting one must not disturb the
+ * other, and a reader whose phone cannot load the 554 MB language model can
+ * still have working search from a 22 MB one.
+ *
+ * The self-test earns its place in the UI rather than living in a test suite.
+ * Everything under it is already unit-tested, but only against fixtures: the
+ * failures that survive to here — a vocabulary offset by a row, an export that
+ * pools its own output — do not throw, and produce vectors of the right shape
+ * whose neighbours are merely worse. Ten seconds on the reader's own phone is
+ * the only place that can be caught.
+ */
+@Composable
+private fun EmbeddingModelSettingsCard(
+    status: EmbeddingModelStatus,
+    selfTest: List<String>,
+    selfTestRunning: Boolean,
+    pending: Int,
+    indexing: Boolean,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    onSelfTest: () -> Unit,
+    onIndexAll: () -> Unit,
+    onRefreshPending: () -> Unit,
+) {
+    // Counted when the model becomes ready rather than observed continuously:
+    // it is one COUNT query, and nothing changes it except saving a card or
+    // running the indexer, both of which refresh it themselves.
+    LaunchedEffect(status) {
+        if (status is EmbeddingModelStatus.Ready) onRefreshPending()
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Finding related notes", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "A small model that turns each card into a set of numbers, so the slip " +
+                    "box can find notes that mean the same thing even when they share no " +
+                    "words. Runs entirely on the phone. " +
+                    "${EmbeddingModelStore.DEFAULT_SOURCE.label}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            when (status) {
+                is EmbeddingModelStatus.NotDownloaded -> {
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Download (22 MB)")
+                    }
+                }
+                is EmbeddingModelStatus.Downloading -> {
+                    val total = status.totalBytes
+                    if (total > 0) {
+                        LinearProgressIndicator(
+                            progress = {
+                                (status.downloadedBytes.toFloat() / total).coerceIn(0f, 1f)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "${status.downloadedBytes / 1_048_576} of ${total / 1_048_576} MB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                }
+                is EmbeddingModelStatus.Ready -> {
+                    Text(
+                        "Installed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onSelfTest,
+                        enabled = !selfTestRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (selfTestRunning) "Testing…" else "Test that it works")
+                    }
+                    // Cards saved before the model was installed have no vector
+                    // and are invisible to every search until this is run. Said
+                    // as a count rather than hidden behind a spinner, because
+                    // "why does it not find my old notes" is otherwise an
+                    // unanswerable question.
+                    if (pending > 0 || indexing) {
+                        Text(
+                            if (indexing) {
+                                "Indexing… $pending to go."
+                            } else {
+                                "$pending card${if (pending == 1) "" else "s"} " +
+                                    "saved before this model was installed. Until they are " +
+                                    "indexed they cannot be found by meaning."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            onClick = onIndexAll,
+                            enabled = !indexing,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (indexing) "Indexing…" else "Index them now")
+                        }
+                    } else {
+                        Text(
+                            "Every card is indexed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                        Text("Delete the model")
+                    }
+                }
+                is EmbeddingModelStatus.Failed -> {
+                    Text(
+                        status.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+                        Text("Try the download again")
+                    }
+                }
+            }
+
+            if (selfTest.isNotEmpty()) {
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                // The verdict first, then the raw numbers under it. The numbers
+                // are what makes the verdict checkable rather than something to
+                // be taken on trust — and if this is ever reported as a bug,
+                // they are the whole of the evidence.
+                Text(selfTest.first(), style = MaterialTheme.typography.bodyMedium)
+                selfTest.drop(1).forEach { line ->
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

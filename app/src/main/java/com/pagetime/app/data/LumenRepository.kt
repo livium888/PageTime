@@ -85,6 +85,16 @@ class LumenRepository(
     private val debugLog: (String) -> Unit = {},
     private val modelStore: () -> LumenModelStore = { throw UnsupportedOperationException("modelStore not provided") },
     private val captureDiagContext: () -> Context = { throw UnsupportedOperationException("captureDiagContext not provided") },
+    /**
+     * Told whenever a card's text changes, so its vector can be rebuilt.
+     *
+     * A plain callback rather than the indexer itself, and deliberately not a
+     * suspend one: embedding loads a 22 MB model into a native runtime, far too
+     * slow to sit inside a save. The caller launches it. A card is saved
+     * whether or not its vector ever follows — a missing vector costs search
+     * quality, and must never be able to cost the reader their note.
+     */
+    private val onCardTextChanged: (LumenCardEntity) -> Unit = {},
     private val scheduler: Scheduler = Scheduler.builder()
         .desiredRetention(0.9)
         .enableFuzzing(false)
@@ -450,6 +460,7 @@ class LumenRepository(
             updatedAt = now
         )
         dao.upsert(card)
+        onCardTextChanged(card)
         return card
     }
 
@@ -483,6 +494,7 @@ class LumenRepository(
             updatedAt = now
         )
         dao.upsert(card)
+        onCardTextChanged(card)
         return card
     }
 
@@ -506,14 +518,16 @@ class LumenRepository(
 
     suspend fun updateText(cardId: String, front: String, back: String) {
         val existing = dao.get(cardId) ?: return
-        dao.upsert(
-            existing.copy(
-                front = front.trim(),
-                back = back.trim(),
-                keywords = LumenCapture.extractKeywords("$front $back ${existing.quote}"),
-                updatedAt = System.currentTimeMillis()
-            )
+        val updated = existing.copy(
+            front = front.trim(),
+            back = back.trim(),
+            keywords = LumenCapture.extractKeywords("$front $back ${existing.quote}"),
+            updatedAt = System.currentTimeMillis()
         )
+        dao.upsert(updated)
+        // The old vector describes text that no longer exists. Rebuilding it is
+        // what stops an edited card from going on matching what it used to say.
+        onCardTextChanged(updated)
     }
 
     /**

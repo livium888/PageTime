@@ -13,6 +13,8 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
+import com.pagetime.app.data.embed.CardEmbeddingIndexer
+import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
@@ -22,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** Simple manual DI container, owned by the Application. */
 class AppContainer(context: Context) {
@@ -111,6 +114,24 @@ class AppContainer(context: Context) {
         )
     val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
 
+    /**
+     * The retrieval model: separate weights, separate directory, separate
+     * lifecycle from the language model. A reader can have either, both, or
+     * neither, and deleting one must not disturb the other.
+     */
+    val embeddingModelStore =
+        EmbeddingModelStore(
+            directory = File(appContext.filesDir, "embedding-model"),
+            downloader = OkHttpLumenModelDownloader(),
+            source = { EmbeddingModelStore.DEFAULT_SOURCE },
+        )
+
+    val cardEmbeddingIndexer =
+        CardEmbeddingIndexer(
+            embeddingDao = database.cardEmbeddingDao(),
+            store = embeddingModelStore,
+        )
+
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),
         geminiClient = geminiLearningClient,
@@ -121,6 +142,12 @@ class AppContainer(context: Context) {
         debugLog = { message -> Log.d("LumenDraft", message) },
         modelStore = { lumenModelStore },
         captureDiagContext = { appContext },
+        // Fire and forget, on the container's own scope rather than a screen's:
+        // a card saved and then navigated away from still gets its vector, and
+        // a save never waits on 22 MB of ONNX.
+        onCardTextChanged = { card ->
+            scope.launch { runCatching { cardEmbeddingIndexer.index(listOf(card)) } }
+        },
     )
 
     val glossRepository = GlossRepository(

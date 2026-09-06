@@ -156,5 +156,45 @@ class EmbeddingModelStore(
          */
         const val MIN_MODEL_BYTES = 1_000_000L
         const val MIN_VOCAB_BYTES = 10_000L
+
+        /**
+         * The default pair, and the first URLs in this feature that were
+         * actually followed before being written down.
+         *
+         * The agent's own container cannot reach huggingface.co, so these were
+         * checked by a CI job that can (.github/workflows/probe-model-urls.yml).
+         * What it found, and why these two addresses rather than the obvious
+         * ones:
+         *
+         *   sentence-transformers/all-MiniLM-L6-v2 onnx/model.onnx
+         *       200, 90,405,214 bytes — real, but fp32 and four times the size
+         *   sentence-transformers/all-MiniLM-L6-v2 onnx/model_quantized.onnx
+         *       404 — the address that follows the obvious pattern, sits beside
+         *       a file that does exist, and is simply not there
+         *   Xenova/all-MiniLM-L6-v2 onnx/model_quantized.onnx
+         *       200, 22,972,370 bytes — int8, and what ships here
+         *
+         * Not the multi-qa variant, though it is byte-for-byte nearly the same
+         * size and equally reachable. That one is trained for ASYMMETRIC
+         * retrieval — a short query against a long passage. A slip box compares
+         * a note against other notes, which is symmetric, and the general model
+         * is the right tool for it. The wrong one would work just badly enough
+         * not to notice.
+         *
+         * Both files come from the same repository. That is not tidiness: a
+         * vocabulary paired with another model's weights indexes the wrong rows
+         * of the embedding matrix and fails silently, which is the whole reason
+         * the download above adopts the two files together or neither.
+         */
+        val DEFAULT_SOURCE = EmbeddingModelSource(
+            modelUrl =
+                "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/" +
+                    "onnx/model_quantized.onnx",
+            vocabUrl = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt",
+            label = "all-MiniLM-L6-v2 (int8, 22 MB)",
+        )
+
+        /** Roughly what [DEFAULT_SOURCE] weighs, for the sentence before the download. */
+        const val DEFAULT_MODEL_BYTES = 22_972_370L
     }
 }

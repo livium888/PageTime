@@ -10,6 +10,12 @@ import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.LumenModelStore
+import com.pagetime.app.data.embed.EmbeddingModelStatus
+import com.pagetime.app.data.embed.EmbeddingModelStore
+import com.pagetime.app.data.embed.EmbeddingSelfTest
+import com.pagetime.app.data.embed.OnnxTextEmbedder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +60,76 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val lumenModelStatus =
         container.lumenModelStore.status
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LumenModelStatus.NotDownloaded)
+
+    val embeddingModelStatus =
+        container.embeddingModelStore.status
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                EmbeddingModelStatus.NotDownloaded,
+            )
+
+    /** Lines from the last self-test, or empty when it has not been run. */
+    private val _embeddingSelfTest = MutableStateFlow<List<String>>(emptyList())
+    val embeddingSelfTest: StateFlow<List<String>> = _embeddingSelfTest.asStateFlow()
+
+    private val _embeddingSelfTestRunning = MutableStateFlow(false)
+    val embeddingSelfTestRunning: StateFlow<Boolean> = _embeddingSelfTestRunning.asStateFlow()
+
+    fun downloadEmbeddingModel() {
+        viewModelScope.launch { container.embeddingModelStore.download() }
+    }
+
+    fun deleteEmbeddingModel() {
+        viewModelScope.launch {
+            container.embeddingModelStore.delete()
+            _embeddingSelfTest.value = emptyList()
+        }
+    }
+
+    /**
+     * Proves the whole chain — tokenise, run, pool, normalise — against the
+     * weights actually on this phone.
+     *
+     * Off the main thread: this loads a 22 MB model into the native runtime
+     * and runs it nine times. On the main thread that is a frozen screen and,
+     * on a slow device, an ANR.
+     *
+     * The embedder is closed in a finally. It holds a native session, and
+     * leaking one per tap would eventually take the app down with an error
+     * that names none of this.
+     */
+    fun runEmbeddingSelfTest() {
+        if (_embeddingSelfTestRunning.value) return
+        viewModelScope.launch {
+            _embeddingSelfTestRunning.value = true
+            _embeddingSelfTest.value = emptyList()
+            val lines = withContext(Dispatchers.Default) {
+                val store = container.embeddingModelStore
+                val tokenizer = store.tokenizer()
+                if (tokenizer == null) {
+                    listOf("No embedding model is installed, so there is nothing to test.")
+                } else {
+                    var embedder: OnnxTextEmbedder? = null
+                    try {
+                        // Held in a non-null local as well as the nullable one:
+                        // the local is what the probes call, the nullable is
+                        // what the finally closes, and neither job wants the
+                        // other's type.
+                        val runner = OnnxTextEmbedder(store.modelFile, tokenizer)
+                        embedder = runner
+                        EmbeddingSelfTest.summarize(EmbeddingSelfTest.run { runner.embed(it) })
+                    } catch (error: Throwable) {
+                        listOf("The embedder could not start: ${error.message ?: error}")
+                    } finally {
+                        runCatching { embedder?.close() }
+                    }
+                }
+            }
+            _embeddingSelfTest.value = lines
+            _embeddingSelfTestRunning.value = false
+        }
+    }
 
     /**
      * Live download progress with a rolling speed estimate, derived from the

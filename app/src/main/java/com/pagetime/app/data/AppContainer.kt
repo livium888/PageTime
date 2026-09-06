@@ -13,6 +13,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
+import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
@@ -110,6 +111,18 @@ class AppContainer(context: Context) {
             urlProvider = { settingsRepository.lumenModelUrl() ?: LumenModelStore.MODEL_URL },
         )
     val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
+
+    /**
+     * The retrieval model: separate weights, separate directory, separate
+     * lifecycle from the language model. A reader can have either, both, or
+     * neither, and deleting one must not disturb the other.
+     */
+    val embeddingModelStore =
+        EmbeddingModelStore(
+            directory = File(appContext.filesDir, "embedding-model"),
+            downloader = OkHttpLumenModelDownloader(),
+            source = { EmbeddingModelStore.DEFAULT_SOURCE },
+        )
 
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),

@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NightsStay
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.Quiz
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
@@ -250,6 +251,7 @@ fun ReaderScreen(
     var showGoTo by remember { mutableStateOf(false) }
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
+    var confirmRegenerate by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -489,8 +491,10 @@ fun ReaderScreen(
                 },
                 onMakePrompts = vm::generateChapterPrompts,
                 onSeePrompts = { showPromptList = true },
+                onRegeneratePrompts = { confirmRegenerate = true },
                 promptsOfferable = promptState.offerable,
                 promptsPending = promptState.pending.size,
+                promptsGenerated = promptState.result != null || promptState.pending.isNotEmpty(),
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
@@ -651,6 +655,32 @@ fun ReaderScreen(
             detail = promptState.result?.detail,
             onSeeQuestions = { showPromptList = true },
             onDismiss = vm::clearPromptMessage,
+        )
+    }
+
+    if (confirmRegenerate) {
+        // Confirmed rather than immediate: it spends another API call, and the
+        // reader should know what it does and does not throw away.
+        AlertDialog(
+            onDismissRequest = { confirmRegenerate = false },
+            title = { Text("Make different questions?") },
+            text = {
+                Text(
+                    "This asks Gemini for a fresh set for this chapter, which " +
+                        "costs another request. Questions you have already kept " +
+                        "are not affected — they stay in your reviews with their " +
+                        "history. Anything you have not judged yet is replaced."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRegenerate = false
+                    vm.regenerateChapterPrompts()
+                }) { Text("Make new ones") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRegenerate = false }) { Text("Cancel") }
+            }
         )
     }
 
@@ -1237,8 +1267,10 @@ private fun ReaderTopBar(
     onSearchBook: () -> Unit,
     onMakePrompts: () -> Unit,
     onSeePrompts: () -> Unit,
+    onRegeneratePrompts: () -> Unit,
     promptsOfferable: Boolean,
     promptsPending: Int,
+    promptsGenerated: Boolean,
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
@@ -1346,6 +1378,18 @@ private fun ReaderTopBar(
                                 if (promptsPending > 0) onSeePrompts() else onMakePrompts()
                             }
                         )
+                        if (promptsGenerated) {
+                            DropdownMenuItem(
+                                text = { Text("Make different questions") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onRegeneratePrompts()
+                                }
+                            )
+                        }
                     }
                     DropdownMenuItem(
                         text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },

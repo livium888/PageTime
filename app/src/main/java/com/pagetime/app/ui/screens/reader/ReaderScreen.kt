@@ -60,6 +60,7 @@ import androidx.compose.material.icons.outlined.NightsStay
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Rule
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
@@ -251,6 +252,7 @@ fun ReaderScreen(
     var showGoTo by remember { mutableStateOf(false) }
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
+    var showCoverage by remember { mutableStateOf(false) }
     var confirmRegenerate by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
@@ -491,6 +493,10 @@ fun ReaderScreen(
                 },
                 onMakePrompts = vm::generateChapterPrompts,
                 onSeePrompts = { showPromptList = true },
+                onSeeCoverage = {
+                    vm.loadChapterCoverage()
+                    showCoverage = true
+                },
                 onRegeneratePrompts = { confirmRegenerate = true },
                 promptsOfferable = promptState.offerable,
                 promptsPending = promptState.pending.size,
@@ -654,6 +660,10 @@ fun ReaderScreen(
             pendingCount = promptState.pending.size,
             detail = promptState.result?.detail,
             onSeeQuestions = { showPromptList = true },
+            onSeeCoverage = {
+                vm.loadChapterCoverage()
+                showCoverage = true
+            },
             onDismiss = vm::clearPromptMessage,
         )
     }
@@ -689,6 +699,19 @@ fun ReaderScreen(
             prompts = promptState.pending,
             progression = promptState.progression,
             onDismiss = { showPromptList = false },
+        )
+    }
+
+    // Everything the chapter was asked about, and the reader's right of reply.
+    if (showCoverage) {
+        ChapterCoverageSheet(
+            passages = promptState.coverage,
+            busy = promptState.generating,
+            onMakeCards = { ordinals ->
+                showCoverage = false
+                vm.makeCardsForPassages(ordinals)
+            },
+            onDismiss = { showCoverage = false },
         )
     }
 
@@ -1267,6 +1290,7 @@ private fun ReaderTopBar(
     onSearchBook: () -> Unit,
     onMakePrompts: () -> Unit,
     onSeePrompts: () -> Unit,
+    onSeeCoverage: () -> Unit,
     onRegeneratePrompts: () -> Unit,
     promptsOfferable: Boolean,
     promptsPending: Int,
@@ -1379,6 +1403,21 @@ private fun ReaderTopBar(
                             }
                         )
                         if (promptsGenerated) {
+                            // The reader's right of reply. Sits above
+                            // "different questions" deliberately: disagreeing
+                            // with what was skipped is almost always the more
+                            // useful of the two, and costs one request rather
+                            // than a whole chapter's worth.
+                            DropdownMenuItem(
+                                text = { Text("What was skipped, and why") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Rule, contentDescription = null)
+                                },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onSeeCoverage()
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Make different questions") },
                                 leadingIcon = {

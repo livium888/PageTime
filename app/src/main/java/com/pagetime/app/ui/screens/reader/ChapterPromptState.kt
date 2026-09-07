@@ -2,6 +2,7 @@ package com.pagetime.app.ui.screens.reader
 
 import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.learning.SurfaceablePrompt
+import com.pagetime.app.data.local.ChapterPassageEntity
 import com.pagetime.app.data.local.LearningCardEntity
 
 /**
@@ -26,7 +27,28 @@ data class ChapterPromptState(
     /** Prompts whose passages the reader has not reached yet. */
     val stillAhead: Int = 0,
     val keptCount: Int = 0,
+    /**
+     * What became of every passage the last generation sent.
+     *
+     * Empty until the reader opens the coverage sheet, or a generation runs.
+     */
+    val coverage: List<ChapterPassageEntity> = emptyList(),
 ) {
+    /**
+     * The rules that threw the most prompts out, named.
+     *
+     * Two at most. A reader does not need the full histogram; they need to know
+     * whether the model is inventing quotes or writing questions that are too
+     * long, because those are completely different problems.
+     */
+    private fun whyRejected(result: ChapterPromptGenerator.Result): String {
+        val top = result.topRejections.take(2)
+        if (top.isEmpty()) return ""
+        return " Mostly: " + top.joinToString("; ") { (rule, count) ->
+            "$count ${rule.reason}"
+        } + "."
+    }
+
     val surfaceable: List<SurfaceablePrompt>
         get() = pending.map { SurfaceablePrompt(it.id, it.sourceFraction ?: 0f) }
 
@@ -79,7 +101,11 @@ data class ChapterPromptState(
                             if (made) {
                                 " (${result.asked} passages sent, " +
                                     "${result.offered} came back, " +
-                                    "${result.rejected} failed the checks.)"
+                                    "${result.rejected} failed the checks.)" +
+                                    // Which rules did the damage. "9 failed" is
+                                    // a complaint; "7 of them quoted something
+                                    // not in the passage" is a diagnosis.
+                                    whyRejected(result)
                             } else {
                                 ""
                             } +

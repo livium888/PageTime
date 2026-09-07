@@ -68,11 +68,65 @@ import com.pagetime.app.data.embed.ChapterTopics
  */
 internal object ChapterPromptText {
 
+    /**
+     * How many to write, and how hard to lean on omitting.
+     *
+     * THIS PARAGRAPH WAS THE BUG
+     *
+     * The first version of it said a passage with no idea "should return none
+     * at all", that reaching the ceiling was "padding", that padding was
+     * "worse than a short chapter", and closed by asking the model to omit
+     * anything not worth remembering. Counted against the rest of the
+     * instructions, that is eleven prohibitions and one permission.
+     *
+     * A chapter then came back with two cards from twenty-four passages. The
+     * ceiling had been raised to three per passage and the surrounding text
+     * simultaneously made refusing the safest possible answer, so the model
+     * did the sensible thing and refused.
+     *
+     * The quality rules are all still here — one idea per prompt, no sets, no
+     * giveaways, a real quote. What is gone is the editorialising ON TOP of
+     * them, which added no rule and cost most of the output.
+     */
+    private fun howMany(perPassage: Int, insist: Boolean): String = if (insist) {
+        """
+            A person read these passages and chose them. Write AT LEAST ONE
+            prompt for EVERY passage below, and up to $perPassage where the
+            passage carries more than one idea.
+
+            Do not skip a passage. If it seems thin, find the most specific
+            checkable fact in it — a name, a number, a definition, a cause, a
+            consequence — and ask about that. Someone has already decided this
+            is worth remembering; your job is to find the question, not to
+            judge the choice.
+        """.trimIndent()
+    } else {
+        """
+            Write one to $perPassage prompts per passage. Most passages in a
+            non-fiction chapter carry at least one fact worth remembering, so
+            one is the normal answer and $perPassage is for a passage genuinely
+            holding that many separate ideas.
+
+            Skip a passage only when it truly holds nothing checkable — pure
+            scene-setting, a transition, a sentence of connective tissue. That
+            is the exception, not the expectation.
+        """.trimIndent()
+    }
+
     fun build(
         bookTitle: String,
         chapterTitle: String,
         passages: List<String>,
         perPassage: Int = ChapterTopics.PROMPTS_PER_PASSAGE,
+        /**
+         * The reader picked these passages by hand and wants a card from each.
+         *
+         * Changes the instruction from a ceiling into a floor. Omitting is the
+         * right default when the app chose the passages; it is the wrong answer
+         * when a person looked at this exact paragraph and said they wanted to
+         * remember it.
+         */
+        insist: Boolean = false,
     ): String {
         val numbered = passages.mapIndexed { index, text ->
             "[$index]\n$text"
@@ -128,14 +182,7 @@ internal object ChapterPromptText {
 
             HOW MANY
 
-            Write up to $perPassage prompts per passage. This is a ceiling and
-            not a quota: a passage holding one idea should return one prompt,
-            and a passage holding none — scene-setting, a transition, pure
-            narrative — should return none at all. Asking one idea from two
-            angles is not duplication and is encouraged where the idea supports
-            it; inventing a second idea to reach the ceiling is padding, and
-            padding is worse than a short chapter because the reader has to
-            rehearse it for months.
+            ${howMany(perPassage, insist)}
 
             Two prompts from one passage must be answerable independently. If
             knowing the answer to one gives away the other, they are one prompt
@@ -148,11 +195,6 @@ internal object ChapterPromptText {
             that same sentence with nothing deleted.
 
             passageIndex is the number in brackets above the passage you used.
-
-            Omit any passage that carries no idea worth remembering. A
-            chapter that yields eight good prompts is better than one that
-            yields twenty with six weak ones in the middle, and the weak ones
-            are what make a reader stop trusting the deck.
 
             BOOK: $bookTitle
             CHAPTER: $chapterTitle

@@ -103,8 +103,13 @@ fun ReviewSessionScreen(
                             .padding(horizontal = 24.dp, vertical = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
                     ) {
+                        // Which book asked this, not just that a book did. A
+                        // sitting now mixes questions from several books, and
+                        // some prompts are ambiguous without knowing the
+                        // subject — through no fault of the reader.
                         Text(
-                            if (card.fromChapter) "From the book" else "From your slip box",
+                            card.sourceLabel
+                                ?: if (card.fromChapter) "From the book" else "From your slip box",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )

@@ -12,6 +12,10 @@ interface BookDao {
     @Query("SELECT * FROM books ORDER BY addedAt DESC")
     fun observeAll(): Flow<List<BookEntity>>
 
+    /** Every book, once. For labelling cards with the book they came from. */
+    @Query("SELECT * FROM books")
+    suspend fun getAll(): List<BookEntity>
+
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getById(id: String): BookEntity?
 

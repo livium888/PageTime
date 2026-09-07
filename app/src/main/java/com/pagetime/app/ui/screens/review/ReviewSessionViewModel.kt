@@ -35,6 +35,18 @@ data class ReviewItem(
     val bookId: String,
     /** Where the reader's own note came from, versus a generated question. */
     val fromChapter: Boolean,
+    /**
+     * Which book and chapter this came from, for the line above the question.
+     *
+     * "From the book" was adequate when a chapter produced four cards. At
+     * Quantum Country's density a sitting mixes fifty questions from several
+     * books, and a prompt whose subject is ambiguous without knowing which
+     * book asked it is unanswerable through no fault of the reader.
+     *
+     * Orbit solves the same problem by colouring each source; a title is
+     * plainer and says more.
+     */
+    val sourceLabel: String? = null,
 )
 
 data class ReviewUiState(
@@ -55,6 +67,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val learningCards = container.database.learningCardDao()
     private val reviewLog = container.database.learningReviewLogDao()
     private val settings = container.settingsRepository
+    private val bookDao = container.database.bookDao()
 
     /**
      * Its own scheduler instance, matching the one LumenRepository builds.
@@ -122,9 +135,15 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }.getOrDefault(emptyList())
 
+            val titles = runCatching {
+                bookDao.getAll().associate { it.id to it.title }
+            }.getOrDefault(emptyMap())
+
             chapterCardIds = chapter.map { it.id }.toSet()
-            cards = (chapter.map { it.asReviewItem() } + slips.map { it.asReviewItem() })
-                .associateBy { it.id }
+            cards = (
+                chapter.map { it.asReviewItem(titles[it.bookId]) } +
+                    slips.map { it.asReviewItem(titles[it.bookId]) }
+                ).associateBy { it.id }
 
             val session = ReviewSession.start(chapter.map { it.id } + slips.map { it.id })
             _state.value = ReviewUiState(
@@ -136,7 +155,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun LearningCardEntity.asReviewItem(): ReviewItem {
+    private fun LearningCardEntity.asReviewItem(bookTitle: String?): ReviewItem {
         // A cloze is shown as its sentence with a gap, and revealed as the same
         // sentence whole — never as the stored {{c1::…}} markup.
         val isCloze = cardType == LearningCardEntity.TYPE_CLOZE
@@ -147,10 +166,14 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             source = sourceQuote?.takeIf { !isCloze },
             bookId = bookId,
             fromChapter = true,
+            sourceLabel = listOfNotNull(
+                bookTitle,
+                chapterTitle?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ").takeIf { it.isNotBlank() },
         )
     }
 
-    private fun LumenCardEntity.asReviewItem(): ReviewItem {
+    private fun LumenCardEntity.asReviewItem(bookTitle: String?): ReviewItem {
         val (front, back) = repository.trainingPrompt(this)
         return ReviewItem(
             id = id,
@@ -159,6 +182,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             source = quote.takeIf { it.isNotBlank() && it != back },
             bookId = bookId,
             fromChapter = false,
+            sourceLabel = bookTitle,
         )
     }
 

@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 import kotlin.math.roundToInt
 
@@ -83,7 +84,11 @@ fun ChapterPromptListSheet(
                         },
                     )
                     Text(
-                        card.prompt,
+                        if (card.cardType == LearningCardEntity.TYPE_CLOZE) {
+                            ClozeText.blanked(card.prompt)
+                        } else {
+                            card.prompt
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )

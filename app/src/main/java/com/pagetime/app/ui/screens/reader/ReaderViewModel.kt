@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.LumenDraftSource
+import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.learning.PromptSurfacing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -1190,19 +1191,32 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * reader's quota on chapters they may never reach and questions they may
      * never want.
      */
-    fun generateChapterPrompts() {
+    fun generateChapterPrompts() = runGeneration(fresh = false)
+
+    /**
+     * Asks for a different set of questions.
+     *
+     * Never automatic. A change to the instructions could otherwise invalidate
+     * every chapter of every book at once and spend the reader's quota
+     * re-answering questions they were perfectly happy with.
+     */
+    fun regenerateChapterPrompts() = runGeneration(fresh = true)
+
+    private fun runGeneration(fresh: Boolean) {
         val b = _book.value ?: return
         if (promptJob?.isActive == true) return
         val chapterIndex = _promptState.value.chapterIndex
+        judgedPrompts.clear()
         _promptState.value = _promptState.value.copy(generating = true, stage = null, result = null)
         promptJob = viewModelScope.launch {
             try {
-                val result = chapterPrompts.generate(
-                    book = b,
-                    chapterIndex = chapterIndex,
-                    chapterTitle = null,
-                ) { stage ->
+                val onStage: (ChapterPromptGenerator.Stage) -> Unit = { stage ->
                     _promptState.value = _promptState.value.copy(stage = stage)
+                }
+                val result = if (fresh) {
+                    chapterPrompts.regenerate(b, chapterIndex, null, onStage)
+                } else {
+                    chapterPrompts.generate(b, chapterIndex, null, onStage = onStage)
                 }
                 val state = _promptState.value
                 _promptState.value = state.copy(

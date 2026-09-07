@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 
 /**
@@ -52,6 +53,7 @@ fun ChapterPromptCard(
     modifier: Modifier = Modifier,
 ) {
     var revealed by remember(card.id) { mutableStateOf(false) }
+    val isCloze = card.cardType == LearningCardEntity.TYPE_CLOZE
 
     // A new question arrives unrevealed even if the last one was open.
     LaunchedEffect(card.id) { revealed = false }
@@ -78,7 +80,7 @@ fun ChapterPromptCard(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    card.prompt,
+                    if (isCloze) ClozeText.blanked(card.prompt) else card.prompt,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -89,8 +91,11 @@ fun ChapterPromptCard(
                         TextButton(onClick = onSkip) { Text("Not this one") }
                     }
                 } else {
-                    Text(card.answer, style = MaterialTheme.typography.bodyLarge)
-                    card.sourceQuote?.takeIf { it.isNotBlank() }?.let { quote ->
+                    Text(
+                        if (isCloze) ClozeText.filled(card.prompt) else card.answer,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    card.sourceQuote?.takeIf { it.isNotBlank() && !isCloze }?.let { quote ->
                         // The line it came from, so the reader can see for
                         // themselves that the card is not invented.
                         Text(

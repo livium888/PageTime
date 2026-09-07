@@ -10,7 +10,16 @@ data class RawPrompt(
     val answer: String,
     /** Text the model says it took this from; must be in the passage verbatim. */
     val sourceQuote: String,
-)
+    /** "qa" or "cloze". Unknown values are treated as qa. */
+    val type: String = TYPE_QA,
+) {
+    val isCloze: Boolean get() = type.equals(TYPE_CLOZE, ignoreCase = true)
+
+    companion object {
+        const val TYPE_QA = "qa"
+        const val TYPE_CLOZE = "cloze"
+    }
+}
 
 /** Why a prompt was thrown away. Named so a rejected batch can be explained. */
 enum class PromptRejection(val reason: String) {
@@ -22,6 +31,9 @@ enum class PromptRejection(val reason: String) {
     ABOUT_THE_TEXT("asks what the text says rather than what is true"),
     TOO_LONG("is longer than anything anyone recalls"),
     DUPLICATE("repeats a prompt already accepted"),
+    ASKS_FOR_A_SET("asks for a list or a set, which cannot be graded honestly"),
+    CLOZE_NOT_IN_PASSAGE("its cloze sentence is not in the passage"),
+    CLOZE_MALFORMED("has no deletion in it, or deletes the whole sentence"),
 }
 
 data class PromptVerdict(
@@ -74,6 +86,33 @@ object ChapterPromptRules {
      * assert. Kept short and conservative: a rule that costs a good card every
      * time it misfires has to be narrower than the intuition behind it.
      */
+    /** A cloze sentence may be longer than a question; it is still one sentence. */
+    const val MAX_CLOZE_WORDS = 60
+
+    private val CLOZE = Regex("""\{\{c\d+::(.+?)\}\}""")
+
+    /**
+     * Asking for a set or an enumeration.
+     *
+     * Deliberately narrow, and count-based rather than verb-based: "Name the
+     * reason the system collapsed" is a fine single-answer prompt and must
+     * survive, while "Name the three reasons" must not. A check that costs a
+     * good card every time it misfires has to be narrower than the intuition
+     * behind it.
+     */
+    private val SET_QUESTION = Regex(
+        "\\b(?:name|list|give|state|identify|describe)\\s+(?:me\\s+)?" +
+            "(?:all|both|each)\\b" +
+            "|\\b(?:name|list|give|state|identify|describe)\\s+(?:the\\s+)?" +
+            "(?:two|three|four|five|six|seven|eight|nine|ten|\\d+)\\b" +
+            "|\\bwhat\\s+are\\s+the\\b" +
+            "|\\bwhich\\s+of\\s+the\\s+following\\b" +
+            "|\\blist\\s+the\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private fun asksForASet(prompt: String): Boolean = SET_QUESTION.containsMatchIn(prompt)
+
     private val IMPERATIVE_OPENERS = setOf(
         "name", "list", "describe", "explain", "state", "give", "define",
         "identify", "recall", "summarise", "summarize",
@@ -90,6 +129,14 @@ object ChapterPromptRules {
         if (quote.isBlank() || !containsQuote(passage, quote)) {
             return PromptRejection.QUOTE_NOT_IN_PASSAGE
         }
+        // Wozniak's rule against sets and enumerations. Partial knowledge of a
+        // set cannot be graded honestly: the reader half-remembers, grades in
+        // the middle, and every fact in the set gets an interval that suits
+        // none of them.
+        if (asksForASet(prompt)) return PromptRejection.ASKS_FOR_A_SET
+
+        if (raw.isCloze) return checkCloze(prompt, answer, passage)
+
         if (!asksSomething(prompt)) return PromptRejection.NOT_A_QUESTION
         // The answer sitting inside the question is the giveaway that makes a
         // card feel easy and teach nothing.
@@ -100,6 +147,35 @@ object ChapterPromptRules {
         if (words(prompt) > MAX_PROMPT_WORDS || words(answer) > MAX_ANSWER_WORDS) {
             return PromptRejection.TOO_LONG
         }
+        return null
+    }
+
+    /**
+     * A cloze is checked by putting the sentence back together.
+     *
+     * This is the strongest verification available anywhere in the pipeline. A
+     * question and answer can only be checked against a quote the model chose;
+     * a cloze IS the sentence, so filling the deletion back in must reproduce
+     * text that is literally in the book. A model cannot invent a fact and
+     * survive it.
+     */
+    private fun checkCloze(prompt: String, answer: String, passage: String): PromptRejection? {
+        val deletions = CLOZE.findAll(prompt).map { it.groupValues[1] }.toList()
+        if (deletions.isEmpty()) return PromptRejection.CLOZE_MALFORMED
+
+        val restored = CLOZE.replace(prompt) { it.groupValues[1] }.trim()
+        if (restored.isBlank()) return PromptRejection.CLOZE_MALFORMED
+        // Deleting the whole sentence leaves nothing to remember it from.
+        if (normalize(deletions.joinToString(" ")) == normalize(restored)) {
+            return PromptRejection.CLOZE_MALFORMED
+        }
+        if (!containsWords(passage, restored)) return PromptRejection.CLOZE_NOT_IN_PASSAGE
+        // The stated answer has to be what was actually deleted, or the review
+        // screen shows one thing and grades another.
+        if (deletions.none { normalize(it) == normalize(answer) }) {
+            return PromptRejection.CLOZE_MALFORMED
+        }
+        if (words(restored) > MAX_CLOZE_WORDS) return PromptRejection.TOO_LONG
         return null
     }
 

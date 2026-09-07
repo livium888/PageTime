@@ -181,8 +181,12 @@ class GeminiLearningClient(
                 .put("passageIndex", JSONObject().put("type", "INTEGER"))
                 .put("prompt", JSONObject().put("type", "STRING"))
                 .put("answer", JSONObject().put("type", "STRING"))
-                .put("sourceQuote", JSONObject().put("type", "STRING")))
-            .put("required", JSONArray(listOf("passageIndex", "prompt", "answer", "sourceQuote")))
+                .put("sourceQuote", JSONObject().put("type", "STRING"))
+                .put("type", JSONObject().put("type", "STRING")
+                    .put("enum", JSONArray(listOf("qa", "cloze")))))
+            .put("required", JSONArray(
+                listOf("passageIndex", "prompt", "answer", "sourceQuote", "type")
+            ))
         val schema = JSONObject()
             .put("type", "OBJECT")
             .put("properties", JSONObject()
@@ -270,6 +274,7 @@ class GeminiLearningClient(
                 prompt = item.optString("prompt", ""),
                 answer = item.optString("answer", ""),
                 sourceQuote = item.optString("sourceQuote", ""),
+                type = item.optString("type", RawPrompt.TYPE_QA),
             )
         }
     }

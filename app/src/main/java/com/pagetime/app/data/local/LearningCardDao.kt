@@ -73,12 +73,26 @@ interface LearningCardDao {
     @Query("DELETE FROM learning_cards WHERE id = :id")
     suspend fun delete(id: String)
 
-    /** Drops a chapter's generated prompts so it can be generated again. */
+    /**
+     * Clears a chapter's UNJUDGED prompts so it can be generated again.
+     *
+     * Kept cards are deliberately spared. A kept card is one the reader chose,
+     * and it carries FSRS state — a difficulty, a stability, a review count
+     * earned over weeks. Regenerating a chapter is a request for different
+     * questions, not permission to delete the reader's own memory schedule,
+     * and a "make new questions" button that silently destroyed review history
+     * would be the worst kind of destructive: invisible until the day the card
+     * failed to come back.
+     *
+     * Skipped rows go, because the reader asking for new questions has
+     * withdrawn the rejection that kept them around.
+     */
     @Query(
         "DELETE FROM learning_cards " +
-            "WHERE bookId = :bookId AND chapterIndex = :chapterIndex AND generatedByAi = 1"
+            "WHERE bookId = :bookId AND chapterIndex = :chapterIndex " +
+            "AND generatedByAi = 1 AND status != 'kept'"
     )
-    suspend fun deleteGeneratedForChapter(bookId: String, chapterIndex: Int)
+    suspend fun deleteUnkeptForChapter(bookId: String, chapterIndex: Int)
 
     @Query("DELETE FROM learning_cards WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: String)

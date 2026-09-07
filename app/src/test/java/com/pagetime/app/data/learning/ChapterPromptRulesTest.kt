@@ -30,7 +30,11 @@ class ChapterPromptRulesTest {
         answer: String,
         quote: String = "smuggling was more profitable than compliance",
         passageIndex: Int = 0,
-    ) = RawPrompt(passageIndex, prompt, answer, quote)
+        type: String = RawPrompt.TYPE_QA,
+    ) = RawPrompt(passageIndex, prompt, answer, quote, type)
+
+    private fun cloze(prompt: String, answer: String, passageIndex: Int = 0) =
+        RawPrompt(passageIndex, prompt, answer, "smuggling was more profitable than compliance", RawPrompt.TYPE_CLOZE)
 
     @Test
     fun `a grounded question survives`() {
@@ -210,5 +214,127 @@ class ChapterPromptRulesTest {
             listOf(PromptRejection.QUOTE_NOT_IN_PASSAGE, PromptRejection.ABOUT_THE_TEXT),
             verdict.rejected.map { it.second },
         )
+    }
+
+    // ---- Wozniak: avoid sets and enumerations --------------------------------
+
+    /**
+     * Partial knowledge of a set cannot be graded honestly. The reader
+     * half-remembers, grades themselves in the middle, and every fact in the
+     * set gets an interval that suits none of them.
+     */
+    @Test
+    fun `a prompt asking for a set is thrown away`() {
+        listOf(
+            "Name the three causes of the collapse.",
+            "List the stages of the blockade.",
+            "What are the factors behind the failure?",
+            "Name all the ports involved.",
+            "Which of the following ports were closed?",
+        ).forEach { question ->
+            assertEquals(
+                "Should have been rejected as a set: $question",
+                PromptRejection.ASKS_FOR_A_SET,
+                ChapterPromptRules.check(raw(question, "Smuggling"), passages),
+            )
+        }
+    }
+
+    /**
+     * The other direction, which matters more: a rule that costs a good card
+     * every time it misfires has to be narrower than the intuition behind it.
+     */
+    @Test
+    fun `single-answer prompts are not mistaken for sets`() {
+        listOf(
+            "Name the reason the Continental System collapsed.",
+            "Why did the Continental System fail?",
+            "What was Napoleon trying to achieve?",
+            "Describe the effect of closing European ports.",
+        ).forEach { question ->
+            assertNull(
+                "Should have survived: $question",
+                ChapterPromptRules.check(raw(question, "Smuggling paid better"), passages),
+            )
+        }
+    }
+
+    // ---- Wozniak: cloze deletion --------------------------------------------
+
+    /**
+     * The strongest check in the pipeline. A cloze IS the sentence, so filling
+     * the deletion back in must reproduce text literally in the book — a model
+     * cannot invent a fact and survive it.
+     */
+    @Test
+    fun `a cloze whose sentence rebuilds to the passage survives`() {
+        assertNull(
+            ChapterPromptRules.check(
+                cloze(
+                    "smuggling was more profitable than {{c1::compliance}}",
+                    "compliance",
+                ),
+                passages,
+            )
+        )
+    }
+
+    @Test
+    fun `a cloze over a sentence that is not in the book is thrown away`() {
+        assertEquals(
+            PromptRejection.CLOZE_NOT_IN_PASSAGE,
+            ChapterPromptRules.check(
+                cloze("smuggling was more lucrative than {{c1::obedience}}", "obedience"),
+                passages,
+            )
+        )
+    }
+
+    @Test
+    fun `a cloze with nothing deleted is not a cloze`() {
+        assertEquals(
+            PromptRejection.CLOZE_MALFORMED,
+            ChapterPromptRules.check(
+                cloze("smuggling was more profitable than compliance", "compliance"),
+                passages,
+            )
+        )
+    }
+
+    @Test
+    fun `deleting the whole sentence leaves nothing to remember it from`() {
+        assertEquals(
+            PromptRejection.CLOZE_MALFORMED,
+            ChapterPromptRules.check(
+                cloze(
+                    "{{c1::smuggling was more profitable than compliance}}",
+                    "smuggling was more profitable than compliance",
+                ),
+                passages,
+            )
+        )
+    }
+
+    @Test
+    fun `the stated answer must be what was actually deleted`() {
+        // Otherwise the review screen shows one thing and grades another.
+        assertEquals(
+            PromptRejection.CLOZE_MALFORMED,
+            ChapterPromptRules.check(
+                cloze("smuggling was more profitable than {{c1::compliance}}", "Britain"),
+                passages,
+            )
+        )
+    }
+
+    @Test
+    fun `a cloze is not judged by the question rules`() {
+        // It has no question mark and asserts rather than asks, which is
+        // exactly what a cloze is supposed to do.
+        val verdict = ChapterPromptRules.check(
+            cloze("smuggling was more profitable than {{c1::compliance}}", "compliance"),
+            passages,
+        )
+        assertNull(verdict)
     }
 }

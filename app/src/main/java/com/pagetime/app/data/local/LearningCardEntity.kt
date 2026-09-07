@@ -67,6 +67,9 @@ data class LearningCardEntity(
     val dueAt: Long? = null
 ) {
     companion object {
+        const val TYPE_QA = "qa"
+        const val TYPE_CLOZE = "cloze"
+
         const val STATUS_PENDING = "pending"
         const val STATUS_KEPT = "kept"
         const val STATUS_SKIPPED = "skipped"

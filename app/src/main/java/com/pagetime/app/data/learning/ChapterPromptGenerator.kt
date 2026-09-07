@@ -75,6 +75,15 @@ class ChapterPromptGenerator(
         book: BookEntity,
         chapterIndex: Int,
         chapterTitle: String?,
+        /**
+         * Skips the "already generated" shortcut.
+         *
+         * Set when the reader explicitly asks for new questions. The key is a
+         * hash of the passages, so a chapter whose text has not changed keeps
+         * the same key forever — which is right for an accidental second tap
+         * and wrong for a deliberate request.
+         */
+        force: Boolean = false,
         onStage: (Stage) -> Unit = {},
     ): Result {
         val model = store.modelId() ?: return Result(Outcome.NOT_INDEXED)
@@ -91,9 +100,14 @@ class ChapterPromptGenerator(
         val key = generationKey(model, topics)
         // Already generated. Whatever the reader did with them — kept, skipped,
         // or not yet judged — this chapter is not paid for twice.
-        if (runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
+        if (!force && runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
             val existing = pending(book, chapterIndex)
-            return Result(Outcome.ALREADY_MADE, existing, offered = existing.size)
+            return Result(
+                Outcome.ALREADY_MADE,
+                existing,
+                asked = topics.size,
+                offered = existing.size,
+            )
         }
 
         onStage(Stage.WRITING)
@@ -134,13 +148,14 @@ class ChapterPromptGenerator(
                     ?: error::class.simpleName,
             )
         }
-        if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING)
+        if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING, asked = topics.size)
 
         onStage(Stage.CHECKING)
         val verdict = ChapterPromptRules.sift(raws, passages)
         if (verdict.accepted.isEmpty()) {
             return Result(
                 Outcome.ALL_REJECTED,
+                asked = topics.size,
                 offered = raws.size,
                 rejected = verdict.rejected.size,
             )
@@ -164,6 +179,11 @@ class ChapterPromptGenerator(
                 // question before they have read the answer.
                 sourceFraction = topic.endProgression,
                 sourceQuote = raw.sourceQuote.trim(),
+                cardType = if (raw.isCloze) {
+                    LearningCardEntity.TYPE_CLOZE
+                } else {
+                    LearningCardEntity.TYPE_QA
+                },
                 fsrsCardJson = fresh,
                 createdAt = now,
                 updatedAt = now,
@@ -174,13 +194,19 @@ class ChapterPromptGenerator(
             )
         }
         if (cards.isEmpty()) {
-            return Result(Outcome.ALL_REJECTED, offered = raws.size, rejected = raws.size)
+            return Result(
+                Outcome.ALL_REJECTED,
+                asked = topics.size,
+                offered = raws.size,
+                rejected = raws.size,
+            )
         }
 
         runCatching { cardDao.insertAll(cards) }
         return Result(
             Outcome.MADE,
             cards = cards,
+            asked = topics.size,
             offered = raws.size,
             rejected = verdict.rejected.size,
         )
@@ -220,9 +246,26 @@ class ChapterPromptGenerator(
         }
     }
 
-    /** Throws away a chapter's generated prompts so it can be generated again. */
-    suspend fun regenerate(book: BookEntity, chapterIndex: Int) {
-        runCatching { cardDao.deleteGeneratedForChapter(book.id, chapterIndex) }
+    /**
+     * Asks for a fresh set of questions for a chapter.
+     *
+     * Costs another API call, which is why it is never automatic — a change to
+     * the instructions could otherwise silently invalidate every chapter in
+     * every book and spend the reader's quota re-answering questions they were
+     * happy with.
+     *
+     * Cards the reader KEPT survive. Those are theirs, with review history
+     * attached; this replaces what they have not judged, and adds to what they
+     * have.
+     */
+    suspend fun regenerate(
+        book: BookEntity,
+        chapterIndex: Int,
+        chapterTitle: String?,
+        onStage: (Stage) -> Unit = {},
+    ): Result {
+        runCatching { cardDao.deleteUnkeptForChapter(book.id, chapterIndex) }
+        return generate(book, chapterIndex, chapterTitle, force = true, onStage = onStage)
     }
 
     enum class Stage { CHOOSING, WRITING, CHECKING }
@@ -251,6 +294,15 @@ class ChapterPromptGenerator(
     data class Result(
         val outcome: Outcome,
         val cards: List<LearningCardEntity> = emptyList(),
+        /**
+         * How many passages were sent.
+         *
+         * The whole chain is reported — asked, offered, kept — because
+         * "1 question ready" out of 5 passages and out of 1 passage are very
+         * different outcomes with very different fixes, and the reader cannot
+         * tell them apart from the number that survived.
+         */
+        val asked: Int = 0,
         /** How many the model offered, before the rules were applied. */
         val offered: Int = 0,
         val rejected: Int = 0,

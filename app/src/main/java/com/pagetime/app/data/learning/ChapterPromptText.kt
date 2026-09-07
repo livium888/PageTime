@@ -51,6 +51,18 @@ package com.pagetime.app.data.learning
  * The source article could not be read directly while writing this — supermemo
  * and every mirror are blocked from the build environment — so this is built on
  * secondary summaries. Worth re-checking against the original.
+ *
+ * WHY THIS IS ITS OWN FILE
+ *
+ * It used to be a raw string inline in the client, and it shipped with every
+ * template marker escaped as a LITERAL dollar sign — so the model was sent
+ * "BOOK: ${'$'}bookTitle" and, worse, "PASSAGES: ${'$'}numbered" with no
+ * passages in it at all. The request never carried the book. Nothing could
+ * catch that, because a prompt built inside a suspend function behind a
+ * network call is not reachable by any test.
+ *
+ * Pulled out here it is a pure function over its inputs, and the test can
+ * simply assert that the passages are in it.
  */
 internal object ChapterPromptText {
 

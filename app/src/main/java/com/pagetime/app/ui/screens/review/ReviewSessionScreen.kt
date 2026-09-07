@@ -138,12 +138,24 @@ fun ReviewSessionScreen(
                             .padding(bottom = 28.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        state.lastInterval?.let {
+                        // The interval and the way back from it, side by side.
+                        // A rating is not a display state: it rewrites the
+                        // card's difficulty and stability, and "Again" on a
+                        // card you actually knew costs weeks of interval that
+                        // nothing else gives back.
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Text(
-                                "Last card returns $it",
+                                state.lastInterval?.let { "Last card returns $it" } ?: "",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (state.canUndo) {
+                                TextButton(onClick = vm::undo) { Text("Undo that") }
+                            }
                         }
                         if (!state.revealed) {
                             Button(

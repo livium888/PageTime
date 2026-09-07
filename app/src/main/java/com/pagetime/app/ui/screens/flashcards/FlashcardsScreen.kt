@@ -93,6 +93,20 @@ fun FlashcardsScreen(
                 }
             }
 
+            // What the reader has actually remembered. Shown only once there
+            // is something to report: "0% of 0 reviews" is not a fact about
+            // the reader, it is a fact about having just started.
+            state.tally.recall?.let { recall ->
+                Text(
+                    "You have remembered ${(recall * 100).toInt()}% of " +
+                        "${state.tally.reviews} reviews across " +
+                        "${state.tally.cards} card${if (state.tally.cards == 1) "" else "s"}.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+
             when {
                 state.loading -> Unit
 

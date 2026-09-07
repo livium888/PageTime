@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.LearningCardEntity
+import com.pagetime.app.data.local.ReviewTally
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +17,14 @@ data class FlashcardsUiState(
     val groups: List<FlashcardGroup> = emptyList(),
     val counts: Map<FlashcardFilter, Int> = emptyMap(),
     val filter: FlashcardFilter = FlashcardFilter.ALL,
+    /**
+     * What the reader has actually remembered, from the review log.
+     *
+     * Not derivable from the cards themselves: grading overwrites a card's
+     * state, so without the log the app can say what is scheduled and nothing
+     * at all about whether any of it worked.
+     */
+    val tally: ReviewTally = ReviewTally(),
     val loading: Boolean = true,
 ) {
     val total: Int get() = counts[FlashcardFilter.ALL] ?: 0
@@ -26,6 +35,7 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val container = (app as PageTimeApp).container
     private val cardDao = container.database.learningCardDao()
+    private val reviewLog = container.database.learningReviewLogDao()
     private val bookDao = container.database.bookDao()
     private val generator = container.chapterPromptGenerator
 
@@ -36,7 +46,8 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
         cardDao.observeLive(),
         bookDao.observeAll(),
         _filter,
-    ) { cards, books, filter ->
+        reviewLog.observeTally(),
+    ) { cards, books, filter, tally ->
         val titles = books.associate { it.id to it.title }
         // Counts are computed from the same list the groups come from, at the
         // same instant. Two passes over different snapshots would let a chip
@@ -48,6 +59,7 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
                 FlashcardListing.countFor(cards, it, now)
             },
             filter = filter,
+            tally = tally,
             loading = false,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FlashcardsUiState())

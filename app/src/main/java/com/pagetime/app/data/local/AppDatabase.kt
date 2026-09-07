@@ -6,13 +6,19 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * learning_cards and learning_review_logs are still registered and still
- * migrated, and nothing in the app reads them any more. The cards were made by
- * a generator that was disabled when the app moved to Explain Back, so no new
- * ones can exist; the tables are kept rather than dropped because an install
- * from before that change may still hold a reader's cards, and a migration
- * that destroys them cannot be undone. The DAOs are gone with the code that
- * used them.
+ * learning_cards and learning_review_logs are live again.
+ *
+ * Both were declared when the app was written, kept through every migration,
+ * and read by nothing at all — the generator that filled them was disabled
+ * when the app moved to Explain Back, and the DAOs went with it. Keeping the
+ * tables rather than dropping them was the right call: a migration that
+ * destroys a reader's cards cannot be undone, and the schema was waiting with
+ * columns for cloze, a validated source quote, and a per-review audit trail
+ * that the chapter flashcard pipeline turned out to need exactly as written.
+ *
+ * learning_cards now holds generated chapter flashcards; learning_review_logs
+ * records every answer given to one, append-only, so the app can say what the
+ * reader actually remembers instead of only what it has scheduled.
  */
 @Database(
     entities = [
@@ -38,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun usageEventDao(): UsageEventDao
     abstract fun learningCardDao(): LearningCardDao
+    abstract fun learningReviewLogDao(): LearningReviewLogDao
     abstract fun learningGenerationDao(): LearningGenerationDao
     abstract fun conceptDao(): ConceptDao
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao

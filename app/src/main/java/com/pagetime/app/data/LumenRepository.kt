@@ -708,6 +708,20 @@ class LumenRepository(
         return nextDue
     }
 
+    /**
+     * The card exactly as it stands, for undoing an answer.
+     *
+     * Taken BEFORE grading. A rating overwrites the scheduler state in place,
+     * and nothing else records what it was, so a snapshot is the only way back
+     * from a mis-tap.
+     */
+    suspend fun trainingSnapshot(cardId: String): LumenCardEntity? = dao.get(cardId)
+
+    /** Puts a snapshot back, undoing a rating. */
+    suspend fun restoreTraining(card: LumenCardEntity) {
+        dao.upsert(card)
+    }
+
     /** Training prompt for a card: front, with back as the revealed answer. */
     fun trainingPrompt(card: LumenCardEntity): Pair<String, String> =
         card.front to card.back.ifBlank { card.quote }

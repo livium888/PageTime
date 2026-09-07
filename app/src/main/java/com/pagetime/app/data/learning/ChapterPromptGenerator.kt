@@ -170,6 +170,11 @@ class ChapterPromptGenerator(
                 // question before they have read the answer.
                 sourceFraction = topic.endProgression,
                 sourceQuote = raw.sourceQuote.trim(),
+                cardType = if (raw.isCloze) {
+                    LearningCardEntity.TYPE_CLOZE
+                } else {
+                    LearningCardEntity.TYPE_QA
+                },
                 fsrsCardJson = fresh,
                 createdAt = now,
                 updatedAt = now,

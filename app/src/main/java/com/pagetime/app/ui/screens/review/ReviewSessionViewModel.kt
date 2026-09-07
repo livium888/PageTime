@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.FsrsCardCodec
+import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.LumenCardEntity
 import io.github.openspacedrepetition.Scheduler
@@ -109,14 +110,19 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun LearningCardEntity.asReviewItem() = ReviewItem(
-        id = id,
-        front = prompt,
-        back = answer,
-        source = sourceQuote,
-        bookId = bookId,
-        fromChapter = true,
-    )
+    private fun LearningCardEntity.asReviewItem(): ReviewItem {
+        // A cloze is shown as its sentence with a gap, and revealed as the same
+        // sentence whole — never as the stored {{c1::…}} markup.
+        val isCloze = cardType == LearningCardEntity.TYPE_CLOZE
+        return ReviewItem(
+            id = id,
+            front = if (isCloze) ClozeText.blanked(prompt) else prompt,
+            back = if (isCloze) ClozeText.filled(prompt) else answer,
+            source = sourceQuote?.takeIf { !isCloze },
+            bookId = bookId,
+            fromChapter = true,
+        )
+    }
 
     private fun LumenCardEntity.asReviewItem(): ReviewItem {
         val (front, back) = repository.trainingPrompt(this)

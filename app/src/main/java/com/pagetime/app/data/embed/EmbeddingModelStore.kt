@@ -53,6 +53,25 @@ class EmbeddingModelStore(
         modelFile.length() >= MIN_MODEL_BYTES && vocabFile.length() >= MIN_VOCAB_BYTES
 
     /**
+     * What identifies the vectors this model produces, or null when nothing is
+     * installed.
+     *
+     * Lives here rather than in either indexer because cards and book text are
+     * indexed by the SAME model and their vectors have to sit in the same
+     * space. Two copies of this string that drifted apart would put a card and
+     * a paragraph in different spaces while both looked correctly labelled —
+     * comparable by the code, meaningless in fact.
+     *
+     * The file's length is part of it deliberately. The label alone stays the
+     * same if the weights underneath are replaced, and the tables would then
+     * hold two incompatible spaces under one name.
+     */
+    fun modelId(): String? {
+        if (!isInstalled()) return null
+        return "${DEFAULT_SOURCE.label}/${modelFile.length()}"
+    }
+
+    /**
      * A tokeniser built from the downloaded vocabulary, or null when the pair
      * is not installed or the vocabulary is not one.
      *

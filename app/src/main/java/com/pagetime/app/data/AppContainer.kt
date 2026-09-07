@@ -13,6 +13,8 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
+import com.pagetime.app.data.embed.BookIndexer
+import com.pagetime.app.data.embed.BookSearcher
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
@@ -62,7 +64,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_12_13,
                 AppDatabase.MIGRATION_13_14,
                 AppDatabase.MIGRATION_14_15,
-                AppDatabase.MIGRATION_15_16
+                AppDatabase.MIGRATION_15_16,
+                AppDatabase.MIGRATION_16_17
             )
             .build()
 
@@ -129,6 +132,30 @@ class AppContainer(context: Context) {
     val cardEmbeddingIndexer =
         CardEmbeddingIndexer(
             embeddingDao = database.cardEmbeddingDao(),
+            store = embeddingModelStore,
+        )
+
+    /**
+     * Book text as vectors, for finding a passage by what it means.
+     *
+     * Chapter access comes in as two functions rather than the extractor
+     * itself: the indexer's job is chunk, embed, store, and it has no business
+     * knowing what an EPUB is.
+     */
+    val bookIndexer =
+        BookIndexer(
+            dao = database.bookChunkEmbeddingDao(),
+            store = embeddingModelStore,
+            chapterCount = { book -> learningContextExtractor.chapterCount(book) },
+            chapterText = { book, chapter ->
+                learningContextExtractor.chapterText(book, chapter)
+            },
+        )
+
+    /** The other half of the index: asking it a question. */
+    val bookSearcher =
+        BookSearcher(
+            dao = database.bookChunkEmbeddingDao(),
             store = embeddingModelStore,
         )
 

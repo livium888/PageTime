@@ -40,16 +40,11 @@ class CardEmbeddingIndexer(
     /**
      * What identifies the vectors currently being produced.
      *
-     * The file's length is part of it deliberately. The label alone would stay
-     * the same if the weights underneath were replaced — a re-download of a
-     * different export, a partially overwritten file — and the vector table
-     * would then hold two incompatible spaces under one name, comparing them
-     * happily and returning nonsense. Length is a cheap way to notice.
+     * Delegated to the store so cards and book text cannot drift into
+     * differently-named versions of the same space. See
+     * [EmbeddingModelStore.modelId].
      */
-    fun modelId(): String? {
-        if (!store.isInstalled()) return null
-        return "${EmbeddingModelStore.DEFAULT_SOURCE.label}/${store.modelFile.length()}"
-    }
+    fun modelId(): String? = store.modelId()
 
     /** How many cards this model has not seen yet. */
     suspend fun pendingCount(): Int {

@@ -21,6 +21,7 @@ import com.pagetime.app.data.local.LumenCardEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.LumenDraftSource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1080,8 +1081,15 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Throws the index away; it is derived data and can always be rebuilt. */
     fun deleteIndex() {
         val b = _book.value ?: return
-        stopIndexing()
+        // Waits for the index to actually stop before deleting. Cancellation is
+        // a request, not an event: a chapter mid-flight could otherwise write
+        // its rows after the delete and leave a fragment of an index the reader
+        // believes they threw away.
+        val running = indexJob
+        indexJob = null
         viewModelScope.launch {
+            runCatching { running?.cancelAndJoin() }
+            _bookSearch.value = _bookSearch.value.copy(indexing = false)
             runCatching { bookIndexer.delete(b) }
             _bookSearch.value = _bookSearch.value.copy(
                 chaptersIndexed = 0,

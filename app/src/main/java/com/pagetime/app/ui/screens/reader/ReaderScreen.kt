@@ -717,8 +717,19 @@ fun ReaderScreen(
         BookSearchSheet(
             state = bookSearch,
             chapterTitle = { index ->
-                tocEntries?.getOrNull(index)?.title
-                    ?: publication?.readingOrder?.getOrNull(index)?.title
+                // Matched by href, not by position: the flattened table of
+                // contents nests, so its Nth entry is not the Nth chapter of
+                // the reading order, and labelling a result with the wrong
+                // chapter is worse than labelling it with none.
+                val href = publication?.readingOrder?.getOrNull(index)?.href?.toString()
+                val fromToc = href?.let { target ->
+                    tocEntries?.firstOrNull {
+                        it.link.href.toString().substringBefore('#') == target.substringBefore('#')
+                    }?.title
+                }
+                fromToc
+                    ?: publication?.readingOrder?.getOrNull(index)?.title?.takeIf { it.isNotBlank() }
+                    ?: book?.takeIf { it.format != "epub" }?.title
                     ?: "Chapter ${index + 1}"
             },
             onQueryChanged = vm::onSearchQueryChanged,

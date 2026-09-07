@@ -73,6 +73,13 @@ class BookIndexer(
         val total = chapterCount(book)
         if (total <= 0) return IndexProgress(0, 0)
 
+        // Rows from a model that is no longer installed can never be searched
+        // again — nothing will ever ask for that model id — but a book's index
+        // runs to megabytes, so left alone they are simply storage the reader
+        // cannot see or reclaim. Dropped here, at the one moment the reader has
+        // asked for indexing and a scan of the table is already justified.
+        runCatching { dao.deleteFromOtherModels(model) }
+
         val startAt = (dao.lastIndexedChapter(book.id, model)?.plus(1)) ?: 0
         if (startAt >= total) return IndexProgress(total, total)
 

@@ -198,6 +198,20 @@ class LumenViewModel(
         viewModelScope.launch { repository.setHub(cardId, isHub) }
     }
 
+    /**
+     * Puts a card into training, or takes it out.
+     *
+     * Deliberately per-card and opt-in. A slip box is a thinking tool first;
+     * turning every note into a daily obligation is how a hundred cards become
+     * a chore nobody opens, and the reader is the only one who knows which
+     * notes are worth carrying in their head.
+     */
+    fun setTraining(cardId: String, training: Boolean) {
+        viewModelScope.launch {
+            if (training) repository.startTraining(cardId) else repository.stopTraining(cardId)
+        }
+    }
+
     suspend fun boxRange(): IntRange = repository.boxRange()
 
     fun addContext(cardId: String, text: String) {
@@ -285,7 +299,8 @@ class LumenViewModel(
 @Composable
 fun LumenCardsScreen(
     onBack: () -> Unit,
-    onOpenSource: (String) -> Unit = {}
+    onOpenSource: (String) -> Unit = {},
+    onOpenReview: () -> Unit = {}
 ) {
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as PageTimeApp
     val vm: LumenViewModel = viewModel(
@@ -447,7 +462,8 @@ fun LumenCardsScreen(
                 boxes = boxes,
                 selected = selectedBox,
                 dueCount = dueCount,
-                onSelect = { vm.selectBox(it) }
+                onSelect = { vm.selectBox(it) },
+                onReview = onOpenReview
             )
             if (!searching) {
                 Row(
@@ -728,6 +744,10 @@ fun LumenCardsScreen(
                 runWithHelp(LumenOnboarding.Action.PULL_THREAD) { moreActions = null; pullingThread = card }
             },
             onToggleHub = { moreActions = null; vm.setHub(card.id, !card.isHub) },
+            onToggleTraining = {
+                moreActions = null
+                vm.setTraining(card.id, card.dueAt == null)
+            },
             onMove = { moreActions = null; moving = card },
             onDelete = { moreActions = null; deleting = card },
             onDismiss = { moreActions = null }
@@ -841,7 +861,8 @@ private fun BoxTabs(
     boxes: List<Int>,
     selected: Int,
     dueCount: Int,
-    onSelect: (Int) -> Unit
+    onSelect: (Int) -> Unit,
+    onReview: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -860,9 +881,11 @@ private fun BoxTabs(
             )
         }
         if (dueCount > 0) {
+            // This chip used to select the first box, which is the only thing
+            // it could do while no review session existed.
             FilterChip(
                 selected = false,
-                onClick = { onSelect(boxes.first()) },
+                onClick = onReview,
                 label = { Text("$dueCount due") }
             )
         }
@@ -1759,6 +1782,7 @@ private fun CardActionsDialog(
     onFileBehind: () -> Unit,
     onPullThread: () -> Unit,
     onToggleHub: () -> Unit,
+    onToggleTraining: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
@@ -1774,6 +1798,15 @@ private fun CardActionsDialog(
                     onClick = onToggleHub,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (card.isHub) "Remove hub marker" else "Mark as hub note", maxLines = 1) }
+                TextButton(
+                    onClick = onToggleTraining,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (card.dueAt == null) "Review this card over time" else "Stop reviewing this card",
+                        maxLines = 1
+                    )
+                }
                 if (canMove) {
                     TextButton(onClick = onMove, modifier = Modifier.fillMaxWidth()) { Text("Move to another box", maxLines = 1) }
                 }

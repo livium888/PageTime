@@ -39,6 +39,7 @@ import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
+import com.pagetime.app.ui.screens.review.ReviewSessionScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
@@ -165,6 +166,16 @@ fun PageTimeAppUi(openReader: Boolean) {
             }
             composable("lumen") {
                 LumenCardsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") },
+                    onOpenReview = { navController.navigate("review") }
+                )
+            }
+            // The same failure as the concept map above, one layer deeper: the
+            // scheduler, the ratings and the due query were all built, and the
+            // only thing that could reach them was a chip that selected a box.
+            composable("review") {
+                ReviewSessionScreen(
                     onBack = { navController.popBackStack() },
                     onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
                 )

@@ -14,6 +14,7 @@ import com.pagetime.app.data.youtube.YouTubeSearchApi
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.embed.BookIndexer
+import com.pagetime.app.data.embed.BookSearcher
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
@@ -149,6 +150,13 @@ class AppContainer(context: Context) {
             chapterText = { book, chapter ->
                 learningContextExtractor.chapterText(book, chapter)
             },
+        )
+
+    /** The other half of the index: asking it a question. */
+    val bookSearcher =
+        BookSearcher(
+            dao = database.bookChunkEmbeddingDao(),
+            store = embeddingModelStore,
         )
 
     val lumenRepository = LumenRepository(

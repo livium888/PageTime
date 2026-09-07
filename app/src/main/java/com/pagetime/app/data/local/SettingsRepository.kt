@@ -118,6 +118,11 @@ class SettingsRepository(private val context: Context) {
         val LUMEN_CLOUD_RESCUE = booleanPreferencesKey("lumen_cloud_rescue")
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
 
+        val REVIEW_REMINDERS = booleanPreferencesKey("review_reminders_enabled")
+        val REVIEW_REMINDERS_SNOOZED_UNTIL = longPreferencesKey("review_reminders_snoozed_until")
+        val REVIEW_REMINDER_LAST_SENT = longPreferencesKey("review_reminder_last_sent")
+        val REVIEW_REMINDER_STREAK = intPreferencesKey("review_reminder_streak")
+
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -381,6 +386,53 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLumenCloudRescue(value: Boolean) {
         context.dataStore.edit { it[Keys.LUMEN_CLOUD_RESCUE] = value }
+    }
+
+    /**
+     * Whether the app may tell the reader when a sitting is worth having.
+     *
+     * Defaults to OFF. Notifications are the one feature where a wrong default
+     * is not a preference the reader can shrug at — an app that starts
+     * interrupting someone who never asked it to is an app they uninstall, and
+     * asking first costs one tap.
+     */
+    suspend fun reviewReminders(): Boolean =
+        context.dataStore.data.first()[Keys.REVIEW_REMINDERS] ?: false
+
+    suspend fun setReviewReminders(value: Boolean) {
+        context.dataStore.edit { it[Keys.REVIEW_REMINDERS] = value }
+    }
+
+    /** Reminders stay quiet until this instant. Orbit offers the same escape. */
+    suspend fun remindersSnoozedUntil(): Long =
+        context.dataStore.data.first()[Keys.REVIEW_REMINDERS_SNOOZED_UNTIL] ?: 0L
+
+    suspend fun snoozeReminders(untilMillis: Long) {
+        context.dataStore.edit { it[Keys.REVIEW_REMINDERS_SNOOZED_UNTIL] = untilMillis }
+    }
+
+    suspend fun lastReminderAt(): Long =
+        context.dataStore.data.first()[Keys.REVIEW_REMINDER_LAST_SENT] ?: 0L
+
+    /**
+     * How many reminders have gone unanswered in a row.
+     *
+     * Drives the backoff ladder, and reset to zero the moment the reader
+     * actually reviews — the ladder is about being ignored, not about elapsed
+     * time.
+     */
+    suspend fun unansweredReminders(): Int =
+        context.dataStore.data.first()[Keys.REVIEW_REMINDER_STREAK] ?: 0
+
+    suspend fun recordReminderSent(atMillis: Long) {
+        context.dataStore.edit {
+            it[Keys.REVIEW_REMINDER_LAST_SENT] = atMillis
+            it[Keys.REVIEW_REMINDER_STREAK] = (it[Keys.REVIEW_REMINDER_STREAK] ?: 0) + 1
+        }
+    }
+
+    suspend fun clearReminderStreak() {
+        context.dataStore.edit { it[Keys.REVIEW_REMINDER_STREAK] = 0 }
     }
 
     /**

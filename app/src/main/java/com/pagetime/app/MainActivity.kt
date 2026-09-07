@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.IntentCompat
 import androidx.fragment.app.FragmentActivity
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
+import com.pagetime.app.data.review.ReviewReminderWorker
 import com.pagetime.app.ui.PageTimeAppUi
 import com.pagetime.app.ui.theme.PageTimeTheme
 
@@ -31,6 +32,15 @@ class MainActivity : FragmentActivity() {
     private val importViewModel: BookImportViewModel by viewModels()
     private val openReaderState = mutableStateOf(false)
 
+    /**
+     * Set when the launch came from a review reminder.
+     *
+     * Consumed once by the UI. A notification that opens the library and
+     * leaves the reader to find the review themselves has wasted the
+     * interruption it just spent.
+     */
+    private val openReviewState = mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -42,7 +52,12 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    PageTimeAppUi(openReader = openReader)
+                    val openReview by openReviewState
+                    PageTimeAppUi(
+                        openReader = openReader,
+                        openReview = openReview,
+                        onReviewOpened = { openReviewState.value = false },
+                    )
                 }
             }
         }
@@ -68,6 +83,9 @@ class MainActivity : FragmentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         openReaderState.value = intent?.getBooleanExtra(EXTRA_OPEN_READER, false) ?: false
+        if (intent?.action == ReviewReminderWorker.ACTION_OPEN_REVIEW) {
+            openReviewState.value = true
+        }
         // A book handed over from outside the app: "Open with PageTime" from a
         // file manager/browser (ACTION_VIEW) or a share-sheet file (ACTION_SEND
         // carrying a content stream). Raw shared text without a stream is ignored.

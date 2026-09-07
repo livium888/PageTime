@@ -32,6 +32,7 @@ enum class PromptRejection(val reason: String) {
     TOO_LONG("is longer than anything anyone recalls"),
     DUPLICATE("repeats a prompt already accepted"),
     ASKS_FOR_A_SET("asks for a list or a set, which cannot be graded honestly"),
+    NEAR_DUPLICATE("is a rewording of a prompt already accepted"),
     CLOZE_NOT_IN_PASSAGE("its cloze sentence is not in the passage"),
     CLOZE_MALFORMED("has no deletion in it, or deletes the whole sentence"),
 }
@@ -179,28 +180,57 @@ object ChapterPromptRules {
         return null
     }
 
-    /** Checks a whole batch, dropping repeats after the first of their kind. */
-    fun sift(raws: List<RawPrompt>, passages: List<String>): PromptVerdict {
-        val accepted = mutableListOf<RawPrompt>()
-        val rejected = mutableListOf<Pair<RawPrompt, PromptRejection>>()
-        val seen = HashSet<String>()
+    /**
+     * How alike two prompts may be before the second is a rewording.
+     *
+     * Jaccard overlap of their words. Calibrated against real pairs rather
+     * than chosen for roundness:
+     *
+     *   "What year did Napoleon invade Russia?" against
+     *   "In what year did Napoleon invade Russia?" scores 0.86 — one prompt,
+     *   written twice, and it must go.
+     *
+     *   "Why did the Continental System fail?" against
+     *   "What did the Continental System ban?" scores 0.50 — two facts about
+     *   one subject, which is exactly what asking for several prompts per
+     *   passage is meant to produce, and it must survive.
+     *
+     * Both are tested. The gap between them is wide, which is the only reason
+     * a single threshold is defensible here.
+     */
+    const val NEAR_DUPLICATE_SIMILARITY = 0.8f
 
-        for (raw in raws) {
-            val failure = check(raw, passages)
-            if (failure != null) {
-                rejected += raw to failure
-                continue
-            }
-            // Two passages about one idea produce one question twice, and the
-            // reader meets it as two cards that are the same work.
-            if (!seen.add(normalize(raw.prompt))) {
-                rejected += raw to PromptRejection.DUPLICATE
-                continue
-            }
-            accepted += raw
-        }
-        return PromptVerdict(accepted, rejected)
+    /**
+     * Checks a whole batch, dropping repeats after the first of their kind.
+     *
+     * Convenience for a single batch. A chapter is generated in several
+     * requests, and duplicates across those requests are exactly as bad as
+     * duplicates within one, so the generator uses [PromptSifter] and keeps it
+     * for the whole chapter.
+     */
+    fun sift(raws: List<RawPrompt>, passages: List<String>): PromptVerdict =
+        PromptSifter().sift(raws, passages)
+
+    /**
+     * Whether two prompts are the same question wearing different words.
+     *
+     * Exposed for the sifter and for its tests; the interesting behaviour is
+     * the threshold, not the arithmetic.
+     */
+    fun similarity(a: String, b: String): Float {
+        val left = tokens(a)
+        val right = tokens(b)
+        if (left.isEmpty() || right.isEmpty()) return 0f
+        val shared = left.count { it in right }
+        val union = left.size + right.size - shared
+        return if (union == 0) 0f else shared.toFloat() / union
     }
+
+    internal fun tokens(text: String): Set<String> =
+        normalize(text).split(' ').filter { it.isNotBlank() }.toSet()
+
+    /** The form two prompts must share to count as literally the same. */
+    internal fun exactKey(text: String): String = normalize(text)
 
     /**
      * Whether [quote] appears in [passage] once both are reduced to their
@@ -257,4 +287,68 @@ object ChapterPromptRules {
         text.lowercase()
             .replace(Regex("[^\\p{L}\\p{Nd}]+"), " ")
             .trim()
+}
+
+/**
+ * Sifting a whole chapter, across however many requests it took.
+ *
+ * WHY THIS HOLDS STATE
+ *
+ * A chapter is no longer one request. At Quantum Country's density a long
+ * chapter sends two dozen passages, which is more than one call should carry,
+ * so it is split into batches. A duplicate that arrives in batch three is
+ * exactly as bad as one that arrives in batch one — worse, if anything,
+ * because nothing later will catch it — and a sifter created fresh per batch
+ * cannot see it. So the state lives for the chapter.
+ *
+ * WHY NEAR-DUPLICATES ONLY BECAME WORTH CATCHING NOW
+ *
+ * At four prompts a chapter, two similar ones are a minor annoyance. At fifty,
+ * asking for several prompts from each passage, rewordings are the predictable
+ * failure: the model is being invited to find three things to say about a
+ * paragraph that may only support two, and the cheapest way to comply is to
+ * ask the same question twice.
+ *
+ * That is Wozniak's interference rule, and it is the one place where raising
+ * the density genuinely does make the cards worse unless something is done
+ * about it. This is the something.
+ */
+class PromptSifter {
+
+    private val seen = HashSet<String>()
+    private val acceptedTokens = mutableListOf<Set<String>>()
+
+    fun sift(raws: List<RawPrompt>, passages: List<String>): PromptVerdict {
+        val accepted = mutableListOf<RawPrompt>()
+        val rejected = mutableListOf<Pair<RawPrompt, PromptRejection>>()
+
+        for (raw in raws) {
+            val failure = ChapterPromptRules.check(raw, passages)
+            if (failure != null) {
+                rejected += raw to failure
+                continue
+            }
+            // Two passages about one idea produce one question twice, and the
+            // reader meets it as two cards that are the same work.
+            if (!seen.add(ChapterPromptRules.exactKey(raw.prompt))) {
+                rejected += raw to PromptRejection.DUPLICATE
+                continue
+            }
+            val tokens = ChapterPromptRules.tokens(raw.prompt)
+            if (acceptedTokens.any { jaccard(tokens, it) >= ChapterPromptRules.NEAR_DUPLICATE_SIMILARITY }) {
+                rejected += raw to PromptRejection.NEAR_DUPLICATE
+                continue
+            }
+            acceptedTokens += tokens
+            accepted += raw
+        }
+        return PromptVerdict(accepted, rejected)
+    }
+
+    private fun jaccard(a: Set<String>, b: Set<String>): Float {
+        if (a.isEmpty() || b.isEmpty()) return 0f
+        val shared = a.count { it in b }
+        val union = a.size + b.size - shared
+        return if (union == 0) 0f else shared.toFloat() / union
+    }
 }

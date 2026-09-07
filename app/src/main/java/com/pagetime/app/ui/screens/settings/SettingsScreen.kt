@@ -35,6 +35,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -249,6 +255,11 @@ fun SettingsScreen(
                 onDownload = viewModel::downloadOfflineModel,
                 onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
+            )
+
+            ReviewRemindersCard(
+                enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
+                onChange = viewModel::setReviewReminders,
             )
 
             CaptureSizeCard(
@@ -1164,6 +1175,76 @@ private fun GeminiSettingsCard(
                     Icon(Icons.Outlined.Refresh, contentDescription = "Refresh Gemini models")
                 }
             }
+        }
+    }
+}
+
+/**
+ * Permission to be interrupted about flashcards.
+ *
+ * OFF by default, deliberately. A wrong default here is not a preference the
+ * reader shrugs at — an app that starts notifying someone who never asked is
+ * one they uninstall, and asking costs a single tap.
+ *
+ * The copy explains the batching, because otherwise the feature looks broken:
+ * a reader who turns this on, sees a card fall due, and hears nothing that
+ * evening will conclude it does not work. It is working — it is waiting until
+ * a sitting is worth having.
+ */
+@Composable
+private fun ReviewRemindersCard(
+    enabled: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    // On API 33+ the permission has to be asked for, and a toggle that turns
+    // on without it is the worst outcome available: the reader believes
+    // reminders are on and simply never hears from the app again. So the
+    // switch turns on only once the grant comes back.
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> onChange(granted) }
+    val context = LocalContext.current
+
+    fun request() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            onChange(true)
+            return
+        }
+        val already = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (already) onChange(true) else launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Review reminders", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (enabled) {
+                        "You will hear from the app when a review sitting is worth " +
+                            "having — not every time a single card falls due. It waits " +
+                            "for a fuller sitting while waiting is cheap, and stops " +
+                            "asking after six reminders you have not acted on."
+                    } else {
+                        "Off — cards still come due, and nothing will tell you. " +
+                            "Spaced repetition you have to remember to open is a pile " +
+                            "of cards."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { wanted -> if (wanted) request() else onChange(false) },
+            )
         }
     }
 }

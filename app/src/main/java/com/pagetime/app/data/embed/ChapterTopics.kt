@@ -101,21 +101,60 @@ object ChapterTopics {
     const val LAMBDA = 0.7f
 
     /**
-     * Roughly one prompt per 1,500 words.
+     * One passage per ~400 words, which is Quantum Country's own spacing.
      *
-     * Quantum Country is far denser — a handful every few hundred words — but
-     * its prompts were written by hand by the authors, and ours are generated
-     * from a chapter the model has skimmed. Density is a promise about quality,
-     * so this claims much less.
+     * Orbit's author documentation describes review areas "interleaved every
+     * few hundred words", each holding several prompts. This used to be 9,000
+     * characters — one passage per 1,500 words, about a fifth of their
+     * density — on the reasoning that their prompts are handwritten and ours
+     * are generated, so we should claim less.
+     *
+     * That reasoning was sound and the conclusion was still wrong, because a
+     * medium this sparse cannot be evaluated. Four cards from a chapter is a
+     * rounding error on what the reader remembers, so whether the feature
+     * works is unanswerable either way. Testing it at the density it is meant
+     * to be used at is the only way to find out.
+     *
+     * The quality worry does not go away; it moves. It is now carried by the
+     * rules that throw prompts out, which is where it can actually be
+     * enforced, rather than by refusing to generate them.
      */
-    const val CHARS_PER_TOPIC = 9_000
+    const val CHARS_PER_TOPIC = 2_500
 
-    const val MIN_TOPICS = 3
-    const val MAX_TOPICS = 8
+    const val MIN_TOPICS = 4
 
-    /** How many prompts a chapter of [chars] characters is worth. */
+    /**
+     * A ceiling, not a target.
+     *
+     * At three prompts per passage this allows 72 from one chapter, which is
+     * already more than anyone will accept in a sitting. It exists to stop a
+     * single enormous chapter — an unsplit plain-text book, say — from
+     * spending the reader's whole quota in one tap.
+     */
+    const val MAX_TOPICS = 24
+
+    /**
+     * How many prompts to ask for from each passage.
+     *
+     * Quantum Country's review areas hold several prompts each, and Wozniak is
+     * explicit that approaching one idea from several angles does not breach
+     * the minimum information principle. Three is an upper bound the model is
+     * told it may ignore; a passage that carries one idea should return one.
+     */
+    const val PROMPTS_PER_PASSAGE = 3
+
+    /** How many passages a chapter of [chars] characters is worth. */
     fun countFor(chars: Int): Int =
         (chars / CHARS_PER_TOPIC).coerceIn(MIN_TOPICS, MAX_TOPICS)
+
+    /**
+     * The most prompts a chapter of [chars] characters could yield.
+     *
+     * Reported to the reader before generating, because at this density one
+     * tap is a materially larger API call than it used to be and they should
+     * know that before making it.
+     */
+    fun promptCeilingFor(chars: Int): Int = countFor(chars) * PROMPTS_PER_PASSAGE
 
     /**
      * The passages worth building prompts from, in reading order.
@@ -147,29 +186,50 @@ object ChapterTopics {
 
         val centrality = FloatArray(usable.size) { EmbeddingMath.cosineSimilarity(centroid, vectors[it]) }
 
+        // Running state rather than a rescan of the chosen list each round.
+        //
+        // The original recomputed every candidate's resemblance to every
+        // passage already picked, on every round: fine at five picks, and
+        // O(picks squared * chunks) vector comparisons, which at
+        // twenty-four picks over a long chapter is hundreds of thousands of
+        // 384-dimensional dot products on a phone while the reader waits.
+        //
+        // Resemblance to a SET is the maximum over its members, and a maximum
+        // only ever needs the new member, so carrying it forward costs one
+        // pass per round and gives identical results.
+        val taken = BooleanArray(usable.size)
+        val blocked = BooleanArray(usable.size)
+        val redundancy = FloatArray(usable.size)
+
         val chosen = mutableListOf<Int>()
         while (chosen.size < wanted) {
             var best = -1
             var bestScore = Float.NEGATIVE_INFINITY
             for (i in usable.indices) {
-                if (i in chosen) continue
-                // Chunks overlap by design, so the neighbour of a chosen
-                // passage is largely the same text. Excluded by position as
-                // well as by similarity: two chunks sharing 80 characters are
-                // one idea however their vectors happen to land.
-                if (chosen.any { overlaps(usable[it], usable[i]) }) continue
-
-                val redundancy = chosen.maxOfOrNull { j ->
-                    EmbeddingMath.cosineSimilarity(vectors[j], vectors[i])
-                } ?: 0f
-                val score = lambda * centrality[i] - (1f - lambda) * redundancy
+                if (taken[i] || blocked[i]) continue
+                val score = lambda * centrality[i] - (1f - lambda) * redundancy[i]
                 if (score > bestScore) {
                     bestScore = score
                     best = i
                 }
             }
             if (best < 0) break
+            taken[best] = true
             chosen += best
+
+            for (i in usable.indices) {
+                if (taken[i] || blocked[i]) continue
+                // Chunks overlap by design, so the neighbour of a chosen
+                // passage is largely the same text. Excluded by position as
+                // well as by similarity: two chunks sharing 80 characters are
+                // one idea however their vectors happen to land.
+                if (overlaps(usable[best], usable[i])) {
+                    blocked[i] = true
+                    continue
+                }
+                val similarity = EmbeddingMath.cosineSimilarity(vectors[best], vectors[i])
+                if (similarity > redundancy[i]) redundancy[i] = similarity
+            }
         }
 
         // Selected by importance, returned by position: a prompt belongs where

@@ -19,18 +19,18 @@ import java.net.URLEncoder
 class GeminiLearningClient(
     private val settingsRepository: SettingsRepository,
     private val endpointBase: String = "https://generativelanguage.googleapis.com/v1beta"
-) {
+) : ChapterPromptWriter {
     private val buildTimeApiKey: String = BuildConfig.GEMINI_API_KEY
 
     val isConfigured: Boolean
         get() = currentApiKey().isNotBlank()
 
-    fun currentModel(): String = settingsRepository.geminiModel()
+    override fun currentModel(): String = settingsRepository.geminiModel()
 
     fun hasUserKey(): Boolean = settingsRepository.geminiApiKey() != null
 
     /** True when any usable key exists (user-entered or build-time fallback). */
-    fun hasKey(): Boolean = runCatching { currentApiKey().isNotBlank() }.getOrDefault(false)
+    override fun hasKey(): Boolean = runCatching { currentApiKey().isNotBlank() }.getOrDefault(false)
 
     fun saveUserApiKey(value: String) {
         settingsRepository.setGeminiApiKey(value)
@@ -166,7 +166,7 @@ class GeminiLearningClient(
      * is checked locally afterwards. This asks for honesty; ChapterPromptRules
      * is what enforces it.
      */
-    suspend fun generateChapterPrompts(
+    override suspend fun generateChapterPrompts(
         bookTitle: String,
         chapterTitle: String,
         passages: List<String>,

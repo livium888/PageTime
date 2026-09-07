@@ -1,5 +1,7 @@
 package com.pagetime.app.data.learning
 
+import com.pagetime.app.data.embed.ChapterTopics
+
 /**
  * The instructions sent to the model for one chapter.
  *
@@ -66,7 +68,12 @@ package com.pagetime.app.data.learning
  */
 internal object ChapterPromptText {
 
-    fun build(bookTitle: String, chapterTitle: String, passages: List<String>): String {
+    fun build(
+        bookTitle: String,
+        chapterTitle: String,
+        passages: List<String>,
+        perPassage: Int = ChapterTopics.PROMPTS_PER_PASSAGE,
+    ): String {
         val numbered = passages.mapIndexed { index, text ->
             "[$index]\n$text"
         }.joinToString("\n\n")
@@ -79,7 +86,7 @@ internal object ChapterPromptText {
             the reader's time for months.
 
             ONE IDEA PER PROMPT. The smallest testable unit. If a passage holds
-            two ideas, pick the more important one and ignore the other. A
+            two ideas, that is two prompts, not one prompt covering both. A
             prompt that needs a paragraph to answer it is worthless: the reader
             will half-remember, grade themselves in the middle, and the
             scheduler will get it wrong in both directions.
@@ -119,9 +126,20 @@ internal object ChapterPromptText {
             from the rest, you deleted the wrong thing. Put the deleted text in
             "answer" as well.
 
-            A passage can yield one of each where the idea genuinely supports
-            both — asking one idea from two angles is not duplication. It can
-            also yield nothing.
+            HOW MANY
+
+            Write up to $perPassage prompts per passage. This is a ceiling and
+            not a quota: a passage holding one idea should return one prompt,
+            and a passage holding none — scene-setting, a transition, pure
+            narrative — should return none at all. Asking one idea from two
+            angles is not duplication and is encouraged where the idea supports
+            it; inventing a second idea to reach the ceiling is padding, and
+            padding is worse than a short chapter because the reader has to
+            rehearse it for months.
+
+            Two prompts from one passage must be answerable independently. If
+            knowing the answer to one gives away the other, they are one prompt
+            written twice.
 
             sourceQuote must be copied from that passage CHARACTER FOR
             CHARACTER: the sentence the answer comes from. Do not paraphrase,
@@ -131,9 +149,10 @@ internal object ChapterPromptText {
 
             passageIndex is the number in brackets above the passage you used.
 
-            If a passage carries no idea worth remembering — scene-setting, a
-            transition, pure narrative — omit it. Four good prompts beat six
-            with two weak ones.
+            Omit any passage that carries no idea worth remembering. A
+            chapter that yields eight good prompts is better than one that
+            yields twenty with six weak ones in the middle, and the weak ones
+            are what make a reader stop trusting the deck.
 
             BOOK: $bookTitle
             CHAPTER: $chapterTitle

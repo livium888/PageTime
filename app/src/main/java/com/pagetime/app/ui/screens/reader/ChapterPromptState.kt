@@ -41,10 +41,20 @@ data class ChapterPromptState(
      */
     val message: String?
         get() = when {
-            generating -> when (stage) {
-                ChapterPromptGenerator.Stage.CHOOSING -> "Finding what this chapter is about…"
-                ChapterPromptGenerator.Stage.WRITING -> "Writing questions…"
-                ChapterPromptGenerator.Stage.CHECKING -> "Checking them against the book…"
+            generating -> when (stage?.phase) {
+                ChapterPromptGenerator.Phase.CHOOSING ->
+                    "Finding what this chapter is about…"
+                // The batch number matters here. A dense chapter takes several
+                // requests and the better part of a minute, and a progress
+                // line that never moves is indistinguishable from a hang.
+                ChapterPromptGenerator.Phase.WRITING ->
+                    if (stage.batches > 1) {
+                        "Writing questions… (${stage.batch} of ${stage.batches})"
+                    } else {
+                        "Writing questions…"
+                    }
+                ChapterPromptGenerator.Phase.CHECKING ->
+                    "Checking them against the book…"
                 null -> "Starting…"
             }
             result == null -> null
@@ -59,13 +69,25 @@ data class ChapterPromptState(
                         // from 5 passages and "1 ready" from 1 passage are
                         // different outcomes with different fixes, and the
                         // reader cannot tell them apart from the number alone.
-                        val lost = (result.asked - n).coerceAtLeast(0)
+                        //
+                        // Only for a generation that actually ran. On the
+                        // cached path nothing was sent and nothing was
+                        // checked, so those counts would be fiction.
+                        val made = result.outcome == ChapterPromptGenerator.Outcome.MADE
                         "$n question${if (n == 1) "" else "s"} ready. " +
                             "They appear as you reach the passages they came from." +
-                            if (lost > 0) {
+                            if (made) {
                                 " (${result.asked} passages sent, " +
                                     "${result.offered} came back, " +
                                     "${result.rejected} failed the checks.)"
+                            } else {
+                                ""
+                            } +
+                            // A chapter can half-succeed now, and a reader who
+                            // is not told will never tap again to get the rest.
+                            if (result.failedBatches > 0) {
+                                " ${result.failedBatches} of ${result.batches} " +
+                                    "requests failed — tap again for the rest."
                             } else {
                                 ""
                             }

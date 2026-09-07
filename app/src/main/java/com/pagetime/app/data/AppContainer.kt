@@ -170,7 +170,7 @@ class AppContainer(context: Context) {
         ChapterPromptGenerator(
             chunkDao = database.bookChunkEmbeddingDao(),
             cardDao = database.learningCardDao(),
-            store = embeddingModelStore,
+            embeddingModelId = embeddingModelStore::modelId,
             gemini = geminiLearningClient,
             usage = aiUsageRepository,
         )

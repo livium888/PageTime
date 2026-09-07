@@ -3,6 +3,14 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+         Review reminders. Runtime-requested on API 33+; on older versions the
+         grant is implicit. Declared here rather than assumed, because a
+         notification that silently never appears is the worst version of this
+         feature: the reader believes reminders are on and simply never hears
+         from the app again.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- UsageStatsManager: lets the app reconcile browse-time spent in blocked apps

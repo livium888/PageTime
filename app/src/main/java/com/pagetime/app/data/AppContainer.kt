@@ -135,7 +135,7 @@ class AppContainer(context: Context) {
     val cardEmbeddingIndexer =
         CardEmbeddingIndexer(
             embeddingDao = database.cardEmbeddingDao(),
-            embeddingModelId = embeddingModelStore::modelId,
+            store = embeddingModelStore,
         )
 
     /**
@@ -148,7 +148,7 @@ class AppContainer(context: Context) {
     val bookIndexer =
         BookIndexer(
             dao = database.bookChunkEmbeddingDao(),
-            embeddingModelId = embeddingModelStore::modelId,
+            store = embeddingModelStore,
             chapterCount = { book -> learningContextExtractor.chapterCount(book) },
             chapterText = { book, chapter ->
                 learningContextExtractor.chapterText(book, chapter)
@@ -159,7 +159,7 @@ class AppContainer(context: Context) {
     val bookSearcher =
         BookSearcher(
             dao = database.bookChunkEmbeddingDao(),
-            embeddingModelId = embeddingModelStore::modelId,
+            store = embeddingModelStore,
         )
 
     /**

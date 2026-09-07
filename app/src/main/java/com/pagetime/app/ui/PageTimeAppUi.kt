@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Settings
@@ -38,6 +40,7 @@ import com.pagetime.app.ui.screens.library.LibraryScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
+import com.pagetime.app.ui.screens.flashcards.FlashcardsScreen
 import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.review.ReviewSessionScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
@@ -61,6 +64,10 @@ private data class BottomTab(
 private val tabs = listOf(
     BottomTab("library", "Library", Icons.Outlined.MenuBook, Icons.Filled.MenuBook),
     BottomTab("lumen", "Lumen", Icons.Outlined.Style, Icons.Filled.Style),
+    // Distinct from Lumen on purpose. A Lumen card is a note the reader wrote
+    // to think with; a flashcard is a question generated from a passage to be
+    // answered from memory. Conflating them has confused a reader already.
+    BottomTab("flashcards", "Recall", Icons.Outlined.Quiz, Icons.Filled.Quiz),
     BottomTab("search", "Discover", Icons.Outlined.Search, Icons.Filled.Search),
     BottomTab("settings", "Settings", Icons.Outlined.Settings, Icons.Filled.Settings)
 )
@@ -70,7 +77,8 @@ fun PageTimeAppUi(openReader: Boolean) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val showBottomBar = currentRoute in setOf("library", "lumen", "search", "settings")
+    val showBottomBar =
+        currentRoute in setOf("library", "lumen", "flashcards", "search", "settings")
     val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -178,6 +186,12 @@ fun PageTimeAppUi(openReader: Boolean) {
                 ReviewSessionScreen(
                     onBack = { navController.popBackStack() },
                     onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
+                )
+            }
+            composable("flashcards") {
+                FlashcardsScreen(
+                    onOpenReview = { navController.navigate("review") },
+                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
                 )
             }
             composable("search") { DiscoverScreen() }

@@ -120,9 +120,10 @@ class ChapterPromptGenerator(
                 answer = raw.answer.trim(),
                 explanation = null,
                 sourceLocator = null,
-                // Where in the chapter this idea lives, which is where the
-                // prompt will meet the reader.
-                sourceFraction = topic.progression,
+                // Where the passage ENDS, not where it starts: a prompt that
+                // appears as the reader arrives at the paragraph is asking the
+                // question before they have read the answer.
+                sourceFraction = topic.endProgression,
                 sourceQuote = raw.sourceQuote.trim(),
                 fsrsCardJson = fresh,
                 createdAt = now,

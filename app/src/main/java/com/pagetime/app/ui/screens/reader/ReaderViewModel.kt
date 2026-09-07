@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.LumenDraftSource
+import com.pagetime.app.data.learning.PromptSurfacing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -901,6 +902,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         if (!ReaderPositionPolicy.canPersist(txtRestoreComplete)) return
         val b = _book.value ?: return
         latestTxtFraction = ReaderPositionPolicy.clampFraction(fraction)
+        // A plain-text book is one chapter, so its whole-file fraction IS its
+        // position in that chapter — the same coordinate the prompts were
+        // stored against.
+        onChapterPosition(0, latestTxtFraction)
         txtSaveJob?.cancel()
         txtSaveJob = persistenceScope.launch {
             delay(250)
@@ -964,6 +969,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         } else {
             onUserScrolled()
         }
+
+        if (index != null) onChapterPosition(index, fraction)
 
         // Debounce: coalesce bursts of locator updates into one write.
         locatorSaveJob?.cancel()
@@ -1124,6 +1131,116 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
+
+    // ---- Chapter prompts -----------------------------------------------------
+
+    private val chapterPrompts = container.chapterPromptGenerator
+
+    private val _promptState = MutableStateFlow(ChapterPromptState())
+    val promptState = _promptState.asStateFlow()
+
+    private var promptJob: Job? = null
+
+    /** Ids judged this sitting, so a dismissed prompt cannot flicker back. */
+    private val judgedPrompts = mutableSetOf<String>()
+
+    /**
+     * Where the reader is inside the current chapter, and which prompt that
+     * makes due.
+     *
+     * Fed from both reading paths — the Readium locator for EPUBs and the
+     * scroll fraction for plain text — because a prompt has to know where the
+     * reader is regardless of which engine is showing the book.
+     */
+    private fun onChapterPosition(chapterIndex: Int, fraction: Float) {
+        val state = _promptState.value
+        if (state.chapterIndex != chapterIndex) {
+            // A new chapter: whatever was pending belongs to the old one.
+            _promptState.value = ChapterPromptState(chapterIndex = chapterIndex)
+            loadPendingPrompts(chapterIndex)
+            return
+        }
+        if (state.pending.isEmpty()) return
+        val surfaced = PromptSurfacing.next(state.surfaceable, fraction, judgedPrompts)
+        _promptState.value = state.copy(
+            progression = fraction,
+            surfacedId = surfaced?.id,
+            stillAhead = PromptSurfacing.remaining(state.surfaceable, fraction, judgedPrompts),
+        )
+    }
+
+    private fun loadPendingPrompts(chapterIndex: Int) {
+        val b = _book.value ?: return
+        viewModelScope.launch {
+            val ready = runCatching { chapterPrompts.isReady(b, chapterIndex) }.getOrDefault(false)
+            val pending = chapterPrompts.pending(b, chapterIndex)
+            _promptState.value = _promptState.value.copy(
+                chapterIndex = chapterIndex,
+                ready = ready,
+                pending = pending,
+            )
+        }
+    }
+
+    /**
+     * Writes this chapter's questions.
+     *
+     * Deliberately a deliberate act. Generating costs an API call, and doing it
+     * automatically on every chapter of a forty-chapter book would spend the
+     * reader's quota on chapters they may never reach and questions they may
+     * never want.
+     */
+    fun generateChapterPrompts() {
+        val b = _book.value ?: return
+        if (promptJob?.isActive == true) return
+        val chapterIndex = _promptState.value.chapterIndex
+        _promptState.value = _promptState.value.copy(generating = true, stage = null)
+        promptJob = viewModelScope.launch {
+            try {
+                val made = chapterPrompts.generate(
+                    book = b,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = null,
+                ) { stage ->
+                    _promptState.value = _promptState.value.copy(stage = stage)
+                }
+                _promptState.value = _promptState.value.copy(
+                    pending = made,
+                    attempted = true,
+                )
+            } finally {
+                _promptState.value = _promptState.value.copy(generating = false, stage = null)
+            }
+        }
+    }
+
+    fun keepPrompt(cardId: String) {
+        judgePrompt(cardId, kept = true)
+        viewModelScope.launch { runCatching { chapterPrompts.keep(cardId) } }
+    }
+
+    fun skipPrompt(cardId: String) {
+        judgePrompt(cardId, kept = false)
+        viewModelScope.launch { runCatching { chapterPrompts.skip(cardId) } }
+    }
+
+    /**
+     * Takes the prompt off screen straight away.
+     *
+     * The row is updated a moment later on the database's own time; waiting for
+     * it before moving on would make every answer feel laggy, and the judged
+     * set is what stops the card flickering back in the meantime.
+     */
+    private fun judgePrompt(cardId: String, kept: Boolean) {
+        judgedPrompts += cardId
+        val state = _promptState.value
+        _promptState.value = state.copy(
+            surfacedId = PromptSurfacing.next(state.surfaceable, state.progression, judgedPrompts)?.id,
+            stillAhead = PromptSurfacing.remaining(state.surfaceable, state.progression, judgedPrompts),
+            keptCount = state.keptCount + if (kept) 1 else 0,
+        )
+    }
+
     fun applyReaderSettings(settings: ReaderSettings) = viewModelScope.launch {
         settingsRepository.setReaderSettings(settings)
     }
@@ -1142,6 +1259,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtSaveJob?.cancel()
         indexJob?.cancel()
         searchJob?.cancel()
+        promptJob?.cancel()
         super.onCleared()
     }
 }

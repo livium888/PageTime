@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import com.pagetime.app.data.LumenCapture
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -115,6 +116,7 @@ class SettingsRepository(private val context: Context) {
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
         val LUMEN_MODEL_URL = stringPreferencesKey("lumen_model_url")
         val LUMEN_CLOUD_RESCUE = booleanPreferencesKey("lumen_cloud_rescue")
+        val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
 
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
@@ -379,6 +381,31 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLumenCloudRescue(value: Boolean) {
         context.dataStore.edit { it[Keys.LUMEN_CLOUD_RESCUE] = value }
+    }
+
+    /**
+     * How much text a capture hands the model, in characters.
+     *
+     * A setting rather than a constant because it is the one lever on card
+     * quality that has never been measured. The failure the reader keeps
+     * seeing is not bad writing — it is bad CHOOSING: a page holds four or
+     * five ideas, the prompt asks for "the one that matters most", and a 1B
+     * model reliably takes the most obvious event rather than the argument.
+     *
+     * Shrink the passage to one paragraph and there is nothing left to choose
+     * between. The model only has to say the idea in front of it, which is the
+     * half it can already do.
+     *
+     * Whether that actually works is unknown, so the number is exposed instead
+     * of guessed. Three prompt rewrites were spent on this problem; none of
+     * them tried giving the model less to read.
+     */
+    suspend fun lumenCaptureChars(): Int =
+        context.dataStore.data.first()[Keys.LUMEN_CAPTURE_CHARS]
+            ?: LumenCapture.PASSAGE_TARGET_CHARS
+
+    suspend fun setLumenCaptureChars(value: Int) {
+        context.dataStore.edit { it[Keys.LUMEN_CAPTURE_CHARS] = value }
     }
 
     suspend fun setLumenPromptTemplate(value: String?) {

@@ -839,7 +839,11 @@ object LumenCapture {
         fullText: String,
         offset: Int?,
         targetChars: Int = PASSAGE_TARGET_CHARS,
-        ceilingChars: Int = PASSAGE_CEILING_CHARS,
+        // Derived from the target rather than fixed, so shrinking the capture
+        // actually shrinks it. A 350-character target under a fixed 2,400
+        // ceiling would still swallow a page whenever one paragraph ran long,
+        // which is the exact behaviour the smaller target exists to remove.
+        ceilingChars: Int = targetChars * 2,
         maxParagraphs: Int = MAX_CAPTURE_PARAGRAPHS,
     ): String {
         if (fullText.isBlank()) return ""

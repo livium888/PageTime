@@ -477,6 +477,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             try {
                 val passage: String
                 val chapterIndex: Int?
+                // Read once, used by both capture paths. Smaller passages give
+                // the model fewer competing ideas to choose between, which is
+                // the half of the task it is worst at.
+                val captureChars = container.settingsRepository.lumenCaptureChars()
                 val selection = selectedText?.trim().orEmpty()
                 if (selection.length >= LumenCapture.MIN_SELECTION_PASSAGE_CHARS) {
                     // The reader selected enough to be the passage itself.
@@ -494,7 +498,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                         chapterIndex = chapterIndex,
                         currentLocatorJson = anchor?.toJSON()?.toString(),
                         progressionOverride = anchor?.locations?.progression?.toFloat(),
-                        anchorText = selection.takeIf { it.isNotBlank() }
+                        anchorText = selection.takeIf { it.isNotBlank() },
+                        targetChars = captureChars,
                     )
                     passage = centered.ifBlank {
                         // No key/href parse failure: reuse the chapter-tail context.
@@ -505,7 +510,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                             currentLocatorJson = latestLocator?.toJSON()?.toString(),
                             currentTextOffset = null,
                             maxCharacters = 4_000
-                        ).recentText.takeLast(1_500)
+                        ).recentText.takeLast(captureChars)
                     }
                 } else {
                     chapterIndex = null
@@ -514,7 +519,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     // paragraphs too, and one behaviour for both beats two.
                     passage = LumenCapture.paragraphPassage(
                         _textContent.value.orEmpty(),
-                        latestTxtOffset()
+                        latestTxtOffset(),
+                        captureChars,
                     )
                 }
                 // Capture diagnostics: if every page yields the same card, this

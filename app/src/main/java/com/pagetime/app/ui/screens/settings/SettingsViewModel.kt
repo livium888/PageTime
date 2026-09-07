@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.LumenAiPrompts
+import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.LumenModelStore
@@ -82,6 +83,17 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _embeddingIndexing = MutableStateFlow(false)
     val embeddingIndexing: StateFlow<Boolean> = _embeddingIndexing.asStateFlow()
+
+    /** How much text a capture hands the model. See SettingsRepository. */
+    private val _captureChars = MutableStateFlow(LumenCapture.PASSAGE_TARGET_CHARS)
+    val captureChars: StateFlow<Int> = _captureChars.asStateFlow()
+
+    fun setCaptureChars(value: Int) {
+        viewModelScope.launch {
+            container.settingsRepository.setLumenCaptureChars(value)
+            _captureChars.value = value
+        }
+    }
 
     fun refreshEmbeddingPending() {
         viewModelScope.launch {
@@ -238,6 +250,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             }
             container.settingsRepository.lumenModelUrl()?.let { _lumenModelUrl.value = it }
             _lumenCloudRescue.value = container.settingsRepository.lumenCloudRescue()
+            _captureChars.value = container.settingsRepository.lumenCaptureChars()
         }
     }
 

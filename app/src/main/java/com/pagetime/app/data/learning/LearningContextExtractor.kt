@@ -121,9 +121,13 @@ class LearningContextExtractor(
         chapterIndex: Int,
         currentLocatorJson: String?,
         progressionOverride: Float? = null,
-        anchorText: String? = null
+        anchorText: String? = null,
+        /** How much text to hand the model; see SettingsRepository.lumenCaptureChars. */
+        targetChars: Int = LumenCapture.PASSAGE_TARGET_CHARS,
     ): String = withContext(Dispatchers.IO) {
-        captureEpubBlocking(book, chapterIndex, currentLocatorJson, progressionOverride, anchorText)
+        captureEpubBlocking(
+            book, chapterIndex, currentLocatorJson, progressionOverride, anchorText, targetChars
+        )
     }
 
     /**
@@ -135,7 +139,8 @@ class LearningContextExtractor(
         chapterIndex: Int,
         currentLocatorJson: String?,
         progressionOverride: Float?,
-        anchorText: String?
+        anchorText: String?,
+        targetChars: Int,
     ): String {
         val extracted = File(context.cacheDir, "epub/${book.id}")
         val parsed = try {
@@ -165,7 +170,7 @@ class LearningContextExtractor(
                     ?: 1f
                 (raw.length * fraction.coerceIn(0f, 1f)).toInt().coerceIn(0, raw.length)
             }
-        return LumenCapture.paragraphPassage(raw, anchor)
+        return LumenCapture.paragraphPassage(raw, anchor, targetChars)
     }
 
     /**

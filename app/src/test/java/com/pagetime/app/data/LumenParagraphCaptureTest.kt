@@ -210,4 +210,73 @@ class LumenParagraphCaptureTest {
         val flat = "One long run of text with no breaks in it at all."
         assertEquals(flat, LumenCapture.paragraphPassage(flat, flat.length))
     }
+
+    /**
+     * The capture size is a setting now, and this is the behaviour it exists
+     * for.
+     *
+     * The failure it targets is not bad writing but bad CHOOSING: a page holds
+     * several ideas, the prompt asks for the one that matters most, and the
+     * on-device model reliably takes the most obvious event instead of the
+     * argument. Fewer paragraphs means fewer ideas competing, and at one
+     * paragraph there is nothing left to choose between.
+     */
+    @Test
+    fun `a smaller target reaches back less far`() {
+        val chapter = chapterOf(count = 8, words = 70)
+
+        val standard = LumenCapture.paragraphPassage(chapter, chapter.length)
+        val single = LumenCapture.paragraphPassage(chapter, chapter.length, targetChars = 350)
+
+        assertTrue(
+            "A 350-char target must return less than the standard one " +
+                "(${single.length} vs ${standard.length})",
+            single.length < standard.length,
+        )
+        assertTrue("still ends where the reader pointed", single.endsWith("word"))
+        assertTrue("still starts at a paragraph start", single.startsWith("P"))
+        assertTrue(
+            "a small target should not pull in a page (${paragraphsIn(single)} paragraphs)",
+            paragraphsIn(single) < paragraphsIn(standard),
+        )
+    }
+
+    /**
+     * The ceiling scales with the target rather than staying at 2,400.
+     *
+     * The ceiling governs what may be ADDED, so the case that exercises it is
+     * a short paragraph preceded by a long one: at the standard size the long
+     * one is worth pulling in, and at one-paragraph size it is exactly the page
+     * of extra ideas the smaller capture exists to avoid.
+     *
+     * An earlier version of this test asserted that a small capture is never
+     * longer than its ceiling. That is false by design — a single paragraph
+     * longer than the ceiling is returned WHOLE, because cutting it back puts
+     * the ragged half-sentence edge straight back. Caught by simulating the
+     * algorithm before pushing rather than by CI.
+     */
+    @Test
+    fun `the ceiling follows the target`() {
+        val long = para("P1", 250)
+        val short = para("P2", 10)
+        val chapter = long + LumenCapture.PARAGRAPH_BREAK + short
+
+        val small = LumenCapture.paragraphPassage(chapter, chapter.length, targetChars = 350)
+        val standard = LumenCapture.paragraphPassage(chapter, chapter.length)
+
+        assertTrue(
+            "A one-paragraph capture must not reach back over a long paragraph",
+            !small.contains("P1"),
+        )
+        assertTrue(
+            "The standard capture still reaches back for it",
+            standard.contains("P1"),
+        )
+    }
+
+    /** The default is unchanged, so nothing already filed behaves differently. */
+    @Test
+    fun `the default target still produces the old ceiling`() {
+        assertEquals(LumenCapture.PASSAGE_CEILING_CHARS, LumenCapture.PASSAGE_TARGET_CHARS * 2)
+    }
 }

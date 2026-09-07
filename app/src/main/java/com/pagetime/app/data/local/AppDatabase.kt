@@ -30,13 +30,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CardEmbeddingEntity::class,
         BookChunkEmbeddingEntity::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun usageEventDao(): UsageEventDao
+    abstract fun learningCardDao(): LearningCardDao
     abstract fun learningGenerationDao(): LearningGenerationDao
     abstract fun conceptDao(): ConceptDao
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao
@@ -225,6 +226,30 @@ abstract class AppDatabase : RoomDatabase() {
          * ON DELETE CASCADE: removing a book removes its index, which would
          * otherwise go on answering searches about a book that is gone.
          */
+        /**
+         * Wakes up learning_cards.
+         *
+         * The table has been declared since it was written and has never had a
+         * DAO, so it is guaranteed empty and the defaults below are for the
+         * schema's sake rather than for any row. It gains the two columns a
+         * generated prompt needs that a hand-made one did not: whether the
+         * reader has accepted it, and when it is next due — the latter
+         * duplicated out of the FSRS JSON because a due query has to be a
+         * WHERE clause.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE learning_cards ADD COLUMN status TEXT NOT NULL DEFAULT 'kept'"
+                )
+                db.execSQL("ALTER TABLE learning_cards ADD COLUMN dueAt INTEGER")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_learning_cards_status_dueAt " +
+                        "ON learning_cards(status, dueAt)"
+                )
+            }
+        }
+
         val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

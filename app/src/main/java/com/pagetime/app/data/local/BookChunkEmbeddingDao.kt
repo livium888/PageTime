@@ -19,6 +19,24 @@ interface BookChunkEmbeddingDao {
     @Query("SELECT * FROM book_chunk_embeddings WHERE bookId = :bookId AND model = :model")
     suspend fun forBook(bookId: String, model: String): List<BookChunkEmbeddingEntity>
 
+    /**
+     * One chapter's chunks.
+     *
+     * Separate from [forBook] because choosing a chapter's topics needs only
+     * that chapter, and loading a whole novel's vectors to look at one of forty
+     * chapters is several megabytes for nothing.
+     */
+    @Query(
+        "SELECT * FROM book_chunk_embeddings " +
+            "WHERE bookId = :bookId AND model = :model AND chapterIndex = :chapterIndex " +
+            "ORDER BY ordinal ASC"
+    )
+    suspend fun forChapter(
+        bookId: String,
+        model: String,
+        chapterIndex: Int
+    ): List<BookChunkEmbeddingEntity>
+
     /** How much of a book is indexed, which is also how the UI knows it is done. */
     @Query(
         "SELECT COUNT(*) FROM book_chunk_embeddings WHERE bookId = :bookId AND model = :model"

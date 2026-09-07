@@ -116,6 +116,36 @@ class LearningContextExtractor(
      * advances within the chapter, the returned window slides forward with it, so
      * capturing on two different pages yields two different source passages.
      */
+    /**
+     * How many chapters a book has, or zero when it cannot be parsed.
+     *
+     * Exists for indexing, which walks chapters one at a time rather than
+     * loading a book: a novel does not fit comfortably in memory as one string,
+     * and an index that has to start over after an interruption never finishes
+     * a long book.
+     */
+    suspend fun chapterCount(book: BookEntity): Int = withContext(Dispatchers.IO) {
+        runCatching {
+            val extracted = File(context.cacheDir, "epub/${book.id}")
+            epubParser.parse(File(book.localPath), extracted, extractAssets = false).chapters.size
+        }.getOrDefault(0)
+    }
+
+    /**
+     * One chapter as paragraphs, blank-line separated, title first — the same
+     * text capture reads, so an indexed passage is the passage a card would
+     * have been made from.
+     */
+    suspend fun chapterText(book: BookEntity, chapterIndex: Int): String =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val extracted = File(context.cacheDir, "epub/${book.id}")
+                val parsed = epubParser.parse(File(book.localPath), extracted, extractAssets = false)
+                val chapter = parsed.chapters.getOrNull(chapterIndex) ?: return@runCatching ""
+                chapterRawText(book, chapter.filePath, chapter.title)
+            }.getOrDefault("")
+        }
+
     suspend fun captureEpub(
         book: BookEntity,
         chapterIndex: Int,

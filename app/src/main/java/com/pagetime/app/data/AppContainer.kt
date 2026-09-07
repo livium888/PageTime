@@ -13,6 +13,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
+import com.pagetime.app.data.embed.BookIndexer
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
@@ -131,6 +132,23 @@ class AppContainer(context: Context) {
         CardEmbeddingIndexer(
             embeddingDao = database.cardEmbeddingDao(),
             store = embeddingModelStore,
+        )
+
+    /**
+     * Book text as vectors, for finding a passage by what it means.
+     *
+     * Chapter access comes in as two functions rather than the extractor
+     * itself: the indexer's job is chunk, embed, store, and it has no business
+     * knowing what an EPUB is.
+     */
+    val bookIndexer =
+        BookIndexer(
+            dao = database.bookChunkEmbeddingDao(),
+            store = embeddingModelStore,
+            chapterCount = { book -> learningContextExtractor.chapterCount(book) },
+            chapterText = { book, chapter ->
+                learningContextExtractor.chapterText(book, chapter)
+            },
         )
 
     val lumenRepository = LumenRepository(

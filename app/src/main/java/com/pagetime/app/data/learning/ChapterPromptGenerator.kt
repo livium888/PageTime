@@ -98,7 +98,7 @@ class ChapterPromptGenerator(
 
         onStage(Stage.WRITING)
         val passages = topics.map { it.text }
-        val raws = runCatching {
+        val raws = try {
             // Logged like every other Gemini call, so the biggest new consumer
             // of the reader's quota is not the one thing the usage screen
             // cannot see.
@@ -121,7 +121,19 @@ class ChapterPromptGenerator(
             } else {
                 call()
             }
-        }.getOrDefault(emptyList())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            // Not swallowed. An HTTP error, a refused key, a timeout and a
+            // malformed response are four different problems, and turning them
+            // all into "the model returned nothing" is the same silence this
+            // feature has already been fixed for once.
+            return Result(
+                Outcome.REQUEST_FAILED,
+                detail = error.message?.take(300)?.ifBlank { null }
+                    ?: error::class.simpleName,
+            )
+        }
         if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING)
 
         onStage(Stage.CHECKING)
@@ -232,6 +244,8 @@ class ChapterPromptGenerator(
         NOTHING_IN_CHAPTER,
         MODEL_RETURNED_NOTHING,
         ALL_REJECTED,
+        /** The call itself failed. [Result.detail] says how. */
+        REQUEST_FAILED,
     }
 
     data class Result(
@@ -240,6 +254,12 @@ class ChapterPromptGenerator(
         /** How many the model offered, before the rules were applied. */
         val offered: Int = 0,
         val rejected: Int = 0,
+        /**
+         * The actual failure, verbatim, for the reader to copy to whoever can
+         * act on it. A summary invented here would lose the one thing worth
+         * having.
+         */
+        val detail: String? = null,
     )
 
     private companion object {

@@ -648,6 +648,7 @@ fun ReaderScreen(
             message = message,
             working = promptState.generating,
             pendingCount = promptState.pending.size,
+            detail = promptState.result?.detail,
             onSeeQuestions = { showPromptList = true },
             onDismiss = vm::clearPromptMessage,
         )

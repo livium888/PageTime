@@ -241,18 +241,63 @@ class GeminiLearningClient(
         parseChapterPrompts(executeWithRetry(request))
     }
 
+    /**
+     * Finds the prompts in a response, or says precisely why it could not.
+     *
+     * THIS THREW EVERYTHING AWAY
+     *
+     * The first version wrapped the whole unwrap in runCatching and returned an
+     * empty list on any failure, so a blocked response, a truncated one, a
+     * schema mismatch and a genuinely empty chapter were one outcome:
+     * "the model returned nothing". That is the same silence this feature has
+     * already been fixed for once, hidden one layer down.
+     *
+     * EVERY PART, NOT THE FIRST
+     *
+     * gemini-2.5-flash is a thinking model, and a thinking response can carry a
+     * reasoning part BEFORE the answer. Reading parts[0] and parsing it as JSON
+     * then fails on the thought and never reaches the answer sitting in the
+     * next part. Every part is searched for the object that actually has the
+     * prompts in it.
+     *
+     * Fences are stripped because a model asked for JSON will sometimes wrap it
+     * in a markdown block anyway, and refusing that is pedantry paid for by the
+     * reader.
+     */
     private fun parseChapterPrompts(raw: String): List<RawPrompt> {
-        // Unwrapped defensively rather than with the chained getters used
-        // elsewhere: a blocked or truncated response has no candidates array,
-        // and a generation that returns nothing must be an empty chapter, not
-        // an exception thrown at someone who is reading.
-        val root = runCatching {
-            val text = JSONObject(raw).getJSONArray("candidates")
-                .getJSONObject(0).getJSONObject("content").getJSONArray("parts")
-                .getJSONObject(0).getString("text")
-            JSONObject(text)
-        }.getOrNull() ?: return emptyList()
-        val array = root.optJSONArray("prompts") ?: return emptyList()
+        val root = JSONObject(raw)
+
+        val candidates = root.optJSONArray("candidates")
+        if (candidates == null || candidates.length() == 0) {
+            val blocked = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+            error(
+                "Gemini returned no candidates" +
+                    if (blocked.isNotBlank()) " (blocked: $blocked)" else ""
+            )
+        }
+
+        val candidate = candidates.getJSONObject(0)
+        val finishReason = candidate.optString("finishReason", "unknown")
+        val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
+        if (parts == null || parts.length() == 0) {
+            // MAX_TOKENS here usually means the thinking budget ate the whole
+            // output allowance before any answer was written.
+            error("Gemini returned no content (finishReason=$finishReason)")
+        }
+
+        val texts = (0 until parts.length())
+            .mapNotNull { parts.optJSONObject(it)?.optString("text") }
+            .filter { it.isNotBlank() }
+        val payload = texts.firstNotNullOfOrNull { text ->
+            runCatching { JSONObject(stripCodeFence(text)) }.getOrNull()
+                ?.takeIf { it.has("prompts") }
+        } ?: error(
+            "Gemini returned no prompts array " +
+                "(finishReason=$finishReason, parts=${parts.length()}, " +
+                "first 120 chars: ${texts.firstOrNull()?.take(120).orEmpty()})"
+        )
+
+        val array = payload.optJSONArray("prompts") ?: JSONArray()
         return (0 until array.length()).mapNotNull { i ->
             val item = array.optJSONObject(i) ?: return@mapNotNull null
             RawPrompt(
@@ -262,6 +307,16 @@ class GeminiLearningClient(
                 sourceQuote = item.optString("sourceQuote", ""),
             )
         }
+    }
+
+    private fun stripCodeFence(text: String): String {
+        val trimmed = text.trim()
+        if (!trimmed.startsWith("```")) return trimmed
+        return trimmed
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
     }
 
     private suspend fun executeWithRetry(request: Request): String {

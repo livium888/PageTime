@@ -12,7 +12,22 @@ data class BookSearchHit(
     val endOffset: Int,
     val text: String,
     val similarity: Float,
-)
+    /**
+     * Length of the chapter this passage came from, in characters.
+     *
+     * Carried on the hit because it is the difference between a result the
+     * reader can open and a result they can only read: a reader navigates by
+     * position within a chapter, and an offset means nothing without the
+     * length it is an offset into. It costs nothing to compute — the ranking
+     * already holds every chunk of the chapter — and it is not knowable later
+     * without loading the book.
+     */
+    val chapterChars: Int = 0,
+) {
+    /** Where in its chapter this passage begins, as a fraction, for jumping to it. */
+    val progression: Float
+        get() = if (chapterChars > 0) (startOffset.toFloat() / chapterChars).coerceIn(0f, 1f) else 0f
+}
 
 /**
  * Ranking search results, kept apart from the native runtime so it can be
@@ -66,6 +81,15 @@ object BookSearchRanking {
     ): List<BookSearchHit> {
         if (query.isEmpty() || rows.isEmpty()) return emptyList()
 
+        // The last chunk of a chapter ends where the chapter ends, so the
+        // chunks already in memory know each chapter's length and nothing
+        // needs to re-read the book to find out.
+        val chapterChars = HashMap<Int, Int>()
+        for (row in rows) {
+            val known = chapterChars[row.chapterIndex] ?: 0
+            if (row.endOffset > known) chapterChars[row.chapterIndex] = row.endOffset
+        }
+
         val scored = rows.mapNotNull { row ->
             // A vector of another width cannot be compared, and comparing it
             // anyway is the silent wrongness the model column exists to stop.
@@ -80,6 +104,7 @@ object BookSearchRanking {
                 endOffset = row.endOffset,
                 text = row.text,
                 similarity = similarity,
+                chapterChars = chapterChars[row.chapterIndex] ?: 0,
             )
         }.sortedByDescending { it.similarity }
 

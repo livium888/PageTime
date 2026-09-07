@@ -1009,6 +1009,113 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
+
+    // ---- Searching the book by meaning -------------------------------------
+
+    private val bookIndexer = container.bookIndexer
+    private val bookSearcher = container.bookSearcher
+
+    private val _bookSearch = MutableStateFlow(BookSearchState())
+    val bookSearch = _bookSearch.asStateFlow()
+
+    private var indexJob: Job? = null
+    private var searchJob: Job? = null
+
+    /**
+     * How much of this book is already searchable.
+     *
+     * Called when the sheet opens rather than on load: it parses the book to
+     * count chapters, which is not work to do for every reader who never opens
+     * search.
+     */
+    fun refreshSearchState() {
+        val b = _book.value ?: return
+        viewModelScope.launch {
+            val installed = bookIndexer.modelId() != null
+            val progress = runCatching { bookIndexer.progressFor(b) }.getOrNull()
+            _bookSearch.value = _bookSearch.value.copy(
+                modelInstalled = installed,
+                chaptersTotal = progress?.chaptersTotal ?: 0,
+                chaptersIndexed = progress?.chaptersDone ?: 0,
+            )
+        }
+    }
+
+    /**
+     * Reads the whole book once, turning it into vectors.
+     *
+     * Runs in viewModelScope deliberately: leaving the book stops it. Indexing
+     * resumes from the last finished chapter, so a stopped index costs one
+     * chapter rather than the book, and holding a phone open on a screen for
+     * ten minutes is not a thing to demand of anyone.
+     */
+    fun startIndexing() {
+        val b = _book.value ?: return
+        if (indexJob?.isActive == true) return
+        _bookSearch.value = _bookSearch.value.copy(indexing = true)
+        indexJob = viewModelScope.launch {
+            try {
+                val done = bookIndexer.index(b) { progress ->
+                    _bookSearch.value = _bookSearch.value.copy(
+                        chaptersIndexed = progress.chaptersDone,
+                        chaptersTotal = progress.chaptersTotal,
+                    )
+                }
+                _bookSearch.value = _bookSearch.value.copy(
+                    chaptersIndexed = done.chaptersDone,
+                    chaptersTotal = done.chaptersTotal,
+                )
+            } finally {
+                _bookSearch.value = _bookSearch.value.copy(indexing = false)
+            }
+        }
+    }
+
+    fun stopIndexing() {
+        indexJob?.cancel()
+        indexJob = null
+        _bookSearch.value = _bookSearch.value.copy(indexing = false)
+    }
+
+    /** Throws the index away; it is derived data and can always be rebuilt. */
+    fun deleteIndex() {
+        val b = _book.value ?: return
+        stopIndexing()
+        viewModelScope.launch {
+            runCatching { bookIndexer.delete(b) }
+            _bookSearch.value = _bookSearch.value.copy(
+                chaptersIndexed = 0,
+                results = emptyList(),
+                answered = false,
+            )
+        }
+    }
+
+    fun onSearchQueryChanged(text: String) {
+        _bookSearch.value = _bookSearch.value.copy(query = text)
+    }
+
+    fun searchBook() {
+        val b = _book.value ?: return
+        val query = _bookSearch.value.query.trim()
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _bookSearch.value = _bookSearch.value.copy(results = emptyList(), answered = false)
+            return
+        }
+        _bookSearch.value = _bookSearch.value.copy(searching = true)
+        searchJob = viewModelScope.launch {
+            val hits = withContext(Dispatchers.Default) {
+                runCatching { bookSearcher.search(b, query) }.getOrDefault(emptyList())
+            }
+            _bookSearch.value = _bookSearch.value.copy(
+                searching = false,
+                results = hits,
+                answered = true,
+            )
+        }
+    }
+
     fun applyReaderSettings(settings: ReaderSettings) = viewModelScope.launch {
         settingsRepository.setReaderSettings(settings)
     }
@@ -1025,6 +1132,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         stopReading()
         locatorSaveJob?.cancel()
         txtSaveJob?.cancel()
+        indexJob?.cancel()
+        searchJob?.cancel()
         super.onCleared()
     }
 }

@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NightsStay
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.AlertDialog
@@ -235,6 +236,7 @@ fun ReaderScreen(
     val answering by vm.answering.collectAsStateWithLifecycle()
     val answerError by vm.answerError.collectAsStateWithLifecycle()
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
+    val bookSearch by vm.bookSearch.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -244,6 +246,7 @@ fun ReaderScreen(
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
+    var showBookSearch by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -477,6 +480,10 @@ fun ReaderScreen(
                 onBack = onBack,
                 onToc = { showToc = true },
                 onGoTo = { showGoTo = true },
+                onSearchBook = {
+                    vm.refreshSearchState()
+                    showBookSearch = true
+                },
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
@@ -703,6 +710,45 @@ fun ReaderScreen(
                 showGoTo = false
             },
             onDismiss = { showGoTo = false }
+        )
+    }
+
+    if (showBookSearch) {
+        BookSearchSheet(
+            state = bookSearch,
+            chapterTitle = { index ->
+                tocEntries?.getOrNull(index)?.title
+                    ?: publication?.readingOrder?.getOrNull(index)?.title
+                    ?: "Chapter ${index + 1}"
+            },
+            onQueryChanged = vm::onSearchQueryChanged,
+            onSearch = vm::searchBook,
+            onIndex = vm::startIndexing,
+            onStopIndexing = vm::stopIndexing,
+            onDeleteIndex = vm::deleteIndex,
+            onOpen = { hit ->
+                // A hit's chapterIndex is an index into the reading order,
+                // which is the same coordinate capture already uses to fetch
+                // chapter text. Its offset becomes a fraction of the chapter,
+                // because that is what both readers can be told to go to.
+                if (book?.format == "txt") {
+                    txtGoRequest = hit.progression to SystemClock.elapsedRealtime()
+                } else {
+                    val link = publication?.readingOrder?.getOrNull(hit.chapterIndex)
+                    val locator = link?.let { publication?.locatorFromLink(it) }
+                    if (locator != null) {
+                        navigator?.go(
+                            locator.copy(
+                                locations = locator.locations.copy(
+                                    progression = hit.progression.toDouble()
+                                )
+                            )
+                        )
+                    }
+                }
+                showBookSearch = false
+            },
+            onDismiss = { showBookSearch = false },
         )
     }
 }
@@ -1137,6 +1183,7 @@ private fun ReaderTopBar(
     onBack: () -> Unit,
     onToc: () -> Unit,
     onGoTo: () -> Unit,
+    onSearchBook: () -> Unit,
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
@@ -1219,6 +1266,14 @@ private fun ReaderTopBar(
                             }
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text("Search this book") },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onSearchBook()
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
                         leadingIcon = {

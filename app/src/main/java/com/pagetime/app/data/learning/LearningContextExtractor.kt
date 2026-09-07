@@ -125,6 +125,10 @@ class LearningContextExtractor(
      * a long book.
      */
     suspend fun chapterCount(book: BookEntity): Int = withContext(Dispatchers.IO) {
+        // A plain-text book has no chapter structure to walk, so it is one
+        // unit. That is not a compromise here: its offsets then index the whole
+        // file, which is exactly the coordinate the text reader navigates by.
+        if (book.format != "epub") return@withContext if (File(book.localPath).isFile) 1 else 0
         runCatching {
             val extracted = File(context.cacheDir, "epub/${book.id}")
             epubParser.parse(File(book.localPath), extracted, extractAssets = false).chapters.size
@@ -134,11 +138,14 @@ class LearningContextExtractor(
     /**
      * One chapter as paragraphs, blank-line separated, title first — the same
      * text capture reads, so an indexed passage is the passage a card would
-     * have been made from.
+     * have been made from. For a plain-text book, chapter zero is the file.
      */
     suspend fun chapterText(book: BookEntity, chapterIndex: Int): String =
         withContext(Dispatchers.IO) {
             runCatching {
+                if (book.format != "epub") {
+                    return@runCatching if (chapterIndex == 0) File(book.localPath).readText() else ""
+                }
                 val extracted = File(context.cacheDir, "epub/${book.id}")
                 val parsed = epubParser.parse(File(book.localPath), extracted, extractAssets = false)
                 val chapter = parsed.chapters.getOrNull(chapterIndex) ?: return@runCatching ""

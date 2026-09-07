@@ -179,6 +179,44 @@ class BookSearchRankingTest {
         assertEquals(listOf(0, 2), hits.map { it.ordinal })
     }
 
+    /**
+     * A result the reader can open. An offset into a chapter is not a place
+     * until you know how long the chapter is, and the chunks already loaded
+     * for the search are the only thing that knows without re-reading the book.
+     */
+    @Test
+    fun `a hit knows where in its chapter it sits`() {
+        val hits = BookSearchRanking.rank(
+            query,
+            listOf(
+                row(1.0f, ordinal = 0, startOffset = 500, endOffset = 900),
+                row(0.9f, ordinal = 1, startOffset = 820, endOffset = 1200),
+                // A different chapter's length must not leak into this one.
+                row(0.95f, chapterIndex = 1, ordinal = 0, startOffset = 0, endOffset = 9000),
+            ),
+        )
+        val first = hits.first { it.chapterIndex == 0 }
+        assertEquals(1200, first.chapterChars)
+        assertEquals(500f / 1200f, first.progression, 1e-4f)
+
+        val other = hits.first { it.chapterIndex == 1 }
+        assertEquals(9000, other.chapterChars)
+        assertEquals(0f, other.progression, 1e-4f)
+    }
+
+    @Test
+    fun `a passage with no chapter length is not sent to a place it cannot know`() {
+        val hit = BookSearchHit(
+            chapterIndex = 0,
+            ordinal = 0,
+            startOffset = 4_000,
+            endOffset = 4_400,
+            text = "",
+            similarity = 1f,
+        )
+        assertEquals(0f, hit.progression, 0f)
+    }
+
     @Test
     fun `no more results than asked for`() {
         val rows = (0 until 5).map {

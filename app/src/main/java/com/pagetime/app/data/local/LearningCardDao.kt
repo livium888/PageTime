@@ -61,6 +61,19 @@ interface LearningCardDao {
     @Query("SELECT * FROM learning_cards WHERE bookId = :bookId AND status = 'kept' ORDER BY chapterIndex ASC, sourceFraction ASC")
     fun observeKeptForBook(bookId: String): Flow<List<LearningCardEntity>>
 
+    /**
+     * Every card the reader has not thrown away, newest book position first.
+     *
+     * Skipped rows are excluded here rather than filtered later: a discarded
+     * prompt is not a card, and a screen for looking at your flashcards should
+     * not make the reader scroll past the ones they rejected.
+     */
+    @Query(
+        "SELECT * FROM learning_cards WHERE status != 'skipped' " +
+            "ORDER BY bookId ASC, chapterIndex ASC, sourceFraction ASC"
+    )
+    fun observeLive(): Flow<List<LearningCardEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(cards: List<LearningCardEntity>)
 

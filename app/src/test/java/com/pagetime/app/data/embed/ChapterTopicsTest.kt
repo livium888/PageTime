@@ -139,13 +139,42 @@ class ChapterTopicsTest {
     }
 
     @Test
-    fun `chapter length decides how many prompts it is worth`() {
-        // A two-thousand-word chapter and a twelve-thousand-word chapter are
-        // not both worth five prompts.
-        assertEquals(3, ChapterTopics.countFor(0))
-        assertEquals(3, ChapterTopics.countFor(11_000))
-        assertEquals(3, ChapterTopics.countFor(27_000))
-        assertEquals(7, ChapterTopics.countFor(66_000))
-        assertEquals(8, ChapterTopics.countFor(200_000))
+    fun `chapter length decides how many passages it is worth`() {
+        // Quantum Country's spacing: a review area every few hundred words.
+        // A 2,000-word chapter and a 12,000-word chapter are not both worth
+        // four passages.
+        assertEquals(4, ChapterTopics.countFor(0))
+        assertEquals(4, ChapterTopics.countFor(11_000))
+        assertEquals(10, ChapterTopics.countFor(27_000))
+        assertEquals(24, ChapterTopics.countFor(66_000))
+        assertEquals(24, ChapterTopics.countFor(200_000))
+    }
+
+    @Test
+    fun `density is in the range the mnemonic medium actually uses`() {
+        // The reason this file changed at all. Orbit's author documentation
+        // describes review areas interleaved "every few hundred words", each
+        // holding several prompts. Assert the property rather than the
+        // constant, so tuning CHARS_PER_TOPIC cannot quietly walk us back to
+        // the sparse version without failing here.
+        //
+        // ~6 characters per word, so a 30,000-character chapter is ~5,000
+        // words and should carry a prompt every 200 words or better.
+        val chapterChars = 30_000
+        val words = chapterChars / 6
+        val ceiling = ChapterTopics.promptCeilingFor(chapterChars)
+        val wordsPerPrompt = words / ceiling
+        assertTrue(
+            "one prompt per $wordsPerPrompt words is sparser than the medium",
+            wordsPerPrompt <= 200,
+        )
+    }
+
+    @Test
+    fun `the ceiling is passages times prompts per passage`() {
+        assertEquals(
+            ChapterTopics.countFor(40_000) * ChapterTopics.PROMPTS_PER_PASSAGE,
+            ChapterTopics.promptCeilingFor(40_000),
+        )
     }
 }

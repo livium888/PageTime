@@ -337,4 +337,88 @@ class ChapterPromptRulesTest {
         )
         assertNull(verdict)
     }
+
+    // Near-duplicates: the failure that only appears at density
+    // =========================================================
+    //
+    // Asking for three prompts from one passage invites the model to reword
+    // rather than admit the passage only supports two. These tests are
+    // deliberately in both directions, because a check that costs a good card
+    // every time it misfires is worse than no check at all.
+
+    @Test
+    fun `a reworded question is caught as a near-duplicate`() {
+        val verdict = PromptSifter().sift(
+            listOf(
+                raw("What year did Napoleon invade Russia?", "1812"),
+                raw("In what year did Napoleon invade Russia?", "1812"),
+            ),
+            passages,
+        )
+        assertEquals(1, verdict.accepted.size)
+        assertEquals(PromptRejection.NEAR_DUPLICATE, verdict.rejected.single().second)
+    }
+
+    @Test
+    fun `two different questions about one passage both survive`() {
+        // This is the case the density increase exists to produce. If this
+        // test ever fails, the threshold has eaten the feature.
+        val verdict = PromptSifter().sift(
+            listOf(
+                raw("Why did the Continental System fail?", "smuggling paid better"),
+                raw("What did the Continental System close to British goods?", "European ports"),
+            ),
+            passages,
+        )
+        assertEquals(2, verdict.accepted.size)
+        assertTrue(verdict.rejected.isEmpty())
+    }
+
+    @Test
+    fun `one changed word is not a duplicate when the word is the point`() {
+        // "What is a qubit" and "what is a qutrit" differ by one token and are
+        // entirely different questions. Short prompts are where a similarity
+        // threshold is most likely to misfire.
+        assertTrue(
+            ChapterPromptRules.similarity(
+                "What is a qubit?",
+                "What is a qutrit?",
+            ) < ChapterPromptRules.NEAR_DUPLICATE_SIMILARITY
+        )
+    }
+
+    @Test
+    fun `the calibration pair scores where the comment says it does`() {
+        // The threshold is only defensible because these two are far apart.
+        // Pinning both keeps the doc comment honest.
+        val rewording = ChapterPromptRules.similarity(
+            "What year did Napoleon invade Russia?",
+            "In what year did Napoleon invade Russia?",
+        )
+        val distinct = ChapterPromptRules.similarity(
+            "Why did the Continental System fail?",
+            "What did the Continental System ban?",
+        )
+        assertTrue("rewording scored $rewording", rewording >= 0.8f)
+        assertTrue("distinct pair scored $distinct", distinct <= 0.6f)
+    }
+
+    @Test
+    fun `a sifter carries duplicates across batches`() {
+        // A chapter is generated in several requests now. A duplicate arriving
+        // in the second batch is exactly as bad as one in the first, and a
+        // sifter made fresh per batch cannot see it.
+        val sifter = PromptSifter()
+        val first = sifter.sift(
+            listOf(raw("Why did the Continental System fail?", "smuggling paid better")),
+            passages,
+        )
+        val second = sifter.sift(
+            listOf(raw("Why did the Continental System fail?", "smuggling paid better")),
+            passages,
+        )
+        assertEquals(1, first.accepted.size)
+        assertTrue(second.accepted.isEmpty())
+        assertEquals(PromptRejection.DUPLICATE, second.rejected.single().second)
+    }
 }

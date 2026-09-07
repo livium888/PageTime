@@ -135,7 +135,7 @@ class AppContainer(context: Context) {
     val cardEmbeddingIndexer =
         CardEmbeddingIndexer(
             embeddingDao = database.cardEmbeddingDao(),
-            store = embeddingModelStore,
+            embeddingModelId = embeddingModelStore::modelId,
         )
 
     /**
@@ -148,7 +148,7 @@ class AppContainer(context: Context) {
     val bookIndexer =
         BookIndexer(
             dao = database.bookChunkEmbeddingDao(),
-            store = embeddingModelStore,
+            embeddingModelId = embeddingModelStore::modelId,
             chapterCount = { book -> learningContextExtractor.chapterCount(book) },
             chapterText = { book, chapter ->
                 learningContextExtractor.chapterText(book, chapter)
@@ -159,7 +159,7 @@ class AppContainer(context: Context) {
     val bookSearcher =
         BookSearcher(
             dao = database.bookChunkEmbeddingDao(),
-            store = embeddingModelStore,
+            embeddingModelId = embeddingModelStore::modelId,
         )
 
     /**
@@ -170,7 +170,7 @@ class AppContainer(context: Context) {
         ChapterPromptGenerator(
             chunkDao = database.bookChunkEmbeddingDao(),
             cardDao = database.learningCardDao(),
-            store = embeddingModelStore,
+            embeddingModelId = embeddingModelStore::modelId,
             gemini = geminiLearningClient,
             usage = aiUsageRepository,
         )

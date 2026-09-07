@@ -3,7 +3,6 @@ package com.pagetime.app.data.learning
 import com.pagetime.app.data.AiUsageRepository
 import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.embed.ChapterTopics
-import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.embed.TopicPassage
 import com.pagetime.app.data.local.BookChunkEmbeddingDao
 import com.pagetime.app.data.local.BookEntity
@@ -40,24 +39,45 @@ import java.util.UUID
  * different model changes the passages and so changes the key, which is the
  * correct time to generate again.
  *
- * EVERY FAILURE IS AN EMPTY LIST
+ * DENSITY
  *
- * No key, no index, a refused request, a chapter with nothing in it: all of
- * them return no prompts. Someone in the middle of a book should never be
- * handed an error about a feature they did not ask for.
+ * One passage per ~400 words, up to three prompts from each — which is the
+ * spacing Quantum Country itself uses, and roughly five times what this
+ * generator produced when it was first written. The earlier caution was
+ * defensible and still wrong: four cards from a chapter is too few to tell
+ * whether any of this works, so the medium could never be evaluated at the
+ * density it was designed for.
+ *
+ * The quality argument did not go away. It moved to [ChapterPromptRules],
+ * where a bad prompt can actually be thrown out, rather than being expressed
+ * as a refusal to generate.
+ *
+ * A LONG CHAPTER IS SEVERAL REQUESTS
+ *
+ * Two dozen passages is too much to ask for in one response. The chapter is
+ * batched, one sifter runs across all of the batches so duplicates cannot slip
+ * between them, and a batch that fails costs only its own prompts.
  */
 class ChapterPromptGenerator(
     private val chunkDao: BookChunkEmbeddingDao,
     private val cardDao: LearningCardDao,
-    private val store: EmbeddingModelStore,
-    private val gemini: GeminiLearningClient,
+    /**
+     * Which embedding model the chapter's index was built with.
+     *
+     * A supplier rather than the EmbeddingModelStore itself: the generator
+     * needs one string from it, and depending on the whole store dragged in a
+     * download directory and a model downloader that cannot be constructed
+     * in a unit test — which is a large part of why none of this had tests.
+     */
+    private val embeddingModelId: () -> String?,
+    private val gemini: ChapterPromptWriter,
     private val usage: AiUsageRepository? = null,
 ) {
 
     /** Whether this chapter could produce prompts at all. */
     suspend fun isReady(book: BookEntity, chapterIndex: Int): Boolean {
         if (!gemini.hasKey()) return false
-        val model = store.modelId() ?: return false
+        val model = embeddingModelId() ?: return false
         return chunkDao.forChapter(book.id, model, chapterIndex).isNotEmpty()
     }
 
@@ -86,14 +106,14 @@ class ChapterPromptGenerator(
         force: Boolean = false,
         onStage: (Stage) -> Unit = {},
     ): Result {
-        val model = store.modelId() ?: return Result(Outcome.NOT_INDEXED)
+        val model = embeddingModelId() ?: return Result(Outcome.NOT_INDEXED)
         if (!gemini.hasKey()) return Result(Outcome.NO_KEY)
 
         val rows = runCatching { chunkDao.forChapter(book.id, model, chapterIndex) }
             .getOrDefault(emptyList())
         if (rows.isEmpty()) return Result(Outcome.NOT_INDEXED)
 
-        onStage(Stage.CHOOSING)
+        onStage(Stage(Phase.CHOOSING))
         val topics = ChapterTopics.select(rows)
         if (topics.isEmpty()) return Result(Outcome.NOTHING_IN_CHAPTER)
 
@@ -110,61 +130,124 @@ class ChapterPromptGenerator(
             )
         }
 
-        onStage(Stage.WRITING)
-        val passages = topics.map { it.text }
-        val raws = try {
-            // Logged like every other Gemini call, so the biggest new consumer
-            // of the reader's quota is not the one thing the usage screen
-            // cannot see.
-            val call: suspend () -> List<RawPrompt> = {
-                gemini.generateChapterPrompts(
-                    bookTitle = book.title,
-                    chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
-                    passages = passages,
-                )
+        // A chapter is several requests now, not one.
+        //
+        // At Quantum Country's density a long chapter selects two dozen
+        // passages, and putting all of them in one call asks the model for
+        // seventy prompts in a single response — which on a thinking model is
+        // the shortest route to MAX_TOKENS, where the reasoning budget eats
+        // the entire output allowance and nothing comes back at all.
+        //
+        // Batching costs one extra copy of the instructions per request. It
+        // buys two things worth more than that: no single response has to be
+        // enormous, and a chapter whose third request fails still keeps the
+        // prompts from the first two, rather than losing everything the reader
+        // just paid for.
+        val batches = topics.chunked(PASSAGES_PER_REQUEST)
+
+        // One sifter for the whole chapter. A duplicate arriving in batch three
+        // is exactly as bad as one in batch one, and worse in practice because
+        // nothing later will look at it again.
+        val sifter = PromptSifter()
+
+        // Prompts are paired with their passage object here rather than by
+        // index. Each batch numbers its passages from zero, so a returned
+        // passageIndex is batch-local; carrying the TopicPassage itself means
+        // there is no global index to get wrong, and misfiling a prompt by one
+        // passage would surface every question in the wrong place.
+        val accepted = mutableListOf<Pair<RawPrompt, TopicPassage>>()
+        var offered = 0
+        var rejected = 0
+        var failedBatches = 0
+        var failureDetail: String? = null
+
+        for ((index, batch) in batches.withIndex()) {
+            onStage(Stage(Phase.WRITING, index + 1, batches.size))
+            val passages = batch.map { it.text }
+            val raws = try {
+                // Logged like every other Gemini call, so the biggest new
+                // consumer of the reader's quota is not the one thing the usage
+                // screen cannot see.
+                val call: suspend () -> List<RawPrompt> = {
+                    gemini.generateChapterPrompts(
+                        bookTitle = book.title,
+                        chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
+                        passages = passages,
+                    )
+                }
+                if (usage != null) {
+                    usage.track(
+                        bookId = book.id,
+                        operation = AiUsageRepository.OPERATION_CHAPTER_PROMPTS,
+                        model = gemini.currentModel(),
+                        inputCharacters = passages.sumOf { it.length },
+                        outputItems = { it.size },
+                        block = call,
+                    )
+                } else {
+                    call()
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // Not swallowed, and not fatal to the chapter. An HTTP error, a
+                // refused key, a timeout and a malformed response are four
+                // different problems; turning them all into "the model returned
+                // nothing" is the silence this feature has been fixed for once
+                // already. One bad batch out of four is now a partial result
+                // with a reason attached, not a lost chapter.
+                failedBatches++
+                if (failureDetail == null) {
+                    failureDetail = error.message?.take(300)?.ifBlank { null }
+                        ?: error::class.simpleName
+                }
+                continue
             }
-            if (usage != null) {
-                usage.track(
-                    bookId = book.id,
-                    operation = AiUsageRepository.OPERATION_CHAPTER_PROMPTS,
-                    model = gemini.currentModel(),
-                    inputCharacters = passages.sumOf { it.length },
-                    outputItems = { it.size },
-                    block = call,
-                )
-            } else {
-                call()
+            offered += raws.size
+
+            onStage(Stage(Phase.CHECKING, index + 1, batches.size))
+            val verdict = sifter.sift(raws, passages)
+            rejected += verdict.rejected.size
+            for (raw in verdict.accepted) {
+                val topic = batch.getOrNull(raw.passageIndex) ?: continue
+                accepted += raw to topic
             }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            // Not swallowed. An HTTP error, a refused key, a timeout and a
-            // malformed response are four different problems, and turning them
-            // all into "the model returned nothing" is the same silence this
-            // feature has already been fixed for once.
+        }
+
+        // Every request failed: this is a failure, not an empty chapter.
+        if (failedBatches == batches.size) {
             return Result(
                 Outcome.REQUEST_FAILED,
-                detail = error.message?.take(300)?.ifBlank { null }
-                    ?: error::class.simpleName,
+                asked = topics.size,
+                batches = batches.size,
+                failedBatches = failedBatches,
+                detail = failureDetail,
             )
         }
-        if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING, asked = topics.size)
-
-        onStage(Stage.CHECKING)
-        val verdict = ChapterPromptRules.sift(raws, passages)
-        if (verdict.accepted.isEmpty()) {
+        if (offered == 0) {
+            return Result(
+                Outcome.MODEL_RETURNED_NOTHING,
+                asked = topics.size,
+                batches = batches.size,
+                failedBatches = failedBatches,
+                detail = failureDetail,
+            )
+        }
+        if (accepted.isEmpty()) {
             return Result(
                 Outcome.ALL_REJECTED,
                 asked = topics.size,
-                offered = raws.size,
-                rejected = verdict.rejected.size,
+                offered = offered,
+                rejected = rejected,
+                batches = batches.size,
+                failedBatches = failedBatches,
+                detail = failureDetail,
             )
         }
 
         val now = System.currentTimeMillis()
         val fresh = FsrsCardCodec.toJson(Card.builder().build())
-        val cards = verdict.accepted.mapNotNull { raw ->
-            val topic = topics.getOrNull(raw.passageIndex) ?: return@mapNotNull null
+        val cards = accepted.map { (raw, topic) ->
             LearningCardEntity(
                 id = UUID.randomUUID().toString(),
                 bookId = book.id,
@@ -193,22 +276,17 @@ class ChapterPromptGenerator(
                 dueAt = null,
             )
         }
-        if (cards.isEmpty()) {
-            return Result(
-                Outcome.ALL_REJECTED,
-                asked = topics.size,
-                offered = raws.size,
-                rejected = raws.size,
-            )
-        }
 
         runCatching { cardDao.insertAll(cards) }
         return Result(
             Outcome.MADE,
             cards = cards,
             asked = topics.size,
-            offered = raws.size,
-            rejected = verdict.rejected.size,
+            offered = offered,
+            rejected = rejected,
+            batches = batches.size,
+            failedBatches = failedBatches,
+            detail = failureDetail,
         )
     }
 
@@ -268,7 +346,22 @@ class ChapterPromptGenerator(
         return generate(book, chapterIndex, chapterTitle, force = true, onStage = onStage)
     }
 
-    enum class Stage { CHOOSING, WRITING, CHECKING }
+    /**
+     * What the generator is doing, and how far through it is.
+     *
+     * The batch numbers are not decoration. A chapter used to be one request
+     * of a few seconds; at this density it is several, and a reader watching
+     * "Writing questions…" for half a minute with no movement has no way to
+     * tell a slow call from a hung one.
+     */
+    data class Stage(
+        val phase: Phase,
+        /** 1-based, or 0 before the requests start. */
+        val batch: Int = 0,
+        val batches: Int = 0,
+    )
+
+    enum class Phase { CHOOSING, WRITING, CHECKING }
 
     /**
      * Why a generation produced what it produced.
@@ -306,6 +399,17 @@ class ChapterPromptGenerator(
         /** How many the model offered, before the rules were applied. */
         val offered: Int = 0,
         val rejected: Int = 0,
+        /** How many requests the chapter was split into. */
+        val batches: Int = 0,
+        /**
+         * How many of those requests failed.
+         *
+         * A chapter can now half-succeed. Reporting only what survived would
+         * make "12 questions ready" from four good batches and from two good
+         * batches and two failures look identical, and only one of those is
+         * worth tapping again.
+         */
+        val failedBatches: Int = 0,
         /**
          * The actual failure, verbatim, for the reader to copy to whoever can
          * act on it. A summary invented here would lose the one thing worth
@@ -315,6 +419,17 @@ class ChapterPromptGenerator(
     )
 
     private companion object {
+
+        /**
+         * Passages per request.
+         *
+         * Small enough that no single response has to carry more than about
+         * two dozen prompts — the regime where a thinking model spends its
+         * whole output allowance on reasoning and returns nothing — and large
+         * enough that the instructions, which are the same every time and
+         * longer than the passages, are not re-sent more often than necessary.
+         */
+        const val PASSAGES_PER_REQUEST = 8
         /**
          * Identity of one generation: the model that produced the vectors, plus
          * the passages actually sent.

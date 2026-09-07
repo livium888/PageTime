@@ -17,8 +17,8 @@ data class ChapterPromptState(
     val ready: Boolean = false,
     val generating: Boolean = false,
     val stage: ChapterPromptGenerator.Stage? = null,
-    /** True once generation has been tried, so "none" can be said honestly. */
-    val attempted: Boolean = false,
+    /** What the last generation did, or null if none has been run. */
+    val result: ChapterPromptGenerator.Result? = null,
     val pending: List<LearningCardEntity> = emptyList(),
     val progression: Float = 0f,
     /** The prompt on screen right now, if any. */
@@ -33,6 +33,47 @@ data class ChapterPromptState(
     val surfaced: LearningCardEntity?
         get() = surfacedId?.let { id -> pending.firstOrNull { it.id == id } }
 
+    /**
+     * A line telling the reader what just happened.
+     *
+     * Null while nothing has been run. Every other state says something,
+     * including the failures — silence was the whole bug.
+     */
+    val message: String?
+        get() = when {
+            generating -> when (stage) {
+                ChapterPromptGenerator.Stage.CHOOSING -> "Finding what this chapter is about…"
+                ChapterPromptGenerator.Stage.WRITING -> "Writing questions…"
+                ChapterPromptGenerator.Stage.CHECKING -> "Checking them against the book…"
+                null -> "Starting…"
+            }
+            result == null -> null
+            else -> when (result.outcome) {
+                ChapterPromptGenerator.Outcome.MADE,
+                ChapterPromptGenerator.Outcome.ALREADY_MADE -> {
+                    val n = pending.size
+                    if (n == 0) {
+                        "You have already answered every question for this chapter."
+                    } else {
+                        "$n question${if (n == 1) "" else "s"} ready. " +
+                            "They appear as you reach the passages they came from."
+                    }
+                }
+                ChapterPromptGenerator.Outcome.NOT_INDEXED ->
+                    "This chapter has not been indexed yet — use Search this book first."
+                ChapterPromptGenerator.Outcome.NO_KEY ->
+                    "No Gemini key is configured, so questions cannot be written."
+                ChapterPromptGenerator.Outcome.NOTHING_IN_CHAPTER ->
+                    "There is not enough in this chapter to build questions from."
+                ChapterPromptGenerator.Outcome.MODEL_RETURNED_NOTHING ->
+                    "The model returned nothing for this chapter. Worth trying again."
+                ChapterPromptGenerator.Outcome.ALL_REJECTED ->
+                    "${result.offered} question${if (result.offered == 1) "" else "s"} came " +
+                        "back and none passed the checks — usually a quote that was not " +
+                        "actually in the book. Nothing was saved."
+            }
+        }
+
     /** Worth offering the reader the option at all. */
-    val offerable: Boolean get() = ready && pending.isEmpty() && !attempted && !generating
+    val offerable: Boolean get() = ready && !generating
 }

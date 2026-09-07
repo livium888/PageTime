@@ -1194,24 +1194,46 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val b = _book.value ?: return
         if (promptJob?.isActive == true) return
         val chapterIndex = _promptState.value.chapterIndex
-        _promptState.value = _promptState.value.copy(generating = true, stage = null)
+        _promptState.value = _promptState.value.copy(generating = true, stage = null, result = null)
         promptJob = viewModelScope.launch {
             try {
-                val made = chapterPrompts.generate(
+                val result = chapterPrompts.generate(
                     book = b,
                     chapterIndex = chapterIndex,
                     chapterTitle = null,
                 ) { stage ->
                     _promptState.value = _promptState.value.copy(stage = stage)
                 }
-                _promptState.value = _promptState.value.copy(
-                    pending = made,
-                    attempted = true,
+                val state = _promptState.value
+                _promptState.value = state.copy(
+                    pending = result.cards,
+                    result = result,
+                    // Anything already behind the reader can show at once
+                    // rather than waiting for the next page turn.
+                    surfacedId = PromptSurfacing.next(
+                        result.cards.map {
+                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
+                        },
+                        state.progression,
+                        judgedPrompts,
+                    )?.id,
+                    stillAhead = PromptSurfacing.remaining(
+                        result.cards.map {
+                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
+                        },
+                        state.progression,
+                        judgedPrompts,
+                    ),
                 )
             } finally {
                 _promptState.value = _promptState.value.copy(generating = false, stage = null)
             }
         }
+    }
+
+    /** Dismisses the status line without touching the questions themselves. */
+    fun clearPromptMessage() {
+        _promptState.value = _promptState.value.copy(result = null)
     }
 
     fun keepPrompt(cardId: String) {

@@ -249,6 +249,7 @@ fun ReaderScreen(
     var showSleepTimer by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
     var showBookSearch by remember { mutableStateOf(false) }
+    var showPromptList by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -487,8 +488,9 @@ fun ReaderScreen(
                     showBookSearch = true
                 },
                 onMakePrompts = vm::generateChapterPrompts,
-                promptsOfferable = promptState.ready,
-                promptsGenerating = promptState.generating,
+                onSeePrompts = { showPromptList = true },
+                promptsOfferable = promptState.offerable,
+                promptsPending = promptState.pending.size,
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
@@ -639,6 +641,26 @@ fun ReaderScreen(
     // A question about the paragraph just read. Rendered beside the existing
     // chapter card rather than as a dialog: it must be ignorable, because the
     // one thing it must never become is a toll booth on the page turn.
+    // Progress and outcome, in the reading surface where the reader is looking
+    // — not in the dropdown that closed the moment they tapped it.
+    promptState.message?.let { message ->
+        ChapterPromptStatus(
+            message = message,
+            working = promptState.generating,
+            pendingCount = promptState.pending.size,
+            onSeeQuestions = { showPromptList = true },
+            onDismiss = vm::clearPromptMessage,
+        )
+    }
+
+    if (showPromptList) {
+        ChapterPromptListSheet(
+            prompts = promptState.pending,
+            progression = promptState.progression,
+            onDismiss = { showPromptList = false },
+        )
+    }
+
     promptState.surfaced?.let { card ->
         ChapterPromptCard(
             card = card,
@@ -1213,8 +1235,9 @@ private fun ReaderTopBar(
     onGoTo: () -> Unit,
     onSearchBook: () -> Unit,
     onMakePrompts: () -> Unit,
+    onSeePrompts: () -> Unit,
     promptsOfferable: Boolean,
-    promptsGenerating: Boolean,
+    promptsPending: Int,
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
@@ -1307,12 +1330,19 @@ private fun ReaderTopBar(
                     )
                     if (promptsOfferable) {
                         DropdownMenuItem(
-                            text = { Text(if (promptsGenerating) "Writing questions…" else "Make questions for this chapter") },
+                            text = {
+                                Text(
+                                    if (promptsPending > 0) {
+                                        "See this chapter's questions ($promptsPending)"
+                                    } else {
+                                        "Make questions for this chapter"
+                                    }
+                                )
+                            },
                             leadingIcon = { Icon(Icons.Outlined.Quiz, contentDescription = null) },
-                            enabled = !promptsGenerating,
                             onClick = {
                                 optionsExpanded = false
-                                onMakePrompts()
+                                if (promptsPending > 0) onSeePrompts() else onMakePrompts()
                             }
                         )
                     }

@@ -30,7 +30,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CardEmbeddingEntity::class,
         BookChunkEmbeddingEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -237,6 +237,28 @@ abstract class AppDatabase : RoomDatabase() {
          * duplicated out of the FSRS JSON because a due query has to be a
          * WHERE clause.
          */
+        /**
+         * Records what a Gemini request actually cost.
+         *
+         * Until now the log stored the number of CHARACTERS sent and the usage
+         * screen divided by 3.5 to guess at tokens, while counting no output at
+         * all — and every response had carried the exact figures all along in a
+         * usageMetadata block nothing parsed.
+         *
+         * Nullable on purpose. Existing rows were never measured, and the
+         * on-device model reports nothing, so null means "not measured" while
+         * zero would mean "measured, and free".
+         */
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ai_usage_events ADD COLUMN promptTokens INTEGER")
+                db.execSQL("ALTER TABLE ai_usage_events ADD COLUMN outputTokens INTEGER")
+                db.execSQL("ALTER TABLE ai_usage_events ADD COLUMN thinkingTokens INTEGER")
+                db.execSQL("ALTER TABLE ai_usage_events ADD COLUMN cachedTokens INTEGER")
+                db.execSQL("ALTER TABLE ai_usage_events ADD COLUMN totalTokens INTEGER")
+            }
+        }
+
         val MIGRATION_17_18 = object : Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

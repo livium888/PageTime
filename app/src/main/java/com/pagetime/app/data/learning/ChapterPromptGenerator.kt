@@ -1,5 +1,6 @@
 package com.pagetime.app.data.learning
 
+import com.pagetime.app.data.AiUsageRepository
 import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.embed.ChapterTopics
 import com.pagetime.app.data.embed.EmbeddingModelStore
@@ -50,6 +51,7 @@ class ChapterPromptGenerator(
     private val cardDao: LearningCardDao,
     private val store: EmbeddingModelStore,
     private val gemini: GeminiLearningClient,
+    private val usage: AiUsageRepository? = null,
 ) {
 
     /** Whether this chapter could produce prompts at all. */
@@ -74,38 +76,63 @@ class ChapterPromptGenerator(
         chapterIndex: Int,
         chapterTitle: String?,
         onStage: (Stage) -> Unit = {},
-    ): List<LearningCardEntity> {
-        val model = store.modelId() ?: return emptyList()
-        if (!gemini.hasKey()) return emptyList()
+    ): Result {
+        val model = store.modelId() ?: return Result(Outcome.NOT_INDEXED)
+        if (!gemini.hasKey()) return Result(Outcome.NO_KEY)
 
         val rows = runCatching { chunkDao.forChapter(book.id, model, chapterIndex) }
             .getOrDefault(emptyList())
-        if (rows.isEmpty()) return emptyList()
+        if (rows.isEmpty()) return Result(Outcome.NOT_INDEXED)
 
         onStage(Stage.CHOOSING)
         val topics = ChapterTopics.select(rows)
-        if (topics.isEmpty()) return emptyList()
+        if (topics.isEmpty()) return Result(Outcome.NOTHING_IN_CHAPTER)
 
         val key = generationKey(model, topics)
         // Already generated. Whatever the reader did with them — kept, skipped,
         // or not yet judged — this chapter is not paid for twice.
         if (runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
-            return pending(book, chapterIndex)
+            val existing = pending(book, chapterIndex)
+            return Result(Outcome.ALREADY_MADE, existing, offered = existing.size)
         }
 
         onStage(Stage.WRITING)
+        val passages = topics.map { it.text }
         val raws = runCatching {
-            gemini.generateChapterPrompts(
-                bookTitle = book.title,
-                chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
-                passages = topics.map { it.text },
-            )
+            // Logged like every other Gemini call, so the biggest new consumer
+            // of the reader's quota is not the one thing the usage screen
+            // cannot see.
+            val call: suspend () -> List<RawPrompt> = {
+                gemini.generateChapterPrompts(
+                    bookTitle = book.title,
+                    chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
+                    passages = passages,
+                )
+            }
+            if (usage != null) {
+                usage.track(
+                    bookId = book.id,
+                    operation = AiUsageRepository.OPERATION_CHAPTER_PROMPTS,
+                    model = gemini.currentModel(),
+                    inputCharacters = passages.sumOf { it.length },
+                    outputItems = { it.size },
+                    block = call,
+                )
+            } else {
+                call()
+            }
         }.getOrDefault(emptyList())
-        if (raws.isEmpty()) return emptyList()
+        if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING)
 
         onStage(Stage.CHECKING)
-        val verdict = ChapterPromptRules.sift(raws, topics.map { it.text })
-        if (verdict.accepted.isEmpty()) return emptyList()
+        val verdict = ChapterPromptRules.sift(raws, passages)
+        if (verdict.accepted.isEmpty()) {
+            return Result(
+                Outcome.ALL_REJECTED,
+                offered = raws.size,
+                rejected = verdict.rejected.size,
+            )
+        }
 
         val now = System.currentTimeMillis()
         val fresh = FsrsCardCodec.toJson(Card.builder().build())
@@ -134,10 +161,17 @@ class ChapterPromptGenerator(
                 dueAt = null,
             )
         }
-        if (cards.isEmpty()) return emptyList()
+        if (cards.isEmpty()) {
+            return Result(Outcome.ALL_REJECTED, offered = raws.size, rejected = raws.size)
+        }
 
         runCatching { cardDao.insertAll(cards) }
-        return cards
+        return Result(
+            Outcome.MADE,
+            cards = cards,
+            offered = raws.size,
+            rejected = verdict.rejected.size,
+        )
     }
 
     /**
@@ -180,6 +214,33 @@ class ChapterPromptGenerator(
     }
 
     enum class Stage { CHOOSING, WRITING, CHECKING }
+
+    /**
+     * Why a generation produced what it produced.
+     *
+     * Returning an empty list for every failure was the original sin here: no
+     * key, no index, a refused request and a batch the rules threw out all
+     * looked identical to the reader, which is to say they all looked like
+     * nothing happening. A reason costs one enum and is the difference between
+     * a feature that is broken and one that is explaining itself.
+     */
+    enum class Outcome {
+        MADE,
+        ALREADY_MADE,
+        NO_KEY,
+        NOT_INDEXED,
+        NOTHING_IN_CHAPTER,
+        MODEL_RETURNED_NOTHING,
+        ALL_REJECTED,
+    }
+
+    data class Result(
+        val outcome: Outcome,
+        val cards: List<LearningCardEntity> = emptyList(),
+        /** How many the model offered, before the rules were applied. */
+        val offered: Int = 0,
+        val rejected: Int = 0,
+    )
 
     private companion object {
         /**

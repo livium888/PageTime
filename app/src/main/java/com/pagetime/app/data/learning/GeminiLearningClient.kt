@@ -189,42 +189,7 @@ class GeminiLearningClient(
                 .put("prompts", JSONObject().put("type", "ARRAY").put("items", promptSchema)))
             .put("required", JSONArray(listOf("prompts")))
 
-        val numbered = passages.mapIndexed { index, text ->
-            "[$index]\n$text"
-        }.joinToString("\n\n")
-
-        val instructions = """
-            Write ONE recall question for each numbered passage below, from a book
-            the reader is part-way through.
-
-            Each question must:
-            - ask about the WORLD, not about the text. Never "what does this passage
-              say", "what does the author argue", or any question that stops making
-              sense once the book is closed.
-            - test ONE idea. If a passage holds two, pick the more important one.
-            - be answerable in a few words. An answer longer than a sentence is not
-              something anyone recalls.
-            - require remembering rather than recognising. Do not put the answer, or
-              a near-synonym of it, into the question.
-            - use the book's own vocabulary for the things it names.
-
-            sourceQuote must be copied from that passage CHARACTER FOR CHARACTER —
-            the sentence the answer comes from. Do not paraphrase it, shorten it, or
-            tidy it. A quote that is not literally in the passage causes the whole
-            prompt to be discarded.
-
-            passageIndex is the number in brackets above the passage you used.
-
-            If a passage carries no idea worth remembering — it is scene-setting,
-            a transition, or pure narrative — omit it entirely. Returning four good
-            prompts is better than five with a weak one.
-
-            BOOK: ${'$'}bookTitle
-            CHAPTER: ${'$'}chapterTitle
-
-            PASSAGES:
-            ${'$'}numbered
-        """.trimIndent()
+        val instructions = ChapterPromptText.build(bookTitle, chapterTitle, passages)
 
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject()
@@ -234,7 +199,7 @@ class GeminiLearningClient(
                 .put("responseSchema", schema))
             .toString()
         val request = Request.Builder()
-            .url("${'$'}endpointBase/models/${'$'}{currentModel()}:generateContent")
+            .url("$endpointBase/models/${currentModel()}:generateContent")
             .header("x-goog-api-key", apiKey)
             .post(body.toRequestBody("application/json".toMediaType()))
             .build()

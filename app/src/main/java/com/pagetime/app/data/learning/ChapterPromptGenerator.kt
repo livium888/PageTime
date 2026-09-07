@@ -93,7 +93,12 @@ class ChapterPromptGenerator(
         // or not yet judged — this chapter is not paid for twice.
         if (runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
             val existing = pending(book, chapterIndex)
-            return Result(Outcome.ALREADY_MADE, existing, offered = existing.size)
+            return Result(
+                Outcome.ALREADY_MADE,
+                existing,
+                asked = topics.size,
+                offered = existing.size,
+            )
         }
 
         onStage(Stage.WRITING)
@@ -134,13 +139,14 @@ class ChapterPromptGenerator(
                     ?: error::class.simpleName,
             )
         }
-        if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING)
+        if (raws.isEmpty()) return Result(Outcome.MODEL_RETURNED_NOTHING, asked = topics.size)
 
         onStage(Stage.CHECKING)
         val verdict = ChapterPromptRules.sift(raws, passages)
         if (verdict.accepted.isEmpty()) {
             return Result(
                 Outcome.ALL_REJECTED,
+                asked = topics.size,
                 offered = raws.size,
                 rejected = verdict.rejected.size,
             )
@@ -174,13 +180,19 @@ class ChapterPromptGenerator(
             )
         }
         if (cards.isEmpty()) {
-            return Result(Outcome.ALL_REJECTED, offered = raws.size, rejected = raws.size)
+            return Result(
+                Outcome.ALL_REJECTED,
+                asked = topics.size,
+                offered = raws.size,
+                rejected = raws.size,
+            )
         }
 
         runCatching { cardDao.insertAll(cards) }
         return Result(
             Outcome.MADE,
             cards = cards,
+            asked = topics.size,
             offered = raws.size,
             rejected = verdict.rejected.size,
         )
@@ -251,6 +263,15 @@ class ChapterPromptGenerator(
     data class Result(
         val outcome: Outcome,
         val cards: List<LearningCardEntity> = emptyList(),
+        /**
+         * How many passages were sent.
+         *
+         * The whole chain is reported — asked, offered, kept — because
+         * "1 question ready" out of 5 passages and out of 1 passage are very
+         * different outcomes with very different fixes, and the reader cannot
+         * tell them apart from the number that survived.
+         */
+        val asked: Int = 0,
         /** How many the model offered, before the rules were applied. */
         val offered: Int = 0,
         val rejected: Int = 0,

@@ -55,8 +55,20 @@ data class ChapterPromptState(
                     if (n == 0) {
                         "You have already answered every question for this chapter."
                     } else {
+                        // The whole chain, not just the survivors. "1 ready"
+                        // from 5 passages and "1 ready" from 1 passage are
+                        // different outcomes with different fixes, and the
+                        // reader cannot tell them apart from the number alone.
+                        val lost = (result.asked - n).coerceAtLeast(0)
                         "$n question${if (n == 1) "" else "s"} ready. " +
-                            "They appear as you reach the passages they came from."
+                            "They appear as you reach the passages they came from." +
+                            if (lost > 0) {
+                                " (${result.asked} passages sent, " +
+                                    "${result.offered} came back, " +
+                                    "${result.rejected} failed the checks.)"
+                            } else {
+                                ""
+                            }
                     }
                 }
                 ChapterPromptGenerator.Outcome.NOT_INDEXED ->

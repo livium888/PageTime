@@ -27,9 +27,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AiUsageEntity::class,
         ExplanationEntity::class,
         LumenCardEntity::class,
-        CardEmbeddingEntity::class
+        CardEmbeddingEntity::class,
+        BookChunkEmbeddingEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun explanationDao(): ExplanationDao
     abstract fun lumenCardDao(): LumenCardDao
     abstract fun cardEmbeddingDao(): CardEmbeddingDao
+    abstract fun bookChunkEmbeddingDao(): BookChunkEmbeddingDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -201,6 +203,49 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_card_embeddings_model " +
                         "ON card_embeddings(model)"
+                )
+            }
+        }
+
+        /**
+         * Book text as vectors, so a passage can be found by meaning.
+         *
+         * A separate table from card_embeddings rather than one table with a
+         * kind column. They have different keys — a card has an id, a chunk is
+         * identified by where it sits in a book — different foreign keys, and
+         * very different row counts: a slip box holds hundreds of cards, one
+         * novel holds thousands of chunks. Sharing a table would make every
+         * card query walk past a book.
+         *
+         * The chunk's text is stored beside its vector so a search result can
+         * be shown without re-opening and re-parsing the EPUB. Roughly 2 KB a
+         * row, so about 6 MB for a 300-page book — derived data, droppable and
+         * rebuildable whenever the reader wants the space.
+         *
+         * ON DELETE CASCADE: removing a book removes its index, which would
+         * otherwise go on answering searches about a book that is gone.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS book_chunk_embeddings (" +
+                        "bookId TEXT NOT NULL, " +
+                        "chapterIndex INTEGER NOT NULL, " +
+                        "ordinal INTEGER NOT NULL, " +
+                        "startOffset INTEGER NOT NULL, " +
+                        "endOffset INTEGER NOT NULL, " +
+                        "text TEXT NOT NULL, " +
+                        "model TEXT NOT NULL, " +
+                        "dimensions INTEGER NOT NULL, " +
+                        "vector BLOB NOT NULL, " +
+                        "indexedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(bookId, chapterIndex, ordinal), " +
+                        "FOREIGN KEY(bookId) REFERENCES books(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_book_chunk_embeddings_bookId_model " +
+                        "ON book_chunk_embeddings(bookId, model)"
                 )
             }
         }

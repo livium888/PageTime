@@ -138,6 +138,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -153,7 +154,8 @@ private data class LumenHelpPrompt(
 
 class LumenViewModel(
     private val repository: LumenRepository,
-    private val settingsRepository: com.pagetime.app.data.local.SettingsRepository
+    private val settingsRepository: com.pagetime.app.data.local.SettingsRepository,
+    private val learningCardDao: com.pagetime.app.data.local.LearningCardDao
 ) : ViewModel() {
 
     /** Which slip box is open (1-based). */
@@ -174,7 +176,17 @@ class LumenViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val dueCount = repository.observeDueCount()
+    /**
+     * Everything due, of both kinds.
+     *
+     * The chip is the only way into a review session, so counting one table
+     * would leave a reader with five chapter flashcards and no slip box
+     * training unable to reach cards the app had already made for them.
+     */
+    val dueCount = combine(
+        repository.observeDueCount(),
+        learningCardDao.observeDueCount(System.currentTimeMillis()),
+    ) { slips, chapters -> slips + chapters }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     /** Structure maps (hub notes) across every box — the main index's heads. */
@@ -282,11 +294,12 @@ class LumenViewModel(
 
     class Factory(
         private val repository: LumenRepository,
-        private val settingsRepository: com.pagetime.app.data.local.SettingsRepository
+        private val settingsRepository: com.pagetime.app.data.local.SettingsRepository,
+        private val learningCardDao: com.pagetime.app.data.local.LearningCardDao
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            LumenViewModel(repository, settingsRepository) as T
+            LumenViewModel(repository, settingsRepository, learningCardDao) as T
     }
 }
 
@@ -306,7 +319,8 @@ fun LumenCardsScreen(
     val vm: LumenViewModel = viewModel(
         factory = LumenViewModel.Factory(
             app.container.lumenRepository,
-            app.container.settingsRepository
+            app.container.settingsRepository,
+            app.container.database.learningCardDao()
         )
     )
     val cards by vm.cards.collectAsStateWithLifecycle()

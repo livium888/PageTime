@@ -7,7 +7,10 @@ import androidx.room.PrimaryKey
 /** A comprehension prompt linked to a precise book location or supporting source quote. */
 @Entity(
     tableName = "learning_cards",
-    indices = [Index(value = ["bookId", "generationKey"])]
+    indices = [
+        Index(value = ["bookId", "generationKey"]),
+        Index(value = ["status", "dueAt"])
+    ]
 )
 data class LearningCardEntity(
     @PrimaryKey val id: String,
@@ -41,5 +44,31 @@ data class LearningCardEntity(
      */
     val cardType: String = "qa",
     /** JSON array of 3–4 answer choices for MCQ cards, e.g. `["A","B","C","D"]`. */
-    val mcqOptions: String? = null
-)
+    val mcqOptions: String? = null,
+    /**
+     * Whether the reader has accepted this prompt.
+     *
+     * A generated prompt is not a card until a person says so. It is written
+     * down before that — generating a chapter costs an API call, and losing
+     * the batch because the reader closed the book would mean paying for it
+     * twice — but a PENDING row is never scheduled and never reviewed.
+     *
+     * [STATUS_PENDING] offered but not yet judged, [STATUS_KEPT] accepted,
+     * [STATUS_SKIPPED] rejected and never to be offered again.
+     */
+    val status: String = STATUS_KEPT,
+    /**
+     * Next scheduled review (epoch ms); null until the card is kept.
+     *
+     * Duplicated out of [fsrsCardJson] because a due query has to be a WHERE
+     * clause. The scheduler owns the JSON; this column exists so SQLite can
+     * answer "what is due" without parsing every card in the table.
+     */
+    val dueAt: Long? = null
+) {
+    companion object {
+        const val STATUS_PENDING = "pending"
+        const val STATUS_KEPT = "kept"
+        const val STATUS_SKIPPED = "skipped"
+    }
+}

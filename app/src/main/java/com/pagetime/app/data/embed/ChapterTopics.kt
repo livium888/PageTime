@@ -16,7 +16,27 @@ data class TopicPassage(
     val endOffset: Int,
     val text: String,
     val centrality: Float,
-)
+    /** Length of the chapter, so an offset can become a position. */
+    val chapterChars: Int = 0,
+) {
+    /** Where the passage begins, as a fraction of the chapter. */
+    val startProgression: Float
+        get() = fraction(startOffset)
+
+    /**
+     * Where the passage ENDS.
+     *
+     * This is the one that matters for surfacing a prompt: asking a question
+     * as the reader arrives at the paragraph is asking it before they have
+     * read the answer. Waiting for the end needs no guessed margin — the
+     * chunk boundaries already say exactly where the idea finishes.
+     */
+    val endProgression: Float
+        get() = fraction(endOffset)
+
+    private fun fraction(offset: Int): Float =
+        if (chapterChars > 0) (offset.toFloat() / chapterChars).coerceIn(0f, 1f) else 0f
+}
 
 /**
  * Choosing what a chapter is about, so the model is told rather than asked.
@@ -165,6 +185,7 @@ object ChapterTopics {
                     endOffset = row.endOffset,
                     text = row.text,
                     centrality = centrality[i],
+                    chapterChars = chapterChars,
                 )
             }
             .sortedBy { it.startOffset }

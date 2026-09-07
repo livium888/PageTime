@@ -142,6 +142,127 @@ class GeminiLearningClient(
         parseConceptMapResponse(executeWithRetry(request), context)
     }
 
+    /**
+     * Writes one prompt per supplied passage.
+     *
+     * ONE CALL FOR THE WHOLE CHAPTER
+     *
+     * The passages arrive together rather than one request each. It is cheaper,
+     * but the real reason is that a model shown all five at once can avoid
+     * asking the same question twice, which it cannot do when each call is
+     * blind to the others.
+     *
+     * WHAT IT IS ASKED FOR, AND WHY
+     *
+     * The instructions are Matuschak's attributes of a good prompt, stated as
+     * rules rather than hoped for: one idea per prompt, an answer short enough
+     * to actually retrieve, and a question about the WORLD rather than about
+     * the text. That last one matters most and is the easiest to get wrong —
+     * "what does this passage say about X" is worthless the moment the book is
+     * closed, which is exactly when the card comes back.
+     *
+     * Every returned quote must be copied from its passage verbatim, and that
+     * is checked locally afterwards. This asks for honesty; ChapterPromptRules
+     * is what enforces it.
+     */
+    suspend fun generateChapterPrompts(
+        bookTitle: String,
+        chapterTitle: String,
+        passages: List<String>,
+    ): List<RawPrompt> = withContext(Dispatchers.IO) {
+        val apiKey = currentApiKey()
+        check(apiKey.isNotBlank()) { "Gemini API key is not configured" }
+        if (passages.isEmpty()) return@withContext emptyList()
+
+        val promptSchema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("passageIndex", JSONObject().put("type", "INTEGER"))
+                .put("prompt", JSONObject().put("type", "STRING"))
+                .put("answer", JSONObject().put("type", "STRING"))
+                .put("sourceQuote", JSONObject().put("type", "STRING")))
+            .put("required", JSONArray(listOf("passageIndex", "prompt", "answer", "sourceQuote")))
+        val schema = JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("prompts", JSONObject().put("type", "ARRAY").put("items", promptSchema)))
+            .put("required", JSONArray(listOf("prompts")))
+
+        val numbered = passages.mapIndexed { index, text ->
+            "[$index]\n$text"
+        }.joinToString("\n\n")
+
+        val instructions = """
+            Write ONE recall question for each numbered passage below, from a book
+            the reader is part-way through.
+
+            Each question must:
+            - ask about the WORLD, not about the text. Never "what does this passage
+              say", "what does the author argue", or any question that stops making
+              sense once the book is closed.
+            - test ONE idea. If a passage holds two, pick the more important one.
+            - be answerable in a few words. An answer longer than a sentence is not
+              something anyone recalls.
+            - require remembering rather than recognising. Do not put the answer, or
+              a near-synonym of it, into the question.
+            - use the book's own vocabulary for the things it names.
+
+            sourceQuote must be copied from that passage CHARACTER FOR CHARACTER —
+            the sentence the answer comes from. Do not paraphrase it, shorten it, or
+            tidy it. A quote that is not literally in the passage causes the whole
+            prompt to be discarded.
+
+            passageIndex is the number in brackets above the passage you used.
+
+            If a passage carries no idea worth remembering — it is scene-setting,
+            a transition, or pure narrative — omit it entirely. Returning four good
+            prompts is better than five with a weak one.
+
+            BOOK: ${'$'}bookTitle
+            CHAPTER: ${'$'}chapterTitle
+
+            PASSAGES:
+            ${'$'}numbered
+        """.trimIndent()
+
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", instructions)))))
+            .put("generationConfig", JSONObject()
+                .put("responseMimeType", "application/json")
+                .put("responseSchema", schema))
+            .toString()
+        val request = Request.Builder()
+            .url("${'$'}endpointBase/models/${'$'}{currentModel()}:generateContent")
+            .header("x-goog-api-key", apiKey)
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        parseChapterPrompts(executeWithRetry(request))
+    }
+
+    private fun parseChapterPrompts(raw: String): List<RawPrompt> {
+        // Unwrapped defensively rather than with the chained getters used
+        // elsewhere: a blocked or truncated response has no candidates array,
+        // and a generation that returns nothing must be an empty chapter, not
+        // an exception thrown at someone who is reading.
+        val root = runCatching {
+            val text = JSONObject(raw).getJSONArray("candidates")
+                .getJSONObject(0).getJSONObject("content").getJSONArray("parts")
+                .getJSONObject(0).getString("text")
+            JSONObject(text)
+        }.getOrNull() ?: return emptyList()
+        val array = root.optJSONArray("prompts") ?: return emptyList()
+        return (0 until array.length()).mapNotNull { i ->
+            val item = array.optJSONObject(i) ?: return@mapNotNull null
+            RawPrompt(
+                passageIndex = item.optInt("passageIndex", -1),
+                prompt = item.optString("prompt", ""),
+                answer = item.optString("answer", ""),
+                sourceQuote = item.optString("sourceQuote", ""),
+            )
+        }
+    }
+
     private suspend fun executeWithRetry(request: Request): String {
         check(currentApiKey().isNotBlank()) { "Gemini API key is not configured" }
         var lastError: Throwable? = null

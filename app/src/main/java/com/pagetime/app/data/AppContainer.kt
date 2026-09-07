@@ -15,6 +15,7 @@ import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.embed.BookIndexer
 import com.pagetime.app.data.embed.BookSearcher
+import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
@@ -65,7 +66,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_13_14,
                 AppDatabase.MIGRATION_14_15,
                 AppDatabase.MIGRATION_15_16,
-                AppDatabase.MIGRATION_16_17
+                AppDatabase.MIGRATION_16_17,
+                AppDatabase.MIGRATION_17_18
             )
             .build()
 
@@ -157,6 +159,18 @@ class AppContainer(context: Context) {
         BookSearcher(
             dao = database.bookChunkEmbeddingDao(),
             store = embeddingModelStore,
+        )
+
+    /**
+     * Chapter flashcards: the vectors choose the passages, Gemini writes the
+     * questions, and the rules decide which of them the reader is offered.
+     */
+    val chapterPromptGenerator =
+        ChapterPromptGenerator(
+            chunkDao = database.bookChunkEmbeddingDao(),
+            cardDao = database.learningCardDao(),
+            store = embeddingModelStore,
+            gemini = geminiLearningClient,
         )
 
     val lumenRepository = LumenRepository(

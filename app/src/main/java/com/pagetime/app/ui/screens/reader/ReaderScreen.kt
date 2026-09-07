@@ -58,6 +58,7 @@ import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.NightsStay
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
@@ -237,6 +238,7 @@ fun ReaderScreen(
     val answerError by vm.answerError.collectAsStateWithLifecycle()
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
     val bookSearch by vm.bookSearch.collectAsStateWithLifecycle()
+    val promptState by vm.promptState.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -484,6 +486,9 @@ fun ReaderScreen(
                     vm.refreshSearchState()
                     showBookSearch = true
                 },
+                onMakePrompts = vm::generateChapterPrompts,
+                promptsOfferable = promptState.ready,
+                promptsGenerating = promptState.generating,
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
@@ -628,6 +633,18 @@ fun ReaderScreen(
                 }
             },
             onDismiss = { showChapterReviewPrompt = false }
+        )
+    }
+
+    // A question about the paragraph just read. Rendered beside the existing
+    // chapter card rather than as a dialog: it must be ignorable, because the
+    // one thing it must never become is a toll booth on the page turn.
+    promptState.surfaced?.let { card ->
+        ChapterPromptCard(
+            card = card,
+            stillAhead = promptState.stillAhead,
+            onKeep = { vm.keepPrompt(card.id) },
+            onSkip = { vm.skipPrompt(card.id) },
         )
     }
 
@@ -1195,6 +1212,9 @@ private fun ReaderTopBar(
     onToc: () -> Unit,
     onGoTo: () -> Unit,
     onSearchBook: () -> Unit,
+    onMakePrompts: () -> Unit,
+    promptsOfferable: Boolean,
+    promptsGenerating: Boolean,
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
@@ -1285,6 +1305,17 @@ private fun ReaderTopBar(
                             onSearchBook()
                         }
                     )
+                    if (promptsOfferable) {
+                        DropdownMenuItem(
+                            text = { Text(if (promptsGenerating) "Writing questions…" else "Make questions for this chapter") },
+                            leadingIcon = { Icon(Icons.Outlined.Quiz, contentDescription = null) },
+                            enabled = !promptsGenerating,
+                            onClick = {
+                                optionsExpanded = false
+                                onMakePrompts()
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
                         leadingIcon = {

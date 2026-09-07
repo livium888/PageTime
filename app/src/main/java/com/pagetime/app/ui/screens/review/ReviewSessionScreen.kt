@@ -95,7 +95,6 @@ fun ReviewSessionScreen(
                 card == null -> Done(state.session, onBack)
 
                 else -> {
-                    val (front, back) = vm.prompt(card)
                     Column(
                         Modifier
                             .weight(1f)
@@ -104,24 +103,22 @@ fun ReviewSessionScreen(
                             .padding(horizontal = 24.dp, vertical = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
                     ) {
-                        if (card.indexNumber.isNotBlank()) {
-                            Text(
-                                card.indexNumber,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
                         Text(
-                            front,
+                            if (card.fromChapter) "From the book" else "From your slip box",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            card.front,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.SemiBold,
                         )
 
                         if (state.revealed) {
-                            Text(back, style = MaterialTheme.typography.bodyLarge)
-                            if (card.quote.isNotBlank() && card.quote != back) {
+                            Text(card.back, style = MaterialTheme.typography.bodyLarge)
+                            card.source?.takeIf { it.isNotBlank() }?.let { source ->
                                 Text(
-                                    card.quote.trim(),
+                                    source.trim(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -206,7 +203,8 @@ private fun Done(session: ReviewSessionState, onBack: () -> Unit) {
             if (session.started == 0) {
                 Text("Nothing is due.", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Cards appear here once you put them into training from the slip box.",
+                    "Questions appear here once you keep one while reading, or put a " +
+                        "slip box card into training.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

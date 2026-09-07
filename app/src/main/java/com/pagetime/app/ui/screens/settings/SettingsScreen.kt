@@ -61,7 +61,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.LumenModelStatus
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.semantics.Role
 import com.pagetime.app.data.LumenModelStore
+import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.learning.GeminiModel
@@ -245,6 +249,11 @@ fun SettingsScreen(
                 onDownload = viewModel::downloadOfflineModel,
                 onCheckForUpdate = viewModel::checkForModelUpdate,
                 onDelete = viewModel::deleteOfflineModel
+            )
+
+            CaptureSizeCard(
+                captureChars = viewModel.captureChars.collectAsStateWithLifecycle().value,
+                onSelect = viewModel::setCaptureChars,
             )
 
             EmbeddingModelSettingsCard(
@@ -770,6 +779,77 @@ private fun OfflineModelSettingsCard(
         }
     }
 }
+
+/**
+ * How much text a capture hands the model.
+ *
+ * This is the one lever on card quality that has never been measured, and it
+ * is exposed rather than guessed because guessing has a poor record here.
+ *
+ * The failure worth targeting is not bad writing, it is bad CHOOSING. A page
+ * of a book holds four or five ideas; the prompt asks for "the one that
+ * matters most"; and the on-device model reliably takes the most obvious event
+ * rather than the argument being made about it. Selection is the hard half of
+ * the task and the half a small model is worst at.
+ *
+ * One paragraph leaves nothing to choose between. The model only has to state
+ * the idea in front of it, which is the half it can already do.
+ *
+ * Whether that is true is unknown. Three prompt rewrites were spent on this
+ * problem and not one of them tried handing the model less to read, so the
+ * number is a setting and the reader can settle it in three captures.
+ */
+@Composable
+private fun CaptureSizeCard(captureChars: Int, onSelect: (Int) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("How much a card reads", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "The text handed to the model when you capture. Less text means fewer " +
+                    "ideas competing, which is what the offline model struggles to choose " +
+                    "between. More text means more context and more to get lost in.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            CAPTURE_SIZES.forEach { (chars, label) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = captureChars == chars,
+                            onClick = { onSelect(chars) },
+                            role = Role.RadioButton,
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = captureChars == chars, onClick = { onSelect(chars) })
+                    Spacer(Modifier.width(8.dp))
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Text(
+                "Capture the same passage at each size and compare. The capture log " +
+                    "records which size produced which card.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Deliberately three, not a slider. A slider invites fiddling; three sizes far
+ * enough apart to tell apart invites a comparison, which is the point.
+ */
+private val CAPTURE_SIZES: List<Pair<Int, String>> = listOf(
+    350 to "One paragraph — least to choose between",
+    700 to "Two paragraphs",
+    LumenCapture.PASSAGE_TARGET_CHARS to "A page (standard)",
+)
 
 /**
  * What happens when the on-device model cannot draft a card at all.

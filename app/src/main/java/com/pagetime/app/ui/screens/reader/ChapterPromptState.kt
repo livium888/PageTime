@@ -66,7 +66,9 @@ data class ChapterPromptState(
                 ChapterPromptGenerator.Outcome.NOTHING_IN_CHAPTER ->
                     "There is not enough in this chapter to build questions from."
                 ChapterPromptGenerator.Outcome.MODEL_RETURNED_NOTHING ->
-                    "The model returned nothing for this chapter. Worth trying again."
+                    "Gemini answered, but with no questions in it. Worth trying again."
+                ChapterPromptGenerator.Outcome.REQUEST_FAILED ->
+                    "The request to Gemini failed: ${result.detail ?: "no reason given"}"
                 ChapterPromptGenerator.Outcome.ALL_REJECTED ->
                     "${result.offered} question${if (result.offered == 1) "" else "s"} came " +
                         "back and none passed the checks — usually a quote that was not " +

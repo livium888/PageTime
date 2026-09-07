@@ -54,6 +54,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = container.lumenRepository
     private val learningCards = container.database.learningCardDao()
     private val reviewLog = container.database.learningReviewLogDao()
+    private val settings = container.settingsRepository
 
     /**
      * Its own scheduler instance, matching the one LumenRepository builds.
@@ -251,6 +252,11 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
         val current = _state.value.card ?: return
         val before = _state.value
         viewModelScope.launch {
+            // The reader came back. The backoff ladder is about being ignored,
+            // not about elapsed time, so answering anything resets it — and a
+            // reader who has been ignoring reminders for a month is not left
+            // permanently unreachable because of it.
+            runCatching { settings.clearReminderStreak() }
             val now = Instant.now()
             var restore: (suspend () -> Unit)? = null
             val nextDue = runCatching {

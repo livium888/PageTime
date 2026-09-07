@@ -8,6 +8,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.review.ReviewReminderWorker
 import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.LumenModelStore
@@ -250,6 +251,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             }
             container.settingsRepository.lumenModelUrl()?.let { _lumenModelUrl.value = it }
             _lumenCloudRescue.value = container.settingsRepository.lumenCloudRescue()
+            _reviewReminders.value = container.settingsRepository.reviewReminders()
             _captureChars.value = container.settingsRepository.lumenCaptureChars()
         }
     }
@@ -294,6 +296,32 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             container.settingsRepository.setLumenCloudRescue(value)
             _lumenCloudRescue.value = value
+        }
+    }
+
+    /**
+     * Whether the app may tell the reader when a sitting is worth having.
+     *
+     * The decision of WHEN is not here — it is in ReviewReminder, which waits
+     * while waiting is cheap and speaks when the delay starts costing real
+     * memories. This is only the reader's permission to be spoken to at all.
+     */
+    private val _reviewReminders = MutableStateFlow(false)
+    val reviewReminders: StateFlow<Boolean> = _reviewReminders.asStateFlow()
+
+    fun setReviewReminders(value: Boolean) {
+        viewModelScope.launch {
+            container.settingsRepository.setReviewReminders(value)
+            _reviewReminders.value = value
+            val context = getApplication<android.app.Application>()
+            if (value) {
+                ReviewReminderWorker.schedule(context)
+            } else {
+                // Cancelled rather than left running and told to stay quiet.
+                // Periodic work that wakes up only to decide it has nothing to
+                // say is still the reader's battery.
+                ReviewReminderWorker.cancel(context)
+            }
         }
     }
 

@@ -6,6 +6,11 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.pagetime.app.data.AppContainer
 import com.pagetime.app.data.AppHttp
+import com.pagetime.app.data.review.ReviewReminderWorker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -18,6 +23,14 @@ class PageTimeApp : Application(), ImageLoaderFactory {
     lateinit var container: AppContainer
         private set
 
+    /**
+     * For the little startup work that outlives no screen.
+     *
+     * SupervisorJob so one failure here cannot cancel the rest; it lives as
+     * long as the process, which is the point.
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override fun onCreate() {
         super.onCreate()
         // Every uncaught exception (Kotlin or native, when the runtime routes it
@@ -26,6 +39,21 @@ class PageTimeApp : Application(), ImageLoaderFactory {
         // of guessing at the cause.
         installCrashLogger()
         container = AppContainer(this)
+        // Re-armed at every launch: WorkManager keeps periodic work across
+        // reboots, but a reader who reinstalls or clears data would otherwise
+        // have the setting still on and nothing scheduled behind it. KEEP
+        // means an existing schedule is left alone rather than restarted.
+        scheduleReviewReminders()
+    }
+
+    private fun scheduleReviewReminders() {
+        appScope.launch {
+            runCatching {
+                if (container.settingsRepository.reviewReminders()) {
+                    ReviewReminderWorker.schedule(this@PageTimeApp)
+                }
+            }
+        }
     }
 
     /** Cover images go through the same resilient HTTP client as the catalog. */

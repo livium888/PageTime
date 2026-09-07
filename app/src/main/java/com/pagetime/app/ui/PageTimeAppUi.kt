@@ -73,7 +73,12 @@ private val tabs = listOf(
 )
 
 @Composable
-fun PageTimeAppUi(openReader: Boolean) {
+fun PageTimeAppUi(
+    openReader: Boolean,
+    /** The launch came from a review reminder; go straight to the sitting. */
+    openReview: Boolean = false,
+    onReviewOpened: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -86,6 +91,15 @@ fun PageTimeAppUi(openReader: Boolean) {
     LaunchedEffect(openReader) {
         if (openReader) {
             navController.navigate("reader/last") { launchSingleTop = true }
+        }
+    }
+
+    // Straight to the review, and the flag is consumed so a rotation does not
+    // fling the reader back here after they have navigated away.
+    LaunchedEffect(openReview) {
+        if (openReview) {
+            navController.navigate("review") { launchSingleTop = true }
+            onReviewOpened()
         }
     }
 

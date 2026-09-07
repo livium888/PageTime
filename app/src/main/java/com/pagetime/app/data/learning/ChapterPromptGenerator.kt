@@ -1,5 +1,6 @@
 package com.pagetime.app.data.learning
 
+import com.pagetime.app.data.AiUsageRepository
 import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.embed.ChapterTopics
 import com.pagetime.app.data.embed.EmbeddingModelStore
@@ -50,6 +51,7 @@ class ChapterPromptGenerator(
     private val cardDao: LearningCardDao,
     private val store: EmbeddingModelStore,
     private val gemini: GeminiLearningClient,
+    private val usage: AiUsageRepository? = null,
 ) {
 
     /** Whether this chapter could produce prompts at all. */
@@ -94,17 +96,35 @@ class ChapterPromptGenerator(
         }
 
         onStage(Stage.WRITING)
+        val passages = topics.map { it.text }
         val raws = runCatching {
-            gemini.generateChapterPrompts(
-                bookTitle = book.title,
-                chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
-                passages = topics.map { it.text },
-            )
+            // Logged like every other Gemini call, so the biggest new consumer
+            // of the reader's quota is not the one thing the usage screen
+            // cannot see.
+            val call: suspend () -> List<RawPrompt> = {
+                gemini.generateChapterPrompts(
+                    bookTitle = book.title,
+                    chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
+                    passages = passages,
+                )
+            }
+            if (usage != null) {
+                usage.track(
+                    bookId = book.id,
+                    operation = AiUsageRepository.OPERATION_CHAPTER_PROMPTS,
+                    model = gemini.currentModel(),
+                    inputCharacters = passages.sumOf { it.length },
+                    outputItems = { it.size },
+                    block = call,
+                )
+            } else {
+                call()
+            }
         }.getOrDefault(emptyList())
         if (raws.isEmpty()) return emptyList()
 
         onStage(Stage.CHECKING)
-        val verdict = ChapterPromptRules.sift(raws, topics.map { it.text })
+        val verdict = ChapterPromptRules.sift(raws, passages)
         if (verdict.accepted.isEmpty()) return emptyList()
 
         val now = System.currentTimeMillis()

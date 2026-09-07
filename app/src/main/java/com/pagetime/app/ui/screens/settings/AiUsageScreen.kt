@@ -99,12 +99,12 @@ fun AiUsageScreen(
             UsageSummaryCard(
                 title = "Today",
                 calls = stats.todayCalls,
-                inputTokens = stats.todayEstimatedInputTokens
+                tokens = stats.todayTotalTokens
             )
             UsageSummaryCard(
                 title = "All time",
                 calls = stats.totalCalls,
-                inputTokens = stats.estimatedInputTokens
+                tokens = stats.totalTokens
             )
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -124,12 +124,52 @@ fun AiUsageScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Tokens used", style = MaterialTheme.typography.titleMedium)
+                    if (stats.hasMeasuredTokens) {
+                        UsageRow("Sent (prompt)", formatNumber(stats.promptTokens))
+                        UsageRow("Answers", formatNumber(stats.outputTokens))
+                        if (stats.thinkingTokens > 0) {
+                            // Billed as output on a thinking model, and often
+                            // the larger half. Shown separately rather than
+                            // folded in, because a reader comparing this with
+                            // an invoice needs to see where the bulk went.
+                            UsageRow("Model reasoning", formatNumber(stats.thinkingTokens))
+                        }
+                        if (stats.cachedTokens > 0) {
+                            UsageRow("Cached (billed less)", formatNumber(stats.cachedTokens))
+                        }
+                        UsageRow("Total", formatNumber(stats.totalTokens))
+                        Text(
+                            "Counted by the API itself, not estimated. " +
+                                if (stats.unmeasuredCalls > 0) {
+                                    "${stats.unmeasuredCalls} earlier or on-device " +
+                                        "request(s) reported no counts and are not included."
+                                } else {
+                                    ""
+                                },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        Text(
+                            "No measured token counts yet. They are recorded from " +
+                                "each Gemini response; the on-device model reports none.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Input sent", style = MaterialTheme.typography.titleMedium)
                     UsageRow("Today", "${formatNumber(stats.todayInputCharacters)} characters")
                     UsageRow("All time", "${formatNumber(stats.inputCharacters)} characters")
-                    UsageRow("Estimated tokens", formatNumber(stats.estimatedInputTokens))
                     Text(
-                        "Token counts are estimates based on roughly four characters per token. The dashboard records request metadata, not your book text or API key.",
+                        "Characters, not tokens — kept for the on-device model, which " +
+                            "reports no counts. The dashboard records request metadata, " +
+                            "not your book text or API key.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -154,13 +194,13 @@ fun AiUsageScreen(
 }
 
 @Composable
-private fun UsageSummaryCard(title: String, calls: Int, inputTokens: Long) {
+private fun UsageSummaryCard(title: String, calls: Int, tokens: Long) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 UsageMetric(calls.toString(), "API calls")
-                UsageMetric(formatNumber(inputTokens), "est. input tokens")
+                UsageMetric(formatNumber(tokens), "tokens")
             }
         }
     }

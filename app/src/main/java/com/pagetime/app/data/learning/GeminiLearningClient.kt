@@ -4,6 +4,7 @@ import com.pagetime.app.BuildConfig
 import com.pagetime.app.data.AppHttp
 import com.pagetime.app.data.local.SettingsRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -273,7 +274,22 @@ class GeminiLearningClient(
                 }
                 response.use {
                     val body = it.body?.string().orEmpty()
-                    if (it.isSuccessful) return body
+                    if (it.isSuccessful) {
+                        // Measured, not estimated. Reported into the caller's
+                        // coroutine context rather than through a callback, so
+                        // two requests in flight at once cannot have their
+                        // tokens attributed to each other's log row. Never
+                        // allowed to break the call it is measuring.
+                        runCatching {
+                            val sink = currentCoroutineContext()[GeminiUsageSink]
+                            if (sink != null) {
+                                GeminiUsageParser.parse(body, currentModel())?.let { usage ->
+                                    sink.usage = usage
+                                }
+                            }
+                        }
+                        return body
+                    }
                     if (it.code !in RETRYABLE_CODES) {
                         val detail = body.take(240).replace(Regex("\\s+"), " ").trim()
                         error("Gemini request failed: HTTP ${it.code}${detail.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}")

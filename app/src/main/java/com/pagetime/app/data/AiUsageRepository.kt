@@ -2,6 +2,8 @@ package com.pagetime.app.data
 
 import com.pagetime.app.data.local.AiUsageDao
 import com.pagetime.app.data.local.AiUsageEntity
+import com.pagetime.app.data.learning.GeminiUsageSink
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
@@ -30,8 +32,11 @@ class AiUsageRepository(private val dao: AiUsageDao) {
                 createdAt = startedAt
             )
         )
+        // The sink travels with this call and no other, so two requests in
+        // flight cannot have their tokens attributed to each other's row.
+        val sink = GeminiUsageSink()
         return try {
-            val result = block()
+            val result = withContext(sink) { block() }
             dao.complete(
                 id = id,
                 status = STATUS_SUCCESS,
@@ -39,6 +44,19 @@ class AiUsageRepository(private val dao: AiUsageDao) {
                 secondaryItems = secondaryItems(result).coerceAtLeast(0),
                 completedAt = System.currentTimeMillis()
             )
+            // Left null when the API reported nothing — the on-device model, or
+            // a response with no usage block. Null is "not measured"; zero would
+            // be "measured, and free".
+            sink.usage?.let { usage ->
+                dao.recordTokens(
+                    id = id,
+                    promptTokens = usage.promptTokens,
+                    outputTokens = usage.outputTokens,
+                    thinkingTokens = usage.thinkingTokens,
+                    cachedTokens = usage.cachedTokens,
+                    totalTokens = usage.totalTokens,
+                )
+            }
             result
         } catch (error: Throwable) {
             dao.complete(
@@ -62,6 +80,7 @@ class AiUsageRepository(private val dao: AiUsageDao) {
         const val OPERATION_LUMEN = "lumen"
         const val OPERATION_GLOSS = "gloss"
         const val OPERATION_EXPLAIN = "explain"
+        const val OPERATION_CHAPTER_PROMPTS = "chapter_prompts"
         const val STATUS_PENDING = "pending"
         const val STATUS_SUCCESS = "success"
         const val STATUS_FAILED = "failed"
@@ -82,14 +101,27 @@ data class AiUsageStats(
     val inputCharacters: Long = 0,
     val todayCalls: Int = 0,
     val todayInputCharacters: Long = 0,
-    val lastCallAt: Long? = null
+    val lastCallAt: Long? = null,
+    /**
+     * Tokens as the API reported them, over the calls that reported any.
+     *
+     * These replace an estimate that divided characters by four and counted no
+     * output whatsoever. On a generation call the output is a large share of
+     * the bill, and on gemini-2.5-flash the model's own reasoning is billed as
+     * output too — so the old number was not merely imprecise, it was low.
+     */
+    val promptTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val thinkingTokens: Long = 0,
+    val cachedTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val todayTotalTokens: Long = 0,
+    /** Calls that reported nothing, so the totals above can be honest about coverage. */
+    val unmeasuredCalls: Int = 0
 ) {
-    /** Input tokens are only an estimate; Gemini's billing tokenizer is not exposed here. */
-    val estimatedInputTokens: Long get() = inputCharacters / CHARS_PER_TOKEN
-    val todayEstimatedInputTokens: Long get() = todayInputCharacters / CHARS_PER_TOKEN
+    val hasMeasuredTokens: Boolean get() = totalTokens > 0
 
     companion object {
-        private const val CHARS_PER_TOKEN = 4L
 
         fun from(events: List<AiUsageEntity>, now: Instant = Instant.now()): AiUsageStats {
             val todayStart = now.atZone(ZoneId.systemDefault())
@@ -102,7 +134,8 @@ data class AiUsageStats(
                 AiUsageRepository.OPERATION_REFORMAT,
                 AiUsageRepository.OPERATION_LUMEN,
                 AiUsageRepository.OPERATION_GLOSS,
-                AiUsageRepository.OPERATION_EXPLAIN
+                AiUsageRepository.OPERATION_EXPLAIN,
+                AiUsageRepository.OPERATION_CHAPTER_PROMPTS
             )
             val analyzed = events.filter { it.operation in trackedOps }
             val today = analyzed.filter { it.createdAt >= todayStart }
@@ -124,7 +157,19 @@ data class AiUsageStats(
                 inputCharacters = analyzed.sumOf { it.inputCharacters.toLong() },
                 todayCalls = today.size,
                 todayInputCharacters = today.sumOf { it.inputCharacters.toLong() },
-                lastCallAt = analyzed.maxOfOrNull { it.createdAt }
+                lastCallAt = analyzed.maxOfOrNull { it.createdAt },
+                promptTokens = analyzed.sumOf { (it.promptTokens ?: 0).toLong() },
+                outputTokens = analyzed.sumOf { (it.outputTokens ?: 0).toLong() },
+                thinkingTokens = analyzed.sumOf { (it.thinkingTokens ?: 0).toLong() },
+                cachedTokens = analyzed.sumOf { (it.cachedTokens ?: 0).toLong() },
+                totalTokens = analyzed.sumOf { (it.totalTokens ?: 0).toLong() },
+                todayTotalTokens = today.sumOf { (it.totalTokens ?: 0).toLong() },
+                // Successful calls the API told us nothing about: the on-device
+                // model, and every row written before this was measured. Named
+                // so a total can say what it does not cover.
+                unmeasuredCalls = analyzed.count {
+                    it.status == AiUsageRepository.STATUS_SUCCESS && it.totalTokens == null
+                }
             )
         }
     }

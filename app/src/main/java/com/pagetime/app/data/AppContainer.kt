@@ -67,7 +67,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_14_15,
                 AppDatabase.MIGRATION_15_16,
                 AppDatabase.MIGRATION_16_17,
-                AppDatabase.MIGRATION_17_18
+                AppDatabase.MIGRATION_17_18,
+                AppDatabase.MIGRATION_18_19
             )
             .build()
 
@@ -171,6 +172,7 @@ class AppContainer(context: Context) {
             cardDao = database.learningCardDao(),
             store = embeddingModelStore,
             gemini = geminiLearningClient,
+            usage = aiUsageRepository,
         )
 
     val lumenRepository = LumenRepository(

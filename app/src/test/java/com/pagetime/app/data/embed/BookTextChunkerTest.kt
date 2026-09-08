@@ -167,6 +167,80 @@ class BookTextChunkerTest {
     // search has been running on vectors of word fragments too.
 
     @Test
+    fun `no chunk begins in the middle of a sentence`() {
+        // Snapping the overlap to a WORD boundary stopped chunks reading
+        // "eillance are no longer…" but left them reading "masses, who could
+        // now hold even the most brazen leader accountable…". Still a fragment
+        // to reason from, and still looks broken to anyone who sees it.
+        val paragraph = (1..40).joinToString(" ") {
+            "Surveillance of communications and sophisticated tracking by " +
+                "corporations reshaped expectations of privacy in period $it."
+        }
+        val chunks = BookTextChunker.chunk(paragraph)
+        assertTrue("expected a split paragraph", chunks.size > 3)
+
+        for (chunk in chunks) {
+            if (chunk.start == 0) continue
+            // Everything before it on this line is a finished sentence: the
+            // two characters preceding a chunk are a terminator and a space.
+            val terminator = paragraph[chunk.start - 2]
+            assertTrue(
+                "chunk at ${chunk.start} begins mid-sentence: ${chunk.text.take(50)}",
+                terminator in charArrayOf('.', '!', '?') &&
+                    paragraph[chunk.start - 1].isWhitespace(),
+            )
+        }
+    }
+
+    @Test
+    fun `chunks never leave a gap between them`() {
+        // The invariant the stepping logic must not break. Overlap is now
+        // measured in sentences, and a sentence too long to repeat gets none
+        // at all — which is safe only so long as the next chunk begins exactly
+        // where the last ended. A gap would drop text from the index with
+        // nothing anywhere to say so.
+        val text = "A sentence of ordinary length that says something. ".repeat(30) +
+            "Then one enormously long sentence " + "of many clauses ".repeat(40) + "ending here."
+        val chunks = BookTextChunker.chunk(text)
+        for (i in 1 until chunks.size) {
+            assertTrue(
+                "gap between chunk ${i - 1} and $i",
+                chunks[i].start <= chunks[i - 1].end,
+            )
+        }
+    }
+
+    @Test
+    fun `a finished sentence is repeated in the next chunk`() {
+        // Not merely a clean start: an idea spanning a boundary has to be
+        // findable from either side, which is what the overlap was always
+        // for.
+        val paragraph = (1..40).joinToString(" ") {
+            "Surveillance of communications and sophisticated tracking by " +
+                "corporations reshaped expectations of privacy in period $it."
+        }
+        val chunks = BookTextChunker.chunk(paragraph)
+        for (i in 1 until chunks.size) {
+            val overlap = chunks[i - 1].end - chunks[i].start
+            assertTrue(
+                "chunks $i and ${i - 1} overlap by only $overlap",
+                overlap >= BookTextChunker.OVERLAP_CHARS,
+            )
+        }
+    }
+
+    @Test
+    fun `prose without sentence endings still breaks on words`() {
+        // The fallback. A page of unpunctuated text has no sentence to snap
+        // to, and a mid-word start is still worse than none.
+        val paragraph = "alpha bravo charlie delta echo foxtrot golf ".repeat(40).trim()
+        for (chunk in BookTextChunker.chunk(paragraph)) {
+            val clean = chunk.start == 0 || paragraph[chunk.start - 1].isWhitespace()
+            assertTrue("chunk at ${chunk.start} begins mid-word", clean)
+        }
+    }
+
+    @Test
     fun `no chunk begins in the middle of a word`() {
         // The overlap stepped back a fixed 80 CHARACTERS from the previous
         // cut, which lands wherever it lands. Every chunk after the first of a

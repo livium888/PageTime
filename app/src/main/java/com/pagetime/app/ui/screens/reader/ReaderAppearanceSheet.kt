@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pagetime.app.data.local.ReaderSettings
@@ -91,6 +90,8 @@ fun ReaderAppearanceSheet(
     var useSystemBrightness by remember(settings.brightness == null) {
         mutableStateOf(settings.brightness == null)
     }
+    var warmth by remember(settings.warmth) { mutableStateOf(settings.warmth) }
+    var nightDim by remember(settings.nightDim) { mutableStateOf(settings.nightDim) }
 
     fun apply() {
         onApply(
@@ -102,7 +103,9 @@ fun ReaderAppearanceSheet(
                 marginDp = margin,
                 alignment = alignment,
                 conceptHints = conceptHints,
-                brightness = brightness.takeIf { !useSystemBrightness }
+                brightness = brightness.takeIf { !useSystemBrightness },
+                warmth = warmth,
+                nightDim = nightDim
             )
         )
     }
@@ -124,13 +127,22 @@ fun ReaderAppearanceSheet(
             )
             Spacer(Modifier.height(8.dp))
 
+            // Built from the live control values rather than from the saved
+            // settings, so the preview shows what a drag is DOING, not what was
+            // last committed.
             AppearancePreview(
-                text = SAMPLE_TEXT,
-                fontSize = fontSize,
-                lineHeight = lineHeight,
-                fontFamily = fontFamily,
-                theme = theme,
-                alignment = alignment
+                settings = ReaderSettings(
+                    fontSizeSp = fontSize,
+                    lineHeight = lineHeight,
+                    fontFamily = fontFamily,
+                    theme = theme,
+                    marginDp = margin,
+                    alignment = alignment,
+                    conceptHints = conceptHints,
+                    brightness = brightness.takeIf { !useSystemBrightness },
+                    warmth = warmth,
+                    nightDim = nightDim,
+                )
             )
 
             AppearanceSectionLabel("Text size")
@@ -305,42 +317,91 @@ fun ReaderAppearanceSheet(
                 valueRange = 0.15f..1f,
                 enabled = !useSystemBrightness
             )
+
+            // The two controls that do most of what software can do to stop a
+            // screen reading as a light source. Neither changes the backlight:
+            // they lay warm, dim air over the page, which is the only way to
+            // go below the brightness floor the display driver enforces.
+            AppearanceSectionLabel("Paper feel")
+            Text(
+                if (warmth <= 0f) {
+                    "Warmth — off"
+                } else {
+                    "Warmth — ${(warmth * 100).toInt()}%"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Screens are daylight-white; paper indoors is lit by something " +
+                    "warmer. A little amber is most of the difference.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = warmth,
+                onValueChange = { warmth = it },
+                onValueChangeFinished = { apply() },
+                valueRange = 0f..1f,
+            )
+
+            Text(
+                if (nightDim <= 0f) {
+                    "Dim further — off"
+                } else {
+                    "Dim further — ${(nightDim * 100).toInt()}%"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "For reading in the dark, below the lowest brightness Android " +
+                    "allows. Only affects this book, never the whole phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = nightDim,
+                onValueChange = { nightDim = it },
+                onValueChangeFinished = { apply() },
+                // The same constant the clamp uses, so the slider cannot offer
+                // a value the settings would silently refuse.
+                valueRange = 0f..ReaderSettings.MAX_NIGHT_DIM,
+            )
         }
     }
 }
 
 @Composable
 private fun AppearancePreview(
-    text: String,
-    fontSize: Float,
-    lineHeight: Float,
-    fontFamily: String,
-    theme: String,
-    alignment: String
+    settings: ReaderSettings,
 ) {
-    val palette = paletteFor(theme)
-    Surface(
-        color = palette.background,
-        contentColor = palette.text,
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text,
-                fontFamily = readerFontFamily(fontFamily),
-                fontSize = fontSize.sp,
-                lineHeight = (fontSize * lineHeight).sp,
-                textAlign = if (alignment == "justify") TextAlign.Justify else TextAlign.Start,
-                letterSpacing = (fontSize * 0.015f).sp,
-                color = palette.text
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Aa · ${fontSize.toInt()}pt · ${FontWeight.Normal.weight}",
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.secondary
-            )
+    val palette = paletteFor(settings.theme)
+    // The veil sits over the sample exactly as it sits over the page, so
+    // warmth and dimming can be judged while they are being dragged rather
+    // than guessed at. The sheet is its own window, so the real page behind is
+    // only partly visible and updates on release.
+    Box {
+        Surface(
+            color = palette.background,
+            contentColor = palette.text,
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    text = SAMPLE_TEXT,
+                    // The reader's own style, so what is previewed is what is
+                    // rendered — hyphenation and line breaking included.
+                    style = readerTextStyle(MaterialTheme.typography.bodyLarge, settings),
+                    color = palette.text,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Aa · ${settings.fontSizeSp.toInt()}pt · ${FontWeight.Normal.weight}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.secondary
+                )
+            }
         }
+        PaperVeil(settings, Modifier.matchParentSize())
     }
 }
 

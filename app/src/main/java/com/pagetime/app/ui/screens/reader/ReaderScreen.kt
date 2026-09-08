@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -547,31 +548,94 @@ fun ReaderScreen(
             )
         }
 
-        AnimatedVisibility(
-            visible = controlsVisible,
+        // THE FOOT OF THE PAGE, WHICH IS WHERE A QUESTION BELONGS
+        //
+        // The prompt used to be emitted after the reading surface closed, with
+        // no layout parent and no alignment, so it landed at the TOP of the
+        // screen — a lid over the text rather than a footer under it. Reported
+        // from the device, and rightly: a question about the paragraph you
+        // just read, floating above a paragraph you have not read yet, reads
+        // as a question about the wrong thing.
+        //
+        // Quantum Country never has this problem because its prompts are
+        // blocks in the document, always below the section they test. This is
+        // the closest a paginated reader gets without owning pagination: the
+        // question sits under the page, after the text, in the reading order a
+        // person expects.
+        //
+        // One column, so the status line, the question and the bottom bar
+        // stack in that order instead of covering one another — and so the
+        // question rises above the bar when the controls are showing rather
+        // than hiding behind it.
+        Column(
             modifier = Modifier.align(Alignment.BottomCenter),
-            enter = fadeIn(),
-            exit = fadeOut()
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(horizontalAlignment = Alignment.End) {
-                ReaderBottomBar(
-                    palette = palette,
-                    sessionSeconds = sessionSeconds,
-                    creditedSeconds = creditedSeconds,
-                    progress = progress,
-                    guardState = guardState,
-                    chapterLabel = chapterLabel,
-                    pageLabel = textPageLabel,
-                    chapterCount = publication?.readingOrder?.size,
-                    mode = progressMode,
-                    onModeToggle = {
-                        progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
-                            ProgressIndicatorMode.TIME_LEFT
-                        } else {
-                            ProgressIndicatorMode.PERCENT
-                        }
-                    }
-                )
+            // Clear of the gesture bar when the chrome is hidden. With the
+            // chrome showing, the bar below already occupies that space, so
+            // padding here as well would float the question needlessly high.
+            // The card carries buttons; one sitting under the navigation bar
+            // is one the reader cannot answer.
+            Column(
+                modifier = if (controlsVisible) Modifier else Modifier.navigationBarsPadding(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // Progress and outcome, in the reading surface where the reader is
+                // looking — not in the dropdown that closed the moment they
+                // tapped it.
+                promptState.message?.let { message ->
+                    ChapterPromptStatus(
+                        message = message,
+                        working = promptState.generating,
+                        pendingCount = promptState.pending.size,
+                        detail = promptState.result?.detail,
+                        onSeeQuestions = { showPromptList = true },
+                        onSeeCoverage = {
+                            vm.loadChapterCoverage()
+                            showCoverage = true
+                        },
+                        onDismiss = vm::clearPromptMessage,
+                    )
+                }
+
+                // A question about the paragraph just read. Never a dialog: it has
+                // to be ignorable, because the one thing this must not become is a
+                // toll booth on the page turn.
+                promptState.surfaced?.let { card ->
+                    ChapterPromptCard(
+                        card = card,
+                        stillAhead = promptState.stillAhead,
+                        onKeep = { vm.keepPrompt(card.id) },
+                        onSkip = { vm.skipPrompt(card.id) },
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Column(horizontalAlignment = Alignment.End) {
+                    ReaderBottomBar(
+                            palette = palette,
+                            sessionSeconds = sessionSeconds,
+                            creditedSeconds = creditedSeconds,
+                            progress = progress,
+                            guardState = guardState,
+                            chapterLabel = chapterLabel,
+                            pageLabel = textPageLabel,
+                            chapterCount = publication?.readingOrder?.size,
+                            mode = progressMode,
+                            onModeToggle = {
+                                progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
+                                    ProgressIndicatorMode.TIME_LEFT
+                                } else {
+                                    ProgressIndicatorMode.PERCENT
+                                }
+                            }
+                        )
+                }
             }
         }
 
@@ -657,26 +721,6 @@ fun ReaderScreen(
         )
     }
 
-    // A question about the paragraph just read. Rendered beside the existing
-    // chapter card rather than as a dialog: it must be ignorable, because the
-    // one thing it must never become is a toll booth on the page turn.
-    // Progress and outcome, in the reading surface where the reader is looking
-    // — not in the dropdown that closed the moment they tapped it.
-    promptState.message?.let { message ->
-        ChapterPromptStatus(
-            message = message,
-            working = promptState.generating,
-            pendingCount = promptState.pending.size,
-            detail = promptState.result?.detail,
-            onSeeQuestions = { showPromptList = true },
-            onSeeCoverage = {
-                vm.loadChapterCoverage()
-                showCoverage = true
-            },
-            onDismiss = vm::clearPromptMessage,
-        )
-    }
-
     if (confirmRegenerate) {
         // Confirmed rather than immediate: it spends another API call, and the
         // reader should know what it does and does not throw away.
@@ -721,15 +765,6 @@ fun ReaderScreen(
                 vm.makeCardsForPassages(ordinals)
             },
             onDismiss = { showCoverage = false },
-        )
-    }
-
-    promptState.surfaced?.let { card ->
-        ChapterPromptCard(
-            card = card,
-            stillAhead = promptState.stillAhead,
-            onKeep = { vm.keepPrompt(card.id) },
-            onSkip = { vm.skipPrompt(card.id) },
         )
     }
 

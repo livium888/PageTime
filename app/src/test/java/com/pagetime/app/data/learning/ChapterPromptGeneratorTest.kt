@@ -41,14 +41,14 @@ class ChapterPromptGeneratorTest {
      * yields is a function of its LENGTH, so a fixture of tightly packed
      * chunks selects only a handful and never reaches a second batch.
      */
-    private fun chunks(count: Int): List<BookChunkEmbeddingEntity> =
+    private fun chunks(count: Int, ordinalBase: Int = 0): List<BookChunkEmbeddingEntity> =
         (0 until count).map { i ->
             val v = FloatArray(3)
             v[i % 3] = 1f
             BookChunkEmbeddingEntity(
                 bookId = "b",
                 chapterIndex = 0,
-                ordinal = i,
+                ordinal = ordinalBase + i,
                 startOffset = i * 3000,
                 endOffset = i * 3000 + 2900,
                 text = "Passage number $i states that widget $i weighs $i kilograms exactly.",
@@ -164,6 +164,9 @@ class ChapterPromptGeneratorTest {
                 rows.removeAll { it.ordinal == p.ordinal }
                 rows += p
             }
+        }
+        override suspend fun deleteForChapter(bookId: String, chapterIndex: Int) {
+            rows.removeAll { it.bookId == bookId && it.chapterIndex == chapterIndex }
         }
         override suspend fun forChapter(bookId: String, chapterIndex: Int) =
             rows.sortedBy { it.startOffset }
@@ -346,5 +349,57 @@ class ChapterPromptGeneratorTest {
             assertEquals(ChapterPromptGenerator.Outcome.MADE, second.outcome)
         }
         assertEquals(2, writer.sentPassages.size)
+    }
+
+    @Test
+    fun `regenerating replaces the record instead of stacking on it`() {
+        // Reported from the device: a sheet claiming 45 passages for a chapter
+        // that can send at most 24, with duplicate rows and stale mid-sentence
+        // text among them.
+        //
+        // Upserting by ordinal is not enough. An ordinal identifies a chunk
+        // within ONE index, and re-indexing renumbers them, so the previous
+        // index's rows sat beside the new ones and the reader saw both
+        // generations at once.
+        val passages = Passages()
+
+        // First generation, over one index.
+        runBlocking {
+            generator(chunks(8), Writer(), passages).generate(book(), 0, "One")
+        }
+        val first = passages.rows.size
+        assertTrue("expected a first record", first > 0)
+
+        // Re-indexed: same chapter, different chunk boundaries and ordinals.
+        // The same chapter after re-indexing: identical text, renumbered
+        // chunks, which is exactly what a chunker change produces.
+        val renumbered = chunks(8, ordinalBase = 100)
+        runBlocking {
+            generator(renumbered, Writer(), passages).generate(book(), 0, "One")
+        }
+
+        assertEquals(
+            "stale rows survived: ${passages.rows.size} for a chapter of $first",
+            first,
+            passages.rows.size,
+        )
+        assertTrue(
+            "the record should describe the current index",
+            passages.rows.all { it.ordinal >= 100 },
+        )
+    }
+
+    @Test
+    fun `a targeted re-ask leaves the rest of the record alone`() {
+        // The other direction. Asking again for six passages must not erase
+        // what is known about the other eighteen.
+        val passages = Passages()
+        runBlocking {
+            val g = generator(chunks(16), Writer(), passages)
+            g.generate(book(), 0, "One")
+            val before = passages.rows.size
+            g.generateForPassages(book(), 0, "One", setOf(passages.rows.first().ordinal))
+            assertEquals(before, passages.rows.size)
+        }
     }
 }

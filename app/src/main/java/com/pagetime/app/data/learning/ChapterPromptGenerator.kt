@@ -264,7 +264,7 @@ class ChapterPromptGenerator(
             )
         }
         if (offered == 0) {
-            recordPassages(book, chapterIndex, key, topics, emptyList(), refusals, unreached)
+            recordPassages(book, chapterIndex, key, topics, emptyList(), refusals, unreached, !insist)
             return Result(
                 Outcome.MODEL_RETURNED_NOTHING,
                 asked = topics.size,
@@ -275,7 +275,7 @@ class ChapterPromptGenerator(
             )
         }
         if (accepted.isEmpty()) {
-            recordPassages(book, chapterIndex, key, topics, accepted, refusals, unreached)
+            recordPassages(book, chapterIndex, key, topics, accepted, refusals, unreached, !insist)
             return Result(
                 Outcome.ALL_REJECTED,
                 asked = topics.size,
@@ -321,7 +321,7 @@ class ChapterPromptGenerator(
         }
 
         runCatching { cardDao.insertAll(cards) }
-        recordPassages(book, chapterIndex, key, topics, accepted, refusals, unreached)
+        recordPassages(book, chapterIndex, key, topics, accepted, refusals, unreached, !insist)
         return Result(
             Outcome.MADE,
             cards = cards,
@@ -350,6 +350,14 @@ class ChapterPromptGenerator(
         accepted: List<Pair<RawPrompt, TopicPassage>>,
         refusals: Map<Int, PromptRejection>,
         unreached: Set<Int>,
+        /**
+         * Whether this run covered the whole chapter.
+         *
+         * A full generation REPLACES the chapter's record; a targeted re-ask
+         * covers only the passages the reader picked and must leave the rest
+         * of the record alone.
+         */
+        replaceAll: Boolean,
     ) {
         val dao = passageDao ?: return
         val made = accepted.groupingBy { it.second.ordinal }.eachCount()
@@ -380,7 +388,13 @@ class ChapterPromptGenerator(
                 updatedAt = now,
             )
         }
-        runCatching { dao.upsertAll(rows) }
+        runCatching {
+            // Wholesale, not merged. Ordinals number chunks within one index,
+            // and re-indexing renumbers them, so merging leaves the previous
+            // index's rows in place beside the new ones.
+            if (replaceAll) dao.deleteForChapter(book.id, chapterIndex)
+            dao.upsertAll(rows)
+        }
     }
 
     /** What became of every passage the last generation sent. */

@@ -28,6 +28,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LearningCardEntity::class,
         LearningReviewLogEntity::class,
         LearningGenerationEntity::class,
+        ChapterPassageEntity::class,
         ConceptEntity::class,
         ConceptRelationshipEntity::class,
         AiUsageEntity::class,
@@ -36,7 +37,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CardEmbeddingEntity::class,
         BookChunkEmbeddingEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,6 +46,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun usageEventDao(): UsageEventDao
     abstract fun learningCardDao(): LearningCardDao
     abstract fun learningReviewLogDao(): LearningReviewLogDao
+    abstract fun chapterPassageDao(): ChapterPassageDao
     abstract fun learningGenerationDao(): LearningGenerationDao
     abstract fun conceptDao(): ConceptDao
     abstract fun conceptRelationshipDao(): ConceptRelationshipDao
@@ -256,6 +258,34 @@ abstract class AppDatabase : RoomDatabase() {
          * on-device model reports nothing, so null means "not measured" while
          * zero would mean "measured, and free".
          */
+        /**
+         * What happened to each passage, so a disappointing chapter can be
+         * explained and argued with.
+         *
+         * A new table rather than columns on an existing one: this is a record
+         * of one generation attempt, it is replaced wholesale on the next, and
+         * it is derived data that can be dropped without losing anything the
+         * reader made.
+         */
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS chapter_passages (" +
+                        "bookId TEXT NOT NULL, chapterIndex INTEGER NOT NULL, " +
+                        "ordinal INTEGER NOT NULL, startOffset INTEGER NOT NULL, " +
+                        "endOffset INTEGER NOT NULL, text TEXT NOT NULL, " +
+                        "progression REAL NOT NULL, cardsMade INTEGER NOT NULL, " +
+                        "outcome TEXT, detail TEXT, generationKey TEXT NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL, " +
+                        "PRIMARY KEY(bookId, chapterIndex, ordinal))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_chapter_passages_bookId_chapterIndex " +
+                        "ON chapter_passages(bookId, chapterIndex)"
+                )
+            }
+        }
+
         val MIGRATION_18_19 = object : Migration(18, 19) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE ai_usage_events ADD COLUMN promptTokens INTEGER")

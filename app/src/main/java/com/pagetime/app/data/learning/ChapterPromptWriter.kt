@@ -40,5 +40,13 @@ interface ChapterPromptWriter {
         bookTitle: String,
         chapterTitle: String,
         passages: List<String>,
+        /**
+         * The reader hand-picked these passages and wants a card from each.
+         *
+         * Turns the instruction's ceiling into a floor. Declining a passage is
+         * the right default when the app chose it and the wrong answer when a
+         * person did.
+         */
+        insist: Boolean = false,
     ): List<RawPrompt>
 }

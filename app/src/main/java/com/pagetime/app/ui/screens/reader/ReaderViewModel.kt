@@ -1202,6 +1202,71 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun regenerateChapterPrompts() = runGeneration(fresh = true)
 
+    /**
+     * Loads what became of each passage the last generation sent.
+     *
+     * Read on demand rather than kept in the reading state: it is a diagnostic
+     * the reader opens occasionally, and holding two dozen paragraphs of text
+     * in memory for every chapter they walk past is not worth it.
+     */
+    fun loadChapterCoverage() {
+        val b = _book.value ?: return
+        val chapterIndex = _promptState.value.chapterIndex
+        viewModelScope.launch {
+            val rows = chapterPrompts.passages(b, chapterIndex)
+            _promptState.value = _promptState.value.copy(coverage = rows)
+        }
+    }
+
+    /**
+     * The reader disagreed: write a question for these passages.
+     *
+     * Additive. Nothing already made is thrown away — the reader is asking for
+     * more from paragraphs that produced none, not for a different set.
+     */
+    fun makeCardsForPassages(ordinals: Set<Int>) {
+        val b = _book.value ?: return
+        if (promptJob?.isActive == true || ordinals.isEmpty()) return
+        val chapterIndex = _promptState.value.chapterIndex
+        _promptState.value = _promptState.value.copy(generating = true, stage = null, result = null)
+        promptJob = viewModelScope.launch {
+            try {
+                val onStage: (ChapterPromptGenerator.Stage) -> Unit = { stage ->
+                    _promptState.value = _promptState.value.copy(stage = stage)
+                }
+                val result = chapterPrompts.generateForPassages(
+                    b, chapterIndex, null, ordinals, onStage,
+                )
+                // The chapter's pending set is re-read rather than replaced:
+                // this run only covers the chosen passages, and overwriting
+                // would drop every question the earlier run had made.
+                val pending = chapterPrompts.pending(b, chapterIndex)
+                val state = _promptState.value
+                _promptState.value = state.copy(
+                    pending = pending,
+                    result = result,
+                    coverage = chapterPrompts.passages(b, chapterIndex),
+                    surfacedId = PromptSurfacing.next(
+                        pending.map {
+                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
+                        },
+                        state.progression,
+                        judgedPrompts,
+                    )?.id,
+                    stillAhead = PromptSurfacing.remaining(
+                        pending.map {
+                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
+                        },
+                        state.progression,
+                        judgedPrompts,
+                    ),
+                )
+            } finally {
+                _promptState.value = _promptState.value.copy(generating = false, stage = null)
+            }
+        }
+    }
+
     private fun runGeneration(fresh: Boolean) {
         val b = _book.value ?: return
         if (promptJob?.isActive == true) return
@@ -1222,6 +1287,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _promptState.value = state.copy(
                     pending = result.cards,
                     result = result,
+                    coverage = chapterPrompts.passages(b, chapterIndex),
                     // Anything already behind the reader can show at once
                     // rather than waiting for the next page turn.
                     surfacedId = PromptSurfacing.next(

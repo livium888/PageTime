@@ -44,6 +44,8 @@ fun ChapterPromptStatus(
     /** The verbatim failure, when there was one, for copying rather than retyping. */
     detail: String? = null,
     onSeeQuestions: () -> Unit,
+    /** Opens the record of what every passage produced, and why. */
+    onSeeCoverage: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -83,6 +85,13 @@ fun ChapterPromptStatus(
                         // "Where are they saved?" deserves an answer in the UI
                         // rather than a promise that they will turn up later.
                         TextButton(onClick = onSeeQuestions) { Text("See them") }
+                    }
+                    // Offered right where a thin result is reported. A reader
+                    // told "3 questions ready" from twenty-four passages should
+                    // not have to go hunting through a menu to find out what
+                    // happened to the other twenty-one.
+                    if (!working && onSeeCoverage != null) {
+                        TextButton(onClick = onSeeCoverage) { Text("What was skipped") }
                     }
                     TextButton(onClick = onDismiss) { Text("Dismiss") }
                 }

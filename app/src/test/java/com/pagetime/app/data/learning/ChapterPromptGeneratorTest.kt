@@ -3,6 +3,9 @@ package com.pagetime.app.data.learning
 import com.pagetime.app.data.local.BookChunkEmbeddingDao
 import com.pagetime.app.data.local.BookChunkEmbeddingEntity
 import com.pagetime.app.data.local.BookEntity
+import com.pagetime.app.data.local.ChapterPassageDao
+import com.pagetime.app.data.local.ChapterPassageEntity
+import com.pagetime.app.data.local.PassageOutcome
 import com.pagetime.app.data.local.LearningCardDao
 import com.pagetime.app.data.local.LearningCardEntity
 import kotlinx.coroutines.flow.Flow
@@ -83,14 +86,18 @@ class ChapterPromptGeneratorTest {
         private val script: MutableList<Result<List<RawPrompt>>> = mutableListOf(),
     ) : ChapterPromptWriter {
         val sentPassages = mutableListOf<List<String>>()
+        /** Whether the reader hand-picked the passages in each request. */
+        val insisted = mutableListOf<Boolean>()
         override fun hasKey() = true
         override fun currentModel() = "gemini-2.5-flash"
         override suspend fun generateChapterPrompts(
             bookTitle: String,
             chapterTitle: String,
             passages: List<String>,
+            insist: Boolean,
         ): List<RawPrompt> {
             sentPassages += passages
+            insisted += insist
             return (script.removeFirstOrNull() ?: Result.success(emptyList())).getOrThrow()
         }
     }
@@ -143,8 +150,29 @@ class ChapterPromptGeneratorTest {
         type = RawPrompt.TYPE_QA,
     )
 
-    private fun generator(rows: List<BookChunkEmbeddingEntity>, writer: Writer) =
-        ChapterPromptGenerator(Chunks(rows), Cards(), { model }, writer, null)
+    private fun generator(
+        rows: List<BookChunkEmbeddingEntity>,
+        writer: Writer,
+        passages: Passages = Passages(),
+    ) = ChapterPromptGenerator(Chunks(rows), Cards(), { model }, writer, null, passages)
+
+    /** In-memory record of what became of each passage. */
+    private class Passages : ChapterPassageDao {
+        val rows = mutableListOf<ChapterPassageEntity>()
+        override suspend fun upsertAll(passages: List<ChapterPassageEntity>) {
+            passages.forEach { p ->
+                rows.removeAll { it.ordinal == p.ordinal }
+                rows += p
+            }
+        }
+        override suspend fun forChapter(bookId: String, chapterIndex: Int) =
+            rows.sortedBy { it.startOffset }
+        override fun observeForChapter(
+            bookId: String,
+            chapterIndex: Int,
+        ): Flow<List<ChapterPassageEntity>> = flowOf(rows)
+        override suspend fun deleteForBook(bookId: String) = rows.clear()
+    }
 
     @Test
     fun `a long chapter is split into several requests`() {
@@ -217,5 +245,106 @@ class ChapterPromptGeneratorTest {
         assertEquals(1, result.cards.size)
         assertEquals(2, result.offered)
         assertEquals(1, result.rejected)
+    }
+
+    // What became of each passage
+    // ===========================
+    //
+    // Reported from the device: 24 passages sent, 2 cards back, and no way to
+    // find out why. The counts existed; the reasons were thrown away at the
+    // moment they were known.
+
+    @Test
+    fun `a passage the model ignored is recorded as skipped, not rejected`() {
+        // The distinction that matters. A rejection is the passage's fault or
+        // the model's; being ignored entirely is usually the instructions'.
+        val passages = Passages()
+        val writer = Writer(mutableListOf(Result.success(listOf(promptFor(0, 0)))))
+        runBlocking { generator(chunks(4), writer, passages).generate(book(), 0, "One") }
+
+        val used = passages.rows.filter { it.outcome == PassageOutcome.USED.name }
+        val skipped = passages.rows.filter { it.outcome == PassageOutcome.MODEL_SKIPPED.name }
+        assertEquals(1, used.size)
+        assertEquals(3, skipped.size)
+        assertEquals(1, used.single().cardsMade)
+    }
+
+    @Test
+    fun `a rejected passage keeps the rule that refused it`() {
+        val passages = Passages()
+        // A quote that is nowhere in the passage: the check the whole pipeline
+        // rests on, and the likeliest reason a chapter comes back thin.
+        val invented = promptFor(0, 0).copy(sourceQuote = "a sentence from another book entirely")
+        val writer = Writer(mutableListOf(Result.success(listOf(invented))))
+        val result = runBlocking {
+            generator(chunks(4), writer, passages).generate(book(), 0, "One")
+        }
+
+        val row = passages.rows.first { it.ordinal == 0 }
+        assertEquals(PassageOutcome.REJECTED.name, row.outcome)
+        assertEquals(PromptRejection.QUOTE_NOT_IN_PASSAGE.reason, row.detail)
+        // And the summary can now name the rule rather than just count it.
+        assertEquals(
+            PromptRejection.QUOTE_NOT_IN_PASSAGE,
+            result.topRejections.first().first,
+        )
+    }
+
+    @Test
+    fun `passages in a failed request are not blamed on the model`() {
+        val passages = Passages()
+        val writer = Writer(
+            mutableListOf(
+                Result.success(listOf(promptFor(0, 0))),
+                Result.failure(IllegalStateException("HTTP 503")),
+            )
+        )
+        runBlocking { generator(chunks(16), writer, passages).generate(book(), 0, "One") }
+
+        val unreached = passages.rows.filter { it.outcome == PassageOutcome.REQUEST_FAILED.name }
+        // The second batch of eight never arrived; saying the model declined
+        // them would send the reader looking for a problem in their book.
+        assertEquals(8, unreached.size)
+    }
+
+    @Test
+    fun `asking for chosen passages sends only those, and insists`() {
+        val passages = Passages()
+        val writer = Writer(mutableListOf(Result.success(listOf(promptFor(0, 4)))))
+        runBlocking {
+            generator(chunks(16), writer, passages)
+                .generateForPassages(book(), 0, "One", setOf(4, 9))
+        }
+        assertEquals(1, writer.sentPassages.size)
+        assertEquals(2, writer.sentPassages.single().size)
+        // The floor, not the ceiling: a person picked these.
+        assertEquals(listOf(true), writer.insisted)
+    }
+
+    @Test
+    fun `a normal generation does not insist`() {
+        val writer = Writer()
+        runBlocking { generator(chunks(4), writer).generate(book(), 0, "One") }
+        assertEquals(listOf(false), writer.insisted)
+    }
+
+    @Test
+    fun `asking again for chosen passages is never blocked as already generated`() {
+        // The shortcut that stops an accidental second tap must not stop a
+        // deliberate "no, I want a card for this one".
+        val passages = Passages()
+        val writer = Writer(
+            mutableListOf(
+                Result.success(listOf(promptFor(0, 4))),
+                Result.success(listOf(promptFor(0, 4).copy(prompt = "How heavy is widget 4?"))),
+            )
+        )
+        val generator = generator(chunks(16), writer, passages)
+        runBlocking {
+            generator.generateForPassages(book(), 0, "One", setOf(4))
+            val second = generator.generateForPassages(book(), 0, "One", setOf(4))
+            assertEquals(ChapterPromptGenerator.Outcome.MADE, second.outcome)
+        }
+        assertEquals(2, writer.sentPassages.size)
     }
 }

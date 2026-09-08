@@ -5,6 +5,9 @@ import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.embed.ChapterTopics
 import com.pagetime.app.data.embed.TopicPassage
 import com.pagetime.app.data.local.BookChunkEmbeddingDao
+import com.pagetime.app.data.local.ChapterPassageDao
+import com.pagetime.app.data.local.ChapterPassageEntity
+import com.pagetime.app.data.local.PassageOutcome
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LearningCardDao
 import com.pagetime.app.data.local.LearningCardEntity
@@ -72,6 +75,13 @@ class ChapterPromptGenerator(
     private val embeddingModelId: () -> String?,
     private val gemini: ChapterPromptWriter,
     private val usage: AiUsageRepository? = null,
+    /**
+     * Where each passage's fate is recorded.
+     *
+     * Optional so the generator can still be constructed without it, but a
+     * chapter generated with this null is one nobody can explain afterwards.
+     */
+    private val passageDao: ChapterPassageDao? = null,
 ) {
 
     /** Whether this chapter could produce prompts at all. */
@@ -104,6 +114,15 @@ class ChapterPromptGenerator(
          * and wrong for a deliberate request.
          */
         force: Boolean = false,
+        /**
+         * Only these chunk ordinals, chosen by the reader.
+         *
+         * Empty means the whole chapter. When set, the instructions switch from
+         * "write up to three per passage" to "write at least one for every
+         * passage here" — the reader has already decided these are worth
+         * remembering, and omitting is no longer the safe answer.
+         */
+        onlyOrdinals: Set<Int> = emptySet(),
         onStage: (Stage) -> Unit = {},
     ): Result {
         val model = embeddingModelId() ?: return Result(Outcome.NOT_INDEXED)
@@ -114,13 +133,15 @@ class ChapterPromptGenerator(
         if (rows.isEmpty()) return Result(Outcome.NOT_INDEXED)
 
         onStage(Stage(Phase.CHOOSING))
-        val topics = ChapterTopics.select(rows)
+        val all = ChapterTopics.select(rows)
+        val topics = if (onlyOrdinals.isEmpty()) all else all.filter { it.ordinal in onlyOrdinals }
         if (topics.isEmpty()) return Result(Outcome.NOTHING_IN_CHAPTER)
+        val insist = onlyOrdinals.isNotEmpty()
 
         val key = generationKey(model, topics)
         // Already generated. Whatever the reader did with them — kept, skipped,
         // or not yet judged — this chapter is not paid for twice.
-        if (!force && runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
+        if (!force && !insist && runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
             val existing = pending(book, chapterIndex)
             return Result(
                 Outcome.ALREADY_MADE,
@@ -160,6 +181,12 @@ class ChapterPromptGenerator(
         var rejected = 0
         var failedBatches = 0
         var failureDetail: String? = null
+        /** How many prompts each rule threw out, for the reader's summary. */
+        val rejections = mutableMapOf<PromptRejection, Int>()
+        /** The first rule that refused each passage. */
+        val refusals = mutableMapOf<Int, PromptRejection>()
+        /** Passages that were in a request which never came back. */
+        val unreached = mutableSetOf<Int>()
 
         for ((index, batch) in batches.withIndex()) {
             onStage(Stage(Phase.WRITING, index + 1, batches.size))
@@ -173,6 +200,7 @@ class ChapterPromptGenerator(
                         bookTitle = book.title,
                         chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
                         passages = passages,
+                        insist = insist,
                     )
                 }
                 if (usage != null) {
@@ -197,6 +225,7 @@ class ChapterPromptGenerator(
                 // already. One bad batch out of four is now a partial result
                 // with a reason attached, not a lost chapter.
                 failedBatches++
+                unreached += batch.map { it.ordinal }
                 if (failureDetail == null) {
                     failureDetail = error.message?.take(300)?.ifBlank { null }
                         ?: error::class.simpleName
@@ -212,6 +241,15 @@ class ChapterPromptGenerator(
                 val topic = batch.getOrNull(raw.passageIndex) ?: continue
                 accepted += raw to topic
             }
+            // Why each passage produced nothing, kept rather than counted.
+            // A total tells the reader a chapter disappointed them; a reason
+            // tells them whether the model declined or the rules refused, and
+            // those have completely different fixes.
+            for ((raw, reason) in verdict.rejected) {
+                val topic = batch.getOrNull(raw.passageIndex) ?: continue
+                rejections.merge(reason, 1, Int::plus)
+                refusals.putIfAbsent(topic.ordinal, reason)
+            }
         }
 
         // Every request failed: this is a failure, not an empty chapter.
@@ -222,18 +260,22 @@ class ChapterPromptGenerator(
                 batches = batches.size,
                 failedBatches = failedBatches,
                 detail = failureDetail,
+                rejections = rejections.toMap(),
             )
         }
         if (offered == 0) {
+            recordPassages(book, chapterIndex, key, topics, emptyList(), refusals, unreached)
             return Result(
                 Outcome.MODEL_RETURNED_NOTHING,
                 asked = topics.size,
                 batches = batches.size,
                 failedBatches = failedBatches,
                 detail = failureDetail,
+                rejections = rejections.toMap(),
             )
         }
         if (accepted.isEmpty()) {
+            recordPassages(book, chapterIndex, key, topics, accepted, refusals, unreached)
             return Result(
                 Outcome.ALL_REJECTED,
                 asked = topics.size,
@@ -242,6 +284,7 @@ class ChapterPromptGenerator(
                 batches = batches.size,
                 failedBatches = failedBatches,
                 detail = failureDetail,
+                rejections = rejections.toMap(),
             )
         }
 
@@ -278,6 +321,7 @@ class ChapterPromptGenerator(
         }
 
         runCatching { cardDao.insertAll(cards) }
+        recordPassages(book, chapterIndex, key, topics, accepted, refusals, unreached)
         return Result(
             Outcome.MADE,
             cards = cards,
@@ -287,6 +331,88 @@ class ChapterPromptGenerator(
             batches = batches.size,
             failedBatches = failedBatches,
             detail = failureDetail,
+            rejections = rejections.toMap(),
+        )
+    }
+
+    /**
+     * Writes down what became of every passage that was sent.
+     *
+     * Never allowed to fail the generation: the cards are what the reader
+     * paid for, and an explanation is worth less than the thing being
+     * explained.
+     */
+    private suspend fun recordPassages(
+        book: BookEntity,
+        chapterIndex: Int,
+        key: String,
+        topics: List<TopicPassage>,
+        accepted: List<Pair<RawPrompt, TopicPassage>>,
+        refusals: Map<Int, PromptRejection>,
+        unreached: Set<Int>,
+    ) {
+        val dao = passageDao ?: return
+        val made = accepted.groupingBy { it.second.ordinal }.eachCount()
+        val now = System.currentTimeMillis()
+        val rows = topics.map { topic ->
+            val cards = made[topic.ordinal] ?: 0
+            val refusal = refusals[topic.ordinal]
+            ChapterPassageEntity(
+                bookId = book.id,
+                chapterIndex = chapterIndex,
+                ordinal = topic.ordinal,
+                startOffset = topic.startOffset,
+                endOffset = topic.endOffset,
+                text = topic.text,
+                progression = topic.endProgression,
+                cardsMade = cards,
+                outcome = when {
+                    cards > 0 -> PassageOutcome.USED
+                    topic.ordinal in unreached -> PassageOutcome.REQUEST_FAILED
+                    refusal != null -> PassageOutcome.REJECTED
+                    // The model was handed this passage and wrote nothing about
+                    // it. Worth distinguishing sharply from a rejection: this
+                    // one is usually the instructions' fault, not the text's.
+                    else -> PassageOutcome.MODEL_SKIPPED
+                }.name,
+                detail = refusal?.reason,
+                generationKey = key,
+                updatedAt = now,
+            )
+        }
+        runCatching { dao.upsertAll(rows) }
+    }
+
+    /** What became of every passage the last generation sent. */
+    suspend fun passages(book: BookEntity, chapterIndex: Int): List<ChapterPassageEntity> =
+        runCatching { passageDao?.forChapter(book.id, chapterIndex).orEmpty() }
+            .getOrDefault(emptyList())
+
+    /**
+     * Writes cards for the passages the reader picked out by hand.
+     *
+     * Additive: nothing is deleted, because the reader is asking for MORE from
+     * passages that produced none, not for a different set of questions.
+     *
+     * The instructions switch from a ceiling to a floor — a person looked at
+     * this exact paragraph and said they wanted to remember it, so declining is
+     * no longer an acceptable answer from the model.
+     */
+    suspend fun generateForPassages(
+        book: BookEntity,
+        chapterIndex: Int,
+        chapterTitle: String?,
+        ordinals: Set<Int>,
+        onStage: (Stage) -> Unit = {},
+    ): Result {
+        if (ordinals.isEmpty()) return Result(Outcome.NOTHING_IN_CHAPTER)
+        return generate(
+            book = book,
+            chapterIndex = chapterIndex,
+            chapterTitle = chapterTitle,
+            force = true,
+            onlyOrdinals = ordinals,
+            onStage = onStage,
         )
     }
 
@@ -416,7 +542,20 @@ class ChapterPromptGenerator(
          * having.
          */
         val detail: String? = null,
-    )
+        /**
+         * Which rules threw prompts out, and how many each.
+         *
+         * "9 failed the checks" says a chapter disappointed the reader. "7 of
+         * them quoted something not in the passage" says what to do about it,
+         * and they are one map apart.
+         */
+        val rejections: Map<PromptRejection, Int> = emptyMap(),
+    ) {
+        /** The rules that did the most damage, worst first. */
+        val topRejections: List<Pair<PromptRejection, Int>>
+            get() = rejections.entries.sortedByDescending { it.value }
+                .map { it.key to it.value }
+    }
 
     private companion object {
 

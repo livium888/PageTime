@@ -41,7 +41,7 @@ data class ReaderSettings(
     val lineHeight: Float = 1.5f,
     /** "serif", "sans", "literata", or "mono" */
     val fontFamily: String = "serif",
-    /** "light", "sepia", "dark", or "night" */
+    /** "paper", "light", "sepia", "dark", or "night" */
     val theme: String = "light",
     val marginDp: Float = 20f,
     /** "justify" or "left" — how both plain-text and EPUB pages align body copy. */
@@ -49,15 +49,50 @@ data class ReaderSettings(
     /** "off", "subtle", or "active" EPUB concept markers. */
     val conceptHints: String = "subtle",
     /** 0.15..1.0 overrides the window brightness; null means use the system setting. */
-    val brightness: Float? = null
-)
+    val brightness: Float? = null,
+    /**
+     * How much amber sits over the page, 0..1.
+     *
+     * Paper indoors is lit by something warm; screens ship at about 6500K,
+     * which is daylight. A little amber is most of what separates "a page
+     * under a lamp" from "a monitor".
+     */
+    val warmth: Float = 0f,
+    /**
+     * Extra dimming beyond the system minimum, 0..1.
+     *
+     * Android's lowest backlight is still too bright to read against in a dark
+     * room, and no app can lower the backlight past it. What an app CAN do is
+     * lay a black veil over its own window, which is what this is. It is the
+     * single most effective thing available for making a screen stop reading
+     * as a light source at night.
+     */
+    val nightDim: Float = 0f
+) {
+    companion object {
+        /**
+         * The densest the night veil may ever be.
+         *
+         * It is drawn OVER the page, so a value near 1 renders a black
+         * rectangle with the text invisible beneath it — and the slider that
+         * would undo it is behind that same rectangle. One constant, used by
+         * both the clamp and the slider's range, so the two cannot drift.
+         */
+        const val MAX_NIGHT_DIM = 0.8f
+    }
+}
 
-private fun ReaderSettings.normalized(): ReaderSettings = copy(
+internal fun ReaderSettings.normalized(): ReaderSettings = copy(
     fontSizeSp = fontSizeSp.coerceIn(12f, 32f),
     lineHeight = lineHeight.coerceIn(1.0f, 2.2f),
     fontFamily = fontFamily.takeIf { it in setOf("serif", "sans", "literata", "mono") } ?: "serif",
-    theme = theme.takeIf { it in setOf("light", "sepia", "dark", "night") } ?: "light",
+    theme = theme.takeIf { it in setOf("paper", "light", "sepia", "dark", "night") } ?: "light",
     marginDp = marginDp.coerceIn(8f, 48f),
+    warmth = warmth.coerceIn(0f, 1f),
+    // Capped well short of 1: a veil dense enough to hide the text would look
+    // exactly like a broken screen, and there would be no way to find the
+    // control to undo it.
+    nightDim = nightDim.coerceIn(0f, ReaderSettings.MAX_NIGHT_DIM),
     alignment = if (alignment == "justify") "justify" else "left",
     conceptHints = conceptHints.takeIf { it in setOf("off", "subtle", "active") } ?: "subtle",
     brightness = brightness?.coerceIn(0.15f, 1f)
@@ -123,6 +158,9 @@ class SettingsRepository(private val context: Context) {
         val REVIEW_REMINDER_LAST_SENT = longPreferencesKey("review_reminder_last_sent")
         val REVIEW_REMINDER_STREAK = intPreferencesKey("review_reminder_streak")
 
+
+        val READER_WARMTH = floatPreferencesKey("reader_warmth")
+        val READER_NIGHT_DIM = floatPreferencesKey("reader_night_dim")
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -505,7 +543,9 @@ class SettingsRepository(private val context: Context) {
             marginDp = p[Keys.MARGIN] ?: 20f,
             alignment = p[Keys.ALIGNMENT] ?: "justify",
             conceptHints = p[Keys.CONCEPT_HINTS] ?: "subtle",
-            brightness = p[Keys.BRIGHTNESS]
+            brightness = p[Keys.BRIGHTNESS],
+            warmth = p[Keys.READER_WARMTH] ?: 0f,
+            nightDim = p[Keys.READER_NIGHT_DIM] ?: 0f
         ).normalized()
     }
 
@@ -585,6 +625,8 @@ class SettingsRepository(private val context: Context) {
             it[Keys.MARGIN] = normalized.marginDp
             it[Keys.ALIGNMENT] = normalized.alignment
             it[Keys.CONCEPT_HINTS] = normalized.conceptHints
+            it[Keys.READER_WARMTH] = normalized.warmth
+            it[Keys.READER_NIGHT_DIM] = normalized.nightDim
             if (normalized.brightness == null) {
                 it.remove(Keys.BRIGHTNESS)
             } else {

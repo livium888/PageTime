@@ -606,6 +606,15 @@ fun ReaderScreen(
         }
 
     
+
+        // Last child of the reading surface, so it covers the page and the
+        // floating controls alike — the whole window warms and dims together
+        // rather than the text sitting in a bright frame.
+        //
+        // Sheets and dialogs are separate windows and stay untouched, which is
+        // what keeps the sliders that control this readable while they are
+        // being dragged.
+        PaperVeil(settings)
     }
 
     conceptMap.concepts.firstOrNull { it.id == activeConceptId }?.let { concept ->
@@ -905,14 +914,9 @@ private fun TextReaderHost(
         val heightPx = with(density) {
             (screenH - 48.dp).coerceAtLeast(96.dp).roundToPx()
         }
-        val family = readerFontFamily(settings.fontFamily)
-        val renderStyle = baseStyle.copy(
-            letterSpacing = (settings.fontSizeSp * 0.015f).sp,
-            fontFamily = family,
-            fontSize = settings.fontSizeSp.sp,
-            lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
-            textAlign = if (settings.alignment == "justify") TextAlign.Justify else TextAlign.Start
-        )
+        // The SAME style the page is drawn with. Measuring with anything else
+        // decides page boundaries for a layout that never happens.
+        val renderStyle = readerTextStyle(baseStyle, settings)
         // Cap the binary-search measurement window to a generous multiple of
         // what a page can hold. Without it the search measures the ENTIRE
         // remaining book per page — O(book²) layout work that froze the UI for
@@ -1041,14 +1045,8 @@ private fun TextReaderHost(
             )
             Text(
                 text = annotatedText,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    letterSpacing = (settings.fontSizeSp * 0.015f).sp
-                ),
-                fontFamily = readerFontFamily(settings.fontFamily),
-                fontSize = settings.fontSizeSp.sp,
-                lineHeight = (settings.fontSizeSp * settings.lineHeight).sp,
-                textAlign = if (settings.alignment == "justify") TextAlign.Justify else TextAlign.Start,
-                color = palette.text
+                style = readerTextStyle(MaterialTheme.typography.bodyLarge, settings),
+                color = palette.text,
             )
         }
     }
@@ -1250,7 +1248,9 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
     },
     theme = when (s.theme) {
         "dark", "night" -> Theme.DARK
-        "sepia" -> Theme.SEPIA
+        // Readium offers three themes; Paper is closest to sepia, which is
+        // also a warm low-contrast page rather than a white one.
+        "sepia", "paper" -> Theme.SEPIA
         else -> Theme.LIGHT
     },
     // publisherStyles must be disabled for user alignment, line spacing, and
@@ -1260,6 +1260,11 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
         "justify" -> ReadiumTextAlign.JUSTIFY
         else -> ReadiumTextAlign.START
     },
+    // Readium has supported this all along and it was never switched on, so
+    // every justified EPUB has been stretching its word spacing instead of
+    // breaking words. It only takes effect with publisherStyles off, which is
+    // already the case above.
+    hyphens = s.alignment == "justify",
     scroll = false
 )
 

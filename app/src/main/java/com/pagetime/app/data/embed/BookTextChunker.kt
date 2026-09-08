@@ -41,13 +41,19 @@ object BookTextChunker {
      * from, and an index built by a different chunker is a different index
      * wearing the same name.
      *
-     * Version 2 fixes chunks that began mid-word — the overlap stepped back a
+     * Version 2 fixed chunks that began mid-word — the overlap stepped back a
      * fixed number of characters and landed wherever it landed — and chunks
-     * too small to mean anything. Every index built before this holds vectors
-     * of word fragments, so it is not merely out of date, it is wrong, and
-     * leaving it in place would be the quiet kind of wrong.
+     * too small to mean anything.
+     *
+     * Version 3 finishes that job. Snapping to a word left chunks beginning
+     * mid-SENTENCE, which still hands the model a fragment to reason from; the
+     * overlap is now measured in sentences, which is the unit it was always
+     * about.
+     *
+     * Every index built before this is not merely out of date, it is wrong,
+     * and leaving it in place would be the quiet kind of wrong.
      */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /**
      * A piece of a chapter, with where it came from.
@@ -176,9 +182,15 @@ object BookTextChunker {
         var cursor = from
         while (cursor < to) {
             val limit = minOf(cursor + maxChars, to)
-            val cut =
-                if (limit >= to) to
-                else lastSentenceEnd(text, cursor, limit) ?: lastSpace(text, cursor, limit) ?: limit
+            // Whether the cut lands on a finished sentence decides how the
+            // NEXT chunk should begin, so it is remembered rather than
+            // re-derived.
+            val sentenceCut = if (limit >= to) null else lastSentenceEnd(text, cursor, limit)
+            val cut = when {
+                limit >= to -> to
+                sentenceCut != null -> sentenceCut
+                else -> lastSpace(text, cursor, limit) ?: limit
+            }
             val piece = text.substring(cursor, cut)
             if (piece.isNotBlank()) out += Chunk(piece.trim(), cursor, cut)
             if (cut >= to) break
@@ -186,19 +198,58 @@ object BookTextChunker {
             // both neighbours, never in neither. Never step back past the start
             // of what was just emitted, or this loops forever.
             //
-            // AND SNAP TO A WORD BOUNDARY. Stepping back a fixed number of
-            // CHARACTERS lands wherever it lands, which is usually the middle
-            // of a word: chunks began "eillance are no longer…" and
-            // "ophisticated and has been deployed…". Those went to the
-            // embedder, which had to make a vector out of a word fragment, and
-            // to the model writing flashcards, which sensibly declined.
+            // WHERE THE NEXT CHUNK BEGINS, in sentences rather than characters.
             //
-            // Snapped BACKWARD, never forward: forward would shrink the
-            // overlap below the amount it exists to guarantee.
-            val stepBack = maxOf(cut - overlapChars, cursor + 1)
-            cursor = maxOf(wordStart(text, from, stepBack), cursor + 1)
+            // Stepping back a fixed number of CHARACTERS lands wherever it
+            // lands. First that was mid-word — chunks began "eillance are no
+            // longer…" — and snapping to a word boundary left them beginning
+            // mid-SENTENCE: "divine words about everything from…". A word was
+            // the wrong unit; the overlap has always been about sentences.
+            //
+            // When the cut is already a finished sentence, nothing is split,
+            // so the next chunk repeats that last SENTENCE rather than the
+            // last eighty characters. An idea spanning the boundary stays
+            // findable from either side and the chunk still opens cleanly.
+            //
+            // A sentence longer than half a chunk is not repeated — doing so
+            // would leave the split barely advancing — and the next chunk
+            // simply starts where this one ended, which is still a clean
+            // boundary because that is what the cut was.
+            cursor = if (sentenceCut != null) {
+                val lastSentence = sentenceStart(text, maxOf(from, cut - maxChars / 2), cut)
+                maxOf(lastSentence?.takeIf { it > cursor } ?: cut, cursor + 1)
+            } else {
+                // A cut mid-sentence — an unpunctuated run, or one sentence
+                // longer than the whole budget. Overlap by characters is all
+                // that is left; land it on a word at least.
+                val floor = maxOf(from, cut - maxChars / 2, cursor + 1)
+                val target = (cut - overlapChars).coerceAtLeast(floor)
+                maxOf(wordStart(text, floor, target), cursor + 1)
+            }
         }
         return out
+    }
+
+    /**
+     * The latest sentence start at or before [at], or null if there is none in
+     * range.
+     *
+     * A sentence start is the first non-space character after a terminator
+     * followed by whitespace. The search window is bounded by [lowerBound], so
+     * this stays cheap however long the paragraph is.
+     */
+    private fun sentenceStart(text: String, lowerBound: Int, at: Int): Int? {
+        var best: Int? = null
+        var i = lowerBound
+        while (i < at) {
+            if (text[i] in SENTENCE_ENDINGS && i + 1 < text.length && text[i + 1].isWhitespace()) {
+                var start = i + 1
+                while (start < text.length && text[start].isWhitespace()) start++
+                if (start in (lowerBound + 1)..at) best = start
+            }
+            i++
+        }
+        return best
     }
 
     /**

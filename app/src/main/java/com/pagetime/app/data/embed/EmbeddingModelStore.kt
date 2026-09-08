@@ -68,7 +68,17 @@ class EmbeddingModelStore(
      */
     fun modelId(): String? {
         if (!isInstalled()) return null
-        return "${DEFAULT_SOURCE.label}/${modelFile.length()}"
+        // The chunker's version is part of this. What a vector MEANS depends
+        // on the text it was made from as much as on the weights that made it,
+        // so a change to how text is cut invalidates the index exactly as a
+        // change of weights does. Without this, a reader who installs the fix
+        // keeps searching and generating from mangled chunks forever, with
+        // nothing anywhere to say so.
+        //
+        // The cost is that Lumen card embeddings are rebuilt too, though
+        // nothing about them changed. That is a few seconds of on-device work,
+        // and it buys one identity that cannot drift instead of two that can.
+        return "${DEFAULT_SOURCE.label}/${modelFile.length()}/c${BookTextChunker.VERSION}"
     }
 
     /**

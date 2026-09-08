@@ -156,4 +156,89 @@ class BookTextChunkerTest {
         assertTrue(BookTextChunker.chunk("", maxChars).isEmpty())
         assertTrue(BookTextChunker.chunk("   \n\n  \n ", maxChars).isEmpty())
     }
+
+    // Reported from the device
+    // ========================
+    //
+    // The coverage sheet showed the passages actually being sent to the model.
+    // They read: "eillance are no longer something we encounter…",
+    // "ophisticated and has been deployed…", "ading corporations.", and one
+    // that was, in full, "privacy." Those went to the embedder as well, so
+    // search has been running on vectors of word fragments too.
+
+    @Test
+    fun `no chunk begins in the middle of a word`() {
+        // The overlap stepped back a fixed 80 CHARACTERS from the previous
+        // cut, which lands wherever it lands. Every chunk after the first of a
+        // long paragraph began mid-word.
+        val paragraph = (1..40).joinToString(" ") {
+            "Surveillance of communications and sophisticated tracking by " +
+                "corporations reshaped expectations of privacy in period $it."
+        }
+        val chunks = BookTextChunker.chunk(paragraph)
+        assertTrue("expected a split paragraph", chunks.size > 3)
+
+        for (chunk in chunks) {
+            // Either the chunk starts the text, or what precedes it is
+            // whitespace — never a letter, which would mean a severed word.
+            val clean = chunk.start == 0 || paragraph[chunk.start - 1].isWhitespace()
+            assertTrue(
+                "chunk at ${chunk.start} begins mid-word: ${chunk.text.take(40)}",
+                clean,
+            )
+        }
+    }
+
+    @Test
+    fun `a short paragraph is never left as a chunk of its own`() {
+        // "privacy." was a real chunk. A short paragraph wedged between two
+        // that are nearly a full budget could not merge forward without
+        // overflowing, so it was flushed alone.
+        // The arithmetic matters, and my first attempt at this test quietly
+        // did not reproduce the bug: a paragraph that CAN absorb the short one
+        // simply absorbs it. The flush-alone path needs a neighbour long
+        // enough that merging would overflow the budget.
+        //
+        // "privacy." is 8 characters plus 2 for the blank line, so the
+        // FOLLOWING paragraph must be too long to absorb it — that is the
+        // branch that flushed it alone — while the preceding one has room.
+        val big = "word ".repeat((maxChars - 5) / 5).trim() + "."
+        val small = "word ".repeat(40).trim() + "."
+        assertTrue("fixture must fit the budget", big.length <= maxChars)
+        assertTrue(
+            "the follower must be unable to absorb the short paragraph",
+            "privacy.".length + 2 + big.length > maxChars,
+        )
+        assertTrue(
+            "the predecessor must have room for it",
+            small.length + 2 + "privacy.".length <= maxChars,
+        )
+        val text = small + "\n\nprivacy.\n\n" + big
+        val chunks = BookTextChunker.chunk(text, maxChars)
+        val tiny = chunks.filter { it.text.length < BookTextChunker.MIN_CHARS }
+        assertTrue("left standalone fragments: ${tiny.map { it.text }}", tiny.isEmpty())
+        // And it is still in there somewhere, because nothing may be dropped.
+        assertTrue(chunks.any { it.text.contains("privacy.") })
+    }
+
+    @Test
+    fun `merging undersized chunks never breaks the embedding budget`() {
+        // A guard on the fix rather than a reproduction of a bug: merging
+        // undersized chunks backward must never push one over the budget,
+        // because over it the embedder truncates silently and the vector then
+        // describes a fraction of the text — the exact failure this whole
+        // class exists to prevent.
+        val max = BookTextChunker.maxCharsFor(128)
+        val text = buildString {
+            repeat(12) { append("Short one.\n\n") }
+            repeat(6) { append("B ".repeat(150).trim() + ".\n\n") }
+            repeat(12) { append("Tiny.\n\n") }
+        }
+        for (chunk in BookTextChunker.chunk(text)) {
+            assertTrue(
+                "chunk of ${chunk.text.length} exceeds the $max budget",
+                chunk.text.length <= max,
+            )
+        }
+    }
 }

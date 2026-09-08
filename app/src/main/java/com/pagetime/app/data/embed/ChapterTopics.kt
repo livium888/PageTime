@@ -143,6 +143,24 @@ object ChapterTopics {
      */
     const val PROMPTS_PER_PASSAGE = 3
 
+    /**
+     * Shorter than this and a passage is not worth asking about.
+     *
+     * Reported from the device: passages reading, in full, "privacy." and
+     * "ading corporations." went to the model, which wrote nothing about them
+     * — correctly, since there is nothing there to ask.
+     *
+     * The chunker now merges undersized pieces where it can, but it cannot
+     * always: a short paragraph between two that each nearly fill the
+     * embedding budget has nowhere to go, and forcing the merge would cause
+     * the silent truncation the budget exists to prevent. So the last defence
+     * is here, where sending it costs tokens and returns nothing.
+     *
+     * A fragment stays in the search index — finding it is harmless, and
+     * dropping text from search is a worse failure than a weak hit.
+     */
+    const val MIN_PASSAGE_CHARS = 120
+
     /** How many passages a chapter of [chars] characters is worth. */
     fun countFor(chars: Int): Int =
         (chars / CHARS_PER_TOPIC).coerceIn(MIN_TOPICS, MAX_TOPICS)
@@ -175,7 +193,12 @@ object ChapterTopics {
         // is the silent wrongness the model column exists to stop.
         val width = rows.groupingBy { it.dimensions }.eachCount()
             .maxByOrNull { it.value }?.key ?: return emptyList()
-        val usable = rows.filter { it.dimensions == width && it.vector.size == width * 4 }
+        val wellFormed = rows.filter { it.dimensions == width && it.vector.size == width * 4 }
+        // Fragments are excluded from being ASKED about, not from the index.
+        val usable = wellFormed.filter { it.text.trim().length >= MIN_PASSAGE_CHARS }
+            // Unless the whole chapter is fragments, in which case the best of
+            // a bad set beats reporting that a chapter has nothing in it.
+            .ifEmpty { wellFormed }
         if (usable.isEmpty()) return emptyList()
 
         val vectors = usable.map { EmbeddingMath.fromBytes(it.vector) }

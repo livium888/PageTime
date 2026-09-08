@@ -34,6 +34,22 @@ import kotlin.math.floor
 object BookTextChunker {
 
     /**
+     * Bumped whenever a change here alters what text becomes a vector.
+     *
+     * Part of the embedding index's identity, for the same reason the model
+     * file's length is: a vector's meaning depends on the text it was made
+     * from, and an index built by a different chunker is a different index
+     * wearing the same name.
+     *
+     * Version 2 fixes chunks that began mid-word — the overlap stepped back a
+     * fixed number of characters and landed wherever it landed — and chunks
+     * too small to mean anything. Every index built before this holds vectors
+     * of word fragments, so it is not merely out of date, it is wrong, and
+     * leaving it in place would be the quiet kind of wrong.
+     */
+    const val VERSION = 2
+
+    /**
      * A piece of a chapter, with where it came from.
      *
      * [start] and [end] index the chapter text the chunk was cut from, so a
@@ -141,7 +157,7 @@ object BookTextChunker {
             chunks += splitLongParagraph(text, paraStart, paraEnd, maxChars, overlapChars)
         }
         flush()
-        return chunks
+        return mergeUndersized(text, chunks, minChars, maxChars)
     }
 
     /**
@@ -169,10 +185,91 @@ object BookTextChunker {
             // Step back by the overlap so a sentence on the boundary lives in
             // both neighbours, never in neither. Never step back past the start
             // of what was just emitted, or this loops forever.
-            cursor = maxOf(cut - overlapChars, cursor + 1)
+            //
+            // AND SNAP TO A WORD BOUNDARY. Stepping back a fixed number of
+            // CHARACTERS lands wherever it lands, which is usually the middle
+            // of a word: chunks began "eillance are no longer…" and
+            // "ophisticated and has been deployed…". Those went to the
+            // embedder, which had to make a vector out of a word fragment, and
+            // to the model writing flashcards, which sensibly declined.
+            //
+            // Snapped BACKWARD, never forward: forward would shrink the
+            // overlap below the amount it exists to guarantee.
+            val stepBack = maxOf(cut - overlapChars, cursor + 1)
+            cursor = maxOf(wordStart(text, from, stepBack), cursor + 1)
         }
         return out
     }
+
+    /**
+     * The start of the word containing [at], never earlier than [lowerBound].
+     *
+     * Walks back to just after the previous whitespace, so a chunk can never
+     * begin part-way through a word.
+     */
+    private fun wordStart(text: String, lowerBound: Int, at: Int): Int {
+        var i = at.coerceIn(lowerBound, text.length)
+        while (i > lowerBound && !text[i - 1].isWhitespace()) i--
+        return i
+    }
+
+    /**
+     * Folds chunks too small to mean anything into the one before them.
+     *
+     * A short paragraph between two long ones was emitted on its own whenever
+     * merging it forward would have overflowed the budget — which produced
+     * real chunks reading, in full, "privacy." A vector for that matches
+     * everything weakly, and a flashcard cannot be written from it at all.
+     *
+     * Merging backward rather than forward because the previous chunk is
+     * already emitted and its size is known; the budget is still respected, so
+     * nothing here can reintroduce the silent truncation the budget exists to
+     * prevent.
+     */
+    private fun mergeUndersized(
+        text: String,
+        chunks: List<Chunk>,
+        minChars: Int,
+        maxChars: Int,
+    ): List<Chunk> {
+        if (chunks.size < 2) return chunks
+        val out = mutableListOf<Chunk>()
+        var i = 0
+        while (i < chunks.size) {
+            val chunk = chunks[i]
+            if (chunk.text.length >= minChars) {
+                out += chunk
+                i++
+                continue
+            }
+            val previous = out.lastOrNull()
+            val next = chunks.getOrNull(i + 1)
+            val backward = previous != null && chunk.end - previous.start <= maxChars
+            val forward = next != null && next.end - chunk.start <= maxChars
+            when {
+                backward -> {
+                    out[out.size - 1] = merged(text, previous!!.start, chunk.end)
+                    i++
+                }
+                forward -> {
+                    out += merged(text, chunk.start, next!!.end)
+                    i += 2
+                }
+                // Both neighbours are already near a full budget, so there is
+                // nowhere to put this without causing the silent truncation
+                // the budget exists to prevent. It stays, and the passage
+                // chooser declines to send it anywhere.
+                else -> {
+                    out += chunk
+                    i++
+                }
+            }
+        }
+        return out
+    }
+
+    private fun merged(text: String, from: Int, to: Int) =
+        Chunk(text.substring(from, to).trim(), from, to)
 
     /** Paragraph ranges, blank-line separated, skipping empty runs. */
     private fun paragraphRanges(text: String): List<Pair<Int, Int>> {

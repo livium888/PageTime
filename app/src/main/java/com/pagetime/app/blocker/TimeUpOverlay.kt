@@ -7,7 +7,10 @@ import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import android.widget.ProgressBar
+import android.widget.TextView
 import com.pagetime.app.R
+import com.pagetime.app.domain.GateState
 
 /**
  * A full-screen, input-capturing overlay shown over a blocked app while the balance is zero.
@@ -34,6 +37,28 @@ class TimeUpOverlay(context: Context, onReadNow: () -> Unit) {
 
     /** True while our window is actually attached — not merely "we asked for it". */
     fun isShowing(): Boolean = view.parent != null
+
+    /**
+     * Repoints the screen at the current rule.
+     *
+     * Called on every show, and the overlay is re-used between blocks, so a
+     * screen left over from a session under the balance must not still be
+     * saying "Time is up!" once the reader has switched to the gate — and a
+     * bar left visible from a gated session must not sit at an old fill under
+     * a rule that has no notion of progress.
+     */
+    fun setStatus(gate: GateState) {
+        view.findViewById<TextView>(R.id.tv_time_up).text = BlockScreenText.title(gate)
+        view.findViewById<TextView>(R.id.tv_overlay_subtitle).text = BlockScreenText.subtitle(gate)
+        val bar = view.findViewById<ProgressBar>(R.id.progress_gate)
+        val progress = BlockScreenText.progress(gate)
+        if (progress == null) {
+            bar.visibility = View.GONE
+        } else {
+            bar.visibility = View.VISIBLE
+            bar.progress = (progress * bar.max).toInt()
+        }
+    }
 
     /**
      * Idempotent. Returns whether the overlay is up, so the caller can fall back to

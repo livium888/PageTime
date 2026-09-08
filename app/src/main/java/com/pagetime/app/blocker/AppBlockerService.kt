@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
 import com.pagetime.app.MainActivity
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.domain.GateState
 
 class AppBlockerService : AccessibilityService() {
 
@@ -136,6 +137,10 @@ class AppBlockerService : AccessibilityService() {
 
     private fun showTimeUpNow(): Boolean {
         val current = overlay ?: TimeUpOverlay(this) { openReader() }.also { overlay = it }
+        // Refreshed on every show rather than only on creation: the overlay is
+        // re-used across blocks, and under the gate the number on it changes
+        // every minute the reader spends reading.
+        current.setStatus(controller?.gate ?: GateState.Disabled)
         return current.show()
     }
 

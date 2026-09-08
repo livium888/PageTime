@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pagetime.app.ui.AssistantTimeCredit
 /**
  * Chat-style screen for the Feynman explain-back flow.
  *
@@ -69,6 +70,12 @@ fun ExplainBackScreen(
     /** Always-available escape hatch: generate a fresh concept for this range. */
     onCreateConcept: (() -> Unit)? = null
 ) {
+    // Explaining a chapter back to the assistant is assistant time, and counts
+    // toward the access gate up to its cap. Only this screen: the slip box and
+    // the card lists are browsing, and crediting those would make the gate
+    // measure "time in PageTime" rather than time doing the work.
+    AssistantTimeCredit()
+
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
 

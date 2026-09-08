@@ -22,13 +22,14 @@ class ChapterTopicsTest {
         endOffset: Int,
         chapterIndex: Int = 0,
         dimensions: Int = vector.size,
+        text: String = "chunk $id",
     ) = BookChunkEmbeddingEntity(
         bookId = "book",
         chapterIndex = chapterIndex,
         ordinal = id,
         startOffset = startOffset,
         endOffset = endOffset,
-        text = "chunk $id",
+        text = text,
         model = "test/1",
         dimensions = dimensions,
         vector = EmbeddingMath.toBytes(vector),
@@ -176,5 +177,35 @@ class ChapterTopicsTest {
             ChapterTopics.countFor(40_000) * ChapterTopics.PROMPTS_PER_PASSAGE,
             ChapterTopics.promptCeilingFor(40_000),
         )
+    }
+
+    @Test
+    fun `a fragment is never sent as a passage`() {
+        // Reported from the device: passages reading "privacy." and "ading
+        // corporations." were sent to the model, which wrote nothing about
+        // them. Asking a language model to build a flashcard from eight
+        // characters costs tokens and can only fail.
+        val real = "A".repeat(300)
+        val rows = listOf(
+            row(0, floatArrayOf(1f, 0f, 0f), 0, 300, text = real),
+            row(1, floatArrayOf(0f, 1f, 0f), 400, 408, text = "privacy."),
+            row(2, floatArrayOf(0f, 0f, 1f), 500, 800, text = real),
+        )
+        val chosen = ChapterTopics.select(rows, count = 3)
+        assertTrue(
+            "a fragment was chosen: ${chosen.map { it.text }}",
+            chosen.none { it.text.length < ChapterTopics.MIN_PASSAGE_CHARS },
+        )
+    }
+
+    @Test
+    fun `a chapter of nothing but fragments still yields its best`() {
+        // The guard must not turn a short chapter into "there is nothing in
+        // this chapter", which would be a worse lie than a weak passage.
+        val rows = listOf(
+            row(0, floatArrayOf(1f, 0f, 0f), 0, 8, text = "privacy."),
+            row(1, floatArrayOf(0f, 1f, 0f), 20, 30, text = "and trade."),
+        )
+        assertTrue(ChapterTopics.select(rows, count = 2).isNotEmpty())
     }
 }

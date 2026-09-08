@@ -17,6 +17,7 @@
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/tv_overlay_subtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
@@ -24,6 +25,20 @@
         android:text="@string/overlay_subtitle"
         android:textColor="#374151"
         android:textSize="18sp" />
+
+    <!--
+        Only shown under the access gate, where the number above is a distance
+        rather than a debt. On the browse balance there is nothing to be part
+        of the way through, so the bar stays gone.
+    -->
+    <ProgressBar
+        android:id="@+id/progress_gate"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:max="1000"
+        android:visibility="gone" />
 
     <Button
         android:id="@+id/btn_read_now"

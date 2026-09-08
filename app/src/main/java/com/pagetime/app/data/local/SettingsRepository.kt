@@ -14,6 +14,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -29,6 +30,20 @@ data class Settings(
     val quickDisableUntil: Long = 0,
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
     val hardLockUntil: Long = 0,
+    /**
+     * Whether blocked apps are governed by the access gate rather than the
+     * browse balance.
+     *
+     * Off by default, including for readers upgrading into it. The gate is a
+     * much sharper instrument than the ratio it replaces — two hours or
+     * nothing — and switching someone into it without their say-so would lock
+     * them out of their phone on the strength of an app update.
+     */
+    val gateEnabled: Boolean = false,
+    /** Reading (plus capped planning) needed in the last day to open the apps. */
+    val gateThresholdSeconds: Long = GateState.DEFAULT_THRESHOLD_SECONDS,
+    /** How much of [gateThresholdSeconds] may be assistant time instead of reading. */
+    val planningCapSeconds: Long = GateState.DEFAULT_PLANNING_CAP_SECONDS,
     /** Whether the slip box shows newcomer help / confirmations before card actions. */
     val helpEnabled: Boolean = true,
     /** Provider used for optional AI-assisted learning features. */
@@ -146,6 +161,9 @@ class SettingsRepository(private val context: Context) {
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
+        val GATE_ENABLED = booleanPreferencesKey("access_gate_enabled")
+        val GATE_THRESHOLD = longPreferencesKey("access_gate_threshold_seconds")
+        val PLANNING_CAP = longPreferencesKey("access_gate_planning_cap_seconds")
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
@@ -375,6 +393,9 @@ class SettingsRepository(private val context: Context) {
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
+            gateEnabled = p[Keys.GATE_ENABLED] ?: false,
+            gateThresholdSeconds = p[Keys.GATE_THRESHOLD] ?: GateState.DEFAULT_THRESHOLD_SECONDS,
+            planningCapSeconds = p[Keys.PLANNING_CAP] ?: GateState.DEFAULT_PLANNING_CAP_SECONDS,
             helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
             llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
@@ -587,6 +608,42 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun clearHardLockUntil() {
         context.dataStore.edit { it.remove(Keys.HARD_LOCK_UNTIL) }
+    }
+
+    suspend fun gateEnabled(): Boolean =
+        context.dataStore.data.first()[Keys.GATE_ENABLED] ?: false
+
+    suspend fun setGateEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.GATE_ENABLED] = enabled }
+    }
+
+    /**
+     * Sets how long the day's reading has to be.
+     *
+     * Floored at fifteen minutes because a gate is a boundary, and a boundary
+     * that can be moved to nothing from inside the app is a button labelled
+     * "open". Fifteen minutes is short enough for someone to try the mechanism
+     * for an evening without committing to two hours of it.
+     */
+    suspend fun setGateThresholdSeconds(seconds: Long) {
+        val clamped = seconds.coerceIn(GateState.MIN_THRESHOLD_SECONDS, GateState.MAX_THRESHOLD_SECONDS)
+        context.dataStore.edit { p ->
+            p[Keys.GATE_THRESHOLD] = clamped
+            // A cap is a share of the gate, so it can never survive the gate
+            // shrinking underneath it — otherwise lowering the threshold to
+            // half an hour would silently leave a twenty-minute cap covering
+            // most of it.
+            val cap = p[Keys.PLANNING_CAP] ?: GateState.DEFAULT_PLANNING_CAP_SECONDS
+            p[Keys.PLANNING_CAP] = cap.coerceAtMost(GateState.maxPlanningCapFor(clamped))
+        }
+    }
+
+    /** Sets the share of the gate that may be planning rather than reading. */
+    suspend fun setPlanningCapSeconds(seconds: Long) {
+        context.dataStore.edit { p ->
+            val threshold = p[Keys.GATE_THRESHOLD] ?: GateState.DEFAULT_THRESHOLD_SECONDS
+            p[Keys.PLANNING_CAP] = seconds.coerceIn(0L, GateState.maxPlanningCapFor(threshold))
+        }
     }
 
     suspend fun addTotalReadingSeconds(delta: Long) {

@@ -16,6 +16,7 @@ import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.embed.EmbeddingSelfTest
 import com.pagetime.app.data.embed.OnnxTextEmbedder
+import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val ratio = container.balanceManager.ratio
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1.0)
+
+    /**
+     * The access gate, live.
+     *
+     * Collected whether or not the gate is switched on, because the reading
+     * count is the thing the reader has to be able to trust BEFORE it starts
+     * locking them out of their phone. Showing it only once the gate is
+     * enabled would mean the first time anyone sees the number is the first
+     * time it can hurt them.
+     */
+    val gate = container.balanceManager.gate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Disabled)
 
     val aiSettings = container.settingsRepository.aiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
@@ -220,6 +233,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setRatio(value: Double) {
         viewModelScope.launch { container.balanceManager.setRatio(value) }
+    }
+
+    fun setGateEnabled(enabled: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setGateEnabled(enabled) }
+    }
+
+    fun setGateThresholdSeconds(seconds: Long) {
+        viewModelScope.launch { container.settingsRepository.setGateThresholdSeconds(seconds) }
+    }
+
+    fun setPlanningCapSeconds(seconds: Long) {
+        viewModelScope.launch { container.settingsRepository.setPlanningCapSeconds(seconds) }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

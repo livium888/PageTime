@@ -6,6 +6,7 @@ import com.pagetime.app.data.UsageRepository
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.usage.PendingLedgerWrites
 import com.pagetime.app.domain.BalanceManager
+import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,11 +36,22 @@ import kotlinx.coroutines.withContext
  * Enforcement design (level-triggered, not edge-triggered):
  * - Showing the block screen once, in reaction to a single window event, is not
  *   enough: events get coalesced, dropped, or arrive for windows that then steal
- *   focus back. So while a blocked app is foreground at zero balance an
+ *   focus back. So while a blocked app is foreground and access is denied an
  *   [enforceJob] re-asserts the overlay every [ENFORCE_INTERVAL_MS] until the
- *   user actually leaves the app or earns time.
+ *   user actually leaves the app or the rule stops denying it.
  * - If no overlay window can be added at all, enforcement falls back to sending
  *   the user home, which an accessibility service can always do.
+ *
+ * TWO RULES, ONE AT A TIME
+ *
+ * "Access is denied" means one of two different things depending on
+ * [GateState.enabled], and everything above is written to hold under both. On
+ * the balance it means there is nothing left to spend, and the whole spending
+ * apparatus runs. Under the gate it means the day's reading is not done, the
+ * spend ticker never starts, and the balance is not consulted at all — the
+ * reason being that a divisible currency is a toll rather than a boundary, and
+ * a minute of reading buying a minute of scrolling is the exact loop the gate
+ * exists to break.
  */
 class BlockController(
     private val scope: CoroutineScope,
@@ -82,6 +94,20 @@ class BlockController(
 
     @Volatile
     var balanceSeconds: Long = 0
+        private set
+
+    /**
+     * The access gate, mirrored in memory for the same reason as the balance:
+     * the AccessibilityService decides on the main thread and cannot wait for
+     * a database.
+     *
+     * Starts [GateState.Disabled], so before the flow has said anything the
+     * controller behaves exactly as it always did and falls back to the
+     * balance. A blocker that guessed "shut" while it was still loading would
+     * lock the reader out of their phone on a cold boot.
+     */
+    @Volatile
+    var gate: GateState = GateState.Disabled
         private set
 
     /** Wall-clock time the temporary "block paused" grace ends (0 = none). */
@@ -158,13 +184,30 @@ class BlockController(
                 // our own write-through echoes back here with the same value — harmless.
                 val previous = balanceSeconds
                 balanceSeconds = s.browseBalanceSeconds
-                if (previous != balanceSeconds) onBalanceChanged()
+                if (previous != balanceSeconds) onAccessChanged()
 
                 quickDisableUntil = s.quickDisableUntil
                 hardLockUntil = s.hardLockUntil
             }
         }
+        scope.launch {
+            balanceManager.gate.collect { next ->
+                val wasDenied = accessDenied()
+                gate = next
+                // Crossing the line mid-session is the moment that matters:
+                // the reader finished their two hours while the block screen
+                // was up, and it has to come down without them going anywhere.
+                if (wasDenied != accessDenied()) onAccessChanged()
+            }
+        }
     }
+
+    /** Whether the current rule — gate or balance — says no. */
+    private fun accessDenied(): Boolean = BlockEnforcementPolicy.accessDenied(
+        gateEnabled = gate.enabled,
+        gateOpen = gate.open,
+        balanceSeconds = balanceSeconds,
+    )
 
     fun onForegroundPackage(packageName: String?) {
         if (packageName != null) lastForegroundPackage = packageName
@@ -198,11 +241,7 @@ class BlockController(
 
         endSpendSession()
         currentBlockedPackage = packageName
-        if (balanceSeconds <= 0) {
-            startEnforcing()
-        } else {
-            startSpending()
-        }
+        if (accessDenied()) startEnforcing() else startSpending()
     }
 
     /**
@@ -277,19 +316,24 @@ class BlockController(
      * quick-disable grace is running AND no hard lock is in force — a hard lock
      * deliberately makes the block unavoidable, so it wins over any grace that
      * was set before it. Read on each decision, so no timer needs to be armed.
+     *
+     * Under the gate it is never true: see [BlockEnforcementPolicy.graceApplies]
+     * for why a boundary with a bypass button beside it is just a button.
      */
-    private fun graceActive(): Boolean {
-        val now = System.currentTimeMillis()
-        if (now < hardLockUntil) return false
-        return now < quickDisableUntil
-    }
+    private fun graceActive(): Boolean = BlockEnforcementPolicy.graceApplies(
+        gateEnabled = gate.enabled,
+        nowMillis = System.currentTimeMillis(),
+        quickDisableUntil = quickDisableUntil,
+        hardLockUntil = hardLockUntil,
+    )
 
-    private fun onBalanceChanged() {
+    private fun onAccessChanged() {
         val pkg = currentBlockedPackage ?: return
-        if (balanceSeconds <= 0) {
+        if (accessDenied()) {
             if (spendJob?.isActive != true) startEnforcing()
         } else if (enforceJob?.isActive == true) {
-            // Time was earned or refunded while the block screen was up.
+            // The balance was topped up, or the day's reading was finished
+            // while the block screen was up. Either way it comes down.
             stopEnforcing()
             service?.dismissTimeUp()
             if (currentBlockedPackage == pkg) startSpending()
@@ -300,6 +344,16 @@ class BlockController(
         if (spendJob?.isActive == true) return
         val pkg = currentBlockedPackage ?: return
         stopEnforcing()
+        // Under the gate there is no meter. Time is not deducted for using a
+        // blocked app, because it was never bought: the day's reading opened
+        // the phone and the phone stays open until the reading ages out.
+        //
+        // Placed AFTER stopEnforcing so that "access is allowed" still tears
+        // down a leftover enforcement loop. Returning before it would make
+        // this function mean two different things — "start the meter" on the
+        // balance and "do nothing at all" under the gate — and the second one
+        // silently drops the side effect every caller relies on.
+        if (gate.enabled) return
         sessionSpentSeconds = 0
         sessionStartWallAt = System.currentTimeMillis()
         spendJob = scope.launch {
@@ -333,7 +387,7 @@ class BlockController(
         val pkg = currentBlockedPackage ?: return
         logBlocked(pkg)
         enforceJob = scope.launch {
-            while (isActive && currentBlockedPackage == pkg && balanceSeconds <= 0) {
+            while (isActive && currentBlockedPackage == pkg && accessDenied()) {
                 val svc = service
                 when {
                     // The service is reconnecting (process restart, user toggled it).
@@ -372,7 +426,7 @@ class BlockController(
                                 overlayAttached = attached,
                                 currentBlockedPackage = currentBlockedPackage,
                                 expectedBlockedPackage = pkg,
-                                balanceSeconds = balanceSeconds,
+                                accessDenied = accessDenied(),
                                 blockedAppSeenRecently = seenRecently
                             )
                         ) {

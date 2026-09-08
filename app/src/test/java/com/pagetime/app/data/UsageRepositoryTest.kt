@@ -7,6 +7,10 @@ import com.pagetime.app.data.local.UsageEventEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -19,6 +23,10 @@ import org.junit.Test
  * against the live ticker's sessions.
  */
 class UsageRepositoryTest {
+
+    private companion object {
+        const val DAY_MS = 24L * 60 * 60 * 1000
+    }
 
     private lateinit var dao: FakeUsageEventDao
     private lateinit var repo: UsageRepository
@@ -118,6 +126,85 @@ class UsageRepositoryTest {
         assertEquals(1, rows.size)
         assertEquals("com.instagram", rows.first().packageName)
         assertEquals(120, rows.first().seconds)
+    }
+
+    /**
+     * The bug the access gate would have shipped with.
+     *
+     * [UsageRepository.earnedToday] computes its window start ONCE, when the
+     * flow is built, so a long-lived collector keeps measuring "since the
+     * moment I subscribed" no matter how much later it is. A screen never
+     * notices. A gate collected for the life of the blocker process would have
+     * opened after two hours and then never closed again.
+     */
+    @Test
+    fun `earnedToday keeps a frozen window, which is why the gate cannot use it`() = runTest {
+        var clock = 1_000_000_000_000L
+        val movable = UsageRepository(dao) { clock }
+        movable.log(UsageRepository.TYPE_EARNED, null, 7200)
+
+        val seen = mutableListOf<Long>()
+        val job = launch { movable.earnedToday().toList(seen) }
+        runCurrent()
+        assertEquals(7200L, seen.last())
+
+        // Two days later. The reading is long outside any honest "last day".
+        clock += 2 * DAY_MS
+        advanceTimeBy(2 * DAY_MS)
+        runCurrent()
+        // Still counted: the window never moved.
+        assertEquals(7200L, seen.last())
+
+        job.cancel()
+    }
+
+    @Test
+    fun `the gate's reading window actually moves`() = runTest {
+        var clock = 1_000_000_000_000L
+        val movable = UsageRepository(dao) { clock }
+        movable.log(UsageRepository.TYPE_EARNED, null, 7200)
+
+        val seen = mutableListOf<Long>()
+        val job = launch { movable.readingInLastDay(tickMillis = 60_000).toList(seen) }
+        runCurrent()
+        assertEquals(7200L, seen.last())
+
+        // Still inside the day: unchanged.
+        clock += DAY_MS - 60_000
+        advanceTimeBy(60_001)
+        runCurrent()
+        assertEquals(7200L, seen.last())
+
+        // Past the day: it ages out on the next tick, with nothing having
+        // happened in the database to signal it.
+        clock += 120_000
+        advanceTimeBy(60_001)
+        runCurrent()
+        assertEquals(0L, seen.last())
+
+        job.cancel()
+    }
+
+    @Test
+    fun `planning time is recorded apart from reading`() = runTest {
+        var clock = 1_000_000_000_000L
+        val movable = UsageRepository(dao) { clock }
+        movable.log(UsageRepository.TYPE_EARNED, null, 600)
+        movable.logPlanning(300)
+        movable.logPlanning(0) // ignored: nothing happened
+
+        val reading = mutableListOf<Long>()
+        val planning = mutableListOf<Long>()
+        val a = launch { movable.readingInLastDay().toList(reading) }
+        val b = launch { movable.planningInLastDay().toList(planning) }
+        runCurrent()
+
+        assertEquals(600L, reading.last())
+        assertEquals(300L, planning.last())
+        assertEquals(1, dao.events.count { it.type == UsageRepository.TYPE_PLANNED })
+
+        a.cancel()
+        b.cancel()
     }
 
     @Test

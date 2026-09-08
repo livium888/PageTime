@@ -4,6 +4,47 @@ package com.pagetime.app.blocker
 object BlockEnforcementPolicy {
 
     /**
+     * Whether a blocked app must be kept shut right now.
+     *
+     * Two eras in one function. Under the balance, access was a purchase and
+     * this asked whether there was anything left to spend. Under the gate it
+     * asks a different question entirely — has the day's reading been done —
+     * and the balance has no vote, which is what stops "read one minute,
+     * browse one minute" from surviving the change.
+     */
+    fun accessDenied(
+        gateEnabled: Boolean,
+        gateOpen: Boolean,
+        balanceSeconds: Long,
+    ): Boolean = if (gateEnabled) !gateOpen else balanceSeconds <= 0
+
+    /**
+     * Whether a user-approved override is lifting the block.
+     *
+     * A hard lock beats everything, as it always did. What is new is that the
+     * quick-disable grace does NOT apply under the gate: a two-hour boundary
+     * with a five-minute bypass button next to it is not a boundary, it is a
+     * button, and the reader asked for the boundary. The setting is left in
+     * place for anyone still on the balance, where it was always a reasonable
+     * escape hatch from a currency.
+     *
+     * The consequence is worth stating plainly: under the gate, the only ways
+     * out are reading, waiting for yesterday's reading to age back in, or
+     * turning the gate off in Settings. That last one is the real escape
+     * hatch, and it is deliberately somewhere other than the block screen.
+     */
+    fun graceApplies(
+        gateEnabled: Boolean,
+        nowMillis: Long,
+        quickDisableUntil: Long,
+        hardLockUntil: Long,
+    ): Boolean {
+        if (nowMillis < hardLockUntil) return false
+        if (gateEnabled) return false
+        return nowMillis < quickDisableUntil
+    }
+
+    /**
      * An attached overlay must never be shown again: repeating WindowManager
      * operations can cause focus churn and visible flashing. A detached overlay
      * may be retried only while the original blocked package is still current
@@ -25,12 +66,21 @@ object BlockEnforcementPolicy {
         overlayAttached: Boolean,
         currentBlockedPackage: String?,
         expectedBlockedPackage: String?,
-        balanceSeconds: Long,
+        /**
+         * The answer from [accessDenied], not the balance.
+         *
+         * This used to take the balance and test it against zero, which under
+         * the gate is the wrong question and answers it wrongly: a reader with
+         * minutes left over from the old currency and no reading done today
+         * would be refused entry by the controller and then never shown the
+         * screen saying so, because the balance was positive.
+         */
+        accessDenied: Boolean,
         blockedAppSeenRecently: Boolean
     ): Boolean =
         !overlayAttached &&
             blockedAppSeenRecently &&
-            balanceSeconds <= 0 &&
+            accessDenied &&
             !currentBlockedPackage.isNullOrBlank() &&
             currentBlockedPackage == expectedBlockedPackage
 }

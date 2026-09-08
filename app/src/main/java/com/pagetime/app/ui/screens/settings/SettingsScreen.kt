@@ -85,6 +85,8 @@ import com.pagetime.app.data.LumenLocalDraft
 import com.pagetime.app.data.LlmTokenBudget
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.ui.SectionHeader
+import com.pagetime.app.blocker.BlockScreenText
+import com.pagetime.app.domain.GateState
 import com.pagetime.app.ui.formatMinutes
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,6 +101,7 @@ fun SettingsScreen(
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
+    val gate by viewModel.gate.collectAsStateWithLifecycle()
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
@@ -143,30 +146,123 @@ fun SettingsScreen(
         ) {
             AppCard {
                 Text("Your time", style = MaterialTheme.typography.titleLarge)
+
+                // Shown whether or not the gate is switched on. This is the
+                // number that decides whether the phone opens, and the reader
+                // has to be able to watch it for a day and believe it BEFORE
+                // it is allowed to lock anything.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Read in the last 24 hours", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        formatMinutes(balanceSeconds),
+                        BlockScreenText.span(gate.readingSeconds),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+                if (gate.planningSeconds > 0) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("With the assistant", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            BlockScreenText.span(gate.countedPlanningSeconds) +
+                                " of " + BlockScreenText.span(gate.effectivePlanningCapSeconds),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { gate.progress },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    when {
+                        !gate.enabled ->
+                            "Against a ${BlockScreenText.span(gate.thresholdSeconds)} day. " +
+                                "Nothing is blocked by this yet — the browse balance below is still in charge."
+                        gate.remainingSeconds <= 0L -> "Today's reading is done. Your apps are open."
+                        else -> "${BlockScreenText.span(gate.remainingSeconds)} of reading before your apps open."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total reading", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatMinutes(totalReadingSeconds), style = MaterialTheme.typography.titleMedium)
                 }
-                Spacer(Modifier.height(4.dp))
-                Text("Reading rate", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = ratio.toFloat(),
-                    onValueChange = { viewModel.setRatio(it.toDouble()) },
-                    valueRange = 0.5f..3.0f,
-                    steps = 4
-                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Earn the day", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Blocked apps stay shut until the whole day's reading is done — " +
+                                "no minute-for-minute trading, and no pause button.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = gate.enabled,
+                        onCheckedChange = { viewModel.setGateEnabled(it) }
+                    )
+                }
+
+                if (gate.enabled) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Reading needed", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        BlockScreenText.span(gate.thresholdSeconds) + " in any 24 hours",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = (gate.thresholdSeconds / 60).toFloat(),
+                        onValueChange = { viewModel.setGateThresholdSeconds(it.toLong() * 60) },
+                        valueRange = (GateState.MIN_THRESHOLD_SECONDS / 60).toFloat()..
+                            (GateState.MAX_THRESHOLD_SECONDS / 60).toFloat(),
+                        steps = 30
+                    )
+                    Text("Of that, talking with the assistant", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        // Never more than half, so the gate cannot be talked
+                        // through — see GateState.maxPlanningCapFor.
+                        "Up to " + BlockScreenText.span(gate.effectivePlanningCapSeconds) +
+                            " may be assistant time instead of reading",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = (gate.effectivePlanningCapSeconds / 60).toFloat(),
+                        onValueChange = { viewModel.setPlanningCapSeconds(it.toLong() * 60) },
+                        valueRange = 0f..
+                            (GateState.maxPlanningCapFor(gate.thresholdSeconds) / 60).toFloat()
+                                .coerceAtLeast(1f)
+                    )
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            formatMinutes(balanceSeconds),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Reading rate", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = ratio.toFloat(),
+                        onValueChange = { viewModel.setRatio(it.toDouble()) },
+                        valueRange = 0.5f..3.0f,
+                        steps = 4
+                    )
+                }
             }
 
             SectionHeader("Protection")

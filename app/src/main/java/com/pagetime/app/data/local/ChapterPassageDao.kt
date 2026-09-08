@@ -26,6 +26,21 @@ interface ChapterPassageDao {
     )
     fun observeForChapter(bookId: String, chapterIndex: Int): Flow<List<ChapterPassageEntity>>
 
+    /**
+     * Clears a chapter's record before a fresh one is written.
+     *
+     * Upserting by ordinal is not enough. Ordinals identify a chunk within one
+     * INDEX, and re-indexing renumbers them — so rows describing the old
+     * chunks survived beside the new ones and the sheet showed both. It read
+     * as 45 passages from a chapter that can send at most 24, with duplicate
+     * rows and stale mid-sentence text among them.
+     */
+    @Query(
+        "DELETE FROM chapter_passages " +
+            "WHERE bookId = :bookId AND chapterIndex = :chapterIndex"
+    )
+    suspend fun deleteForChapter(bookId: String, chapterIndex: Int)
+
     @Query("DELETE FROM chapter_passages WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: String)
 }

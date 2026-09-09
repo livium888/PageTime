@@ -108,6 +108,7 @@ class AppContainer(context: Context) {
         dao = database.shelfBookDao(),
         library = libraryRepository,
         catalogs = bookCatalogs,
+        authors = com.pagetime.app.data.shelf.OpenLibraryAuthors(),
     )
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)

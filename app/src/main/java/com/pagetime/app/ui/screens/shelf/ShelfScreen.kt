@@ -150,7 +150,7 @@ fun ShelfScreen(
 }
 
 @Composable
-private fun LadderRow(
+internal fun LadderRow(
     row: ShelfRow,
     downloading: Boolean,
     onDownload: () -> Unit,

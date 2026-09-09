@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,6 +85,8 @@ fun LibraryScreen(
     viewModel: LibraryViewModel = viewModel(),
     /** The curated reading path. */
     onOpenShelf: () -> Unit = {},
+    /** Everything this author wrote, whether or not we can serve it. */
+    onOpenAuthor: (String) -> Unit = {},
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -281,6 +284,7 @@ fun LibraryScreen(
                     BookRow(
                         book = book,
                         onClick = { onOpenBook(book.id) },
+                        onAuthorClick = { onOpenAuthor(book.author) },
                         onDelete = { viewModel.delete(book) },
                         onReformat = { viewModel.reformatWithAI(book.id) },
                         onReplace = { replaceBook = book; replacePicker.launch(arrayOf("text/plain", "text/*")) },
@@ -366,7 +370,9 @@ private fun BookRow(
     isReformatting: Boolean = false,
     reformatProgress: Pair<Int, Int>? = null,
     onCopy: (() -> Unit)? = null,
-    onShare: (() -> Unit)? = null
+    onShare: (() -> Unit)? = null,
+    /** Tapping the author opens everything else they wrote. */
+    onAuthorClick: (() -> Unit)? = null
 ) {
     Surface(
         onClick = onClick,
@@ -418,9 +424,17 @@ private fun BookRow(
                 Text(
                     text = book.author,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Coloured as a link only when it is one, so a book with
+                    // no usable author does not offer a tap that goes nowhere.
+                    color = if (onAuthorClick != null) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (onAuthorClick != null) {
+                        Modifier.clickable(onClick = onAuthorClick)
+                    } else {
+                        Modifier
+                    }
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

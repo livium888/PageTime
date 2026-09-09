@@ -8,6 +8,7 @@ import com.pagetime.app.data.local.ShelfBookDao
 import com.pagetime.app.data.local.ShelfBookEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 
 /** One line of a shelf, as the screen needs it. */
 data class ShelfRow(
@@ -43,6 +44,7 @@ class ShelfRepository(
     private val dao: ShelfBookDao,
     private val library: LibraryRepository,
     private val catalogs: BookCatalogs,
+    private val authors: OpenLibraryAuthors = OpenLibraryAuthors(),
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
 
@@ -59,6 +61,58 @@ class ShelfRepository(
          */
         const val UNAVAILABLE_RETRY_MS = 14L * 24 * 60 * 60 * 1000
     }
+
+    /**
+     * The shelf id for one author, derived from the name.
+     *
+     * Stable and readable, so a shelf survives the app being reinstalled with
+     * the same library and can be recognised in a database dump.
+     */
+    fun authorShelfId(author: String): String =
+        "author-" + ShelfMatcher.normalize(author).replace(' ', '-').take(80)
+
+    /**
+     * Builds (or refreshes) the shelf of everything one author wrote.
+     *
+     * Returns what the lookup concluded so the screen can say "several people
+     * are called this" rather than showing one of them and hoping. Nothing is
+     * written to the shelf unless exactly one author was identified — a
+     * bibliography under the wrong name is worse than no bibliography, because
+     * the reader has no way to notice.
+     */
+    suspend fun buildAuthorShelf(author: String): AuthorLookup {
+        val shelfId = authorShelfId(author)
+        val candidates = authors.searchAuthors(author)
+        val lookup = AuthorBibliography.chooseAuthor(author, candidates)
+        val found = (lookup as? AuthorLookup.Found)?.author ?: return lookup
+
+        val works = authors.works(found.key)
+        if (works.isEmpty()) return AuthorLookup.NotFound
+
+        val rows = works.mapIndexed { index, work ->
+            ShelfBookEntity(
+                shelfId = shelfId,
+                // The Open Library work key where there is one, so a retitled
+                // record does not arrive as a second copy of the same book.
+                slotId = work.workKey ?: ShelfMatcher.normalize(work.title).take(60),
+                title = work.title,
+                author = found.name,
+                position = index,
+                note = work.firstPublishedYear?.toString(),
+                addedAt = now(),
+            )
+        }
+        dao.insertAllKeepingExisting(rows)
+        return lookup
+    }
+
+    /** Every author in the reader's library, in the order they read them. */
+    fun observeLibraryAuthors(): Flow<List<String>> =
+        library.observeBooks().map { books ->
+            books.map { it.author.trim() }
+                .filter { it.isNotBlank() && !it.equals("Unknown author", ignoreCase = true) }
+                .distinct()
+        }
 
     /**
      * Puts the shipped ladder on its shelf, once.
@@ -91,6 +145,8 @@ class ShelfRepository(
     fun observeShelf(shelfId: String): Flow<List<ShelfRow>> =
         combine(dao.observeShelf(shelfId), library.observeBooks()) { entries, books ->
             val owned: Map<String, BookEntity> = books.associateBy { it.id }
+            // Stage headings belong to the ladder; an author shelf is one
+            // career and has no stages, so this map is simply empty for it.
             val stages = ReadingLadders.greatBooks.associate { it.key to it.stage }
             entries.map { row ->
                 val book = row.catalogBookId?.let { owned[it] }
@@ -129,7 +185,10 @@ class ShelfRepository(
         )
         val byKey = ReadingLadders.greatBooks.associateBy { it.key }
         for (row in pending) {
-            val entry = byKey[row.slotId] ?: continue
+            // A ladder slot carries its author aliases; an author shelf row
+            // has only what Open Library said, which is enough because the
+            // name came from a record rather than from my typing.
+            val entry = byKey[row.slotId] ?: ShelfBookRef(row.title, row.author)
             val hit = searchCatalogues(entry)
             dao.recordResolution(
                 shelfId = shelfId,
@@ -155,21 +214,29 @@ class ShelfRepository(
      * which is exactly the shape of failure the catalogue health states were
      * added to stop elsewhere.
      */
-    private suspend fun searchCatalogues(entry: LadderEntry): Pair<GutendexBook, String>? {
+    private suspend fun searchCatalogues(entry: WantedBook): Pair<GutendexBook, String>? {
         for (catalogue in catalogs.all) {
-            val page = runCatching { catalogue.search(entry.searchQuery, 1) }.getOrNull() ?: continue
+            val query = "${'$'}{entry.title} ${'$'}{entry.author}"
+            val page = runCatching { catalogue.search(query, 1) }.getOrNull() ?: continue
             val match = ShelfMatcher.bestMatch(entry, page.books)
             if (match != null) return match to catalogue.id
         }
         return null
     }
 
+    /** A shelf row as something the matcher can look for. */
+    private data class ShelfBookRef(
+        override val title: String,
+        override val author: String,
+        override val authorAliases: List<String> = emptyList(),
+    ) : WantedBook
+
     /** Downloads a resolved shelf entry through the library's normal path. */
     suspend fun download(shelfId: String, slotId: String): Result<BookEntity> {
         val row = dao.shelf(shelfId).firstOrNull { it.slotId == slotId }
             ?: return Result.failure(IllegalStateException("No such shelf entry"))
-        val entry = ReadingLadders.greatBooks.firstOrNull { it.key == slotId }
-            ?: return Result.failure(IllegalStateException("No such ladder entry"))
+        val entry: WantedBook = ReadingLadders.greatBooks.firstOrNull { it.key == slotId }
+            ?: ShelfBookRef(row.title, row.author)
         // Re-search rather than storing download URLs: a URL cached weeks ago
         // may 404, and the catalogue is the thing that knows.
         val hit = searchCatalogues(entry)

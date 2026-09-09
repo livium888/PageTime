@@ -123,6 +123,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     private var tickerJob: Job? = null
+
+    /** Whether the guard has been started for this book, so resumes resume. */
+    private var guardStarted = false
     private var pendingSeconds = 0L
     private var resumed = false
 
@@ -263,9 +266,18 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private fun tryStartTicker() {
         // The book loads asynchronously on first open; only arm the ticker once it
         // exists AND the reader is actually in the foreground.
-        if (_book.value == null) return
+        val book = _book.value ?: return
         if (tickerJob?.isActive == true) return
-        guard.start(SystemClock.elapsedRealtime())
+        val now = SystemClock.elapsedRealtime()
+        // Started once per book; every later return to the foreground resumes.
+        // These used to be the same call, which handed out a fresh allowance and
+        // a cleared watermark on every flick to the home screen.
+        if (guardStarted) {
+            guard.resume(now)
+        } else {
+            guard.start(now, book.scrollProgress)
+            guardStarted = true
+        }
         _guardState.value = guard.state
         tickerJob = viewModelScope.launch {
             var ticks = 0

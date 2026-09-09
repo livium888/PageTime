@@ -21,17 +21,20 @@ object BlockEnforcementPolicy {
     /**
      * Whether a user-approved override is lifting the block.
      *
-     * A hard lock beats everything, as it always did. What is new is that the
-     * quick-disable grace does NOT apply under the gate: a two-hour boundary
-     * with a five-minute bypass button next to it is not a boundary, it is a
-     * button, and the reader asked for the boundary. The setting is left in
-     * place for anyone still on the balance, where it was always a reasonable
-     * escape hatch from a currency.
+     * A hard lock beats everything, as it always did. The quick-disable grace
+     * never applies under the gate: a two-hour boundary with a five-minute
+     * bypass button next to it is not a boundary, it is a button.
      *
-     * The consequence is worth stating plainly: under the gate, the only ways
-     * out are reading, waiting for yesterday's reading to age back in, or
-     * turning the gate off in Settings. That last one is the real escape
-     * hatch, and it is deliberately somewhere other than the block screen.
+     * Its buttons have since been deleted from the app entirely, so nothing
+     * can set this any more. The check stays because an install upgrading
+     * mid-grace still carries a stored expiry, and the honest thing is to let
+     * a pause the reader was already given run out rather than cancel it. Once
+     * those have expired the parameter is permanently zero.
+     *
+     * The consequence is worth stating plainly: under the gate the only ways
+     * out are reading, or turning the gate off in Settings — which itself
+     * takes a day. Neither is reachable from the block screen, which is where
+     * someone would look at the moment they least want to be told no.
      */
     fun graceApplies(
         gateEnabled: Boolean,

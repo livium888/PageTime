@@ -40,11 +40,24 @@
         android:max="1000"
         android:visibility="gone" />
 
+    <!--
+        Shown only once the reading is already done, so the block screen can
+        be the door as well as the wall. Hidden the rest of the time: a start
+        button that is present but refuses is worse than no button.
+    -->
+    <Button
+        android:id="@+id/btn_start_session"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="@string/overlay_start_session"
+        android:visibility="gone" />
+
     <Button
         android:id="@+id/btn_read_now"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
+        android:layout_marginTop="12dp"
         android:text="@string/overlay_button" />
 
 </LinearLayout>

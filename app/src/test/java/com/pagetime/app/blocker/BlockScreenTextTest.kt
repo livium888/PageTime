@@ -2,52 +2,83 @@ package com.pagetime.app.blocker
 
 import com.pagetime.app.domain.GateState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BlockScreenTextTest {
 
-    private fun gate(reading: Long, threshold: Long = 7200, enabled: Boolean = true) =
-        GateState(
-            enabled = enabled,
-            readingSeconds = reading,
-            planningSeconds = 0,
-            thresholdSeconds = threshold,
-            planningCapSeconds = 1200,
-        )
+    private companion object {
+        const val T0 = 1_700_000_000_000L
+        const val COST = GateState.DEFAULT_SESSION_COST_SECONDS
+    }
+
+    private fun gate(
+        credit: Long = 0,
+        switchedOn: Boolean = true,
+        sessionRemaining: Long = 0,
+    ) = GateState(
+        switchedOn = switchedOn,
+        creditSeconds = credit,
+        sessionSecondsRemaining = sessionRemaining,
+        disableAtMillis = 0,
+        nowMillis = T0,
+    )
 
     @Test
     fun `on the balance the screen still says what it always said`() {
-        val g = gate(reading = 0, enabled = false)
+        val g = gate(switchedOn = false)
         assertEquals("Time is up!", BlockScreenText.title(g))
         assertEquals("Read a few minutes to earn time in this app.", BlockScreenText.subtitle(g))
         assertNull(BlockScreenText.progress(g))
+        assertFalse(BlockScreenText.showsStartButton(g))
     }
 
     /** A distance the reader can close, not a debt that happened to them. */
     @Test
-    fun `under the gate the screen reports a distance`() {
-        val g = gate(reading = 72 * 60)
+    fun `part way there the screen reports a distance`() {
+        val g = gate(credit = 72 * 60)
         assertEquals("1h 12m of 2h", BlockScreenText.title(g))
-        assertEquals("48m of reading left before your apps open.", BlockScreenText.subtitle(g))
+        assertEquals("48m of reading before your next 30m.", BlockScreenText.subtitle(g))
         assertEquals(0.6f, BlockScreenText.progress(g)!!, 0.001f)
+        assertFalse(BlockScreenText.showsStartButton(g))
     }
 
+    /**
+     * The one moment the block screen is a door rather than a wall. Getting
+     * this wrong would leave a reader who has done the work staring at a
+     * refusal with no way through.
+     */
     @Test
-    fun `counted planning shows up in the distance`() {
-        val g = GateState(
-            enabled = true,
-            readingSeconds = 60 * 60,
-            planningSeconds = 20 * 60,
-            thresholdSeconds = 7200,
-            planningCapSeconds = 1200,
+    fun `once the reading is done the screen offers the session`() {
+        val g = gate(credit = COST)
+        assertTrue(BlockScreenText.showsStartButton(g))
+        assertEquals("You've read enough", BlockScreenText.title(g))
+        assertEquals(
+            "Start your 30m. It only counts down while you are using these apps.",
+            BlockScreenText.subtitle(g)
         )
-        assertEquals("1h 20m of 2h", BlockScreenText.title(g))
+        assertEquals("Start 30m", BlockScreenText.startButtonLabel(g))
     }
 
     @Test
-    fun `an open gate says so rather than counting`() {
-        assertEquals("Reading done. This app is open.", BlockScreenText.subtitle(gate(reading = 7200)))
+    fun `a banked session still offers itself rather than showing a full bar as done`() {
+        val g = gate(credit = COST + 30 * 60)
+        assertTrue(BlockScreenText.showsStartButton(g))
+    }
+
+    /**
+     * The second before the door opens must not claim to be open — a screen
+     * that says you are done and will not let you through is the worst thing
+     * it could do.
+     */
+    @Test
+    fun `almost done does not claim to be done`() {
+        val g = gate(credit = COST - 1)
+        assertFalse(BlockScreenText.showsStartButton(g))
+        assertEquals("1h 59m of 2h", BlockScreenText.title(g))
+        assertEquals("under a minute of reading before your next 30m.", BlockScreenText.subtitle(g))
     }
 
     @Test
@@ -59,18 +90,30 @@ class BlockScreenTextTest {
         assertEquals("1h", BlockScreenText.span(60 * 60))
         assertEquals("1h 1m", BlockScreenText.span(61 * 60))
         assertEquals("2h", BlockScreenText.span(7200))
-        assertEquals("8h", BlockScreenText.span(8 * 3600))
     }
 
-    /**
-     * The second before the gate opens must not round up to "2h of 2h" while
-     * still refusing entry — a screen that says you are done and will not let
-     * you through is the worst thing this screen could do.
-     */
+    /** While something is being spent, the seconds are the information. */
     @Test
-    fun `almost done does not claim to be done`() {
-        val g = gate(reading = 7200 - 1)
-        assertEquals("1h 59m of 2h", BlockScreenText.title(g))
-        assertEquals("under a minute of reading left before your apps open.", BlockScreenText.subtitle(g))
+    fun `the session countdown shows seconds`() {
+        assertEquals("30:00", BlockScreenText.countdown(1800))
+        assertEquals("9:05", BlockScreenText.countdown(545))
+        assertEquals("0:09", BlockScreenText.countdown(9))
+        assertEquals("0:00", BlockScreenText.countdown(0))
+        assertEquals("0:00", BlockScreenText.countdown(-5))
+    }
+
+    @Test
+    fun `a zero cost cannot divide the title by zero`() {
+        val g = GateState(
+            switchedOn = true,
+            creditSeconds = 100,
+            sessionSecondsRemaining = 0,
+            disableAtMillis = 0,
+            nowMillis = T0,
+            sessionCostSeconds = 0,
+        )
+        // Affordable at any credit, so it offers rather than dividing.
+        assertTrue(BlockScreenText.showsStartButton(g))
+        assertEquals("You've read enough", BlockScreenText.title(g))
     }
 }

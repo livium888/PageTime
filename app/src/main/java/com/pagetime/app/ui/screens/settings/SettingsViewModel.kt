@@ -58,8 +58,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
      * enabled would mean the first time anyone sees the number is the first
      * time it can hurt them.
      */
+    /** What was actually read today — the honest report, not the counter. */
+    val readInLastDay = container.usageRepository.readingInLastDay()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
     val gate = container.balanceManager.gate
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Disabled)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
+
+    init {
+        // A wind-down that finished while the app was closed leaves a stored
+        // switch reading "on" for a gate that is off. Settling it here is the
+        // one place the reader would notice the contradiction.
+        viewModelScope.launch { container.balanceManager.settleWindDownIfElapsed() }
+    }
 
     val aiSettings = container.settingsRepository.aiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
@@ -235,16 +246,20 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { container.balanceManager.setRatio(value) }
     }
 
-    fun setGateEnabled(enabled: Boolean) {
-        viewModelScope.launch { container.settingsRepository.setGateEnabled(enabled) }
+    fun setGateSwitchedOn(on: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setGateSwitchedOn(on) }
     }
 
-    fun setGateThresholdSeconds(seconds: Long) {
-        viewModelScope.launch { container.settingsRepository.setGateThresholdSeconds(seconds) }
+    fun setSessionCostSeconds(seconds: Long) {
+        viewModelScope.launch { container.settingsRepository.setSessionCostSeconds(seconds) }
     }
 
-    fun setPlanningCapSeconds(seconds: Long) {
-        viewModelScope.launch { container.settingsRepository.setPlanningCapSeconds(seconds) }
+    fun setSessionLengthSeconds(seconds: Long) {
+        viewModelScope.launch { container.settingsRepository.setSessionLengthSeconds(seconds) }
+    }
+
+    fun startSession() {
+        viewModelScope.launch { container.balanceManager.startSession() }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

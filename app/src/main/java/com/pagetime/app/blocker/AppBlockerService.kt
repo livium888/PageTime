@@ -136,11 +136,15 @@ class AppBlockerService : AccessibilityService() {
     }
 
     private fun showTimeUpNow(): Boolean {
-        val current = overlay ?: TimeUpOverlay(this) { openReader() }.also { overlay = it }
+        val current = overlay ?: TimeUpOverlay(
+            context = this,
+            onReadNow = { openReader() },
+            onStartSession = { controller?.startSessionFromBlockScreen() },
+        ).also { overlay = it }
         // Refreshed on every show rather than only on creation: the overlay is
         // re-used across blocks, and under the gate the number on it changes
         // every minute the reader spends reading.
-        current.setStatus(controller?.gate ?: GateState.Disabled)
+        current.setStatus(controller?.gate ?: GateState.Unknown)
         return current.show()
     }
 

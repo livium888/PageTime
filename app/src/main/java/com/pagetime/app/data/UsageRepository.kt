@@ -35,15 +35,15 @@ class UsageRepository(
         const val TYPE_RECONCILED = "RECONCILED"
 
         /**
-         * Time spent talking to the assistant about what to read.
+         * A session was opened: reading credit spent for a window of app time.
          *
-         * Counted toward the access gate up to a cap, which is why it is its
-         * own type rather than more EARNED rows: the cap can only be applied
-         * to a quantity that can be told apart from reading, and the audit
-         * screen should not claim the reader read for twenty minutes they
-         * spent planning.
+         * The one row that says the bargain was actually struck. Reading rows
+         * say what was earned and spend rows say what a particular app took;
+         * neither answers "how many times this week did I trade two hours for
+         * thirty minutes", which is the question the whole mechanism exists to
+         * make askable.
          */
-        const val TYPE_PLANNED = "PLANNED"
+        const val TYPE_SESSION = "SESSION"
 
         private const val DAY_MS = 24L * 60 * 60 * 1000
 
@@ -123,12 +123,6 @@ class UsageRepository(
 
     fun earnedToday(): Flow<Long> = dao.sumSince(TYPE_EARNED, now() - DAY_MS)
 
-    /** Records assistant time so it can count toward the gate, capped, later. */
-    suspend fun logPlanning(seconds: Long) {
-        if (seconds <= 0) return
-        log(TYPE_PLANNED, packageName = null, seconds = seconds)
-    }
-
     /**
      * Creditable reading in the last twenty-four hours, on a window that
      * actually moves.
@@ -144,13 +138,14 @@ class UsageRepository(
      * Rolling rather than calendar-day on purpose: a midnight reset invites
      * banking minutes at 11:55pm for a day that has not started, and strands
      * anyone reading across it.
+     *
+     * The access gate does NOT use this. It spends a credit counter, which is
+     * a different question — what you have left, rather than what you did.
+     * This is the honest report of the day, shown next to the counter so the
+     * two can be compared.
      */
     fun readingInLastDay(tickMillis: Long = WINDOW_TICK_MS): Flow<Long> =
         rollingDaySum(TYPE_EARNED, tickMillis)
-
-    /** Assistant time in the same window, uncapped — the cap belongs to the gate. */
-    fun planningInLastDay(tickMillis: Long = WINDOW_TICK_MS): Flow<Long> =
-        rollingDaySum(TYPE_PLANNED, tickMillis)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun rollingDaySum(type: String, tickMillis: Long): Flow<Long> =

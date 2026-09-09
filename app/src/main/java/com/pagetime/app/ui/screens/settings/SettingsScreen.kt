@@ -102,6 +102,7 @@ fun SettingsScreen(
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
+    val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
@@ -147,44 +148,87 @@ fun SettingsScreen(
             AppCard {
                 Text("Your time", style = MaterialTheme.typography.titleLarge)
 
-                // Shown whether or not the gate is switched on. This is the
-                // number that decides whether the phone opens, and the reader
-                // has to be able to watch it for a day and believe it BEFORE
-                // it is allowed to lock anything.
+                if (gate.enabled) {
+                    if (gate.sessionActive) {
+                        // Unspent app time is the only thing on this card
+                        // worth looking at, so it gets the big number.
+                        Text("App time left", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            BlockScreenText.countdown(gate.sessionRemainingSeconds),
+                            style = MaterialTheme.typography.displaySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "Your apps are open. This only counts down while you are actually " +
+                                "using them, and what is left keeps until you do. It is also " +
+                                "the only time apps can be taken off the blocked list.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (gate.canStartSession) {
+                            Button(
+                                onClick = { viewModel.startSession() },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Add ${BlockScreenText.span(gate.sessionLengthSeconds)} more")
+                            }
+                        }
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Read toward your next " +
+                                    BlockScreenText.span(gate.sessionLengthSeconds),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                BlockScreenText.span(
+                                    gate.sessionCostSeconds - gate.secondsToNextSession
+                                ) + " of " + BlockScreenText.span(gate.sessionCostSeconds),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { gate.creditProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (gate.sessionsBanked > 1) {
+                            Text(
+                                "${gate.sessionsBanked} sessions banked — the most you can hold.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = { viewModel.startSession() },
+                            enabled = gate.canStartSession,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                if (gate.canStartSession) {
+                                    "Start ${BlockScreenText.span(gate.sessionLengthSeconds)}"
+                                } else {
+                                    BlockScreenText.span(gate.secondsToNextSession) + " to go"
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // Shown whichever rule is in force: what was actually read.
+                // Not the same question as the credit counter above — that one
+                // says what is left, this says what happened.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Read in the last 24 hours", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        BlockScreenText.span(gate.readingSeconds),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        BlockScreenText.span(readInLastDay),
+                        style = MaterialTheme.typography.titleMedium
                     )
                 }
-                if (gate.planningSeconds > 0) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("With the assistant", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            BlockScreenText.span(gate.countedPlanningSeconds) +
-                                " of " + BlockScreenText.span(gate.effectivePlanningCapSeconds),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = { gate.progress },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    when {
-                        !gate.enabled ->
-                            "Against a ${BlockScreenText.span(gate.thresholdSeconds)} day. " +
-                                "Nothing is blocked by this yet — the browse balance below is still in charge."
-                        gate.remainingSeconds <= 0L -> "Today's reading is done. Your apps are open."
-                        else -> "${BlockScreenText.span(gate.remainingSeconds)} of reading before your apps open."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total reading", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatMinutes(totalReadingSeconds), style = MaterialTheme.typography.titleMedium)
@@ -200,46 +244,57 @@ fun SettingsScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Earn the day", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Blocked apps stay shut until the whole day's reading is done — " +
-                                "no minute-for-minute trading, and no pause button.",
+                            "${BlockScreenText.span(gate.sessionCostSeconds)} of reading buys " +
+                                "${BlockScreenText.span(gate.sessionLengthSeconds)} of app time, " +
+                                "spent only while you use them. No minute-for-minute trading, " +
+                                "and no pause button.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
-                        checked = gate.enabled,
-                        onCheckedChange = { viewModel.setGateEnabled(it) }
+                        checked = gate.switchedOn,
+                        onCheckedChange = { viewModel.setGateSwitchedOn(it) }
+                    )
+                }
+
+                if (gate.windingDown) {
+                    // The switch reads off; the gate is still on for a day.
+                    // Saying so is the whole point — a delay the reader only
+                    // discovers by being blocked would feel like a bug.
+                    Text(
+                        "Switching off in " + BlockScreenText.span(gate.secondsUntilDisabled) +
+                            ". Until then the gate still applies. Turn it back on any time.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
 
                 if (gate.enabled) {
                     Spacer(Modifier.height(8.dp))
-                    Text("Reading needed", style = MaterialTheme.typography.titleMedium)
+                    Text("Reading per session", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        BlockScreenText.span(gate.thresholdSeconds) + " in any 24 hours",
+                        BlockScreenText.span(gate.sessionCostSeconds),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Slider(
-                        value = (gate.thresholdSeconds / 60).toFloat(),
-                        onValueChange = { viewModel.setGateThresholdSeconds(it.toLong() * 60) },
-                        valueRange = (GateState.MIN_THRESHOLD_SECONDS / 60).toFloat()..
-                            (GateState.MAX_THRESHOLD_SECONDS / 60).toFloat(),
+                        value = (gate.sessionCostSeconds / 60).toFloat(),
+                        onValueChange = { viewModel.setSessionCostSeconds(it.toLong() * 60) },
+                        valueRange = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()..
+                            (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat(),
                         steps = 30
                     )
-                    Text("Of that, talking with the assistant", style = MaterialTheme.typography.titleMedium)
+                    Text("Session length", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        // Never more than half, so the gate cannot be talked
-                        // through — see GateState.maxPlanningCapFor.
-                        "Up to " + BlockScreenText.span(gate.effectivePlanningCapSeconds) +
-                            " may be assistant time instead of reading",
+                        BlockScreenText.span(gate.sessionLengthSeconds),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Slider(
-                        value = (gate.effectivePlanningCapSeconds / 60).toFloat(),
-                        onValueChange = { viewModel.setPlanningCapSeconds(it.toLong() * 60) },
-                        valueRange = 0f..
-                            (GateState.maxPlanningCapFor(gate.thresholdSeconds) / 60).toFloat()
-                                .coerceAtLeast(1f)
+                        value = (gate.sessionLengthSeconds / 60).toFloat(),
+                        onValueChange = { viewModel.setSessionLengthSeconds(it.toLong() * 60) },
+                        valueRange = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()..
+                            (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat(),
+                        steps = 22
                     )
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

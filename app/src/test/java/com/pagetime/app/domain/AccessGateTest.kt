@@ -7,140 +7,209 @@ import org.junit.Test
 
 class AccessGateTest {
 
+    private companion object {
+        const val T0 = 1_700_000_000_000L
+        const val COST = GateState.DEFAULT_SESSION_COST_SECONDS      // 7200
+        const val LENGTH = GateState.DEFAULT_SESSION_LENGTH_SECONDS  // 1800
+    }
+
     private fun gate(
-        enabled: Boolean = true,
-        reading: Long = 0,
-        planning: Long = 0,
-        threshold: Long = GateState.DEFAULT_THRESHOLD_SECONDS,
-        cap: Long = GateState.DEFAULT_PLANNING_CAP_SECONDS,
-    ) = GateState(enabled, reading, planning, threshold, cap)
+        switchedOn: Boolean = true,
+        credit: Long = 0,
+        sessionRemaining: Long = 0,
+        disableAt: Long = 0,
+        now: Long = T0,
+        cost: Long = COST,
+        length: Long = LENGTH,
+    ) = GateState(switchedOn, credit, sessionRemaining, disableAt, now, cost, length)
+
+    // --- The exchange ---
 
     @Test
-    fun `below the line the apps stay shut`() {
-        val g = gate(reading = 2 * 60 * 60 - 1)
-        assertFalse(g.open)
-        assertEquals(1L, g.remainingSeconds)
+    fun `a minute of reading buys nothing`() {
+        assertFalse(gate(credit = 60).canStartSession)
+        assertFalse(gate(credit = 60).open)
+        assertFalse(gate(credit = COST - 1).canStartSession)
     }
 
     @Test
-    fun `the line itself opens them`() {
-        val g = gate(reading = 2 * 60 * 60)
+    fun `the full price buys a session`() {
+        assertTrue(gate(credit = COST).canStartSession)
+        assertEquals(0L, gate(credit = COST).secondsToNextSession)
+    }
+
+    /**
+     * The heart of it: the door being affordable is not the door being open.
+     * Credit has to be spent deliberately, which is what makes a session a
+     * thing you decide to take rather than a state you drift into.
+     */
+    @Test
+    fun `affording a session is not the same as being in one`() {
+        val afford = gate(credit = COST * 2)
+        assertTrue(afford.canStartSession)
+        assertFalse(afford.open)
+    }
+
+    // --- The session ---
+
+    @Test
+    fun `unspent app time opens the apps`() {
+        val g = gate(credit = 0, sessionRemaining = 20 * 60)
+        assertTrue(g.sessionActive)
         assertTrue(g.open)
-        assertEquals(0L, g.remainingSeconds)
+        assertEquals(20L * 60, g.sessionRemainingSeconds)
     }
 
     @Test
-    fun `a disabled gate opens regardless of how little was read`() {
-        assertTrue(gate(enabled = false, reading = 0).open)
+    fun `spent-out app time closes them again`() {
+        val g = gate(sessionRemaining = 0)
+        assertFalse(g.sessionActive)
+        assertFalse(g.open)
     }
 
     /**
-     * The rule the whole feature turns on. Reading a minute used to buy a
-     * minute; now a minute buys nothing at all until the line is crossed.
+     * A meter, not a wall clock. Nothing in this state depends on the time,
+     * so app time cannot evaporate while the phone is face-down — the reader
+     * paid two hours for it and it is still there tomorrow.
      */
     @Test
-    fun `a minute of reading does not buy a minute of apps`() {
-        val before = gate(reading = 0)
-        val after = gate(reading = 60)
-        assertFalse(before.open)
-        assertFalse(after.open)
+    fun `app time does not run down on its own`() {
+        val g = gate(sessionRemaining = 12 * 60)
+        val aWeekLater = g.copy(nowMillis = T0 + 7L * 24 * 60 * 60 * 1000)
+        assertEquals(g.sessionRemainingSeconds, aWeekLater.sessionRemainingSeconds)
+        assertTrue(aWeekLater.open)
+    }
+
+    /**
+     * Buying more while some is left is allowed — it is the reader's two
+     * hours — but it stops at the ceiling, or a month of reading could
+     * stockpile an afternoon of scrolling.
+     */
+    @Test
+    fun `app time can be topped up but not hoarded`() {
+        assertTrue(gate(credit = COST, sessionRemaining = LENGTH).canStartSession)
+        assertFalse(gate(credit = COST * 2, sessionRemaining = LENGTH * 2).canStartSession)
+        assertEquals(LENGTH * 2, GateState.maxSessionSecondsFor(LENGTH))
+    }
+
+    // --- Banking ---
+
+    @Test
+    fun `credit banks whole sessions`() {
+        assertEquals(0, gate(credit = COST - 1).sessionsBanked)
+        assertEquals(1, gate(credit = COST).sessionsBanked)
+        assertEquals(2, gate(credit = COST * 2).sessionsBanked)
     }
 
     @Test
-    fun `planning time counts toward the line`() {
-        val g = gate(reading = 2 * 60 * 60 - 300, planning = 300)
+    fun `banking is capped at two sessions`() {
+        assertEquals(COST * 2, GateState.maxCreditFor(COST))
+        assertEquals(0L, GateState.maxCreditFor(0))
+        assertEquals(0L, GateState.maxCreditFor(-5))
+    }
+
+    @Test
+    fun `progress reads as fullness toward the next session`() {
+        assertEquals(0f, gate(credit = 0).creditProgress, 0.0001f)
+        assertEquals(0.5f, gate(credit = COST / 2).creditProgress, 0.0001f)
+        // A whole session banked is full, not back to empty.
+        assertEquals(1f, gate(credit = COST).creditProgress, 0.0001f)
+        // Part-way to a second.
+        assertEquals(0.25f, gate(credit = COST + COST / 4).creditProgress, 0.0001f)
+    }
+
+    // --- The off switch ---
+
+    @Test
+    fun `switching off does not take effect for a day`() {
+        val g = gate(switchedOn = true, disableAt = T0 + GateState.COOLING_OFF_MILLIS)
+        assertTrue(g.enabled)
+        assertTrue(g.windingDown)
+        assertFalse(g.open)
+        assertEquals(24L * 60 * 60, g.secondsUntilDisabled)
+    }
+
+    @Test
+    fun `once the day has passed the gate really is off`() {
+        val g = gate(switchedOn = true, disableAt = T0 - 1, now = T0)
+        assertFalse(g.enabled)
+        assertFalse(g.windingDown)
         assertTrue(g.open)
     }
 
-    @Test
-    fun `planning past the cap stops counting`() {
-        val g = gate(reading = 0, planning = 10 * 60 * 60, cap = 20 * 60)
-        assertEquals(20L * 60, g.countedPlanningSeconds)
-        assertEquals(20L * 60, g.accruedSeconds)
-        assertFalse(g.open)
-    }
-
     /**
-     * The cap's reason for existing: an afternoon of talking about reading is
-     * not an afternoon of reading, and must not open the phone on its own.
+     * Nothing runs to expire the cooling-off. The rule is a function of the
+     * clock, so the next question anyone asks gets the right answer even if
+     * the process died for the whole day in between.
      */
     @Test
-    fun `talking alone can never open the gate`() {
-        val g = gate(reading = 0, planning = Long.MAX_VALUE / 2)
-        assertFalse(g.open)
-        assertEquals(GateState.DEFAULT_THRESHOLD_SECONDS - GateState.DEFAULT_PLANNING_CAP_SECONDS,
-            g.remainingSeconds)
-    }
-
-    /**
-     * Even if the stored cap is nonsense. A cap at or above the threshold would
-     * quietly convert the gate into "chat for two hours", so it is clamped
-     * rather than trusted.
-     */
-    @Test
-    fun `a cap larger than the whole gate is clamped to it`() {
-        val g = gate(reading = 0, planning = 5 * 60 * 60, threshold = 7200, cap = 99 * 60 * 60)
-        assertEquals(7200L, g.effectivePlanningCapSeconds)
-        // Clamped to the threshold rather than beyond it, so the gate is still
-        // reachable by planning at that (rejected) setting but never exceeded.
-        assertEquals(7200L, g.accruedSeconds)
+    fun `the cooling-off expires without anything having to run`() {
+        val flipped = gate(switchedOn = true, disableAt = T0 + GateState.COOLING_OFF_MILLIS)
+        assertTrue(flipped.enabled)
+        val muchLater = flipped.copy(nowMillis = T0 + 40L * 24 * 60 * 60 * 1000)
+        assertFalse(muchLater.enabled)
     }
 
     @Test
-    fun `the planning bucket empties as it is used`() {
-        assertEquals(20L * 60, gate(planning = 0).planningRemainingSeconds)
-        assertEquals(5L * 60, gate(planning = 15 * 60).planningRemainingSeconds)
-        assertEquals(0L, gate(planning = 60 * 60).planningRemainingSeconds)
-    }
-
-    @Test
-    fun `progress is a fraction of the line and never leaves zero to one`() {
-        assertEquals(0f, gate(reading = 0).progress, 0.0001f)
-        assertEquals(0.5f, gate(reading = 60 * 60).progress, 0.0001f)
-        assertEquals(1f, gate(reading = 99 * 60 * 60).progress, 0.0001f)
-    }
-
-    @Test
-    fun `a threshold of zero is a gate that is simply open`() {
-        val g = gate(reading = 0, threshold = 0)
+    fun `a gate that was never switched on is simply off`() {
+        val g = gate(switchedOn = false, credit = 0)
+        assertFalse(g.enabled)
         assertTrue(g.open)
-        assertEquals(1f, g.progress, 0.0001f)
-        assertEquals(0L, g.remainingSeconds)
+        assertFalse(g.canStartSession)
+        assertTrue(g.canRemoveBlockedApps)
     }
+
+    // --- The list freeze, which is what makes the rest mean anything ---
 
     /**
-     * Reading seconds come from a ledger sum, which is a SQL SUM over rows
-     * anyone could in principle corrupt. Nothing here should answer with a
-     * negative distance.
-     */
-    /**
-     * The default configuration must not be one where talking is half the day.
+     * Without this the gate is decorative: two hours of reading, or Settings →
+     * uncheck. The escape and the front door now cost the same.
      */
     @Test
-    fun `the shipped defaults are a real reading gate`() {
-        assertEquals(2L * 60 * 60, GateState.DEFAULT_THRESHOLD_SECONDS)
-        assertTrue(
-            GateState.DEFAULT_PLANNING_CAP_SECONDS <=
-                GateState.maxPlanningCapFor(GateState.DEFAULT_THRESHOLD_SECONDS)
-        )
-        // At the defaults, at least an hour and forty minutes must be reading.
-        val talkedOut = gate(reading = 0, planning = 99 * 60 * 60)
-        assertEquals(100L * 60, talkedOut.remainingSeconds)
+    fun `apps cannot be unblocked while the reading is being done`() {
+        assertFalse(gate(credit = 0).canRemoveBlockedApps)
+        assertFalse(gate(credit = COST).canRemoveBlockedApps)
     }
 
     @Test
-    fun `the planning cap is never more than half the gate`() {
-        assertEquals(0L, GateState.maxPlanningCapFor(0))
-        assertEquals(0L, GateState.maxPlanningCapFor(-100))
-        assertEquals(3600L, GateState.maxPlanningCapFor(7200))
-        assertEquals(450L, GateState.maxPlanningCapFor(900))
+    fun `apps can be unblocked while app time is in hand`() {
+        assertTrue(gate(sessionRemaining = 60).canRemoveBlockedApps)
     }
 
     @Test
-    fun `nonsense inputs do not produce negative numbers`() {
-        val g = gate(reading = -500, planning = -500)
-        assertEquals(0L, g.accruedSeconds)
-        assertEquals(GateState.DEFAULT_THRESHOLD_SECONDS, g.remainingSeconds)
-        assertFalse(g.open)
+    fun `winding down does not unfreeze the list early`() {
+        val g = gate(disableAt = T0 + GateState.COOLING_OFF_MILLIS)
+        assertFalse(g.canRemoveBlockedApps)
+    }
+
+    // --- Degenerate configurations ---
+
+    @Test
+    fun `a zero cost does not divide by zero`() {
+        val g = gate(credit = 0, cost = 0)
+        assertEquals(1f, g.creditProgress, 0.0001f)
+        assertEquals(0, g.sessionsBanked)
+        assertTrue(g.canStartSession)
+    }
+
+    @Test
+    fun `nonsense credit does not produce negative distances`() {
+        val g = gate(credit = -500)
+        assertEquals(COST, g.secondsToNextSession)
+        assertFalse(g.canStartSession)
+        assertEquals(0, g.sessionsBanked)
+    }
+
+    @Test
+    fun `a negative counter is not app time`() {
+        assertFalse(gate(sessionRemaining = -30).sessionActive)
+        assertEquals(0L, gate(sessionRemaining = -30).sessionRemainingSeconds)
+    }
+
+    @Test
+    fun `the shipped defaults are four hours of reading to one of apps`() {
+        assertEquals(2L * 60 * 60, GateState.DEFAULT_SESSION_COST_SECONDS)
+        assertEquals(30L * 60, GateState.DEFAULT_SESSION_LENGTH_SECONDS)
+        assertEquals(4L, GateState.DEFAULT_SESSION_COST_SECONDS / GateState.DEFAULT_SESSION_LENGTH_SECONDS)
     }
 }

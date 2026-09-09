@@ -175,4 +175,128 @@ class ReadingGuardTest {
             maxBudgetSeen <= budgetAfterFirstRead
         )
     }
+
+    // --- Backgrounding, which used to reset everything ---
+
+    /**
+     * The hole. start() was wired to ON_RESUME, so a flick to the home screen
+     * and back granted the opening allowance again. Sixty flicks was two hours
+     * of credit for no reading at all.
+     */
+    @Test
+    fun `flicking to the home screen and back does not refill the allowance`() {
+        // Never touch a page. The only credit available in the whole test is
+        // the opening allowance, and it is granted exactly once.
+        var credited = 0L
+        for (i in 1..200) if (guard.onTick(i * S)) credited++
+
+        // Away and back, ten times over. Resuming keeps the session alive, so
+        // crediting starts again and drains whatever allowance is LEFT — but
+        // nothing new is ever minted, so the total is bounded by the one
+        // allowance however many times the reader flicks home.
+        var t = 300 * S
+        repeat(10) {
+            guard.resume(t)
+            for (i in 1..200) {
+                t += S
+                if (guard.onTick(t)) credited++
+            }
+            t += 60 * S
+        }
+
+        // 120s of allowance. With start() on resume this was ~120 PER FLICK.
+        assertTrue(
+            "ten resumes minted more than the single opening allowance: $credited",
+            credited <= 125
+        )
+    }
+
+    /**
+     * The worse half of the same bug: start() reset the watermark to zero, so
+     * every page already paid for became farmable again. Backgrounding was a
+     * one-tap reset of the anti-oscillation defence.
+     */
+    @Test
+    fun `resuming does not make already-paid pages farmable again`() {
+        // Read forward, paying for everything up to the watermark.
+        var t = 0L
+        var p = 0f
+        repeat(120) { i ->
+            p += PAGE / 40f
+            t = (i + 1) * S
+            guard.onProgress(p, t)
+            guard.onTick(t)
+        }
+
+        // Drain every second of banked budget, moving (so the session stays
+        // live) but never advancing. Measuring the PEAK budget instead would
+        // prove nothing: it is capped, so a refill hides under the ceiling.
+        while (guard.state.budgetSeconds > 0) {
+            t += S
+            guard.onMovement(t)
+            guard.onTick(t)
+        }
+
+        // Home screen, back, then re-read the same pages from near the start.
+        guard.resume(t + 60 * S)
+        t += 61 * S
+        guard.onProgress(0.0005f, t)
+        var q = 0.0005f
+        var credited = 0
+        repeat(90) {
+            q += PAGE / 40f
+            t += S
+            guard.onProgress(q, t)
+            if (guard.onTick(t)) credited++
+        }
+
+        // Every one of those pages was already paid for, and the resume added
+        // nothing, so there is nothing to credit.
+        assertEquals("re-read paid content after a resume", 0, credited)
+    }
+
+    /**
+     * Closing the book entirely and reopening it is a real start() — but the
+     * watermark is seeded from the saved position, so the pages behind the
+     * reader stay paid for.
+     */
+    @Test
+    fun `reopening a part-read book cannot re-farm the pages behind it`() {
+        val reopened = ReadingGuard()
+        reopened.start(0L, alreadyRead = 0.40f)
+
+        // Jump back to the start of the book and read forward through content
+        // that was paid for in an earlier sitting.
+        reopened.onProgress(0.10f, 1 * S)
+        var q = 0.10f
+        var minted = 0
+        repeat(120) { i ->
+            q += PAGE / 40f
+            val t = (2 + i) * S
+            reopened.onProgress(q, t)
+            reopened.onTick(t)
+            minted = max(minted, reopened.state.budgetSeconds)
+        }
+        // Only the opening allowance, never budget minted from the old pages.
+        assertTrue("re-farmed content behind the watermark: $minted", minted <= 120)
+    }
+
+    /**
+     * A cooldown that could be cleared by pressing home would not be a
+     * cooldown.
+     */
+    @Test
+    fun `the too-fast cooldown survives backgrounding`() {
+        var t = 0L
+        repeat(70) { i ->
+            t = (i + 1) * S
+            guard.onProgress(0.002f * (i + 1), t)
+            guard.onTick(t)
+        }
+        assertTrue("expected a pace cooldown", guard.state.tooFast)
+
+        guard.resume(t + 1 * S)
+        guard.onTick(t + 2 * S)
+        assertTrue("backgrounding cleared the cooldown", guard.state.tooFast)
+    }
 }

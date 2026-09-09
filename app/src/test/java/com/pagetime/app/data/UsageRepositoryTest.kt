@@ -186,28 +186,6 @@ class UsageRepositoryTest {
     }
 
     @Test
-    fun `planning time is recorded apart from reading`() = runTest {
-        var clock = 1_000_000_000_000L
-        val movable = UsageRepository(dao) { clock }
-        movable.log(UsageRepository.TYPE_EARNED, null, 600)
-        movable.logPlanning(300)
-        movable.logPlanning(0) // ignored: nothing happened
-
-        val reading = mutableListOf<Long>()
-        val planning = mutableListOf<Long>()
-        val a = launch { movable.readingInLastDay().toList(reading) }
-        val b = launch { movable.planningInLastDay().toList(planning) }
-        runCurrent()
-
-        assertEquals(600L, reading.last())
-        assertEquals(300L, planning.last())
-        assertEquals(1, dao.events.count { it.type == UsageRepository.TYPE_PLANNED })
-
-        a.cancel()
-        b.cancel()
-    }
-
-    @Test
     fun `prune removes only rows older than the cutoff`() = runTest {
         val now = System.currentTimeMillis()
         // Direct insert with an old timestamp (repo.log always stamps "now";

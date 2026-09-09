@@ -35,6 +35,11 @@ package com.pagetime.app.ui.screens.reader
  * lingering on a hard page is covered by the starting allowance plus the idle
  * timeout being far longer than a normal page dwell.
  *
+ * A fifth defence is structural rather than a rule: [start] happens once per
+ * book and [resume] every time the reader returns to the foreground. Only
+ * start() grants the opening allowance or moves the watermark backward, so
+ * leaving and returning cannot mint anything.
+ *
  * All timing uses caller-supplied milliseconds since boot (SystemClock.elapsedRealtime),
  * never System.currentTimeMillis(), so wall-clock changes cannot extend sessions.
  * The class is pure and time-injectable, which makes every cheat scenario unit-testable.
@@ -81,18 +86,58 @@ class ReadingGuard(
     private var tooFastUntil = 0L
     private var gateHiddenUntil = 0L
 
-    /** Begin a reading session. [now] = SystemClock.elapsedRealtime(). */
-    fun start(now: Long) {
+    /**
+     * Begin reading a book. [now] = SystemClock.elapsedRealtime().
+     *
+     * [alreadyRead] is how far through this book the reader already is, from
+     * the saved position. It seeds the watermark, so content paid for in an
+     * earlier sitting cannot mint budget a second time. Without it, closing
+     * the book and reopening it made the whole book farmable again — the
+     * watermark's entire job, undone by a back button.
+     *
+     * Call this once per book. Coming back from the home screen is [resume].
+     */
+    fun start(now: Long, alreadyRead: Float = 0f) {
         startedAt = now
         lastMovementAt = now
         lastProgressAt = now
-        watermark = 0f
-        lastSeenProgress = 0f
+        watermark = alreadyRead.coerceIn(0f, 1f)
+        lastSeenProgress = watermark
         budgetSeconds = startingBudgetSeconds
         tooFastUntil = 0L
         gateHiddenUntil = 0L
         windowStartAt = now
-        windowStartWatermark = 0f
+        windowStartWatermark = watermark
+        recompute(now)
+    }
+
+    /**
+     * The reader came back to the foreground on a book already being read.
+     *
+     * THIS USED TO BE [start], AND THAT WAS THE BIGGEST HOLE IN THE ENGINE.
+     *
+     * start() is wired to ON_RESUME, so every flick to the home screen and
+     * back re-ran a full session reset: [startingBudgetSeconds] granted again
+     * for no reading, and the watermark dropped to zero so every page already
+     * paid for became farmable. Two minutes of credit per flick, and the
+     * anti-oscillation defence cleared on demand.
+     *
+     * At the old one-to-one rate that was worth two minutes of browsing. Under
+     * the session gate, where two hours buys thirty minutes, sixty flicks buys
+     * the whole thing — so what was a leak became the cheapest way to use the
+     * app.
+     *
+     * Resuming refreshes only liveness: the timestamps that decide whether the
+     * reader is idle, and the pace window, which would otherwise measure a
+     * minute that included an hour in someone's pocket. Everything earned or
+     * spent carries over. In particular the too-fast cooldown SURVIVES, or
+     * backgrounding the app would be the way to clear it.
+     */
+    fun resume(now: Long) {
+        lastMovementAt = now
+        lastProgressAt = now
+        windowStartAt = now
+        windowStartWatermark = watermark
         recompute(now)
     }
 

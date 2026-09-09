@@ -140,13 +140,44 @@ class AppBlockerService : AccessibilityService() {
             context = this,
             onReadNow = { openReader() },
             onStartSession = { controller?.startSessionFromBlockScreen() },
+            onEmergency = { controller?.useEmergencyUnlock() },
         ).also { overlay = it }
+        val gate = controller?.gate ?: GateState.Unknown
         // Refreshed on every show rather than only on creation: the overlay is
         // re-used across blocks, and under the gate the number on it changes
         // every minute the reader spends reading.
-        current.setStatus(controller?.gate ?: GateState.Unknown)
+        current.setStatus(gate, emergencyOffer(gate))
         return current.show()
     }
+
+    /**
+     * The hatch, if it is on offer.
+     *
+     * Withheld entirely when a session is already affordable: an escape route
+     * next to an unlocked door teaches the reader to take the escape.
+     */
+    private fun emergencyOffer(gate: GateState): TimeUpOverlay.EmergencyOffer? {
+        val c = controller ?: return null
+        if (gate.canStartSession) return null
+        // A hard lock hides it altogether rather than showing a refusal: the
+        // reader chose that lock and does not need arguing with. Merely having
+        // spent both for today still shows the button, disabled, saying when
+        // the next one is back — that is information, not temptation.
+        val hardLocked = !c.canUseEmergency() && c.emergencyUsesLeft() > 0
+        if (hardLocked) return null
+        val pkg = c.currentBlockedPackage ?: return null
+        return TimeUpOverlay.EmergencyOffer(
+            appLabel = labelFor(pkg),
+            usesLeft = c.emergencyUsesLeft(),
+            nextAvailableInSeconds = c.emergencyNextAvailableInSeconds(),
+        )
+    }
+
+    /** The app's own name, so the button can say what it will open. */
+    private fun labelFor(packageName: String): String? = runCatching {
+        val pm = packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+    }.getOrNull()
 
     fun dismissTimeUp() {
         mainHandler.post { overlay?.dismiss() }

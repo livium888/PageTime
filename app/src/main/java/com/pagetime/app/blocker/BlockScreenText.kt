@@ -56,6 +56,27 @@ object BlockScreenText {
     fun startButtonLabel(gate: GateState): String = "Start ${span(gate.sessionLengthSeconds)}"
 
     /**
+     * What the emergency button offers, or why it cannot.
+     *
+     * Names the app rather than saying "unlock", because naming it is the
+     * honest description of what happens — one app opens and the rest stay
+     * shut — and because a reader who reaches for this in a hurry should be
+     * able to see at a glance that it is not a general bypass.
+     */
+    fun emergencyLabel(appLabel: String?): String =
+        if (appLabel.isNullOrBlank()) "Open this app for 5 minutes"
+        else "Open $appLabel for 5 minutes"
+
+    /** The line under it: how many are left, or when the next one returns. */
+    fun emergencyNote(usesLeft: Int, nextAvailableInSeconds: Long?): String = when {
+        usesLeft > 1 -> "$usesLeft left today. Only this app opens."
+        usesLeft == 1 -> "1 left today. Only this app opens."
+        nextAvailableInSeconds != null ->
+            "None left. The next one is back in ${span(nextAvailableInSeconds)}."
+        else -> "None left today."
+    }
+
+    /**
      * A duration a person would say out loud.
      *
      * Never seconds: the smallest thing this screen reports is a minute of

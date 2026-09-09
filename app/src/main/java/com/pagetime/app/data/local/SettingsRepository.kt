@@ -15,6 +15,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -31,6 +32,12 @@ data class Settings(
     val quickDisableUntil: Long = 0,
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
     val hardLockUntil: Long = 0,
+    /** The one app an emergency unlock is currently covering, if any. */
+    val emergencyPackage: String? = null,
+    /** When that unlock expires (epoch millis); 0 = none. */
+    val emergencyUntil: Long = 0,
+    /** When the recent emergency unlocks were spent, newest first. */
+    val emergencyUses: List<Long> = emptyList(),
     /**
      * Whether blocked apps are governed by the access gate rather than the
      * browse balance.
@@ -168,6 +175,9 @@ class SettingsRepository(private val context: Context) {
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
+        val EMERGENCY_PACKAGE = stringPreferencesKey("emergency_unlock_package")
+        val EMERGENCY_UNTIL = longPreferencesKey("emergency_unlock_until")
+        val EMERGENCY_USES = stringPreferencesKey("emergency_unlock_uses")
         val GATE_ENABLED = booleanPreferencesKey("access_gate_enabled")
         val READING_CREDIT = longPreferencesKey("access_gate_reading_credit_seconds")
         val SESSION_REMAINING = longPreferencesKey("access_gate_session_seconds_remaining")
@@ -403,6 +413,9 @@ class SettingsRepository(private val context: Context) {
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
+            emergencyPackage = p[Keys.EMERGENCY_PACKAGE],
+            emergencyUntil = p[Keys.EMERGENCY_UNTIL] ?: 0L,
+            emergencyUses = EmergencyUnlock.decode(p[Keys.EMERGENCY_USES]),
             gateEnabled = p[Keys.GATE_ENABLED] ?: false,
             readingCreditSeconds = p[Keys.READING_CREDIT] ?: 0L,
             sessionSecondsRemaining = p[Keys.SESSION_REMAINING] ?: 0L,
@@ -621,6 +634,36 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun clearHardLockUntil() {
         context.dataStore.edit { it.remove(Keys.HARD_LOCK_UNTIL) }
+    }
+
+    /**
+     * Spends one emergency unlock on [packageName]. Returns whether it opened.
+     *
+     * The whole decision happens inside a single DataStore edit: two taps on
+     * the block screen must not both read two uses left and both spend one.
+     *
+     * Scoped to one package by construction — there is no call here that opens
+     * everything, because the value of the hatch is entirely in how small it
+     * is.
+     */
+    suspend fun startEmergencyUnlock(
+        packageName: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (packageName.isBlank()) return false
+        var opened = false
+        context.dataStore.edit { p ->
+            val hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L
+            val uses = EmergencyUnlock.decode(p[Keys.EMERGENCY_USES])
+            if (!EmergencyUnlock.canUnlock(uses, nowMillis, hardLockUntil)) return@edit
+            p[Keys.EMERGENCY_PACKAGE] = packageName
+            p[Keys.EMERGENCY_UNTIL] = nowMillis + EmergencyUnlock.DURATION_SECONDS * 1000
+            p[Keys.EMERGENCY_USES] = EmergencyUnlock.encode(
+                EmergencyUnlock.recordUse(uses, nowMillis)
+            )
+            opened = true
+        }
+        return opened
     }
 
     suspend fun gateEnabled(): Boolean =

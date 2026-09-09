@@ -103,6 +103,7 @@ fun SettingsScreen(
     val ratio by viewModel.ratio.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
+    val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
@@ -232,6 +233,17 @@ fun SettingsScreen(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total reading", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatMinutes(totalReadingSeconds), style = MaterialTheme.typography.titleMedium)
+                }
+                if (emergencyThisWeek > 0) {
+                    // The number, not a judgement about it. It is the only way
+                    // to notice that the gate is set wrong for your life.
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            "Emergency unlocks this week",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text("$emergencyThisWeek", style = MaterialTheme.typography.titleMedium)
+                    }
                 }
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))

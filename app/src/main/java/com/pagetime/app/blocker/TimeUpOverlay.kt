@@ -27,6 +27,7 @@ class TimeUpOverlay(
     context: Context,
     onReadNow: () -> Unit,
     onStartSession: () -> Unit = {},
+    onEmergency: () -> Unit = {},
 ) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -35,6 +36,7 @@ class TimeUpOverlay(
     init {
         view.findViewById<View>(R.id.btn_read_now).setOnClickListener { onReadNow() }
         view.findViewById<View>(R.id.btn_start_session).setOnClickListener { onStartSession() }
+        view.findViewById<View>(R.id.btn_emergency).setOnClickListener { onEmergency() }
         // Focusable so the overlay swallows BACK instead of letting it fall through
         // to the blocked app underneath.
         view.isFocusableInTouchMode = true
@@ -53,7 +55,10 @@ class TimeUpOverlay(
      * bar left visible from a gated session must not sit at an old fill under
      * a rule that has no notion of progress.
      */
-    fun setStatus(gate: GateState) {
+    fun setStatus(
+        gate: GateState,
+        emergency: EmergencyOffer? = null,
+    ) {
         view.findViewById<TextView>(R.id.tv_time_up).text = BlockScreenText.title(gate)
         view.findViewById<TextView>(R.id.tv_overlay_subtitle).text = BlockScreenText.subtitle(gate)
         val bar = view.findViewById<ProgressBar>(R.id.progress_gate)
@@ -73,7 +78,39 @@ class TimeUpOverlay(
         } else {
             start.visibility = View.GONE
         }
+
+        setEmergency(emergency)
     }
+
+    /**
+     * The hatch, shown only when there is one to spend and the reader is
+     * actually shut out.
+     *
+     * Hidden entirely once a session is affordable: offering an emergency
+     * escape beside a door the reader can simply walk through would teach them
+     * to use the escape, which is the one outcome this must not produce.
+     */
+    private fun setEmergency(offer: EmergencyOffer?) {
+        val button = view.findViewById<Button>(R.id.btn_emergency)
+        val note = view.findViewById<TextView>(R.id.tv_emergency_note)
+        if (offer == null) {
+            button.visibility = View.GONE
+            note.visibility = View.GONE
+            return
+        }
+        button.text = BlockScreenText.emergencyLabel(offer.appLabel)
+        button.isEnabled = offer.usesLeft > 0
+        button.visibility = View.VISIBLE
+        note.text = BlockScreenText.emergencyNote(offer.usesLeft, offer.nextAvailableInSeconds)
+        note.visibility = View.VISIBLE
+    }
+
+    /** What the block screen knows about the hatch when it is drawn. */
+    data class EmergencyOffer(
+        val appLabel: String?,
+        val usesLeft: Int,
+        val nextAvailableInSeconds: Long?,
+    )
 
     /**
      * Idempotent. Returns whether the overlay is up, so the caller can fall back to

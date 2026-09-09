@@ -207,6 +207,7 @@ private fun UsageEventRow(event: UsageEventEntity) {
         UsageRepository.TYPE_RECONCILED -> "Usage recovered"
         UsageRepository.TYPE_BLOCKED -> "Blocked at zero"
         UsageRepository.TYPE_SESSION -> "Session opened"
+        UsageRepository.TYPE_EMERGENCY -> "Emergency unlock"
         else -> event.type
     }
     val detail = buildString {

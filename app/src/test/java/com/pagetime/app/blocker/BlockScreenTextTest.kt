@@ -102,6 +102,34 @@ class BlockScreenTextTest {
         assertEquals("0:00", BlockScreenText.countdown(-5))
     }
 
+    // --- The emergency hatch ---
+
+    /**
+     * The button names the app, because naming it is the honest description
+     * of what happens: one app opens and the rest stay shut.
+     */
+    @Test
+    fun `the emergency button says which app it opens`() {
+        assertEquals("Open Monzo for 5 minutes", BlockScreenText.emergencyLabel("Monzo"))
+        assertEquals("Open this app for 5 minutes", BlockScreenText.emergencyLabel(null))
+        assertEquals("Open this app for 5 minutes", BlockScreenText.emergencyLabel("  "))
+    }
+
+    @Test
+    fun `the note says what is left and repeats the scope`() {
+        assertEquals("2 left today. Only this app opens.", BlockScreenText.emergencyNote(2, null))
+        assertEquals("1 left today. Only this app opens.", BlockScreenText.emergencyNote(1, null))
+    }
+
+    @Test
+    fun `with none left it says when the next one is back`() {
+        assertEquals(
+            "None left. The next one is back in 3h 20m.",
+            BlockScreenText.emergencyNote(0, 3 * 3600 + 20 * 60),
+        )
+        assertEquals("None left today.", BlockScreenText.emergencyNote(0, null))
+    }
+
     @Test
     fun `a zero cost cannot divide the title by zero`() {
         val g = GateState(

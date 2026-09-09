@@ -97,7 +97,15 @@ data class ReaderSettings(
      * single most effective thing available for making a screen stop reading
      * as a light source at night.
      */
-    val nightDim: Float = 0f
+    val nightDim: Float = 0f,
+    /**
+     * Volume down turns forward, volume up turns back.
+     *
+     * Off by default: the volume keys belong to the system until the reader is
+     * told otherwise, and someone who never opens the appearance sheet should
+     * never discover their volume buttons doing something else.
+     */
+    val volumeKeysTurnPages: Boolean = false,
 ) {
     companion object {
         /**
@@ -200,6 +208,7 @@ class SettingsRepository(private val context: Context) {
 
         val READER_WARMTH = floatPreferencesKey("reader_warmth")
         val READER_NIGHT_DIM = floatPreferencesKey("reader_night_dim")
+        val READER_VOLUME_KEYS = booleanPreferencesKey("reader_volume_keys_turn_pages")
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
@@ -593,7 +602,8 @@ class SettingsRepository(private val context: Context) {
             conceptHints = p[Keys.CONCEPT_HINTS] ?: "subtle",
             brightness = p[Keys.BRIGHTNESS],
             warmth = p[Keys.READER_WARMTH] ?: 0f,
-            nightDim = p[Keys.READER_NIGHT_DIM] ?: 0f
+            nightDim = p[Keys.READER_NIGHT_DIM] ?: 0f,
+            volumeKeysTurnPages = p[Keys.READER_VOLUME_KEYS] ?: false,
         ).normalized()
     }
 
@@ -902,6 +912,7 @@ class SettingsRepository(private val context: Context) {
             it[Keys.CONCEPT_HINTS] = normalized.conceptHints
             it[Keys.READER_WARMTH] = normalized.warmth
             it[Keys.READER_NIGHT_DIM] = normalized.nightDim
+            it[Keys.READER_VOLUME_KEYS] = normalized.volumeKeysTurnPages
             if (normalized.brightness == null) {
                 it.remove(Keys.BRIGHTNESS)
             } else {

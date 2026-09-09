@@ -18,6 +18,9 @@ import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import com.pagetime.app.data.review.ReviewReminderWorker
 import com.pagetime.app.ui.PageTimeAppUi
 import com.pagetime.app.ui.theme.PageTimeTheme
+import com.pagetime.app.ui.screens.reader.VolumeKeyPaging
+import com.pagetime.app.ui.screens.reader.ReaderPageTurns
+import android.view.KeyEvent
 
 /**
  * FragmentActivity (not plain ComponentActivity) because the Readium EPUB navigator
@@ -40,6 +43,42 @@ class MainActivity : FragmentActivity() {
      * interruption it just spent.
      */
     private val openReviewState = mutableStateOf(false)
+
+    /**
+     * Volume keys turn pages while the reader is open and the reader asked for
+     * it.
+     *
+     * Intercepted here rather than in a Composable because a key event never
+     * reaches the composition — it arrives at the Activity, and the thing that
+     * knows how to turn a page is several layers down and different for each
+     * format. The reader publishes a handler while it is on screen; see
+     * ReaderPageTurns.
+     *
+     * BOTH HALVES OF THE PRESS ARE SWALLOWED. Android raises the volume panel
+     * on key-UP, so handling only the down stroke turns the page and then
+     * slides the volume UI over the text.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val enabled = ReaderPageTurns.enabled && ReaderPageTurns.active
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val turn = VolumeKeyPaging.turnFor(
+                keyCode = event.keyCode,
+                enabled = enabled,
+                readerVisible = ReaderPageTurns.active,
+                repeatCount = event.repeatCount,
+            )
+            if (turn != null && ReaderPageTurns.turn(turn)) return true
+        }
+        if (VolumeKeyPaging.consumesWithoutTurning(
+                keyCode = event.keyCode,
+                enabled = enabled,
+                readerVisible = ReaderPageTurns.active,
+            )
+        ) {
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -155,22 +155,34 @@ data class GateState(
         }
 
     /**
-     * Whether an app may be taken OFF the blocked list.
+     * Whether the rules may be made EASIER right now.
      *
-     * The rule that makes the rest of this mean anything. Without it the gate
-     * is decorative: two hours of reading, or Settings, uncheck, done. Removal
-     * waits for a session — which costs the same two hours, so the escape and
-     * the front door have the same price.
+     * The rule that makes the rest of this mean anything, and it has to cover
+     * every way out, not just the obvious one. Taking an app off the blocked
+     * list is one. Dragging the price of a session down to fifteen minutes is
+     * another, and it is worse: it does not merely unblock one app, it
+     * dissolves the whole gate, from the settings screen, while locked out.
      *
-     * ADDING an app is never restricted. More blocking is not an escape, and
-     * making someone earn the right to block something would be perverse.
+     * Loosening therefore costs what entry costs — a session, which is the
+     * same two hours. The escape and the front door have the same price, so
+     * there is nothing to be gained by reaching for the escape.
      *
-     * The hard lock still overrides this; that is checked by its own screen,
-     * because a hard lock is about a promise the reader made and has nothing
-     * to do with what they have read.
+     * TIGHTENING IS ALWAYS ALLOWED
+     *
+     * Blocking another app, raising the price, shortening the session: none of
+     * those is an escape, and making someone earn the right to be stricter
+     * with themselves would be perverse. The asymmetry is the whole design.
+     *
+     * The hard lock overrides this in the tightening direction; that is
+     * checked by its own screen, because a hard lock is about a promise the
+     * reader made and has nothing to do with what they have read.
      */
-    val canRemoveBlockedApps: Boolean
+    val canLoosenTheRules: Boolean
         get() = !enabled || sessionActive
+
+    /** Removing an app is one way of loosening. */
+    val canRemoveBlockedApps: Boolean
+        get() = canLoosenTheRules
 
     companion object {
 
@@ -221,6 +233,21 @@ data class GateState(
          */
         fun maxCreditFor(sessionCostSeconds: Long): Long =
             (sessionCostSeconds.coerceAtLeast(0L)) * 2
+
+        /**
+         * Whether a proposed session price is a loosening.
+         *
+         * Cheaper is easier. Written as a named function rather than a `<`
+         * at the call site because the direction is not self-evident for a
+         * cost — the number going DOWN is the gate getting weaker — and the
+         * one place it is written down should say so.
+         */
+        fun loosensCost(currentSeconds: Long, proposedSeconds: Long): Boolean =
+            proposedSeconds < currentSeconds
+
+        /** Longer sessions are easier, so the direction is the other way round. */
+        fun loosensLength(currentSeconds: Long, proposedSeconds: Long): Boolean =
+            proposedSeconds > currentSeconds
 
         /** Before anything is known: off, so nothing is blocked on a guess. */
         val Unknown = GateState(

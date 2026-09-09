@@ -45,6 +45,16 @@ class UsageRepository(
          */
         const val TYPE_SESSION = "SESSION"
 
+        /**
+         * An emergency unlock was spent on one app.
+         *
+         * Logged so the count can be shown back to the reader. Not to shame
+         * them — because it is the only honest diagnostic available. Someone
+         * using twelve a week is living on the hatch rather than the front
+         * door, and by design they will not notice that on their own.
+         */
+        const val TYPE_EMERGENCY = "EMERGENCY"
+
         private const val DAY_MS = 24L * 60 * 60 * 1000
 
         /**
@@ -120,6 +130,10 @@ class UsageRepository(
     /** Browse-seconds burned per app over the last day, most-burned first. */
     fun spentSecondsByPackageToday(): Flow<List<PackageTotal>> =
         dao.spentSecondsByPackageSince(now() - DAY_MS)
+
+    /** Emergency unlocks spent in the last seven days, for the Settings count. */
+    fun emergencyUnlocksThisWeek(): Flow<Long> =
+        dao.countSince(TYPE_EMERGENCY, now() - 7 * DAY_MS)
 
     fun earnedToday(): Flow<Long> = dao.sumSince(TYPE_EARNED, now() - DAY_MS)
 

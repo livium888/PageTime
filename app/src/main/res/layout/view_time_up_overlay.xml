@@ -53,6 +53,30 @@
         android:text="@string/overlay_start_session"
         android:visibility="gone" />
 
+    <!--
+        The escape hatch. Deliberately the least prominent thing on the screen
+        and the last in reading order: it opens ONE app for five minutes, and
+        it should be findable when needed rather than inviting when not.
+    -->
+    <Button
+        android:id="@+id/btn_emergency"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="@string/overlay_emergency"
+        android:textColor="#6B7280"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tv_emergency_note"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textColor="#6B7280"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
     <Button
         android:id="@+id/btn_read_now"
         android:layout_width="wrap_content"

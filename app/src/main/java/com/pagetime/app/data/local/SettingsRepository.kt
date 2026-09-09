@@ -9,11 +9,14 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import com.pagetime.app.data.LumenCapture
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.blocker.BlockEnforcementPolicy
+import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -30,6 +33,12 @@ data class Settings(
     val quickDisableUntil: Long = 0,
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
     val hardLockUntil: Long = 0,
+    /** The one app an emergency unlock is currently covering, if any. */
+    val emergencyPackage: String? = null,
+    /** When that unlock expires (epoch millis); 0 = none. */
+    val emergencyUntil: Long = 0,
+    /** When the recent emergency unlocks were spent, newest first. */
+    val emergencyUses: List<Long> = emptyList(),
     /**
      * Whether blocked apps are governed by the access gate rather than the
      * browse balance.
@@ -167,6 +176,9 @@ class SettingsRepository(private val context: Context) {
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
+        val EMERGENCY_PACKAGE = stringPreferencesKey("emergency_unlock_package")
+        val EMERGENCY_UNTIL = longPreferencesKey("emergency_unlock_until")
+        val EMERGENCY_USES = stringPreferencesKey("emergency_unlock_uses")
         val GATE_ENABLED = booleanPreferencesKey("access_gate_enabled")
         val READING_CREDIT = longPreferencesKey("access_gate_reading_credit_seconds")
         val SESSION_REMAINING = longPreferencesKey("access_gate_session_seconds_remaining")
@@ -402,6 +414,9 @@ class SettingsRepository(private val context: Context) {
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
+            emergencyPackage = p[Keys.EMERGENCY_PACKAGE],
+            emergencyUntil = p[Keys.EMERGENCY_UNTIL] ?: 0L,
+            emergencyUses = EmergencyUnlock.decode(p[Keys.EMERGENCY_USES]),
             gateEnabled = p[Keys.GATE_ENABLED] ?: false,
             readingCreditSeconds = p[Keys.READING_CREDIT] ?: 0L,
             sessionSecondsRemaining = p[Keys.SESSION_REMAINING] ?: 0L,
@@ -606,20 +621,67 @@ class SettingsRepository(private val context: Context) {
     suspend fun hardLockUntil(): Long =
         context.dataStore.data.first()[Keys.HARD_LOCK_UNTIL] ?: 0L
 
-    suspend fun setQuickDisableUntil(epochMillis: Long) {
-        context.dataStore.edit { it[Keys.QUICK_DISABLE_UNTIL] = epochMillis }
-    }
-
+    /**
+     * Clears any legacy quick-disable grace.
+     *
+     * The buttons that set one were deleted; this remains because an install
+     * upgrading mid-grace still carries a stored expiry. There is deliberately
+     * no setter any more — a method that grants a bypass is a loaded gun left
+     * on the table for whoever writes the next screen.
+     */
     suspend fun clearQuickDisableUntil() {
         context.dataStore.edit { it.remove(Keys.QUICK_DISABLE_UNTIL) }
     }
 
-    suspend fun setHardLockUntil(epochMillis: Long) {
-        context.dataStore.edit { it[Keys.HARD_LOCK_UNTIL] = epochMillis }
+    /**
+     * Starts or extends a hard lock.
+     *
+     * NEVER SHORTENS ONE. Setting a thirty-minute lock while a three-hour lock
+     * runs used to cut it to thirty minutes — the screen disables the buttons
+     * so it could not be reached from there, but "a rule the UI enforces" is
+     * how the settings sliders came to be a way out, and this is the same
+     * shape. A lock that can be shortened is not a lock.
+     *
+     * There is no clearHardLockUntil. It existed, nothing called it, and a
+     * public method that cancels a lock advertised as uncancellable is worse
+     * than dead code: it is a hole waiting for a caller.
+     */
+    suspend fun setHardLockUntil(epochMillis: Long, nowMillis: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { p ->
+            val current = p[Keys.HARD_LOCK_UNTIL] ?: 0L
+            p[Keys.HARD_LOCK_UNTIL] =
+                BlockEnforcementPolicy.hardLockAfterSetting(current, epochMillis, nowMillis)
+        }
     }
 
-    suspend fun clearHardLockUntil() {
-        context.dataStore.edit { it.remove(Keys.HARD_LOCK_UNTIL) }
+    /**
+     * Spends one emergency unlock on [packageName]. Returns whether it opened.
+     *
+     * The whole decision happens inside a single DataStore edit: two taps on
+     * the block screen must not both read two uses left and both spend one.
+     *
+     * Scoped to one package by construction — there is no call here that opens
+     * everything, because the value of the hatch is entirely in how small it
+     * is.
+     */
+    suspend fun startEmergencyUnlock(
+        packageName: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (packageName.isBlank()) return false
+        var opened = false
+        context.dataStore.edit { p ->
+            val hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L
+            val uses = EmergencyUnlock.decode(p[Keys.EMERGENCY_USES])
+            if (!EmergencyUnlock.canUnlock(uses, nowMillis, hardLockUntil)) return@edit
+            p[Keys.EMERGENCY_PACKAGE] = packageName
+            p[Keys.EMERGENCY_UNTIL] = nowMillis + EmergencyUnlock.DURATION_SECONDS * 1000
+            p[Keys.EMERGENCY_USES] = EmergencyUnlock.encode(
+                EmergencyUnlock.recordUse(uses, nowMillis)
+            )
+            opened = true
+        }
+        return opened
     }
 
     suspend fun gateEnabled(): Boolean =
@@ -730,12 +792,49 @@ class SettingsRepository(private val context: Context) {
         return left
     }
 
-    suspend fun setSessionCostSeconds(seconds: Long) {
+    /**
+     * The gate as the stored preferences currently describe it.
+     *
+     * Built from the same type the rest of the app reads, rather than
+     * re-deriving "is the gate on" from the raw keys — the wind-down alone
+     * makes that a two-part question, and a second copy of the answer is a
+     * second place for it to be wrong.
+     */
+    private fun gateFrom(p: Preferences, nowMillis: Long) = GateState(
+        switchedOn = p[Keys.GATE_ENABLED] ?: false,
+        creditSeconds = p[Keys.READING_CREDIT] ?: 0L,
+        sessionSecondsRemaining = p[Keys.SESSION_REMAINING] ?: 0L,
+        disableAtMillis = p[Keys.GATE_DISABLE_AT] ?: 0L,
+        nowMillis = nowMillis,
+        sessionCostSeconds = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS,
+        sessionLengthSeconds = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS,
+    )
+
+    /**
+     * Sets the price of a session.
+     *
+     * RAISING IT IS ALWAYS ALLOWED. LOWERING IT COSTS A SESSION.
+     *
+     * A slider that drops the price to fifteen minutes is a bigger hole than
+     * unblocking a single app — it dissolves the gate entirely, from the
+     * settings screen, while the reader is locked out and most motivated to
+     * reach for it. So a loosening change waits for app time in hand, exactly
+     * as removing an app does, and the escape ends up costing what the front
+     * door costs.
+     *
+     * Enforced here and not only by disabling the slider. A rule that lives in
+     * a Composable is a rule that any other caller walks straight past.
+     */
+    suspend fun setSessionCostSeconds(seconds: Long, nowMillis: Long = System.currentTimeMillis()) {
         val clamped = seconds.coerceIn(
             GateState.MIN_SESSION_COST_SECONDS,
             GateState.MAX_SESSION_COST_SECONDS,
         )
         context.dataStore.edit { p ->
+            val current = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
+            if (GateState.loosensCost(current, clamped) && !gateFrom(p, nowMillis).canLoosenTheRules) {
+                return@edit
+            }
             p[Keys.SESSION_COST] = clamped
             // Banked credit is denominated in sessions, so a cost change has
             // to re-cap it or an old balance could buy more sessions than the
@@ -745,12 +844,17 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setSessionLengthSeconds(seconds: Long) {
+    /** Shortening a session is always allowed; lengthening it waits, as above. */
+    suspend fun setSessionLengthSeconds(seconds: Long, nowMillis: Long = System.currentTimeMillis()) {
         val clamped = seconds.coerceIn(
             GateState.MIN_SESSION_LENGTH_SECONDS,
             GateState.MAX_SESSION_LENGTH_SECONDS,
         )
         context.dataStore.edit { p ->
+            val current = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS
+            if (GateState.loosensLength(current, clamped) && !gateFrom(p, nowMillis).canLoosenTheRules) {
+                return@edit
+            }
             p[Keys.SESSION_LENGTH] = clamped
             // Unspent app time is denominated in sessions too, so shortening
             // one has to re-cap what is already banked.

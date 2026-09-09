@@ -19,6 +19,21 @@ object BlockEnforcementPolicy {
     ): Boolean = if (gateEnabled) !gateOpen else balanceSeconds <= 0
 
     /**
+     * What a hard lock's end time becomes when one is set.
+     *
+     * A hard lock that can be SHORTENED is not a hard lock. The buttons are
+     * disabled while one runs, so from the screen this never arises — but that
+     * is exactly the shape of hole the settings sliders turned out to be, and
+     * a rule enforced only by a disabled button is enforced only for callers
+     * that go through that button.
+     *
+     * While a lock is running, a new one can only push the end further out.
+     * Once it has expired, any new lock replaces it.
+     */
+    fun hardLockAfterSetting(currentUntil: Long, proposedUntil: Long, nowMillis: Long): Long =
+        if (nowMillis < currentUntil) maxOf(currentUntil, proposedUntil) else proposedUntil
+
+    /**
      * Whether a user-approved override is lifting the block.
      *
      * A hard lock beats everything, as it always did. The quick-disable grace

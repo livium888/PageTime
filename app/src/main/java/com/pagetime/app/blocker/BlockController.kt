@@ -6,6 +6,7 @@ import com.pagetime.app.data.UsageRepository
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.usage.PendingLedgerWrites
 import com.pagetime.app.domain.BalanceManager
+import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -119,6 +120,23 @@ class BlockController(
     var gate: GateState = GateState.Unknown
         private set
 
+    /**
+     * The one app an emergency unlock is currently covering, and until when.
+     *
+     * Deliberately a package and not a flag. A boolean here would be a general
+     * bypass, and the point of the hatch is that it lets the reader into the
+     * app they actually need rather than into everything.
+     */
+    @Volatile
+    private var emergencyPackage: String? = null
+
+    @Volatile
+    private var emergencyUntil = 0L
+
+    /** When recent emergency unlocks were spent, for the two-a-day limit. */
+    @Volatile
+    private var emergencyUses: List<Long> = emptyList()
+
     /** Wall-clock time the temporary "block paused" grace ends (0 = none). */
     @Volatile
     private var quickDisableUntil = 0L
@@ -197,6 +215,15 @@ class BlockController(
 
                 quickDisableUntil = s.quickDisableUntil
                 hardLockUntil = s.hardLockUntil
+
+                val wasDenied = accessDenied()
+                emergencyPackage = s.emergencyPackage
+                emergencyUntil = s.emergencyUntil
+                emergencyUses = s.emergencyUses
+                // Pressing the button has to take the block screen down at
+                // once; waiting for the next foreground event would look like
+                // the button had not worked.
+                if (wasDenied != accessDenied()) onAccessChanged()
             }
         }
         scope.launch {
@@ -211,12 +238,69 @@ class BlockController(
         }
     }
 
-    /** Whether the current rule — gate or balance — says no. */
-    private fun accessDenied(): Boolean = BlockEnforcementPolicy.accessDenied(
-        gateEnabled = gate.enabled,
-        gateOpen = gate.open,
-        balanceSeconds = balanceSeconds,
+    /**
+     * Whether the current rule — gate or balance — says no.
+     *
+     * An emergency unlock is checked first and is scoped to one package, so it
+     * can only ever answer for the app it was spent on. Every other app stays
+     * exactly as blocked as it was, which is what separates this from the
+     * quick-disable that was deleted.
+     */
+    private fun accessDenied(): Boolean {
+        if (emergencyCovers(currentBlockedPackage)) return false
+        return BlockEnforcementPolicy.accessDenied(
+            gateEnabled = gate.enabled,
+            gateOpen = gate.open,
+            balanceSeconds = balanceSeconds,
+        )
+    }
+
+    /** Whether an emergency unlock is currently covering [packageName]. */
+    fun emergencyCovers(packageName: String?): Boolean = EmergencyUnlock.covers(
+        unlockedPackage = emergencyPackage,
+        untilMillis = emergencyUntil,
+        packageName = packageName,
+        nowMillis = System.currentTimeMillis(),
     )
+
+    /** How many emergency unlocks are left in the rolling day. */
+    fun emergencyUsesLeft(): Int =
+        EmergencyUnlock.usesLeft(emergencyUses, System.currentTimeMillis())
+
+    /** Seconds until the next emergency unlock returns, or null if one is free. */
+    fun emergencyNextAvailableInSeconds(): Long? {
+        val now = System.currentTimeMillis()
+        val at = EmergencyUnlock.nextAvailableAt(emergencyUses, now) ?: return null
+        return ((at - now) / 1000).coerceAtLeast(0L)
+    }
+
+    /** Whether the block screen should offer the button at all. */
+    fun canUseEmergency(): Boolean = EmergencyUnlock.canUnlock(
+        stamps = emergencyUses,
+        nowMillis = System.currentTimeMillis(),
+        hardLockUntil = hardLockUntil,
+    )
+
+    /**
+     * Spends an emergency unlock on the app the reader is currently blocked
+     * from, and stands the block down if it opened.
+     *
+     * The package comes from [currentBlockedPackage] rather than being passed
+     * in, because that is the one the block screen is covering — there is no
+     * way to ask for an app other than the one in front, and that is on
+     * purpose.
+     */
+    fun useEmergencyUnlock() {
+        val pkg = currentBlockedPackage ?: return
+        scope.launch {
+            if (settingsRepository.startEmergencyUnlock(pkg)) {
+                emergencyPackage = pkg
+                emergencyUntil = System.currentTimeMillis() + EmergencyUnlock.DURATION_SECONDS * 1000
+                usageRepository.log(UsageRepository.TYPE_EMERGENCY, pkg, EmergencyUnlock.DURATION_SECONDS)
+                if (!accessDenied()) onAccessChanged()
+            }
+        }
+    }
 
     /**
      * Opens a session from the block screen and, if one opened, stands down.
@@ -523,11 +607,8 @@ class BlockController(
      */
     suspend fun awaitLedgerWrites() = pendingLedgerWrites.await()
 
-    /** Manual top-up path (kept for API compatibility); routes through the serialized mutator. */
-    fun addBalance(seconds: Long) {
-        if (seconds <= 0) return
-        scope.launch {
-            balanceSeconds = balanceManager.adjustBalance(seconds)
-        }
-    }
+    // addBalance() was here: a public "give yourself browse time" method,
+    // kept for API compatibility with callers that no longer exist. Nothing
+    // referenced it. Deleted rather than left, because the one thing this
+    // sweep found repeatedly is that unused doors get opened eventually.
 }

@@ -62,6 +62,16 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val readInLastDay = container.usageRepository.readingInLastDay()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    /**
+     * Emergency unlocks spent this week.
+     *
+     * Shown because it is the only honest diagnostic the reader gets. Someone
+     * on twelve a week is living on the hatch rather than the front door, and
+     * by design they will not notice that on their own.
+     */
+    val emergencyThisWeek = container.usageRepository.emergencyUnlocksThisWeek()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
     val gate = container.balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
 

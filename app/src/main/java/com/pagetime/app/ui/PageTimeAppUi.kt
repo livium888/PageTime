@@ -37,6 +37,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pagetime.app.BookImportViewModel
 import com.pagetime.app.ui.screens.library.LibraryScreen
+import com.pagetime.app.ui.screens.bookshelf.BookshelfScreen
 import com.pagetime.app.ui.screens.shelf.AuthorShelfScreen
 import com.pagetime.app.ui.screens.shelf.ShelfScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
@@ -177,9 +178,16 @@ fun PageTimeAppUi(
                     onOpenConcepts = { bookId -> navController.navigate("concepts/$bookId") },
                     onDiscover = { navController.navigate("search") },
                     onOpenShelf = { navController.navigate("shelf") },
+                    onOpenBookshelf = { navController.navigate("bookshelf") },
                     onOpenAuthor = { author ->
                         navController.navigate("author/${URLEncoder.encode(author, "UTF-8")}")
                     }
+                )
+            }
+            composable("bookshelf") {
+                BookshelfScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") }
                 )
             }
             composable("shelf") {

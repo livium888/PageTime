@@ -69,7 +69,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_16_17,
                 AppDatabase.MIGRATION_17_18,
                 AppDatabase.MIGRATION_18_19,
-                AppDatabase.MIGRATION_19_20
+                AppDatabase.MIGRATION_19_20,
+                AppDatabase.MIGRATION_20_21
             )
             .build()
 
@@ -100,6 +101,13 @@ class AppContainer(context: Context) {
         settingsRepository = settingsRepository,
         context = appContext,
         aiUsageRepository = aiUsageRepository
+    )
+
+    /** Curated reading lists, and books the reader wants but has not got. */
+    val shelfRepository = com.pagetime.app.data.shelf.ShelfRepository(
+        dao = database.shelfBookDao(),
+        library = libraryRepository,
+        catalogs = bookCatalogs,
     )
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)

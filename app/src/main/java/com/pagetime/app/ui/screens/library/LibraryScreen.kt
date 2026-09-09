@@ -81,7 +81,9 @@ fun LibraryScreen(
     onOpenBook: (String) -> Unit,
     onOpenConcepts: (String) -> Unit,
     onDiscover: () -> Unit,
-    viewModel: LibraryViewModel = viewModel()
+    viewModel: LibraryViewModel = viewModel(),
+    /** The curated reading path. */
+    onOpenShelf: () -> Unit = {},
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -213,6 +215,11 @@ fun LibraryScreen(
                     text = "Discover free books",
                     onClick = onDiscover
                 )
+                Spacer(Modifier.height(Spacing.s))
+                AppPrimaryButton(
+                    text = "The ladder — what to read next",
+                    onClick = onOpenShelf
+                )
             }
         } else {
             LazyColumn(
@@ -231,6 +238,13 @@ fun LibraryScreen(
                     Text(
                         "${formatMinutes(totalReadingSeconds)} read · ${formatMinutes(balanceSeconds)} earned",
                         style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                item {
+                    AppPrimaryButton(
+                        text = "The ladder — what to read next",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onOpenShelf
                     )
                 }
                 item {

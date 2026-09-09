@@ -35,9 +35,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExplanationEntity::class,
         LumenCardEntity::class,
         CardEmbeddingEntity::class,
-        BookChunkEmbeddingEntity::class
+        BookChunkEmbeddingEntity::class,
+        ShelfBookEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -55,6 +56,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun lumenCardDao(): LumenCardDao
     abstract fun cardEmbeddingDao(): CardEmbeddingDao
     abstract fun bookChunkEmbeddingDao(): BookChunkEmbeddingDao
+    abstract fun shelfBookDao(): ShelfBookDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -267,6 +269,33 @@ abstract class AppDatabase : RoomDatabase() {
          * it is derived data that can be dropped without losing anything the
          * reader made.
          */
+        /**
+         * Shelves: books the reader has not got.
+         *
+         * A new table rather than columns on `books`, because every row there
+         * carries a localPath and means "downloaded". Widening it with a
+         * nullable path would have made every query that assumes a file on
+         * disk quietly wrong, and there are a lot of them.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS shelf_books (" +
+                        "shelfId TEXT NOT NULL, slotId TEXT NOT NULL, " +
+                        "title TEXT NOT NULL, author TEXT NOT NULL, " +
+                        "position INTEGER NOT NULL, note TEXT, " +
+                        "catalogSource TEXT, catalogBookId TEXT, " +
+                        "availability TEXT NOT NULL DEFAULT 'unknown', " +
+                        "resolvedAt INTEGER, addedAt INTEGER NOT NULL DEFAULT 0, " +
+                        "PRIMARY KEY(shelfId, slotId))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_shelf_books_shelfId_position " +
+                        "ON shelf_books(shelfId, position)"
+                )
+            }
+        }
+
         val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

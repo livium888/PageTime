@@ -176,6 +176,57 @@ class ReadingGuardTest {
         )
     }
 
+    /**
+     * The symptom that reached the device: a counter stuck at exactly two
+     * minutes however long the reader read.
+     *
+     * Movement keeps a session alive but mints nothing — budget comes only
+     * from forward content. A caller that reports page turns with
+     * [ReadingGuard.onMovement] and never [ReadingGuard.onProgress] therefore
+     * spends the opening allowance and earns nothing again, which is exactly
+     * what the plain-text reader did: only the EPUB path reported progress.
+     *
+     * This test does not exercise that wiring — it is a ViewModel calling a
+     * Compose callback, and neither compiles here. It pins the behaviour that
+     * makes the symptom diagnosable: 120 seconds, then flat.
+     */
+    @Test
+    fun `movement without progress earns the allowance and never more`() {
+        var credited = 0L
+        var t = 0L
+        // Read for an hour, turning a page every ten seconds, reporting only
+        // movement — never progress.
+        repeat(360) {
+            repeat(10) {
+                t += S
+                if (guard.onTick(t)) credited++
+            }
+            guard.onMovement(t)
+        }
+        assertTrue("earned more than the allowance without progress: $credited", credited <= 125)
+        assertTrue("session should still be live", guard.state.crediting)
+        assertEquals(0, guard.state.budgetSeconds)
+    }
+
+    /**
+     * The same hour, with page turns reported as progress, earns properly.
+     */
+    @Test
+    fun `the same reading reported as progress earns throughout`() {
+        var credited = 0L
+        var t = 0L
+        var p = 0f
+        repeat(360) {
+            repeat(10) {
+                t += S
+                if (guard.onTick(t)) credited++
+            }
+            p += PAGE
+            guard.onProgress(p, t)
+        }
+        assertTrue("an hour of real reading should earn most of it: $credited", credited > 3_000)
+    }
+
     // --- Backgrounding, which used to reset everything ---
 
     /**

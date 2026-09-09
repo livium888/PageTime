@@ -396,7 +396,19 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
         _progress.value = fraction
         if (!userInitiated || !txtRestoreComplete) return
-        onUserScrolled()
+        // Progress, not merely movement.
+        //
+        // This was onUserScrolled(), which tells the guard someone is awake but
+        // mints no budget — budget comes only from forward content. So a
+        // plain-text book earned the 120-second opening allowance and then
+        // nothing, ever, however long the reader stayed. Only EPUBs reported
+        // progress, through the Readium locator.
+        //
+        // It hid behind a second bug: the guard used to restart on every
+        // ON_RESUME, handing out a fresh allowance each time the reader flicked
+        // away and back, which looked enough like earning to pass for it. Fixing
+        // that stopped the drip and left the counter stuck at two minutes.
+        onProgressChanged(fraction)
         updateScrollProgress(fraction)
         persistenceScope.launch {
             settingsRepository.saveTextOffset(bookId, pageStartOffset)
@@ -973,6 +985,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // anti-cheat guard. This is what lets the guard distinguish real reading
         // (forward progress) from oscillation/idle for EPUBs — previously only the
         // plain-text path reported progress, so the pace checks never saw EPUBs.
+        //
+        // The plain-text side then lost it again and read as movement only,
+        // which earned nothing at all; see onTextPageChanged. Both paths report
+        // progress now, and both must, because minting happens nowhere else.
         val publication = _publication.value
         val index = publication?.readingOrder?.indexOfFirstWithHref(locator.href)
         val fraction = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f)

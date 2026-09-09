@@ -45,7 +45,8 @@ object BlockScreenText {
     fun subtitle(gate: GateState): String = when {
         !gate.enabled -> "Read a few minutes to earn time in this app."
         gate.canStartSession ->
-            "Start your ${span(gate.sessionLengthSeconds)} whenever you are ready."
+            "Start your ${span(gate.sessionLengthSeconds)}. It only counts down " +
+                "while you are using these apps."
         else ->
             "${span(gate.secondsToNextSession)} of reading before your next " +
                 "${span(gate.sessionLengthSeconds)}."
@@ -76,12 +77,14 @@ object BlockScreenText {
     }
 
     /**
-     * A countdown, which unlike [span] does show seconds.
+     * App time left, which unlike [span] shows seconds.
      *
      * The opposite decision to the one above, for the opposite reason: a
      * session that says "1m" for a minute and then ends feels like it was
-     * taken away. While something is running out, the seconds are the
-     * information.
+     * taken away. While something is being spent, the seconds are the
+     * information — and this one only moves while it is genuinely being
+     * spent, so a reader who looks at it after a day away sees exactly the
+     * number they left.
      */
     fun countdown(seconds: Long): String {
         val safe = seconds.coerceAtLeast(0L)

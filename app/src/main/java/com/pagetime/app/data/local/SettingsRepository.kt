@@ -42,8 +42,8 @@ data class Settings(
     val gateEnabled: Boolean = false,
     /** Reading banked toward the next session. */
     val readingCreditSeconds: Long = 0,
-    /** When the running session ends (epoch millis); 0 when none. */
-    val sessionEndsAt: Long = 0,
+    /** App time bought and not yet used, in seconds. */
+    val sessionSecondsRemaining: Long = 0,
     /** When the cooling-off finishes and the gate switches off; 0 = not winding down. */
     val gateDisableAt: Long = 0,
     /** Reading needed to buy one session. */
@@ -169,7 +169,7 @@ class SettingsRepository(private val context: Context) {
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
         val GATE_ENABLED = booleanPreferencesKey("access_gate_enabled")
         val READING_CREDIT = longPreferencesKey("access_gate_reading_credit_seconds")
-        val SESSION_ENDS_AT = longPreferencesKey("access_gate_session_ends_at")
+        val SESSION_REMAINING = longPreferencesKey("access_gate_session_seconds_remaining")
         val GATE_DISABLE_AT = longPreferencesKey("access_gate_disable_at")
         val SESSION_COST = longPreferencesKey("access_gate_session_cost_seconds")
         val SESSION_LENGTH = longPreferencesKey("access_gate_session_length_seconds")
@@ -404,7 +404,7 @@ class SettingsRepository(private val context: Context) {
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
             gateEnabled = p[Keys.GATE_ENABLED] ?: false,
             readingCreditSeconds = p[Keys.READING_CREDIT] ?: 0L,
-            sessionEndsAt = p[Keys.SESSION_ENDS_AT] ?: 0L,
+            sessionSecondsRemaining = p[Keys.SESSION_REMAINING] ?: 0L,
             gateDisableAt = p[Keys.GATE_DISABLE_AT] ?: 0L,
             sessionCostSeconds = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS,
             sessionLengthSeconds = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS,
@@ -665,7 +665,7 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             p[Keys.GATE_ENABLED] = false
             p.remove(Keys.GATE_DISABLE_AT)
-            p.remove(Keys.SESSION_ENDS_AT)
+            p.remove(Keys.SESSION_REMAINING)
         }
     }
 
@@ -687,27 +687,47 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Spends one session's cost and opens the window, or reports that it could
-     * not be afforded.
+     * Converts one session's worth of reading credit into app time, or reports
+     * that it could not be afforded.
      *
      * Read-modify-write inside one DataStore edit so two taps cannot both see
-     * the same credit and both open a session. The caller serializes as well;
+     * the same credit and both buy with it. The caller serializes as well;
      * this is the part that has to be right regardless.
      */
-    suspend fun startSessionIfAffordable(nowMillis: Long = System.currentTimeMillis()): Boolean {
+    suspend fun startSessionIfAffordable(): Boolean {
         var started = false
         context.dataStore.edit { p ->
             val cost = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
             val length = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS
             val credit = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
-            val running = (p[Keys.SESSION_ENDS_AT] ?: 0L) > nowMillis
-            if (!running && credit >= cost) {
+            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
+            val ceiling = GateState.maxSessionSecondsFor(length)
+            if (credit >= cost && remaining < ceiling) {
                 p[Keys.READING_CREDIT] = credit - cost
-                p[Keys.SESSION_ENDS_AT] = nowMillis + length * 1000
+                p[Keys.SESSION_REMAINING] = (remaining + length).coerceAtMost(ceiling)
                 started = true
             }
         }
         return started
+    }
+
+    /**
+     * Burns one second of app time. Returns what is left.
+     *
+     * Called once a second by the block controller's spend ticker while a
+     * blocked app is genuinely in front — never while the screen is off, and
+     * never while the reader is somewhere else. That is the whole difference
+     * between this and a countdown: time the reader is not spending is time
+     * they still have.
+     */
+    suspend fun spendSessionSecond(): Long {
+        var left = 0L
+        context.dataStore.edit { p ->
+            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
+            left = (remaining - 1).coerceAtLeast(0L)
+            p[Keys.SESSION_REMAINING] = left
+        }
+        return left
     }
 
     suspend fun setSessionCostSeconds(seconds: Long) {
@@ -730,7 +750,14 @@ class SettingsRepository(private val context: Context) {
             GateState.MIN_SESSION_LENGTH_SECONDS,
             GateState.MAX_SESSION_LENGTH_SECONDS,
         )
-        context.dataStore.edit { it[Keys.SESSION_LENGTH] = clamped }
+        context.dataStore.edit { p ->
+            p[Keys.SESSION_LENGTH] = clamped
+            // Unspent app time is denominated in sessions too, so shortening
+            // one has to re-cap what is already banked.
+            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
+            p[Keys.SESSION_REMAINING] =
+                remaining.coerceAtMost(GateState.maxSessionSecondsFor(clamped))
+        }
     }
 
     suspend fun addTotalReadingSeconds(delta: Long) {

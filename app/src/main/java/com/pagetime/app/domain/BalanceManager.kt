@@ -39,18 +39,17 @@ class BalanceManager(
         repository.settings.map { it.ratio }
 
     /**
-     * The access gate, re-evaluated as the clock moves.
+     * The access gate.
      *
-     * Two of the three things that can change the answer are not events: a
-     * session expiring and a wind-down completing both happen because time
-     * passed and nothing was written anywhere. So the settings flow alone
-     * would leave a session open until the reader happened to touch something.
+     * Almost everything here changes because something was written: reading
+     * banks credit, buying a session spends it, and the spend ticker writes
+     * the remaining second every second it burns one. All of that arrives
+     * through the settings flow with no polling at all — which is the quiet
+     * benefit of metering the session rather than counting down to a deadline.
      *
-     * The tick rate follows what is being watched. While a session runs there
-     * is a second-hand on screen and an expiry to enforce, so it ticks every
-     * second; otherwise the only deadline is a day away and once a minute is
-     * plenty. A blocker that woke every second for the life of the process to
-     * watch a clock nobody is reading would be a battery bug.
+     * The one exception is the wind-down, which completes because a day
+     * passed and nothing was written anywhere. That is what the slow tick is
+     * for; a deadline that far out does not need watching more often.
      */
     val gate: Flow<GateState> =
         repository.settings
@@ -59,16 +58,15 @@ class BalanceManager(
 
     private fun ticking(settings: Settings): Flow<GateState> = flow {
         while (true) {
-            val state = stateOf(settings, System.currentTimeMillis())
-            emit(state)
-            delay(if (state.sessionActive) SESSION_TICK_MS else IDLE_TICK_MS)
+            emit(stateOf(settings, System.currentTimeMillis()))
+            delay(WIND_DOWN_TICK_MS)
         }
     }
 
     private fun stateOf(settings: Settings, now: Long) = GateState(
         switchedOn = settings.gateEnabled,
         creditSeconds = settings.readingCreditSeconds,
-        sessionEndsAtMillis = settings.sessionEndsAt,
+        sessionSecondsRemaining = settings.sessionSecondsRemaining,
         disableAtMillis = settings.gateDisableAt,
         nowMillis = now,
         sessionCostSeconds = settings.sessionCostSeconds,
@@ -80,23 +78,34 @@ class BalanceManager(
         stateOf(repository.settings.first(), System.currentTimeMillis())
 
     /**
-     * Spends the banked reading and opens a session. Returns whether one
-     * opened.
+     * Buys app time with banked reading. Returns whether the purchase went
+     * through.
      *
      * Serialized with every other mutation, and the affordability check lives
      * inside the DataStore edit as well: two taps on the block screen's start
      * button must not both read the same credit and both come back yes.
      */
     suspend fun startSession(): Boolean = mutex.withLock {
-        val now = System.currentTimeMillis()
-        val state = stateOf(repository.settings.first(), now)
-        if (!state.enabled || state.sessionActive) return@withLock false
-        val started = repository.startSessionIfAffordable(now)
+        val state = stateOf(repository.settings.first(), System.currentTimeMillis())
+        if (!state.enabled) return@withLock false
+        val started = repository.startSessionIfAffordable()
         if (started) {
             ledger?.log(UsageRepository.TYPE_SESSION, packageName = null, seconds = state.sessionLengthSeconds)
         }
         started
     }
+
+    /**
+     * Burns one second of whichever counter is currently paying for access,
+     * and returns what is left of it.
+     *
+     * One ticker, two counters. Under the gate it is bought app time; on the
+     * browse balance it is the old currency. Keeping the branch here rather
+     * than in the controller means the screen-off rule, the ledger flush and
+     * the UsageStats reconciliation are written once and cannot drift apart.
+     */
+    suspend fun spendAccessSecond(): Long =
+        if (repository.gateEnabled()) repository.spendSessionSecond() else spendSecond()
 
     /**
      * Turns the stored switch off once its cooling-off has elapsed.
@@ -161,10 +170,12 @@ class BalanceManager(
     private val mutex = Mutex()
 
     private companion object {
-        /** A visible countdown deserves a second hand. */
-        const val SESSION_TICK_MS = 1_000L
-
-        /** Nothing on this side of the gate changes faster than a minute. */
-        const val IDLE_TICK_MS = 60_000L
+        /**
+         * The wind-down is the only deadline left, and it is a day away.
+         *
+         * Everything else reaches this flow as a DataStore write, so there is
+         * nothing else worth waking up for.
+         */
+        const val WIND_DOWN_TICK_MS = 60_000L
     }
 }

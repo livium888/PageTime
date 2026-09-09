@@ -23,13 +23,22 @@ package com.pagetime.app.domain
  * INDIVISIBLE. You cannot buy a minute at any price. Indivisibility was always
  * the fix; the absence of trade never was.
  *
- * THE SESSION RUNS ON A WALL CLOCK
+ * THE SESSION IS METERED, NOT A WALL CLOCK
  *
- * Thirty minutes from the moment it is opened, running whether the phone is
- * used or not. Metering it only while a blocked app is in front would rebuild
- * minute-nibbling inside the window, and would make putting the phone down
- * feel like saving — the opposite of the lesson. A session is a block of time
- * that is spent, not a balance that is drawn down.
+ * It was a wall clock for exactly one commit, and that was wrong. Thirty
+ * minutes counting down in real time means putting the phone down to answer
+ * the door costs you minutes you paid two hours of reading for — the same
+ * theft the spend ticker already refuses to commit when the screen is off,
+ * just wearing a nicer name.
+ *
+ * So session time only drains while a blocked app is actually in front, and
+ * it does not expire. What is left is still there tomorrow.
+ *
+ * The worry that this rebuilds minute-nibbling does not survive contact with
+ * the arithmetic. Nibbling was possible because the PURCHASE was divisible —
+ * a minute of reading bought a minute of scrolling. Here the smallest thing
+ * that can be bought is thirty minutes and it costs two hours. How that
+ * thirty is spent afterwards was never the problem.
  *
  * CREDIT IS BANKED, BUT NOT INDEFINITELY
  *
@@ -49,17 +58,22 @@ package com.pagetime.app.domain
  *
  * EVERYTHING HERE IS A FUNCTION OF ITS ARGUMENTS
  *
- * Including [nowMillis], which is passed in rather than read. Session expiry,
- * the cooling-off period and the countdown are all time-dependent, and a rule
- * that reads the clock itself can only be tested by waiting.
+ * Including [nowMillis], which is passed in rather than read. The cooling-off
+ * period is the one rule left that depends on the clock, and a rule that reads
+ * the clock itself can only be tested by waiting.
  */
 data class GateState(
     /** The stored switch. Not the same as [enabled] while winding down. */
     val switchedOn: Boolean,
     /** Reading banked toward the next session. */
     val creditSeconds: Long,
-    /** When the current session ends (epoch millis); 0 when none is running. */
-    val sessionEndsAtMillis: Long,
+    /**
+     * App time bought and not yet used, in seconds.
+     *
+     * A counter rather than a deadline, which is what makes it survive a
+     * night on the bedside table.
+     */
+    val sessionSecondsRemaining: Long,
     /** When the cooling-off finishes and the gate really switches off; 0 = none. */
     val disableAtMillis: Long,
     val nowMillis: Long,
@@ -99,18 +113,26 @@ data class GateState(
         get() = creditSeconds.coerceAtLeast(0L)
 
     val sessionActive: Boolean
-        get() = enabled && nowMillis < sessionEndsAtMillis
+        get() = enabled && sessionSecondsRemaining > 0L
 
     val sessionRemainingSeconds: Long
-        get() = if (!sessionActive) 0L else ((sessionEndsAtMillis - nowMillis) / 1000).coerceAtLeast(0L)
+        get() = sessionSecondsRemaining.coerceAtLeast(0L)
 
     /** Whether blocked apps may be opened right now. */
     val open: Boolean
         get() = !enabled || sessionActive
 
-    /** Enough read to open the door, and no session already running. */
+    /**
+     * Enough read to buy more app time.
+     *
+     * Buying again while time is still unspent is allowed — it is the
+     * reader's two hours — but capped by [maxSessionSecondsFor] so app time
+     * cannot be hoarded without limit.
+     */
     val canStartSession: Boolean
-        get() = enabled && !sessionActive && banked >= sessionCostSeconds
+        get() = enabled &&
+            banked >= sessionCostSeconds &&
+            sessionSecondsRemaining < maxSessionSecondsFor(sessionLengthSeconds)
 
     /** Still to read before the next session can be started. */
     val secondsToNextSession: Long
@@ -158,6 +180,17 @@ data class GateState(
         /** Buys thirty minutes. */
         const val DEFAULT_SESSION_LENGTH_SECONDS = 30L * 60
 
+        /**
+         * The ceiling on unspent app time: two sessions' worth.
+         *
+         * Time does not expire, so without a ceiling a reader could stockpile
+         * an afternoon of app time across a month of reading and then spend a
+         * week not reading at all — the currency returning in a larger
+         * denomination, which is the failure this design exists to avoid.
+         */
+        fun maxSessionSecondsFor(sessionLengthSeconds: Long): Long =
+            (sessionLengthSeconds.coerceAtLeast(0L)) * 2
+
         /** How long turning the gate off takes to take effect. */
         const val COOLING_OFF_MILLIS = 24L * 60 * 60 * 1000
 
@@ -193,7 +226,7 @@ data class GateState(
         val Unknown = GateState(
             switchedOn = false,
             creditSeconds = 0,
-            sessionEndsAtMillis = 0,
+            sessionSecondsRemaining = 0,
             disableAtMillis = 0,
             nowMillis = 0,
         )

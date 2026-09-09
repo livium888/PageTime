@@ -150,20 +150,29 @@ fun SettingsScreen(
 
                 if (gate.enabled) {
                     if (gate.sessionActive) {
-                        // A running session is the only thing on this card
+                        // Unspent app time is the only thing on this card
                         // worth looking at, so it gets the big number.
-                        Text("Session running", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("App time left", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
                             BlockScreenText.countdown(gate.sessionRemainingSeconds),
                             style = MaterialTheme.typography.displaySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "Your apps are open. This is also the only time apps can be " +
-                                "taken off the blocked list.",
+                            "Your apps are open. This only counts down while you are actually " +
+                                "using them, and what is left keeps until you do. It is also " +
+                                "the only time apps can be taken off the blocked list.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (gate.canStartSession) {
+                            Button(
+                                onClick = { viewModel.startSession() },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Add ${BlockScreenText.span(gate.sessionLengthSeconds)} more")
+                            }
+                        }
                     } else {
                         Row(
                             Modifier.fillMaxWidth(),
@@ -236,8 +245,9 @@ fun SettingsScreen(
                         Text("Earn the day", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "${BlockScreenText.span(gate.sessionCostSeconds)} of reading buys " +
-                                "${BlockScreenText.span(gate.sessionLengthSeconds)} of apps. " +
-                                "No minute-for-minute trading, and no pause button.",
+                                "${BlockScreenText.span(gate.sessionLengthSeconds)} of app time, " +
+                                "spent only while you use them. No minute-for-minute trading, " +
+                                "and no pause button.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

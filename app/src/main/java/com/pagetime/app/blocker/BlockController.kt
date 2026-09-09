@@ -54,8 +54,13 @@ import kotlinx.coroutines.withContext
  * break.
  *
  * Under the gate the block screen is also the only place a session can be
- * opened from besides Settings, so this controller is where the door is, not
+ * bought from besides Settings, so this controller is where the door is, not
  * merely where the wall is.
+ *
+ * Bought app time is METERED by the same spend ticker as the balance: it
+ * drains only while a blocked app is genuinely in front with the screen on,
+ * and what is left is still there tomorrow. A session that counted down on a
+ * wall clock would charge the reader for answering the door.
  */
 class BlockController(
     private val scope: CoroutineScope,
@@ -352,8 +357,8 @@ class BlockController(
         if (accessDenied()) {
             if (spendJob?.isActive != true) startEnforcing()
         } else if (enforceJob?.isActive == true) {
-            // The balance was topped up, or the day's reading was finished
-            // while the block screen was up. Either way it comes down.
+            // The balance was topped up, or app time was just bought while the
+            // block screen was up. Either way it comes down.
             stopEnforcing()
             service?.dismissTimeUp()
             if (currentBlockedPackage == pkg) startSpending()
@@ -364,16 +369,14 @@ class BlockController(
         if (spendJob?.isActive == true) return
         val pkg = currentBlockedPackage ?: return
         stopEnforcing()
-        // Under the gate there is no meter. Time is not deducted for using a
-        // blocked app, because it was never bought: the day's reading opened
-        // the phone and the phone stays open until the reading ages out.
+        // One ticker for both eras. Under the gate it burns bought app time,
+        // on the balance the old currency; which counter that is belongs to
+        // BalanceManager.spendAccessSecond, not here.
         //
-        // Placed AFTER stopEnforcing so that "access is allowed" still tears
-        // down a leftover enforcement loop. Returning before it would make
-        // this function mean two different things — "start the meter" on the
-        // balance and "do nothing at all" under the gate — and the second one
-        // silently drops the side effect every caller relies on.
-        if (gate.enabled) return
+        // The gate had no meter at all for one commit, back when a session was
+        // a wall clock. That meant putting the phone down cost you minutes you
+        // had paid two hours of reading for — the same theft the screen-off
+        // rule below exists to prevent, just harder to notice.
         sessionSpentSeconds = 0
         sessionStartWallAt = System.currentTimeMillis()
         spendJob = scope.launch {
@@ -383,8 +386,8 @@ class BlockController(
                 // Screen off → nobody is using the app; don't drain their time.
                 if (!powerManager.isInteractive) continue
 
-                val remaining = balanceManager.spendSecond()
-                balanceSeconds = remaining
+                val remaining = balanceManager.spendAccessSecond()
+                if (!gate.enabled) balanceSeconds = remaining
                 sessionSpentSeconds++
 
                 if (remaining <= 0) {

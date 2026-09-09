@@ -17,11 +17,11 @@ class BlockScreenTextTest {
     private fun gate(
         credit: Long = 0,
         switchedOn: Boolean = true,
-        sessionEndsAt: Long = 0,
+        sessionRemaining: Long = 0,
     ) = GateState(
         switchedOn = switchedOn,
         creditSeconds = credit,
-        sessionEndsAtMillis = sessionEndsAt,
+        sessionSecondsRemaining = sessionRemaining,
         disableAtMillis = 0,
         nowMillis = T0,
     )
@@ -55,7 +55,10 @@ class BlockScreenTextTest {
         val g = gate(credit = COST)
         assertTrue(BlockScreenText.showsStartButton(g))
         assertEquals("You've read enough", BlockScreenText.title(g))
-        assertEquals("Start your 30m whenever you are ready.", BlockScreenText.subtitle(g))
+        assertEquals(
+            "Start your 30m. It only counts down while you are using these apps.",
+            BlockScreenText.subtitle(g)
+        )
         assertEquals("Start 30m", BlockScreenText.startButtonLabel(g))
     }
 
@@ -89,7 +92,7 @@ class BlockScreenTextTest {
         assertEquals("2h", BlockScreenText.span(7200))
     }
 
-    /** While something is running out, the seconds are the information. */
+    /** While something is being spent, the seconds are the information. */
     @Test
     fun `the session countdown shows seconds`() {
         assertEquals("30:00", BlockScreenText.countdown(1800))
@@ -104,7 +107,7 @@ class BlockScreenTextTest {
         val g = GateState(
             switchedOn = true,
             creditSeconds = 100,
-            sessionEndsAtMillis = 0,
+            sessionSecondsRemaining = 0,
             disableAtMillis = 0,
             nowMillis = T0,
             sessionCostSeconds = 0,

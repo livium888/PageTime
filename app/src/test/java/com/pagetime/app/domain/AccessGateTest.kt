@@ -16,12 +16,12 @@ class AccessGateTest {
     private fun gate(
         switchedOn: Boolean = true,
         credit: Long = 0,
-        sessionEndsAt: Long = 0,
+        sessionRemaining: Long = 0,
         disableAt: Long = 0,
         now: Long = T0,
         cost: Long = COST,
         length: Long = LENGTH,
-    ) = GateState(switchedOn, credit, sessionEndsAt, disableAt, now, cost, length)
+    ) = GateState(switchedOn, credit, sessionRemaining, disableAt, now, cost, length)
 
     // --- The exchange ---
 
@@ -53,30 +53,43 @@ class AccessGateTest {
     // --- The session ---
 
     @Test
-    fun `an open session opens the apps and counts down`() {
-        val g = gate(credit = 0, sessionEndsAt = T0 + 20 * 60 * 1000)
+    fun `unspent app time opens the apps`() {
+        val g = gate(credit = 0, sessionRemaining = 20 * 60)
         assertTrue(g.sessionActive)
         assertTrue(g.open)
         assertEquals(20L * 60, g.sessionRemainingSeconds)
     }
 
-    /**
-     * Wall clock, not a meter: the session drains while the phone is in a
-     * pocket, so putting it down never banks time for later.
-     */
     @Test
-    fun `the session ends on the clock whatever the reader was doing`() {
-        val started = T0
-        val g = gate(sessionEndsAt = started + LENGTH * 1000, now = started + (LENGTH + 1) * 1000)
+    fun `spent-out app time closes them again`() {
+        val g = gate(sessionRemaining = 0)
         assertFalse(g.sessionActive)
         assertFalse(g.open)
-        assertEquals(0L, g.sessionRemainingSeconds)
     }
 
+    /**
+     * A meter, not a wall clock. Nothing in this state depends on the time,
+     * so app time cannot evaporate while the phone is face-down — the reader
+     * paid two hours for it and it is still there tomorrow.
+     */
     @Test
-    fun `a session cannot be started while one is running`() {
-        val g = gate(credit = COST * 2, sessionEndsAt = T0 + 60_000)
-        assertFalse(g.canStartSession)
+    fun `app time does not run down on its own`() {
+        val g = gate(sessionRemaining = 12 * 60)
+        val aWeekLater = g.copy(nowMillis = T0 + 7L * 24 * 60 * 60 * 1000)
+        assertEquals(g.sessionRemainingSeconds, aWeekLater.sessionRemainingSeconds)
+        assertTrue(aWeekLater.open)
+    }
+
+    /**
+     * Buying more while some is left is allowed — it is the reader's two
+     * hours — but it stops at the ceiling, or a month of reading could
+     * stockpile an afternoon of scrolling.
+     */
+    @Test
+    fun `app time can be topped up but not hoarded`() {
+        assertTrue(gate(credit = COST, sessionRemaining = LENGTH).canStartSession)
+        assertFalse(gate(credit = COST * 2, sessionRemaining = LENGTH * 2).canStartSession)
+        assertEquals(LENGTH * 2, GateState.maxSessionSecondsFor(LENGTH))
     }
 
     // --- Banking ---
@@ -159,8 +172,8 @@ class AccessGateTest {
     }
 
     @Test
-    fun `apps can be unblocked inside a session`() {
-        assertTrue(gate(sessionEndsAt = T0 + 60_000).canRemoveBlockedApps)
+    fun `apps can be unblocked while app time is in hand`() {
+        assertTrue(gate(sessionRemaining = 60).canRemoveBlockedApps)
     }
 
     @Test
@@ -188,9 +201,9 @@ class AccessGateTest {
     }
 
     @Test
-    fun `a session end in the past is not a session`() {
-        assertFalse(gate(sessionEndsAt = T0 - 1).sessionActive)
-        assertEquals(0L, gate(sessionEndsAt = T0 - 10_000).sessionRemainingSeconds)
+    fun `a negative counter is not app time`() {
+        assertFalse(gate(sessionRemaining = -30).sessionActive)
+        assertEquals(0L, gate(sessionRemaining = -30).sessionRemainingSeconds)
     }
 
     @Test

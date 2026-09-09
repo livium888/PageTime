@@ -36,6 +36,21 @@ import com.pagetime.app.data.gutenberg.GutendexBook
  * title has to be a prefix of the other. Leading articles are dropped first,
  * because "The Republic" and "Republic of Plato" are the same book.
  */
+/**
+ * A book someone wants, whoever decided they wanted it.
+ *
+ * The matcher was written against the ladder and took a LadderEntry, which
+ * made it useless to the author shelves — where the wanting comes from the
+ * reader's own library rather than a curated list. The check itself never
+ * cared where the title came from, only what it is.
+ */
+interface WantedBook {
+    val title: String
+    val author: String
+    /** Other spellings a catalogue might file the author under. */
+    val authorAliases: List<String>
+}
+
 object ShelfMatcher {
 
     /** Below this a "prefix" is meaningless — two letters prefix half a catalogue. */
@@ -51,7 +66,7 @@ object ShelfMatcher {
      * than volume three of five, and a modern translation rather than an
      * abandoned one.
      */
-    fun bestMatch(entry: LadderEntry, results: List<GutendexBook>): GutendexBook? =
+    fun bestMatch(entry: WantedBook, results: List<GutendexBook>): GutendexBook? =
         results
             .filter { it.isDownloadable() && authorAgrees(entry, it) && titleAgrees(entry.title, it.title) }
             .maxByOrNull { it.downloadCount }
@@ -60,7 +75,7 @@ object ShelfMatcher {
     private fun GutendexBook.isDownloadable(): Boolean =
         !epubUrl.isNullOrBlank() || !txtUrl.isNullOrBlank()
 
-    fun authorAgrees(entry: LadderEntry, book: GutendexBook): Boolean {
+    fun authorAgrees(entry: WantedBook, book: GutendexBook): Boolean {
         val keys = (listOf(entry.author) + entry.authorAliases).mapNotNull { surnameKey(it) }
         if (keys.isEmpty()) return false
         val listed = book.authors.joinToString(" ") { normalize(it) }

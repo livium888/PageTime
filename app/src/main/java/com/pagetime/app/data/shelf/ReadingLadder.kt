@@ -40,8 +40,8 @@ package com.pagetime.app.data.shelf
 data class LadderEntry(
     /** Stable key. Persisted as a shelf slot, so it never changes. */
     val key: String,
-    val title: String,
-    val author: String,
+    override val title: String,
+    override val author: String,
     val stage: LadderStage,
     /** One line on why it earns its place, shown under the title. */
     val note: String,
@@ -55,8 +55,8 @@ data class LadderEntry(
      * solved with fuzzy matching, because a matcher loose enough to bridge
      * that gap is also loose enough to confuse two real authors.
      */
-    val authorAliases: List<String> = emptyList(),
-) {
+    override val authorAliases: List<String> = emptyList(),
+) : WantedBook {
     /** What to ask a catalogue for. */
     val searchQuery: String get() = "$title $author"
 }

@@ -37,6 +37,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pagetime.app.BookImportViewModel
 import com.pagetime.app.ui.screens.library.LibraryScreen
+import com.pagetime.app.ui.screens.shelf.ShelfScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
@@ -173,7 +174,14 @@ fun PageTimeAppUi(
                 LibraryScreen(
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
                     onOpenConcepts = { bookId -> navController.navigate("concepts/$bookId") },
-                    onDiscover = { navController.navigate("search") }
+                    onDiscover = { navController.navigate("search") },
+                    onOpenShelf = { navController.navigate("shelf") }
+                )
+            }
+            composable("shelf") {
+                ShelfScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") }
                 )
             }
             // The concept map screen was written, and then never given a route:

@@ -40,10 +40,16 @@ data class Settings(
      * them out of their phone on the strength of an app update.
      */
     val gateEnabled: Boolean = false,
-    /** Reading (plus capped planning) needed in the last day to open the apps. */
-    val gateThresholdSeconds: Long = GateState.DEFAULT_THRESHOLD_SECONDS,
-    /** How much of [gateThresholdSeconds] may be assistant time instead of reading. */
-    val planningCapSeconds: Long = GateState.DEFAULT_PLANNING_CAP_SECONDS,
+    /** Reading banked toward the next session. */
+    val readingCreditSeconds: Long = 0,
+    /** When the running session ends (epoch millis); 0 when none. */
+    val sessionEndsAt: Long = 0,
+    /** When the cooling-off finishes and the gate switches off; 0 = not winding down. */
+    val gateDisableAt: Long = 0,
+    /** Reading needed to buy one session. */
+    val sessionCostSeconds: Long = GateState.DEFAULT_SESSION_COST_SECONDS,
+    /** How long a session lasts once opened. */
+    val sessionLengthSeconds: Long = GateState.DEFAULT_SESSION_LENGTH_SECONDS,
     /** Whether the slip box shows newcomer help / confirmations before card actions. */
     val helpEnabled: Boolean = true,
     /** Provider used for optional AI-assisted learning features. */
@@ -162,8 +168,11 @@ class SettingsRepository(private val context: Context) {
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
         val GATE_ENABLED = booleanPreferencesKey("access_gate_enabled")
-        val GATE_THRESHOLD = longPreferencesKey("access_gate_threshold_seconds")
-        val PLANNING_CAP = longPreferencesKey("access_gate_planning_cap_seconds")
+        val READING_CREDIT = longPreferencesKey("access_gate_reading_credit_seconds")
+        val SESSION_ENDS_AT = longPreferencesKey("access_gate_session_ends_at")
+        val GATE_DISABLE_AT = longPreferencesKey("access_gate_disable_at")
+        val SESSION_COST = longPreferencesKey("access_gate_session_cost_seconds")
+        val SESSION_LENGTH = longPreferencesKey("access_gate_session_length_seconds")
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
@@ -394,8 +403,11 @@ class SettingsRepository(private val context: Context) {
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
             gateEnabled = p[Keys.GATE_ENABLED] ?: false,
-            gateThresholdSeconds = p[Keys.GATE_THRESHOLD] ?: GateState.DEFAULT_THRESHOLD_SECONDS,
-            planningCapSeconds = p[Keys.PLANNING_CAP] ?: GateState.DEFAULT_PLANNING_CAP_SECONDS,
+            readingCreditSeconds = p[Keys.READING_CREDIT] ?: 0L,
+            sessionEndsAt = p[Keys.SESSION_ENDS_AT] ?: 0L,
+            gateDisableAt = p[Keys.GATE_DISABLE_AT] ?: 0L,
+            sessionCostSeconds = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS,
+            sessionLengthSeconds = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS,
             helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
             llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
@@ -613,37 +625,112 @@ class SettingsRepository(private val context: Context) {
     suspend fun gateEnabled(): Boolean =
         context.dataStore.data.first()[Keys.GATE_ENABLED] ?: false
 
-    suspend fun setGateEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.GATE_ENABLED] = enabled }
+    /**
+     * Switches the gate on immediately, or starts it winding down.
+     *
+     * Asymmetric on purpose. Turning it ON takes effect at once and clears any
+     * pending wind-down, because more restriction never needs protecting from
+     * the reader. Turning it OFF only sets the date: a boundary that can be
+     * removed at the moment you want to cross it was never a boundary, and the
+     * moment you want to cross it is exactly when you would reach for this
+     * switch.
+     */
+    suspend fun setGateSwitchedOn(on: Boolean, nowMillis: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { p ->
+            if (on) {
+                p[Keys.GATE_ENABLED] = true
+                p.remove(Keys.GATE_DISABLE_AT)
+            } else if (p[Keys.GATE_ENABLED] == true) {
+                // Already winding down: leave the original date alone, so
+                // tapping the switch again cannot restart the clock at a
+                // shorter distance than it already was.
+                if ((p[Keys.GATE_DISABLE_AT] ?: 0L) <= 0L) {
+                    p[Keys.GATE_DISABLE_AT] = nowMillis + GateState.COOLING_OFF_MILLIS
+                }
+            } else {
+                p[Keys.GATE_ENABLED] = false
+                p.remove(Keys.GATE_DISABLE_AT)
+            }
+        }
     }
 
     /**
-     * Sets how long the day's reading has to be.
+     * Clears a finished wind-down, once the gate has actually switched off.
      *
-     * Floored at fifteen minutes because a gate is a boundary, and a boundary
-     * that can be moved to nothing from inside the app is a button labelled
-     * "open". Fifteen minutes is short enough for someone to try the mechanism
-     * for an evening without committing to two hours of it.
+     * The rule itself needs no help — [GateState.enabled] is a function of the
+     * clock — but leaving the stored flag on forever would mean the settings
+     * screen had to explain a switch that says on and behaves as off.
      */
-    suspend fun setGateThresholdSeconds(seconds: Long) {
-        val clamped = seconds.coerceIn(GateState.MIN_THRESHOLD_SECONDS, GateState.MAX_THRESHOLD_SECONDS)
+    suspend fun settleGateWindDown() {
         context.dataStore.edit { p ->
-            p[Keys.GATE_THRESHOLD] = clamped
-            // A cap is a share of the gate, so it can never survive the gate
-            // shrinking underneath it — otherwise lowering the threshold to
-            // half an hour would silently leave a twenty-minute cap covering
-            // most of it.
-            val cap = p[Keys.PLANNING_CAP] ?: GateState.DEFAULT_PLANNING_CAP_SECONDS
-            p[Keys.PLANNING_CAP] = cap.coerceAtMost(GateState.maxPlanningCapFor(clamped))
+            p[Keys.GATE_ENABLED] = false
+            p.remove(Keys.GATE_DISABLE_AT)
+            p.remove(Keys.SESSION_ENDS_AT)
         }
     }
 
-    /** Sets the share of the gate that may be planning rather than reading. */
-    suspend fun setPlanningCapSeconds(seconds: Long) {
+    /**
+     * Banks reading toward the next session, capped.
+     *
+     * Reading past the cap still counts as reading — the ledger records it and
+     * the book advances — it simply stops buying. Without the cap a heavy
+     * weekend funds a week of not reading, which is the currency returning in
+     * a larger denomination.
+     */
+    suspend fun addReadingCredit(delta: Long) {
+        if (delta <= 0) return
         context.dataStore.edit { p ->
-            val threshold = p[Keys.GATE_THRESHOLD] ?: GateState.DEFAULT_THRESHOLD_SECONDS
-            p[Keys.PLANNING_CAP] = seconds.coerceIn(0L, GateState.maxPlanningCapFor(threshold))
+            val cost = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
+            val current = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
+            p[Keys.READING_CREDIT] = (current + delta).coerceAtMost(GateState.maxCreditFor(cost))
         }
+    }
+
+    /**
+     * Spends one session's cost and opens the window, or reports that it could
+     * not be afforded.
+     *
+     * Read-modify-write inside one DataStore edit so two taps cannot both see
+     * the same credit and both open a session. The caller serializes as well;
+     * this is the part that has to be right regardless.
+     */
+    suspend fun startSessionIfAffordable(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        var started = false
+        context.dataStore.edit { p ->
+            val cost = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
+            val length = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS
+            val credit = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
+            val running = (p[Keys.SESSION_ENDS_AT] ?: 0L) > nowMillis
+            if (!running && credit >= cost) {
+                p[Keys.READING_CREDIT] = credit - cost
+                p[Keys.SESSION_ENDS_AT] = nowMillis + length * 1000
+                started = true
+            }
+        }
+        return started
+    }
+
+    suspend fun setSessionCostSeconds(seconds: Long) {
+        val clamped = seconds.coerceIn(
+            GateState.MIN_SESSION_COST_SECONDS,
+            GateState.MAX_SESSION_COST_SECONDS,
+        )
+        context.dataStore.edit { p ->
+            p[Keys.SESSION_COST] = clamped
+            // Banked credit is denominated in sessions, so a cost change has
+            // to re-cap it or an old balance could buy more sessions than the
+            // new setting allows.
+            val credit = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
+            p[Keys.READING_CREDIT] = credit.coerceAtMost(GateState.maxCreditFor(clamped))
+        }
+    }
+
+    suspend fun setSessionLengthSeconds(seconds: Long) {
+        val clamped = seconds.coerceIn(
+            GateState.MIN_SESSION_LENGTH_SECONDS,
+            GateState.MAX_SESSION_LENGTH_SECONDS,
+        )
+        context.dataStore.edit { it[Keys.SESSION_LENGTH] = clamped }
     }
 
     suspend fun addTotalReadingSeconds(delta: Long) {

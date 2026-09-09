@@ -7,6 +7,7 @@
     <string name="overlay_title">Time is up!</string>
     <string name="overlay_subtitle">Read a few minutes to earn time in this app.</string>
     <string name="overlay_button">Read now</string>
+    <string name="overlay_start_session">Start session</string>
 
     <string name="tab_library">Library</string>
     <string name="tab_discover">Discover</string>

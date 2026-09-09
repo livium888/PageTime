@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.pagetime.app.R
@@ -22,13 +23,18 @@ import com.pagetime.app.domain.GateState
  * such grant and is laid out above ordinary overlays — so that is the primary path,
  * with the old type kept as a fallback.
  */
-class TimeUpOverlay(context: Context, onReadNow: () -> Unit) {
+class TimeUpOverlay(
+    context: Context,
+    onReadNow: () -> Unit,
+    onStartSession: () -> Unit = {},
+) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val view: View = LayoutInflater.from(context).inflate(R.layout.view_time_up_overlay, null)
 
     init {
         view.findViewById<View>(R.id.btn_read_now).setOnClickListener { onReadNow() }
+        view.findViewById<View>(R.id.btn_start_session).setOnClickListener { onStartSession() }
         // Focusable so the overlay swallows BACK instead of letting it fall through
         // to the blocked app underneath.
         view.isFocusableInTouchMode = true
@@ -57,6 +63,15 @@ class TimeUpOverlay(context: Context, onReadNow: () -> Unit) {
         } else {
             bar.visibility = View.VISIBLE
             bar.progress = (progress * bar.max).toInt()
+        }
+
+        // The one moment this screen is a door rather than a wall.
+        val start = view.findViewById<Button>(R.id.btn_start_session)
+        if (BlockScreenText.showsStartButton(gate)) {
+            start.text = BlockScreenText.startButtonLabel(gate)
+            start.visibility = View.VISIBLE
+        } else {
+            start.visibility = View.GONE
         }
     }
 

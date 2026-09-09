@@ -1,10 +1,15 @@
 package com.pagetime.app.domain
 
 import com.pagetime.app.data.UsageRepository
+import com.pagetime.app.data.local.Settings
 import com.pagetime.app.data.local.SettingsRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -18,6 +23,7 @@ import kotlinx.coroutines.sync.withLock
  * DataStore remains the single source of truth: whatever survives here is what
  * the app shows after being swiped away and relaunched.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class BalanceManager(
     private val repository: SettingsRepository,
     private val ledger: UsageRepository? = null
@@ -33,33 +39,78 @@ class BalanceManager(
         repository.settings.map { it.ratio }
 
     /**
-     * The access gate: whether the blocked apps are open, and how far off it is
-     * if they are not.
+     * The access gate, re-evaluated as the clock moves.
      *
-     * Deliberately not derived from [browseBalanceSeconds]. The balance is the
-     * old currency and the gate is its replacement, and a gate computed from a
-     * balance would be the currency wearing a different label — read a minute,
-     * open the apps for a minute, which is exactly the loop this exists to
-     * close.
+     * Two of the three things that can change the answer are not events: a
+     * session expiring and a wind-down completing both happen because time
+     * passed and nothing was written anywhere. So the settings flow alone
+     * would leave a session open until the reader happened to touch something.
      *
-     * With no ledger there is nothing to count, so the gate reports itself off
-     * rather than guessing: a blocker that cannot measure reading must not be
-     * the thing that locks someone out of their phone.
+     * The tick rate follows what is being watched. While a session runs there
+     * is a second-hand on screen and an expiry to enforce, so it ticks every
+     * second; otherwise the only deadline is a day away and once a minute is
+     * plenty. A blocker that woke every second for the life of the process to
+     * watch a clock nobody is reading would be a battery bug.
      */
-    val gate: Flow<GateState> = ledger.let { log ->
-        if (log == null) flowOf(GateState.Disabled)
-        else combine(
-            repository.settings,
-            log.readingInLastDay(),
-            log.planningInLastDay(),
-        ) { settings, reading, planning ->
-            GateState(
-                enabled = settings.gateEnabled,
-                readingSeconds = reading,
-                planningSeconds = planning,
-                thresholdSeconds = settings.gateThresholdSeconds,
-                planningCapSeconds = settings.planningCapSeconds,
-            )
+    val gate: Flow<GateState> =
+        repository.settings
+            .flatMapLatest { settings -> ticking(settings) }
+            .distinctUntilChanged()
+
+    private fun ticking(settings: Settings): Flow<GateState> = flow {
+        while (true) {
+            val state = stateOf(settings, System.currentTimeMillis())
+            emit(state)
+            delay(if (state.sessionActive) SESSION_TICK_MS else IDLE_TICK_MS)
+        }
+    }
+
+    private fun stateOf(settings: Settings, now: Long) = GateState(
+        switchedOn = settings.gateEnabled,
+        creditSeconds = settings.readingCreditSeconds,
+        sessionEndsAtMillis = settings.sessionEndsAt,
+        disableAtMillis = settings.gateDisableAt,
+        nowMillis = now,
+        sessionCostSeconds = settings.sessionCostSeconds,
+        sessionLengthSeconds = settings.sessionLengthSeconds,
+    )
+
+    /** The gate right now, for callers that cannot wait for a flow. */
+    suspend fun gateNow(): GateState =
+        stateOf(repository.settings.first(), System.currentTimeMillis())
+
+    /**
+     * Spends the banked reading and opens a session. Returns whether one
+     * opened.
+     *
+     * Serialized with every other mutation, and the affordability check lives
+     * inside the DataStore edit as well: two taps on the block screen's start
+     * button must not both read the same credit and both come back yes.
+     */
+    suspend fun startSession(): Boolean = mutex.withLock {
+        val now = System.currentTimeMillis()
+        val state = stateOf(repository.settings.first(), now)
+        if (!state.enabled || state.sessionActive) return@withLock false
+        val started = repository.startSessionIfAffordable(now)
+        if (started) {
+            ledger?.log(UsageRepository.TYPE_SESSION, packageName = null, seconds = state.sessionLengthSeconds)
+        }
+        started
+    }
+
+    /**
+     * Turns the stored switch off once its cooling-off has elapsed.
+     *
+     * Not required for correctness — [GateState.enabled] already reads false —
+     * but a switch that shows "on" while behaving as off is a lie the settings
+     * screen would have to explain.
+     */
+    suspend fun settleWindDownIfElapsed() {
+        val settings = repository.settings.first()
+        if (!settings.gateEnabled) return
+        val disableAt = settings.gateDisableAt
+        if (disableAt > 0L && System.currentTimeMillis() >= disableAt) {
+            repository.settleGateWindDown()
         }
     }
 
@@ -86,29 +137,19 @@ class BalanceManager(
         if (seconds <= 0) return
         mutex.withLock {
             repository.addTotalReadingSeconds(seconds)
-            // Under the gate the balance stops growing. It is not spent either
-            // — the reader keeps whatever they had — but continuing to credit
-            // a currency nobody can spend would quietly bank a month of browse
-            // time against the day they switch the gate off, and hand them an
-            // afternoon of it as a reward for having read.
-            if (!repository.gateEnabled()) {
+            if (repository.gateEnabled()) {
+                // Reading banks credit toward the next session, and the browse
+                // balance stops growing. It is not spent either — the reader
+                // keeps whatever they had — but continuing to credit a currency
+                // nobody can spend would bank a month of browse time against
+                // the day they switch the gate off, and hand them an afternoon
+                // of it as a reward for having read.
+                repository.addReadingCredit(seconds)
+            } else {
                 repository.addBrowseBalanceSeconds((seconds * repository.ratio()).toLong())
             }
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
-    }
-
-    /**
-     * Records time spent planning with the assistant.
-     *
-     * No balance and no reading total: planning is credit toward the gate and
-     * nothing else. Under the old ratio it buys nothing at all, which is
-     * correct — it was never part of that bargain — but it is still written
-     * down, so the audit screen can account for where the evening went.
-     */
-    suspend fun earnFromPlanning(seconds: Long) {
-        if (seconds <= 0) return
-        ledger?.logPlanning(seconds)
     }
 
     suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {
@@ -118,4 +159,12 @@ class BalanceManager(
     suspend fun setRatio(value: Double) = repository.setRatio(value)
 
     private val mutex = Mutex()
+
+    private companion object {
+        /** A visible countdown deserves a second hand. */
+        const val SESSION_TICK_MS = 1_000L
+
+        /** Nothing on this side of the gate changes faster than a minute. */
+        const val IDLE_TICK_MS = 60_000L
+    }
 }

@@ -1,158 +1,201 @@
 package com.pagetime.app.domain
 
 /**
- * Whether the blocked apps are open, under the "earn the day" rule.
+ * Reading buys a session, and a session is the only way into a blocked app.
  *
- * WHY THIS REPLACES THE RATIO
+ * WHY NOT A RATIO, AND WHY NOT A STANDING GATE EITHER
  *
- * The original design was a currency: reading seconds bought browsing seconds
- * at [Settings.ratio], and the balance drained one per second while a blocked
- * app was in front. It is a clean mechanism and it fails at the only thing it
- * was built for, because a currency is divisible. Read for a minute, spend a
- * minute, read another minute — the block becomes a toll rather than a
- * boundary, and the toll is cheap enough to pay over and over without ever
- * settling into reading.
+ * The first design was a currency: reading seconds bought browsing seconds at
+ * a ratio, drained a second at a time. It fails because a currency is
+ * divisible — read a minute, spend a minute, read another minute. The block
+ * becomes a toll rather than a boundary, and the toll is cheap enough to pay
+ * over and over without ever settling into reading.
  *
- * A gate is not divisible. Below the line nothing is purchasable at any price;
- * above it, nothing is metered. There is no rate to optimise and no reason to
- * bargain with it in one-minute increments, because a minute buys nothing.
+ * The second design overcorrected into a standing gate: two hours of reading
+ * and the apps simply opened until that reading aged out. That removes the
+ * nibbling but replaces it with an all-day pass, which is a strange reward for
+ * an afternoon of reading and gives the reader nothing to aim at once they
+ * have crossed the line.
  *
- * WHAT COUNTS
+ * This is the third and it keeps what each got right. There IS an exchange
+ * rate — [DEFAULT_SESSION_COST_SECONDS] of reading for
+ * [DEFAULT_SESSION_LENGTH_SECONDS] of apps, four to one — but the purchase is
+ * INDIVISIBLE. You cannot buy a minute at any price. Indivisibility was always
+ * the fix; the absence of trade never was.
  *
- * Reading, and — up to [planningCapSeconds] — time spent talking to the
- * assistant about what to read. Planning is genuinely part of the work and
- * shutting it out would push the reader to fake reading instead; capping it is
- * what stops "talking about reading" from becoming the whole two hours.
+ * THE SESSION RUNS ON A WALL CLOCK
  *
- * THE CAP IS APPLIED HERE, NOT WHEN THE TIME IS RECORDED
+ * Thirty minutes from the moment it is opened, running whether the phone is
+ * used or not. Metering it only while a blocked app is in front would rebuild
+ * minute-nibbling inside the window, and would make putting the phone down
+ * feel like saving — the opposite of the lesson. A session is a block of time
+ * that is spent, not a balance that is drawn down.
  *
- * Every planning second is written to the ledger; only the first
- * [planningCapSeconds] of them count toward the gate. Recording capped values
- * would bake today's setting into permanent history and make the audit screen
- * lie about how long was actually spent. The cost is that lowering the cap can
- * close a gate that was open — correct, if unwelcome: the rule changed.
+ * CREDIT IS BANKED, BUT NOT INDEFINITELY
  *
- * NOTHING HERE KNOWS THE TIME
+ * Reading past the cost of one session keeps counting, up to [maxCreditFor],
+ * which is two sessions' worth. A long Sunday is not wasted; it also cannot
+ * fund a whole lost week. There is no rolling window and no nightly expiry —
+ * credit is a counter that fills and empties, which is both simpler and easier
+ * to explain than "your reading from Tuesday afternoon has just expired".
  *
- * The window this counts over is the caller's business. Everything below is a
- * function of its arguments, which is what makes the awkward cases — cap
- * larger than the threshold, a threshold of zero, more planning than anyone
- * could do in a day — answerable by a test rather than by running the app for
- * a day and watching.
+ * TURNING IT OFF TAKES A DAY
+ *
+ * A boundary you can remove at the moment you want to cross it is not a
+ * boundary. But an app with no exit gets uninstalled, and uninstalling is the
+ * one hole nothing can plug — so the exit is real and merely slow:
+ * [COOLING_OFF_MILLIS] after the switch is flipped. Turning it back ON is
+ * instant, because more restriction never needs protecting from the reader.
+ *
+ * EVERYTHING HERE IS A FUNCTION OF ITS ARGUMENTS
+ *
+ * Including [nowMillis], which is passed in rather than read. Session expiry,
+ * the cooling-off period and the countdown are all time-dependent, and a rule
+ * that reads the clock itself can only be tested by waiting.
  */
 data class GateState(
-    /** False while the reader is still on the old ratio-and-balance model. */
-    val enabled: Boolean,
-    /** Creditable reading in the window. */
-    val readingSeconds: Long,
-    /** Assistant time in the window, BEFORE the cap. */
-    val planningSeconds: Long,
-    val thresholdSeconds: Long,
-    val planningCapSeconds: Long,
+    /** The stored switch. Not the same as [enabled] while winding down. */
+    val switchedOn: Boolean,
+    /** Reading banked toward the next session. */
+    val creditSeconds: Long,
+    /** When the current session ends (epoch millis); 0 when none is running. */
+    val sessionEndsAtMillis: Long,
+    /** When the cooling-off finishes and the gate really switches off; 0 = none. */
+    val disableAtMillis: Long,
+    val nowMillis: Long,
+    val sessionCostSeconds: Long = DEFAULT_SESSION_COST_SECONDS,
+    val sessionLengthSeconds: Long = DEFAULT_SESSION_LENGTH_SECONDS,
 ) {
 
     /**
-     * The cap actually in force, which is never the whole gate.
+     * Whether the gate is really in force.
      *
-     * A stored cap at or above [thresholdSeconds] would mean the apps could be
-     * opened by talking and no reading at all — not a stricter or a looser
-     * setting but a different feature, and one nobody asked for. The settings
-     * screen keeps the slider well below this; the clamp is here because a
-     * value that arrives some other way (an old preference, a hand-edited
-     * store, a threshold lowered underneath a cap that was fine yesterday)
-     * should not be able to turn the gate off.
+     * The switch and the answer differ for exactly one day, after the reader
+     * asks to turn it off. Computing it here rather than flipping a stored
+     * flag on a timer means nothing has to run for the gate to expire — the
+     * next question anyone asks gets the right answer.
      */
-    val effectivePlanningCapSeconds: Long
-        get() = planningCapSeconds.coerceIn(0L, thresholdSeconds.coerceAtLeast(0L))
+    val enabled: Boolean
+        get() = switchedOn && !(disableAtMillis > 0L && nowMillis >= disableAtMillis)
 
-    /** How much of [planningSeconds] the gate is willing to count. */
-    val countedPlanningSeconds: Long
-        get() = planningSeconds.coerceIn(0L, effectivePlanningCapSeconds)
+    /** The reader has asked to turn it off and the day has not yet passed. */
+    val windingDown: Boolean
+        get() = enabled && disableAtMillis > 0L
 
-    /** Reading plus counted planning: the number measured against the line. */
-    val accruedSeconds: Long
-        get() = readingSeconds.coerceAtLeast(0L) + countedPlanningSeconds
-
-    /** Still to do before the apps open. Zero once they have. */
-    val remainingSeconds: Long
-        get() = (thresholdSeconds - accruedSeconds).coerceAtLeast(0L)
+    /** How long until the gate switches itself off. Zero when not winding down. */
+    val secondsUntilDisabled: Long
+        get() = if (!windingDown) 0L else ((disableAtMillis - nowMillis) / 1000).coerceAtLeast(0L)
 
     /**
-     * Planning time that would still count if it were spent now.
+     * Credit, floored at zero.
      *
-     * Shown next to the cap so the reader can see the bucket emptying rather
-     * than discovering it empty when the counter stops moving.
+     * The stored counter is a long that has been added to and subtracted from
+     * since the app was installed; a bug anywhere upstream that drove it
+     * negative should cost the reader nothing and, more importantly, should
+     * never make the next session look FURTHER away than a fresh install
+     * would.
      */
-    val planningRemainingSeconds: Long
-        get() = (effectivePlanningCapSeconds - planningSeconds).coerceAtLeast(0L)
+    private val banked: Long
+        get() = creditSeconds.coerceAtLeast(0L)
 
-    /**
-     * Whether blocked apps may be opened.
-     *
-     * Note what is NOT here: the balance. Under the gate a balance cannot open
-     * anything, which is the whole point of the change, so the old figure is
-     * left alone rather than spent down — it is a few minutes of credit, not a
-     * savings account, and quietly draining it would be the currency logic
-     * surviving one more release.
-     */
+    val sessionActive: Boolean
+        get() = enabled && nowMillis < sessionEndsAtMillis
+
+    val sessionRemainingSeconds: Long
+        get() = if (!sessionActive) 0L else ((sessionEndsAtMillis - nowMillis) / 1000).coerceAtLeast(0L)
+
+    /** Whether blocked apps may be opened right now. */
     val open: Boolean
-        get() = !enabled || accruedSeconds >= thresholdSeconds
+        get() = !enabled || sessionActive
 
-    /** 0..1, for a bar. A threshold of zero is a gate that is always open. */
-    val progress: Float
-        get() = if (thresholdSeconds <= 0L) 1f
-        else (accruedSeconds.toFloat() / thresholdSeconds).coerceIn(0f, 1f)
+    /** Enough read to open the door, and no session already running. */
+    val canStartSession: Boolean
+        get() = enabled && !sessionActive && banked >= sessionCostSeconds
+
+    /** Still to read before the next session can be started. */
+    val secondsToNextSession: Long
+        get() = (sessionCostSeconds - banked).coerceAtLeast(0L)
+
+    /** Whole sessions currently affordable. */
+    val sessionsBanked: Int
+        get() = if (sessionCostSeconds <= 0L) 0 else (banked / sessionCostSeconds).toInt()
+
+    /** 0..1 toward the next session, for a bar. */
+    val creditProgress: Float
+        get() = when {
+            sessionCostSeconds <= 0L -> 1f
+            else -> {
+                val towardNext = banked % sessionCostSeconds
+                // A full session banked reads as full, not as back to zero.
+                if (banked >= sessionCostSeconds && towardNext == 0L) 1f
+                else (towardNext.toFloat() / sessionCostSeconds).coerceIn(0f, 1f)
+            }
+        }
+
+    /**
+     * Whether an app may be taken OFF the blocked list.
+     *
+     * The rule that makes the rest of this mean anything. Without it the gate
+     * is decorative: two hours of reading, or Settings, uncheck, done. Removal
+     * waits for a session — which costs the same two hours, so the escape and
+     * the front door have the same price.
+     *
+     * ADDING an app is never restricted. More blocking is not an escape, and
+     * making someone earn the right to block something would be perverse.
+     *
+     * The hard lock still overrides this; that is checked by its own screen,
+     * because a hard lock is about a promise the reader made and has nothing
+     * to do with what they have read.
+     */
+    val canRemoveBlockedApps: Boolean
+        get() = !enabled || sessionActive
 
     companion object {
 
-        /**
-         * Two hours, which is the number the reader asked for.
-         *
-         * It is deliberately not tuneable down to a token amount from the
-         * block screen — a gate you can lower while standing at it is a
-         * button that says "open".
-         */
-        const val DEFAULT_THRESHOLD_SECONDS = 2L * 60 * 60
+        /** Two hours of reading. */
+        const val DEFAULT_SESSION_COST_SECONDS = 2L * 60 * 60
+
+        /** Buys thirty minutes. */
+        const val DEFAULT_SESSION_LENGTH_SECONDS = 30L * 60
+
+        /** How long turning the gate off takes to take effect. */
+        const val COOLING_OFF_MILLIS = 24L * 60 * 60 * 1000
 
         /**
-         * Twenty minutes of the two hours may be talking rather than reading.
+         * The shortest session cost the settings screen will accept.
          *
-         * Enough to plan a week of reading without being enough to replace an
-         * evening of it.
+         * Not zero, and not five minutes. A cost you can lower to nothing
+         * while standing at the block screen is an "open" button with extra
+         * steps. Fifteen minutes is enough to try the mechanism for one
+         * evening without committing to two hours of it.
          */
-        const val DEFAULT_PLANNING_CAP_SECONDS = 20L * 60
-
-        /**
-         * The shortest gate the settings screen will accept.
-         *
-         * Not zero. A gate that can be set to nothing is a gate with an
-         * "open" button on it, and the reader asked for the opposite of that.
-         * Fifteen minutes is enough to try the mechanism for one evening
-         * without committing to two hours of it.
-         */
-        const val MIN_THRESHOLD_SECONDS = 15L * 60
+        const val MIN_SESSION_COST_SECONDS = 15L * 60
 
         /** A working day of reading. Past this the setting is not serious. */
-        const val MAX_THRESHOLD_SECONDS = 8L * 60 * 60
+        const val MAX_SESSION_COST_SECONDS = 8L * 60 * 60
+
+        const val MIN_SESSION_LENGTH_SECONDS = 5L * 60
+        const val MAX_SESSION_LENGTH_SECONDS = 2L * 60 * 60
 
         /**
-         * The largest share of a gate that may be planning rather than reading.
+         * The ceiling on banked credit: two sessions' worth.
          *
-         * Half. Talking about what to read is real work and shutting it out
-         * would only push the reader into faking reading time instead; being
-         * able to talk your way past MOST of the gate would make it a
-         * conversation you have to sit through rather than a reading habit.
+         * Reading past this still counts as reading — it is recorded, and the
+         * book still advances — it simply stops buying anything. The cap is
+         * what stops a heavy weekend from funding a week of not reading,
+         * which would turn the whole mechanism back into a currency with a
+         * larger denomination.
          */
-        fun maxPlanningCapFor(thresholdSeconds: Long): Long =
-            (thresholdSeconds.coerceAtLeast(0L)) / 2
+        fun maxCreditFor(sessionCostSeconds: Long): Long =
+            (sessionCostSeconds.coerceAtLeast(0L)) * 2
 
-        /** The gate before anything is known: closed only once switched on. */
-        val Disabled = GateState(
-            enabled = false,
-            readingSeconds = 0,
-            planningSeconds = 0,
-            thresholdSeconds = DEFAULT_THRESHOLD_SECONDS,
-            planningCapSeconds = DEFAULT_PLANNING_CAP_SECONDS,
+        /** Before anything is known: off, so nothing is blocked on a guess. */
+        val Unknown = GateState(
+            switchedOn = false,
+            creditSeconds = 0,
+            sessionEndsAtMillis = 0,
+            disableAtMillis = 0,
+            nowMillis = 0,
         )
     }
 }

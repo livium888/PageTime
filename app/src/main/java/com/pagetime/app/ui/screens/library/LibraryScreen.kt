@@ -87,6 +87,8 @@ fun LibraryScreen(
     onOpenShelf: () -> Unit = {},
     /** Everything this author wrote, whether or not we can serve it. */
     onOpenAuthor: (String) -> Unit = {},
+    /** The shelves, drawn as books rather than listed. */
+    onOpenBookshelf: () -> Unit = {},
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -248,6 +250,13 @@ fun LibraryScreen(
                         text = "The ladder — what to read next",
                         modifier = Modifier.fillMaxWidth(),
                         onClick = onOpenShelf
+                    )
+                }
+                item {
+                    AppPrimaryButton(
+                        text = "Bookshelf",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onOpenBookshelf
                     )
                 }
                 item {

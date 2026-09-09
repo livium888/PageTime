@@ -18,6 +18,16 @@ interface ShelfBookDao {
     @Query("SELECT * FROM shelf_books WHERE shelfId = :shelfId ORDER BY position ASC")
     suspend fun shelf(shelfId: String): List<ShelfBookEntity>
 
+    /**
+     * Every shelf at once, for the bookshelf view.
+     *
+     * One query rather than a flow per shelf: the whole table is at most a few
+     * hundred rows, and observing N shelves separately would mean the screen
+     * had to know which shelves exist before it could ask about them.
+     */
+    @Query("SELECT * FROM shelf_books ORDER BY shelfId ASC, position ASC")
+    fun observeAll(): Flow<List<ShelfBookEntity>>
+
     @Query("SELECT COUNT(*) FROM shelf_books WHERE shelfId = :shelfId")
     suspend fun countIn(shelfId: String): Int
 

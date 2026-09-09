@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pagetime.app.data.local.ReaderSettings
+import androidx.compose.material3.Switch
 
 private val FONT_OPTIONS = listOf(
     "serif" to "Serif",
@@ -92,6 +93,9 @@ fun ReaderAppearanceSheet(
     }
     var warmth by remember(settings.warmth) { mutableStateOf(settings.warmth) }
     var nightDim by remember(settings.nightDim) { mutableStateOf(settings.nightDim) }
+    var volumeKeys by remember(settings.volumeKeysTurnPages) {
+        mutableStateOf(settings.volumeKeysTurnPages)
+    }
 
     fun apply() {
         onApply(
@@ -105,7 +109,8 @@ fun ReaderAppearanceSheet(
                 conceptHints = conceptHints,
                 brightness = brightness.takeIf { !useSystemBrightness },
                 warmth = warmth,
-                nightDim = nightDim
+                nightDim = nightDim,
+                volumeKeysTurnPages = volumeKeys,
             )
         )
     }
@@ -142,6 +147,7 @@ fun ReaderAppearanceSheet(
                     brightness = brightness.takeIf { !useSystemBrightness },
                     warmth = warmth,
                     nightDim = nightDim,
+                    volumeKeysTurnPages = volumeKeys,
                 )
             )
 
@@ -366,6 +372,31 @@ fun ReaderAppearanceSheet(
                 // a value the settings would silently refuse.
                 valueRange = 0f..ReaderSettings.MAX_NIGHT_DIM,
             )
+
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Volume keys turn pages", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        // Says which way round, because wired the other way it
+                        // feels wrong immediately and nobody can say why.
+                        "Volume down for the next page, up for the previous one. " +
+                            "Only while a book is open.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = volumeKeys,
+                    onCheckedChange = {
+                        volumeKeys = it
+                        apply()
+                    },
+                )
+            }
         }
     }
 }

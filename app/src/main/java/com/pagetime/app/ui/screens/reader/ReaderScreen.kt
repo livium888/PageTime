@@ -396,6 +396,7 @@ fun ReaderScreen(
                 },
                 onTapZone = { controlsVisible = !controlsVisible },
                 onNavigatorChanged = { navigator = it },
+                volumeKeysTurnPages = settings.volumeKeysTurnPages,
                 onRestoreComplete = {
                     vm.markEpubRestoreComplete()
                 },
@@ -1045,6 +1046,32 @@ private fun TextReaderHost(
             }
     }
 
+    // The volume keys, for as long as this reader is on screen.
+    //
+    // Registered here rather than in the screen above because only this
+    // composable holds the pager; the EPUB half registers separately against
+    // the Readium navigator. Unregistering on the way out is what makes the
+    // Activity stop swallowing volume keys the moment the reader closes.
+    val turnScope = rememberCoroutineScope()
+    DisposableEffect(pagerState, settings.volumeKeysTurnPages, pages.size) {
+        ReaderPageTurns.register(settings.volumeKeysTurnPages) { direction ->
+            turnScope.launch {
+                val target = when (direction) {
+                    PageTurn.FORWARD -> pagerState.currentPage + 1
+                    PageTurn.BACK -> pagerState.currentPage - 1
+                }
+                if (target in 0 until pages.size) {
+                    // Animated, so a page turn by button looks like a page turn
+                    // by thumb rather than a jump cut.
+                    pagerState.animateScrollToPage(target)
+                    // The pager's own snapshotFlow reports the move, so the
+                    // reading guard and the saved position need nothing here.
+                }
+            }
+        }
+        onDispose { ReaderPageTurns.unregister() }
+    }
+
     // Kindle-style "Go to position": jump straight to the page matching a fraction.
     LaunchedEffect(goRequest) {
         val (fraction, _) = goRequest ?: return@LaunchedEffect
@@ -1103,6 +1130,8 @@ private fun ReadiumNavigatorHost(
     onLocatorChanged: (Locator) -> Unit,
     onTapZone: (TapZone) -> Unit,
     onNavigatorChanged: (EpubNavigatorFragment?) -> Unit,
+    /** Whether the volume keys should page this book. */
+    volumeKeysTurnPages: Boolean = false,
     onRestoreComplete: () -> Unit,
     onExplainSelection: (term: String, before: String, after: String) -> Unit,
     onSimplifySelection: (passage: String) -> Unit,
@@ -1119,6 +1148,28 @@ private fun ReadiumNavigatorHost(
     val currentOnTapZone by rememberUpdatedState(onTapZone)
 
     var container by remember { mutableStateOf<FrameLayout?>(null) }
+
+    // The volume keys, for as long as this book is open.
+    //
+    // Readium owns EPUB pagination, so a page turn is a request to the
+    // navigator rather than a scroll — goForward and goBackward respect the
+    // reading direction, which a raw "next page" would not for a right-to-left
+    // book. The plain-text reader registers its own handler against its pager;
+    // only one of the two is ever on screen.
+    val navigatorForKeys = fragmentManager?.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+    DisposableEffect(navigatorForKeys, volumeKeysTurnPages) {
+        if (navigatorForKeys != null) {
+            ReaderPageTurns.register(volumeKeysTurnPages) { direction ->
+                scope.launch {
+                    when (direction) {
+                        PageTurn.FORWARD -> navigatorForKeys.goForward(animated = true)
+                        PageTurn.BACK -> navigatorForKeys.goBackward(animated = true)
+                    }
+                }
+            }
+        }
+        onDispose { ReaderPageTurns.unregister() }
+    }
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),

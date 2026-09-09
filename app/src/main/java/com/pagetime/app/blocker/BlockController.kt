@@ -607,11 +607,8 @@ class BlockController(
      */
     suspend fun awaitLedgerWrites() = pendingLedgerWrites.await()
 
-    /** Manual top-up path (kept for API compatibility); routes through the serialized mutator. */
-    fun addBalance(seconds: Long) {
-        if (seconds <= 0) return
-        scope.launch {
-            balanceSeconds = balanceManager.adjustBalance(seconds)
-        }
-    }
+    // addBalance() was here: a public "give yourself browse time" method,
+    // kept for API compatibility with callers that no longer exist. Nothing
+    // referenced it. Deleted rather than left, because the one thing this
+    // sweep found repeatedly is that unused doors get opened eventually.
 }

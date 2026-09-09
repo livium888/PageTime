@@ -104,6 +104,29 @@ class EmergencyUnlockTest {
         assertTrue(EmergencyUnlock.canUnlock(emptyList(), T0, hardLockUntil = T0))
     }
 
+    /**
+     * An emergency unlock opens ONE app. It must not also unlock the settings
+     * that would let the reader dismantle the gate — that would turn a
+     * five-minute hatch into a permanent one.
+     */
+    @Test
+    fun `an emergency unlock does not unlock the rules`() {
+        // The hatch writes nothing to session time, and canLoosenTheRules
+        // reads only that. Stated as a test so a future change that "helpfully"
+        // grants a moment of session time has to argue with this.
+        val lockedOut = GateState(
+            switchedOn = true,
+            creditSeconds = 0,
+            sessionSecondsRemaining = 0,
+            disableAtMillis = 0,
+            nowMillis = T0,
+        )
+        assertFalse(lockedOut.canLoosenTheRules)
+        assertFalse(lockedOut.canRemoveBlockedApps)
+        // And the unlock itself is still perfectly valid for its own app.
+        assertTrue(EmergencyUnlock.covers("com.bank", T0 + 60_000, "com.bank", T0))
+    }
+
     // --- Storage ---
 
     @Test

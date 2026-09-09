@@ -15,6 +15,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.blocker.BlockEnforcementPolicy
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
@@ -620,20 +621,37 @@ class SettingsRepository(private val context: Context) {
     suspend fun hardLockUntil(): Long =
         context.dataStore.data.first()[Keys.HARD_LOCK_UNTIL] ?: 0L
 
-    suspend fun setQuickDisableUntil(epochMillis: Long) {
-        context.dataStore.edit { it[Keys.QUICK_DISABLE_UNTIL] = epochMillis }
-    }
-
+    /**
+     * Clears any legacy quick-disable grace.
+     *
+     * The buttons that set one were deleted; this remains because an install
+     * upgrading mid-grace still carries a stored expiry. There is deliberately
+     * no setter any more — a method that grants a bypass is a loaded gun left
+     * on the table for whoever writes the next screen.
+     */
     suspend fun clearQuickDisableUntil() {
         context.dataStore.edit { it.remove(Keys.QUICK_DISABLE_UNTIL) }
     }
 
-    suspend fun setHardLockUntil(epochMillis: Long) {
-        context.dataStore.edit { it[Keys.HARD_LOCK_UNTIL] = epochMillis }
-    }
-
-    suspend fun clearHardLockUntil() {
-        context.dataStore.edit { it.remove(Keys.HARD_LOCK_UNTIL) }
+    /**
+     * Starts or extends a hard lock.
+     *
+     * NEVER SHORTENS ONE. Setting a thirty-minute lock while a three-hour lock
+     * runs used to cut it to thirty minutes — the screen disables the buttons
+     * so it could not be reached from there, but "a rule the UI enforces" is
+     * how the settings sliders came to be a way out, and this is the same
+     * shape. A lock that can be shortened is not a lock.
+     *
+     * There is no clearHardLockUntil. It existed, nothing called it, and a
+     * public method that cancels a lock advertised as uncancellable is worse
+     * than dead code: it is a hole waiting for a caller.
+     */
+    suspend fun setHardLockUntil(epochMillis: Long, nowMillis: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { p ->
+            val current = p[Keys.HARD_LOCK_UNTIL] ?: 0L
+            p[Keys.HARD_LOCK_UNTIL] =
+                BlockEnforcementPolicy.hardLockAfterSetting(current, epochMillis, nowMillis)
+        }
     }
 
     /**

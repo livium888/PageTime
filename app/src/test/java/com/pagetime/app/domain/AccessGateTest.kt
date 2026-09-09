@@ -182,6 +182,73 @@ class AccessGateTest {
         assertFalse(g.canRemoveBlockedApps)
     }
 
+    // --- Changing the rules, which is another way out ---
+
+    /**
+     * The hole this closes. Unblocking one app is an escape; dragging the
+     * price of a session down to fifteen minutes dissolves the whole gate,
+     * from the settings screen, while locked out and most motivated to.
+     */
+    @Test
+    fun `the rules cannot be made easier while locked out`() {
+        assertFalse(gate(credit = 0).canLoosenTheRules)
+        assertFalse(gate(credit = COST).canLoosenTheRules)
+        assertFalse(gate(disableAt = T0 + GateState.COOLING_OFF_MILLIS).canLoosenTheRules)
+    }
+
+    @Test
+    fun `the rules can be made easier with app time in hand`() {
+        assertTrue(gate(sessionRemaining = 60).canLoosenTheRules)
+    }
+
+    @Test
+    fun `with the gate off nothing is locked`() {
+        assertTrue(gate(switchedOn = false).canLoosenTheRules)
+    }
+
+    /** Unblocking an app is one instance of the general rule, not a separate one. */
+    @Test
+    fun `unblocking an app follows the same rule as changing the price`() {
+        listOf(
+            gate(credit = 0),
+            gate(sessionRemaining = 60),
+            gate(switchedOn = false),
+        ).forEach {
+            assertEquals(it.canLoosenTheRules, it.canRemoveBlockedApps)
+        }
+    }
+
+    /**
+     * The direction is not self-evident for a price: the number going DOWN is
+     * the gate getting weaker.
+     */
+    @Test
+    fun `a cheaper session is a loosening and a dearer one is not`() {
+        assertTrue(GateState.loosensCost(currentSeconds = 7200, proposedSeconds = 900))
+        assertFalse(GateState.loosensCost(currentSeconds = 7200, proposedSeconds = 14400))
+        assertFalse(GateState.loosensCost(currentSeconds = 7200, proposedSeconds = 7200))
+    }
+
+    @Test
+    fun `a longer session is a loosening and a shorter one is not`() {
+        assertTrue(GateState.loosensLength(currentSeconds = 1800, proposedSeconds = 3600))
+        assertFalse(GateState.loosensLength(currentSeconds = 1800, proposedSeconds = 600))
+        assertFalse(GateState.loosensLength(currentSeconds = 1800, proposedSeconds = 1800))
+    }
+
+    /**
+     * Tightening is always available. Making someone earn the right to be
+     * stricter with themselves would be perverse, and the asymmetry is the
+     * whole design.
+     */
+    @Test
+    fun `tightening is never something that has to be earned`() {
+        val lockedOut = gate(credit = 0)
+        assertFalse(lockedOut.canLoosenTheRules)
+        assertFalse(GateState.loosensCost(7200, 14400))
+        assertFalse(GateState.loosensLength(1800, 600))
+    }
+
     // --- Degenerate configurations ---
 
     @Test

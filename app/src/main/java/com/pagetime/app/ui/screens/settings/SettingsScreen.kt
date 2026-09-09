@@ -272,29 +272,59 @@ fun SettingsScreen(
 
                 if (gate.enabled) {
                     Spacer(Modifier.height(8.dp))
+                    // Both sliders can only be moved in the strict direction
+                    // outside a session. Making the gate cheaper is the same
+                    // kind of escape as unblocking an app — a bigger one, in
+                    // fact, since it dissolves the whole thing — so it costs
+                    // the same: app time in hand.
+                    if (!gate.canLoosenTheRules) {
+                        Text(
+                            "These can be made stricter any time. Making them easier needs " +
+                                "app time in hand — the same price as unblocking an app.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
                     Text("Reading per session", style = MaterialTheme.typography.titleMedium)
                     Text(
                         BlockScreenText.span(gate.sessionCostSeconds),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    // The travel is clipped to the direction that is allowed,
+                    // rather than letting the thumb be dragged somewhere the
+                    // repository will refuse — a slider that springs back
+                    // reads as broken, not as a rule.
+                    val costMinutes = (gate.sessionCostSeconds / 60).toFloat()
+                    val lengthMinutes = (gate.sessionLengthSeconds / 60).toFloat()
+                    val costFloor = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()
+                    val costCeiling = (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat()
+                    val lengthFloor = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()
+                    val lengthCeiling = (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat()
+
+                    val costStart = if (gate.canLoosenTheRules) costFloor else costMinutes
+                    // Already at the strictest end with no room left to move:
+                    // the range would collapse to a point, so the control is
+                    // switched off rather than handed an empty span.
+                    val costMovable = costCeiling > costStart
                     Slider(
-                        value = (gate.sessionCostSeconds / 60).toFloat(),
+                        value = costMinutes.coerceIn(costStart, costCeiling),
                         onValueChange = { viewModel.setSessionCostSeconds(it.toLong() * 60) },
-                        valueRange = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()..
-                            (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat(),
-                        steps = 30
+                        valueRange = costStart..maxOf(costCeiling, costStart + 1f),
+                        enabled = costMovable
                     )
                     Text("Session length", style = MaterialTheme.typography.titleMedium)
                     Text(
                         BlockScreenText.span(gate.sessionLengthSeconds),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    val lengthEnd = if (gate.canLoosenTheRules) lengthCeiling else lengthMinutes
+                    val lengthMovable = lengthEnd > lengthFloor
                     Slider(
-                        value = (gate.sessionLengthSeconds / 60).toFloat(),
+                        value = lengthMinutes.coerceIn(lengthFloor, lengthEnd.coerceAtLeast(lengthFloor)),
                         onValueChange = { viewModel.setSessionLengthSeconds(it.toLong() * 60) },
-                        valueRange = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()..
-                            (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat(),
-                        steps = 22
+                        valueRange = lengthFloor..maxOf(lengthEnd, lengthFloor + 1f),
+                        enabled = lengthMovable
                     )
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import com.pagetime.app.data.LumenCapture
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -730,12 +731,49 @@ class SettingsRepository(private val context: Context) {
         return left
     }
 
-    suspend fun setSessionCostSeconds(seconds: Long) {
+    /**
+     * The gate as the stored preferences currently describe it.
+     *
+     * Built from the same type the rest of the app reads, rather than
+     * re-deriving "is the gate on" from the raw keys — the wind-down alone
+     * makes that a two-part question, and a second copy of the answer is a
+     * second place for it to be wrong.
+     */
+    private fun gateFrom(p: Preferences, nowMillis: Long) = GateState(
+        switchedOn = p[Keys.GATE_ENABLED] ?: false,
+        creditSeconds = p[Keys.READING_CREDIT] ?: 0L,
+        sessionSecondsRemaining = p[Keys.SESSION_REMAINING] ?: 0L,
+        disableAtMillis = p[Keys.GATE_DISABLE_AT] ?: 0L,
+        nowMillis = nowMillis,
+        sessionCostSeconds = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS,
+        sessionLengthSeconds = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS,
+    )
+
+    /**
+     * Sets the price of a session.
+     *
+     * RAISING IT IS ALWAYS ALLOWED. LOWERING IT COSTS A SESSION.
+     *
+     * A slider that drops the price to fifteen minutes is a bigger hole than
+     * unblocking a single app — it dissolves the gate entirely, from the
+     * settings screen, while the reader is locked out and most motivated to
+     * reach for it. So a loosening change waits for app time in hand, exactly
+     * as removing an app does, and the escape ends up costing what the front
+     * door costs.
+     *
+     * Enforced here and not only by disabling the slider. A rule that lives in
+     * a Composable is a rule that any other caller walks straight past.
+     */
+    suspend fun setSessionCostSeconds(seconds: Long, nowMillis: Long = System.currentTimeMillis()) {
         val clamped = seconds.coerceIn(
             GateState.MIN_SESSION_COST_SECONDS,
             GateState.MAX_SESSION_COST_SECONDS,
         )
         context.dataStore.edit { p ->
+            val current = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
+            if (GateState.loosensCost(current, clamped) && !gateFrom(p, nowMillis).canLoosenTheRules) {
+                return@edit
+            }
             p[Keys.SESSION_COST] = clamped
             // Banked credit is denominated in sessions, so a cost change has
             // to re-cap it or an old balance could buy more sessions than the
@@ -745,12 +783,17 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setSessionLengthSeconds(seconds: Long) {
+    /** Shortening a session is always allowed; lengthening it waits, as above. */
+    suspend fun setSessionLengthSeconds(seconds: Long, nowMillis: Long = System.currentTimeMillis()) {
         val clamped = seconds.coerceIn(
             GateState.MIN_SESSION_LENGTH_SECONDS,
             GateState.MAX_SESSION_LENGTH_SECONDS,
         )
         context.dataStore.edit { p ->
+            val current = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS
+            if (GateState.loosensLength(current, clamped) && !gateFrom(p, nowMillis).canLoosenTheRules) {
+                return@edit
+            }
             p[Keys.SESSION_LENGTH] = clamped
             // Unspent app time is denominated in sessions too, so shortening
             // one has to re-cap what is already banked.

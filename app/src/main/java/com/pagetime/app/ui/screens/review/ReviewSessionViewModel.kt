@@ -5,12 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.LumenRating
-import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
-import com.pagetime.app.data.local.LearningReviewLogEntity
 import com.pagetime.app.data.local.LumenCardEntity
-import io.github.openspacedrepetition.Scheduler
+import com.pagetime.app.data.review.ChapterCardGrader
 import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.data.review.ReviewSessionState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,14 +70,15 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val bookDao = container.database.bookDao()
 
     /**
-     * Its own scheduler instance, matching the one LumenRepository builds.
+     * Grading for chapter flashcards, shared with the reading chair.
      *
-     * Flashcards have no repository of their own yet, so grading one happens
-     * here. The important thing is that both card types go through the SAME
-     * FSRS configuration — two schedulers with different parameters would give
-     * the same reader different intervals depending on where a card came from.
+     * It builds its own scheduler, matching the one LumenRepository builds.
+     * The important thing is that both card types, and both places a card can
+     * be answered, go through the SAME FSRS configuration — two schedulers
+     * with different parameters would give the same reader different intervals
+     * depending on where they happened to answer.
      */
-    private val scheduler: Scheduler = Scheduler.builder().build()
+    private val grader = ChapterCardGrader(learningCards, reviewLog)
 
     private val _state = MutableStateFlow(ReviewUiState())
     val state = _state.asStateFlow()
@@ -192,9 +191,9 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Applies a rating to a chapter flashcard.
      *
-     * The same two writes LumenRepository.rateTraining does: the scheduler's
-     * new state as JSON, and dueAt lifted out of it so the due query stays a
-     * WHERE clause.
+     * The work moved to [ChapterCardGrader] when the reading chair started
+     * grading cards too. This is the sitting's half of it: the same scheduler,
+     * and no status write, because a card in a sitting was accepted long ago.
      */
     private suspend fun gradeChapterCard(
         id: String,
@@ -202,65 +201,9 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
         now: Instant,
         onUndo: (suspend () -> Unit) -> Unit,
     ): Instant? {
-        val existing = learningCards.get(id) ?: return null
-        val old = runCatching { FsrsCardCodec.fromJson(existing.fsrsCardJson) }.getOrNull() ?: return null
-        val result = scheduler.reviewCard(old, rating.toFsrs(), now, null)
-        val updated = result.card()
-        val nextDue = updated.due ?: now.plusSeconds(86_400)
-
-        // What was scheduled and what actually happened, captured BEFORE the
-        // card is overwritten. A moment later both are gone: the previous due
-        // date is the only thing that says whether this answer was on time,
-        // and grading replaces it.
-        val previousDue = existing.dueAt
-        val scheduledDays = previousDue?.let { due ->
-            java.time.Duration.between(
-                java.time.Instant.ofEpochMilli(existing.updatedAt),
-                java.time.Instant.ofEpochMilli(due),
-            ).toDays()
-        } ?: 0L
-        val elapsedDays = java.time.Duration
-            .between(java.time.Instant.ofEpochMilli(existing.updatedAt), now)
-            .toDays()
-
-        learningCards.upsert(
-            existing.copy(
-                fsrsCardJson = FsrsCardCodec.toJson(updated),
-                dueAt = nextDue.toEpochMilli(),
-                reviewCount = existing.reviewCount + 1,
-                lastRating = rating.value,
-                updatedAt = System.currentTimeMillis(),
-            )
-        )
-
-        // Append-only, and never allowed to break the review. The scheduling
-        // write above is what the reader is owed; the log is what lets the app
-        // tell them later whether any of it worked.
-        val logId = runCatching {
-            reviewLog.insert(
-                LearningReviewLogEntity(
-                    cardId = id,
-                    bookId = existing.bookId,
-                    reviewedAt = now.toEpochMilli(),
-                    rating = rating.value,
-                    scheduledDays = scheduledDays,
-                    elapsedDays = elapsedDays,
-                    // An answer given before the card came due is not evidence
-                    // of remembering anything, and the recall figure excludes
-                    // it for that reason.
-                    wasDue = previousDue != null && previousDue <= now.toEpochMilli(),
-                )
-            )
-        }.getOrNull()
-
-        onUndo {
-            // The card exactly as it was, and the log row with it. Leaving the
-            // row would count a mis-tap as a real answer forever, which is the
-            // one thing a recall figure must not do.
-            learningCards.upsert(existing)
-            logId?.let { runCatching { reviewLog.deleteById(it) } }
-        }
-        return nextDue
+        val graded = grader.grade(id, rating, now, keepIfUnjudged = false) ?: return null
+        onUndo(graded.restore)
+        return graded.nextDue
     }
 
     fun reveal() {

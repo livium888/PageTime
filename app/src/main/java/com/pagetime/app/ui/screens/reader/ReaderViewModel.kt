@@ -1344,9 +1344,90 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _promptState.value = _promptState.value.copy(result = null)
     }
 
-    fun keepPrompt(cardId: String) {
+    /**
+     * Grading for questions answered in the reading chair.
+     *
+     * The same object the review sitting uses, so a card rated Good here and a
+     * card rated Good there get the same interval from the same scheduler.
+     */
+    private val chapterCardGrader by lazy {
+        com.pagetime.app.data.review.ChapterCardGrader(
+            container.database.learningCardDao(),
+            container.database.learningReviewLogDao(),
+        )
+    }
+
+    /**
+     * The reader answers a question while still in the chapter.
+     *
+     * This is a REVIEW, not a purchase. It used to be "Keep it", which said
+     * nothing about whether the reader knew the answer, so the card entered
+     * the deck with no history and fell due immediately — and the first thing
+     * a review sitting did was ask a question answered ten minutes earlier.
+     * The most valuable retrieval of all, the one taken while the passage is
+     * still warm, was being thrown away.
+     *
+     * Now the grade goes to FSRS, the scheduler picks the next date, and
+     * answering is itself how the card is accepted.
+     */
+    fun gradePrompt(cardId: String, rating: com.pagetime.app.data.LumenRating) {
+        val honest = com.pagetime.app.data.review.FirstReview.inTheChair(rating.value)
+        val applied = com.pagetime.app.data.LumenRating.entries.firstOrNull { it.value == honest } ?: rating
         judgePrompt(cardId, kept = true)
-        viewModelScope.launch { runCatching { chapterPrompts.keep(cardId) } }
+        viewModelScope.launch {
+            runCatching {
+                chapterCardGrader.grade(cardId, applied, java.time.Instant.now(), keepIfUnjudged = true)
+            }
+            // The reader now owns a card with a date on it, and this is the
+            // moment to ask whether the app may say so when that date comes.
+            // Quantum Country asks at exactly this point and for exactly this
+            // reason: at a cold first launch the request is noise about a
+            // feature you have no cards for, and here it is obviously about
+            // the thing you just did.
+            runCatching {
+                if (!settingsRepository.remindersPermissionAsked()) {
+                    _askReminderPermission.value = true
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether to put the notification permission dialog up.
+     *
+     * Held here rather than in the screen because the condition is a stored
+     * fact — have we ever asked — and a screen that is recomposed or rotated
+     * must not ask again.
+     */
+    private val _askReminderPermission = MutableStateFlow(false)
+    val askReminderPermission: StateFlow<Boolean> = _askReminderPermission.asStateFlow()
+
+    /**
+     * Records what came back from the system dialog.
+     *
+     * A refusal switches the preference off rather than leaving it on and
+     * silent. An app that believes it is reminding you while Android drops
+     * every notification is worse than one that admits it is off, because the
+     * reader has no way to tell the difference until the cards have gone
+     * stale.
+     */
+    fun reminderPermissionAnswered(granted: Boolean) {
+        _askReminderPermission.value = false
+        persistenceScope.launch {
+            runCatching {
+                settingsRepository.setRemindersPermissionAsked(true)
+                settingsRepository.setReviewReminders(granted)
+                // Scheduled here and not only at launch. The permission was
+                // granted seconds ago and the first card is already due in
+                // days; waiting for the next cold start to arm the worker
+                // would be an invisible way to miss the first reminder.
+                if (granted) {
+                    com.pagetime.app.data.review.ReviewReminderWorker.schedule(app)
+                } else {
+                    com.pagetime.app.data.review.ReviewReminderWorker.cancel(app)
+                }
+            }
+        }
     }
 
     fun skipPrompt(cardId: String) {

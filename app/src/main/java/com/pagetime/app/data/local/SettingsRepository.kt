@@ -202,6 +202,7 @@ class SettingsRepository(private val context: Context) {
 
         val REVIEW_REMINDERS = booleanPreferencesKey("review_reminders_enabled")
         val REVIEW_REMINDERS_SNOOZED_UNTIL = longPreferencesKey("review_reminders_snoozed_until")
+        val REVIEW_REMINDERS_ASKED = booleanPreferencesKey("review_reminders_permission_asked")
         val REVIEW_REMINDER_LAST_SENT = longPreferencesKey("review_reminder_last_sent")
         val REVIEW_REMINDER_STREAK = intPreferencesKey("review_reminder_streak")
 
@@ -486,16 +487,46 @@ class SettingsRepository(private val context: Context) {
     /**
      * Whether the app may tell the reader when a sitting is worth having.
      *
-     * Defaults to OFF. Notifications are the one feature where a wrong default
-     * is not a preference the reader can shrug at — an app that starts
-     * interrupting someone who never asked it to is an app they uninstall, and
-     * asking first costs one tap.
+     * Defaults to ON, which it did not used to.
+     *
+     * Off was the cautious choice and it was the wrong one. Spaced repetition
+     * that the reader has to remember to open is not spaced repetition; it is
+     * a pile of cards ripening in a database that nobody is told about. Every
+     * system that actually works — Quantum Country above all — reaches out.
+     * Quantum Country makes you register at the first review area precisely so
+     * it can email you five days later, because it knows that without that
+     * message the second review never happens.
+     *
+     * The old comment worried about interrupting someone who never asked. That
+     * worry is answered by WHEN the permission is requested, not by leaving
+     * the feature switched off: nothing is ever posted before the reader has
+     * answered their first question, because Android will not let it be, and
+     * [remindersPermissionAsked] makes sure the request itself arrives at that
+     * moment rather than at a cold first launch. A reader who declines is
+     * switched back off and told so plainly in Settings.
      */
     suspend fun reviewReminders(): Boolean =
-        context.dataStore.data.first()[Keys.REVIEW_REMINDERS] ?: false
+        context.dataStore.data.first()[Keys.REVIEW_REMINDERS] ?: true
 
     suspend fun setReviewReminders(value: Boolean) {
         context.dataStore.edit { it[Keys.REVIEW_REMINDERS] = value }
+    }
+
+    /**
+     * Whether the reader has been asked to allow notifications yet.
+     *
+     * Separate from the preference above because the two answer different
+     * questions: the preference is whether reminders are wanted, this is
+     * whether the awkward system dialog has already been spent. Asking twice
+     * is not possible on Android anyway — the second request returns denied
+     * without showing anything — so an app that does not remember having asked
+     * will conclude the reader refused when they never saw the dialog.
+     */
+    suspend fun remindersPermissionAsked(): Boolean =
+        context.dataStore.data.first()[Keys.REVIEW_REMINDERS_ASKED] ?: false
+
+    suspend fun setRemindersPermissionAsked(value: Boolean) {
+        context.dataStore.edit { it[Keys.REVIEW_REMINDERS_ASKED] = value }
     }
 
     /** Reminders stay quiet until this instant. Orbit offers the same escape. */

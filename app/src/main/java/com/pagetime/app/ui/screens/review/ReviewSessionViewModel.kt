@@ -31,6 +31,8 @@ data class ReviewItem(
     val id: String,
     val front: String,
     val back: String,
+    /** Why the answer is the answer, in the model's words. Null on older cards. */
+    val explanation: String? = null,
     val source: String?,
     val bookId: String,
     /** Where the reader's own note came from, versus a generated question. */
@@ -163,6 +165,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             id = id,
             front = if (isCloze) ClozeText.blanked(prompt) else prompt,
             back = if (isCloze) ClozeText.filled(prompt) else answer,
+            explanation = explanation?.takeIf { it.isNotBlank() },
             source = sourceQuote?.takeIf { !isCloze },
             bookId = bookId,
             fromChapter = true,

@@ -25,16 +25,43 @@ class ChapterPromptRulesTest {
 
     private val passages = listOf(passage)
 
+    /**
+     * A serviceable explanation in its own words, so tests about the OTHER
+     * rules are not all rejected for the one they are not about. Deliberately
+     * shares almost no phrasing with the passage — see the explanation tests
+     * at the foot of this file for that rule on its own.
+     */
+    private val goodWhy =
+        "A blockade only bites if everyone honours it. Here the people best placed " +
+            "to break it stood to earn more by doing so, which is why the policy " +
+            "collapsed from the inside."
+
+    // Named arguments throughout: this data class has grown a field twice, and
+    // positional construction silently shifted every quote into the wrong slot.
     private fun raw(
         prompt: String,
         answer: String,
         quote: String = "smuggling was more profitable than compliance",
         passageIndex: Int = 0,
         type: String = RawPrompt.TYPE_QA,
-    ) = RawPrompt(passageIndex, prompt, answer, quote, type)
+        explanation: String = goodWhy,
+    ) = RawPrompt(
+        passageIndex = passageIndex,
+        prompt = prompt,
+        answer = answer,
+        explanation = explanation,
+        sourceQuote = quote,
+        type = type,
+    )
 
-    private fun cloze(prompt: String, answer: String, passageIndex: Int = 0) =
-        RawPrompt(passageIndex, prompt, answer, "smuggling was more profitable than compliance", RawPrompt.TYPE_CLOZE)
+    private fun cloze(prompt: String, answer: String, passageIndex: Int = 0) = RawPrompt(
+        passageIndex = passageIndex,
+        prompt = prompt,
+        answer = answer,
+        explanation = goodWhy,
+        sourceQuote = "smuggling was more profitable than compliance",
+        type = RawPrompt.TYPE_CLOZE,
+    )
 
     @Test
     fun `a grounded question survives`() {
@@ -420,5 +447,87 @@ class ChapterPromptRulesTest {
         assertEquals(1, first.accepted.size)
         assertTrue(second.accepted.isEmpty())
         assertEquals(PromptRejection.DUPLICATE, second.rejected.single().second)
+    }
+
+    // --- The explanation, which is what the reader actually learns from ---
+
+    private val blockadePassage =
+        "The Continental System closed European ports to British ships. Napoleon " +
+            "expected Britain's economy to collapse without its export markets, but " +
+            "smuggling through Portugal and Russia kept the trade alive."
+
+    private fun withExplanation(explanation: String) = RawPrompt(
+        passageIndex = 0,
+        prompt = "Why did the Continental System fail to break Britain?",
+        answer = "Smuggling kept British trade alive",
+        explanation = explanation,
+        sourceQuote = "smuggling through Portugal and Russia kept the trade alive",
+    )
+
+    @Test
+    fun `an explanation in its own words is accepted`() {
+        val raw = withExplanation(
+            "A blockade only works if it is airtight. Two of the largest coastlines " +
+                "in Europe went on trading, so the pressure Napoleon was counting on " +
+                "never actually reached British exporters."
+        )
+        assertNull(ChapterPromptRules.check(raw, listOf(blockadePassage)))
+    }
+
+    /**
+     * The failure reported from the device. A model asked for an explanation
+     * will very often paraphrase the source, because that is the least
+     * effortful thing that satisfies the instruction — and the card then shows
+     * the reader the same sentence twice.
+     */
+    @Test
+    fun `an explanation lifted from the passage is rejected`() {
+        val raw = withExplanation(
+            "The Continental System closed European ports to British ships. Napoleon " +
+                "expected Britain's economy to collapse without its export markets, but " +
+                "smuggling through Portugal and Russia kept the trade alive."
+        )
+        assertEquals(
+            PromptRejection.EXPLANATION_IS_THE_PASSAGE,
+            ChapterPromptRules.check(raw, listOf(blockadePassage)),
+        )
+    }
+
+    @Test
+    fun `a missing or token explanation is rejected`() {
+        assertEquals(PromptRejection.NO_EXPLANATION, ChapterPromptRules.check(withExplanation(""), listOf(blockadePassage)))
+        assertEquals(
+            PromptRejection.NO_EXPLANATION,
+            ChapterPromptRules.check(withExplanation("Because of smuggling."), listOf(blockadePassage)),
+        )
+    }
+
+    /**
+     * Sharing subject-matter words is not copying. An explanation about the
+     * Continental System has to be allowed to say "Continental System".
+     */
+    @Test
+    fun `sharing the subject's vocabulary is not copying`() {
+        val raw = withExplanation(
+            "The Continental System assumed Britain had no other buyers. Britain did, " +
+                "and reaching them mattered more to merchants than obeying a decree " +
+                "issued in Paris."
+        )
+        assertNull(ChapterPromptRules.check(raw, listOf(blockadePassage)))
+    }
+
+    @Test
+    fun `overlap is measured on word pairs, not single words`() {
+        // Same vocabulary, different sentences: low overlap.
+        val reworded = "Ports stayed open because merchants ignored the decree."
+        assertTrue(ChapterPromptRules.liftedFrom(reworded, blockadePassage) < 0.5f)
+        // The passage itself: total overlap.
+        assertTrue(ChapterPromptRules.liftedFrom(blockadePassage, blockadePassage) > 0.9f)
+    }
+
+    @Test
+    fun `nothing to compare against does not reject`() {
+        assertEquals(0f, ChapterPromptRules.liftedFrom("anything at all here", ""), 0.0001f)
+        assertEquals(0f, ChapterPromptRules.liftedFrom("", blockadePassage), 0.0001f)
     }
 }

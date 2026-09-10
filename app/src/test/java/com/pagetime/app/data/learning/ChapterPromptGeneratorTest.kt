@@ -146,6 +146,10 @@ class ChapterPromptGeneratorTest {
         passageIndex = batchLocal,
         prompt = "How much does widget $globalPassage weigh?",
         answer = "$globalPassage kilograms",
+        // Long enough to satisfy the explanation rule and worded nothing like
+        // the passage, so these tests fail only for the reasons they are about.
+        explanation = "Mass here is fixed by the casting process rather than by " +
+            "anything the assembler chooses, so every unit off the line matches.",
         sourceQuote = "widget $globalPassage weighs $globalPassage kilograms exactly",
         type = RawPrompt.TYPE_QA,
     )

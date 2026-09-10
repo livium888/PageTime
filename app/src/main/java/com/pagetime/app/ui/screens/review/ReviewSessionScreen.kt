@@ -121,7 +121,24 @@ fun ReviewSessionScreen(
 
                         if (state.revealed) {
                             Text(card.back, style = MaterialTheme.typography.bodyLarge)
+                            // The answer says what; this says why. It is the
+                            // part worth reading on the tenth review, when the
+                            // answer itself is long since automatic.
+                            card.explanation?.let { why ->
+                                Spacer(Modifier.height(10.dp))
+                                Text(why, style = MaterialTheme.typography.bodyMedium)
+                            }
                             card.source?.takeIf { it.isNotBlank() }?.let { source ->
+                                Spacer(Modifier.height(10.dp))
+                                // Labelled, because unlabelled it read as the
+                                // explanation — which is exactly what it was
+                                // standing in for while the explanation column
+                                // went unfilled.
+                                Text(
+                                    "From the book",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                                 Text(
                                     source.trim(),
                                     style = MaterialTheme.typography.bodySmall,

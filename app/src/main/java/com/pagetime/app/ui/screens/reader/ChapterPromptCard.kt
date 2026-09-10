@@ -95,6 +95,12 @@ fun ChapterPromptCard(
                         if (isCloze) ClozeText.filled(card.prompt) else card.answer,
                         style = MaterialTheme.typography.bodyLarge,
                     )
+                    // Why, before the evidence. Judging whether a prompt is
+                    // worth keeping means knowing what it was trying to teach,
+                    // and the answer alone rarely says.
+                    card.explanation?.takeIf { it.isNotBlank() }?.let { why ->
+                        Text(why, style = MaterialTheme.typography.bodyMedium)
+                    }
                     card.sourceQuote?.takeIf { it.isNotBlank() && !isCloze }?.let { quote ->
                         // The line it came from, so the reader can see for
                         // themselves that the card is not invented.

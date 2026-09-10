@@ -54,6 +54,26 @@ import com.pagetime.app.data.embed.ChapterTopics
  * and every mirror are blocked from the build environment — so this is built on
  * secondary summaries. Worth re-checking against the original.
  *
+ * WHY BLOOM'S FIRST TWO LEVELS AND NOT THE INTERESTING ONES
+ *
+ * Reported from the device: the questions were poor — lookup, not thought.
+ * That was true and Wozniak's rules alone caused it. Optimising for the
+ * smallest testable unit, with nothing pulling the other way, reliably
+ * produces trivia.
+ *
+ * The instinct is then to reach for Bloom's top: evaluate, critique, create.
+ * That is the wrong fix and would be worse. A spaced-repetition prompt has to
+ * be answerable in seconds and gradeable the same way twice — "assess whether
+ * this argument survives" is a fine question and a useless card, because it
+ * takes minutes, has no checkable answer, and hands the scheduler noise.
+ * Matuschak makes the same point as a criterion: a prompt should be tractable,
+ * near-always answerable, or the reader stops reviewing it.
+ *
+ * So the target is levels one and two — remember, and understand. Why
+ * something follows, what breaks without it, how two things differ. Still a
+ * sentence, still gradeable, and genuinely requiring thought rather than
+ * lookup.
+ *
  * WHY THIS IS ITS OWN FILE
  *
  * It used to be a raw string inline in the client, and it shipped with every
@@ -167,6 +187,29 @@ internal object ChapterPromptText {
             DO NOT PUT THE ANSWER IN THE QUESTION, including a near-synonym of
             it. The reader must produce it, not recognise it.
 
+            WHAT KIND OF QUESTION
+
+            Two levels, and nothing above them.
+
+            REMEMBERING. A fact, a name, a number, a definition — something
+            stated in the passage that a reader should carry away.
+
+            UNDERSTANDING. Why something follows, what would break without it,
+            how two things differ, what a claim predicts about a case the book
+            does not mention. These take a moment's thought and are answerable
+            in one sentence.
+
+            Aim for a mix, leaning toward understanding. A chapter answered
+            entirely from the first level is trivia, and the reader will
+            correctly stop caring about it.
+
+            NOT ABOVE THAT. Do not ask the reader to evaluate an argument,
+            weigh evidence, compare against something outside the passage, or
+            produce anything original. Those are good questions and terrible
+            prompts: they take minutes rather than seconds, two people would
+            grade them differently, and a prompt that cannot be graded
+            consistently poisons the schedule that decides when it comes back.
+
             TWO KINDS OF PROMPT
 
             type "qa": a question and a short answer. The answer should be a few
@@ -187,6 +230,23 @@ internal object ChapterPromptText {
             Two prompts from one passage must be answerable independently. If
             knowing the answer to one gives away the other, they are one prompt
             written twice.
+
+            EXPLANATION
+
+            Every prompt carries one, and it is the part the reader learns
+            from. Two or three sentences saying WHY the answer is the answer:
+            the mechanism, the reason, the consequence — what a good teacher
+            says after you have guessed.
+
+            It must be YOUR OWN WORDS. Do not copy or lightly reword the
+            passage. The passage is shown underneath already; repeating it
+            teaches nothing and is the single most common way this goes wrong.
+            If the only thing you can say is what the passage said, the prompt
+            was not worth asking.
+
+            Where it helps, say what the reader would get wrong, or what the
+            answer rules out. Never open with "The passage states" or "The
+            author says" — explain the world, not the text.
 
             sourceQuote must be copied from that passage CHARACTER FOR
             CHARACTER: the sentence the answer comes from. Do not paraphrase,

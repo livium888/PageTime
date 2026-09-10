@@ -298,7 +298,11 @@ class ChapterPromptGenerator(
                 chapterTitle = chapterTitle,
                 prompt = raw.prompt.trim(),
                 answer = raw.answer.trim(),
-                explanation = null,
+                // The column has existed since the schema was written and was
+                // never filled: every AI card stored null here, and the review
+                // screen showed the source quote in its place — which is why
+                // the "explanation" was the book's own sentence read back.
+                explanation = raw.explanation.trim().takeIf { it.isNotBlank() },
                 sourceLocator = null,
                 // Where the passage ENDS, not where it starts: a prompt that
                 // appears as the reader arrives at the paragraph is asking the

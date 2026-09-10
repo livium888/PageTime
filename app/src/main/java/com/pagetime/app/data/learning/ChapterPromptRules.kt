@@ -8,6 +8,15 @@ data class RawPrompt(
     val passageIndex: Int,
     val prompt: String,
     val answer: String,
+    /**
+     * Why the answer is the answer, in the model's own words.
+     *
+     * The part the reader actually learns from. Checked against the passage,
+     * because the failure mode is not an absent explanation but a copied one
+     * — the model paraphrases the source, the card shows it above the source,
+     * and the reader is told the same sentence twice.
+     */
+    val explanation: String = "",
     /** Text the model says it took this from; must be in the passage verbatim. */
     val sourceQuote: String,
     /** "qa" or "cloze". Unknown values are treated as qa. */
@@ -35,6 +44,8 @@ enum class PromptRejection(val reason: String) {
     NEAR_DUPLICATE("is a rewording of a prompt already accepted"),
     CLOZE_NOT_IN_PASSAGE("its cloze sentence is not in the passage"),
     CLOZE_MALFORMED("has no deletion in it, or deletes the whole sentence"),
+    NO_EXPLANATION("has no explanation of why the answer is the answer"),
+    EXPLANATION_IS_THE_PASSAGE("explains by quoting the book back at the reader"),
 }
 
 data class PromptVerdict(
@@ -130,6 +141,7 @@ object ChapterPromptRules {
         if (quote.isBlank() || !containsQuote(passage, quote)) {
             return PromptRejection.QUOTE_NOT_IN_PASSAGE
         }
+        explanationProblem(raw.explanation.trim(), passage)?.let { return it }
         // Wozniak's rule against sets and enumerations. Partial knowledge of a
         // set cannot be graded honestly: the reader half-remembers, grades in
         // the middle, and every fact in the set gets an interval that suits
@@ -149,6 +161,68 @@ object ChapterPromptRules {
             return PromptRejection.TOO_LONG
         }
         return null
+    }
+
+    /**
+     * The shortest explanation that could be teaching anything.
+     *
+     * Below this it is a label, not a reason — "Because it is faster" tells
+     * the reader nothing they did not have from the answer.
+     */
+    const val MIN_EXPLANATION_CHARS = 40
+
+    /**
+     * How much of an explanation may be lifted from the passage before it is
+     * a quote wearing a different hat.
+     *
+     * Some overlap is unavoidable and correct: an explanation about the
+     * Continental System has to say "Continental System". A majority of the
+     * words in sequence is something else.
+     */
+    const val MAX_PASSAGE_OVERLAP = 0.6f
+
+    /**
+     * Why the explanation is checked at all.
+     *
+     * The failure reported from the device was not a missing explanation but
+     * a useless one: the card showed the answer, then the book's own sentence
+     * underneath, presented as if it explained something. A model asked for an
+     * explanation will very often paraphrase the source, because that is the
+     * least effortful thing that satisfies the instruction.
+     *
+     * So it is measured against the passage. An explanation that is mostly the
+     * passage is rejected, and the model is told why on the retry.
+     */
+    internal fun explanationProblem(explanation: String, passage: String): PromptRejection? {
+        if (explanation.length < MIN_EXPLANATION_CHARS) return PromptRejection.NO_EXPLANATION
+        if (liftedFrom(explanation, passage) > MAX_PASSAGE_OVERLAP) {
+            return PromptRejection.EXPLANATION_IS_THE_PASSAGE
+        }
+        return null
+    }
+
+    /**
+     * The share of the explanation's word PAIRS that also appear in the
+     * passage.
+     *
+     * Pairs rather than single words, because single words overlap heavily
+     * between any two texts on the same subject and would reject honest
+     * explanations. A shared pair means the same two words in the same order,
+     * which is the signature of copying rather than of writing about the same
+     * thing.
+     */
+    internal fun liftedFrom(explanation: String, passage: String): Float {
+        val theirs = bigrams(passage)
+        if (theirs.isEmpty()) return 0f
+        val mine = bigrams(explanation)
+        if (mine.isEmpty()) return 0f
+        return mine.count { it in theirs }.toFloat() / mine.size
+    }
+
+    private fun bigrams(text: String): Set<String> {
+        val words = normalize(text).split(' ').filter { it.isNotBlank() }
+        if (words.size < 2) return emptySet()
+        return words.zipWithNext { a, b -> "$a $b" }.toSet()
     }
 
     /**

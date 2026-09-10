@@ -1,6 +1,9 @@
 package com.pagetime.app.ui.screens.reader
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
 import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -115,6 +118,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
@@ -606,10 +612,15 @@ fun ReaderScreen(
                     ChapterPromptCard(
                         card = card,
                         stillAhead = promptState.stillAhead,
-                        onKeep = { vm.keepPrompt(card.id) },
+                        onGrade = { rating -> vm.gradePrompt(card.id, rating) },
                         onSkip = { vm.skipPrompt(card.id) },
                     )
                 }
+
+                ReviewPermissionRequest(
+                    ask = vm.askReminderPermission.collectAsStateWithLifecycle().value,
+                    onAnswered = vm::reminderPermissionAnswered,
+                )
             }
 
             AnimatedVisibility(
@@ -2696,5 +2707,49 @@ private fun CopyCaptureLogButton(captureLog: List<String>) {
         )
         Spacer(Modifier.width(6.dp))
         Text("Copy capture log")
+    }
+}
+
+/**
+ * Asks, once, whether the app may say something when cards fall due.
+ *
+ * WHY HERE AND NOT AT FIRST LAUNCH
+ *
+ * At a cold first launch the request is a system dialog about a feature the
+ * reader has no cards for, and the honest answer to it is "no idea". Asked
+ * immediately after they have answered their first question, it is obviously
+ * about the thing they just did — and there is now a real card with a real
+ * date on it, which is the only argument the dialog has.
+ *
+ * Quantum Country makes you register at the first review area for the same
+ * reason, and it is not incidental to how well it works: without a way to
+ * reach you, the second review simply never happens.
+ *
+ * RENDERS NOTHING
+ *
+ * It exists for its launcher and its effect. Below API 33 there is no
+ * permission to ask for, so the grant is reported straight back.
+ */
+@Composable
+private fun ReviewPermissionRequest(
+    ask: Boolean,
+    onAnswered: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> onAnswered(granted) }
+
+    LaunchedEffect(ask) {
+        if (!ask) return@LaunchedEffect
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            onAnswered(true)
+            return@LaunchedEffect
+        }
+        val already = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (already) onAnswered(true) else launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 }

@@ -355,8 +355,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
      * The decision of WHEN is not here — it is in ReviewReminder, which waits
      * while waiting is cheap and speaks when the delay starts costing real
      * memories. This is only the reader's permission to be spoken to at all.
+     *
+     * Starts true to match the stored default, so the switch does not show as
+     * off for the moment before DataStore is read and then flip under the
+     * reader's eyes.
      */
-    private val _reviewReminders = MutableStateFlow(false)
+    private val _reviewReminders = MutableStateFlow(true)
     val reviewReminders: StateFlow<Boolean> = _reviewReminders.asStateFlow()
 
     fun setReviewReminders(value: Boolean) {

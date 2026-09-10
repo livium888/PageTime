@@ -1379,6 +1379,15 @@ private fun GeminiSettingsCard(
  * reader shrugs at — an app that starts notifying someone who never asked is
  * one they uninstall, and asking costs a single tap.
  *
+ * SINCE THEN THE DEFAULT HAS FLIPPED ON
+ *
+ * Not because that worry was wrong, but because it is answered somewhere else
+ * now: the notification permission is requested in the reading chair, straight
+ * after the reader answers their first question, and until it is granted the
+ * app cannot interrupt anybody. Declining there switches this back off. So
+ * this card is where the decision is REVISITED rather than where it is made,
+ * and a reader who never grants the permission finds it already off.
+ *
  * The copy explains the batching, because otherwise the feature looks broken:
  * a reader who turns this on, sees a card fall due, and hears nothing that
  * evening will conclude it does not work. It is working — it is waiting until

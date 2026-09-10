@@ -24,8 +24,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
+import com.pagetime.app.data.review.FirstReview
 
 /**
  * A question about the paragraph just read, offered rather than imposed.
@@ -37,18 +39,37 @@ import com.pagetime.app.data.local.LearningCardEntity
  * the page: the reader can answer it, keep it, throw it away, or ignore it
  * entirely and carry on reading, and ignoring it costs nothing.
  *
- * THE ANSWER IS HIDDEN, THEN THE JUDGEMENT
+ * THE ANSWER IS HIDDEN, THEN THE GRADING
  *
  * Two steps, deliberately in this order. Showing the answer first would make
  * the reader judge a question they never tried, and the only way to know
- * whether a prompt is any good is to attempt it. So: think, reveal, then decide
- * whether it is worth keeping.
+ * whether you knew something is to try to recall it. So: think, reveal, then
+ * say how it went.
+ *
+ * HOW IT WENT, NOT WHETHER TO KEEP IT
+ *
+ * This card used to ask "Keep it" or "Throw it away", which is shopping. It
+ * never asked the one question worth asking — did you know the answer — so the
+ * card entered the deck with no history, fell due immediately, and the next
+ * review sitting opened by asking something answered ten minutes ago. The
+ * retrieval that matters most, taken while the passage is still warm, was
+ * discarded.
+ *
+ * Now the buttons are FSRS ratings and answering IS accepting. See
+ * [FirstReview] for why Easy is not among them.
+ *
+ * THROWING ONE AWAY IS STILL POSSIBLE, JUST DEMOTED
+ *
+ * Some generated questions are bad, and a reader who cannot say so is stuck
+ * with them forever. But that is a judgement about the QUESTION, not about
+ * their performance on it, so it sits apart from the ratings and is phrased as
+ * such.
  */
 @Composable
 fun ChapterPromptCard(
     card: LearningCardEntity,
     stillAhead: Int,
-    onKeep: () -> Unit,
+    onGrade: (LumenRating) -> Unit,
     onSkip: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -95,25 +116,54 @@ fun ChapterPromptCard(
                         if (isCloze) ClozeText.filled(card.prompt) else card.answer,
                         style = MaterialTheme.typography.bodyLarge,
                     )
-                    // Why, before the evidence. Judging whether a prompt is
-                    // worth keeping means knowing what it was trying to teach,
-                    // and the answer alone rarely says.
+                    // Why, before the evidence. Grading yourself honestly
+                    // means knowing what the question was actually after, and
+                    // the answer on its own rarely says.
                     card.explanation?.takeIf { it.isNotBlank() }?.let { why ->
                         Text(why, style = MaterialTheme.typography.bodyMedium)
                     }
                     card.sourceQuote?.takeIf { it.isNotBlank() && !isCloze }?.let { quote ->
-                        // The line it came from, so the reader can see for
-                        // themselves that the card is not invented.
+                        // Labelled, because unlabelled it read as the
+                        // explanation — which is exactly what it was standing
+                        // in for while the explanation column went unfilled.
                         Text(
-                            "“${quote.trim()}”",
+                            "From the book",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            quote.trim(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onKeep) { Text("Keep it") }
-                        OutlinedButton(onClick = onSkip) { Text("Throw it away") }
+                    Text(
+                        "How did that go?",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        chairRatings.forEach { rating ->
+                            // Again is the filled one, as in the review
+                            // sitting, so the same answer is in the same place
+                            // wherever the reader meets a question.
+                            if (rating == LumenRating.AGAIN) {
+                                Button(
+                                    onClick = { onGrade(rating) },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text(chairLabel(rating), maxLines = 1) }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { onGrade(rating) },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text(chairLabel(rating), maxLines = 1) }
+                            }
+                        }
                     }
+                    TextButton(onClick = onSkip) { Text("Bad question — throw it away") }
                 }
 
                 if (stillAhead > 0) {
@@ -128,4 +178,29 @@ fun ChapterPromptCard(
             }
         }
     }
+}
+
+/**
+ * The ratings the reading chair offers, in the order the review sitting shows
+ * them.
+ *
+ * Built from [FirstReview] rather than listed here, so the rule about Easy
+ * lives in one place and is tested there.
+ */
+private val chairRatings: List<LumenRating> =
+    FirstReview.OFFERED_IN_THE_CHAIR.mapNotNull { value ->
+        LumenRating.entries.firstOrNull { it.value == value }
+    }
+
+/**
+ * Plainer words than the review sitting uses.
+ *
+ * "Again" makes sense once you have met a card before and it means "show me
+ * this again sooner". On a question you are seeing for the first time it means
+ * nothing, so the chair says what actually happened.
+ */
+private fun chairLabel(rating: LumenRating): String = when (rating) {
+    LumenRating.AGAIN -> "Missed it"
+    LumenRating.HARD -> "Struggled"
+    else -> "Knew it"
 }

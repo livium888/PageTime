@@ -88,6 +88,44 @@ Highlights are stored per book and deleted with it. Each one keeps the
 highlighted text itself, so the list can show a passage without re-reading it
 out of the book.
 
+## Bookshelf
+
+**Library → Bookshelf** is every shelf in one unit, with the books drawn as
+objects instead of listed: your own books, the books you are in the middle of,
+the Great Books ladder, and an author's shelf once you have built one. It is the
+one screen in the app that is a piece of furniture rather than a page, so the
+case is walnut in both themes and the app's own accent is kept for the one thing
+on the shelf that means something.
+
+**Spines, not covers.** Most of what is on a shelf is not owned — most of the
+ladder, and nearly all of an author's bibliography — so a cover-based shelf
+would be a few real covers and a wall of grey. A spine can be drawn for
+anything that has a title and an author. Width, height, colour and bands all
+come out of the title and the author, so one writer's books share a colour
+family, the same book is the same spine on any device, and nothing is stored:
+one hash function, no migration, and the shelf changes its look by changing
+code rather than by rewriting the database.
+
+**What the drawing says:**
+
+- **A solid spine** is a book you have. **An outline** is one you do not — two
+  solid books and twenty outlines says what an author's shelf holds at a glance.
+- **A bookmark ribbon** hangs from the head of the spine, as long as how far in
+  you are. It is the only saturated colour in the case and it is what makes "the
+  book I am reading" findable without reading anything. A book not yet started
+  and a book finished have none, which is what a ribbon means.
+- **The author is set at the foot** of the spine when there is room for it
+  beside the title, and the surname alone when only that fits — the title always
+  wins, because a cramped spine is worse than a spare one.
+- **A brass label plate** names each shelf. *Reading now* gets the polished plate
+  and every other shelf the dull one, so the shelf you are in the middle of is
+  the one you see first.
+
+The depth is deliberate and cheap: a back panel shaded at both uprights, the
+shadow each shelf casts on the one below, a groove under every plank, and a
+little grain. Tapping a book you do not have opens that author's shelf rather
+than swallowing the tap.
+
 ## Settings
 
 Settings is grouped by what the reader is doing, not by the order features were

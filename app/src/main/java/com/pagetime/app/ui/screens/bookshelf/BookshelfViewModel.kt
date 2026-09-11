@@ -27,6 +27,13 @@ data class BookshelfSection(
     val title: String,
     val subtitle: String?,
     val books: List<ShelfDisplayBook>,
+    /**
+     * Drawn on the polished label plate rather than the dull one.
+     *
+     * Only the reader's own in-flight books get it, so the shelf they are in
+     * the middle of is the one they see first.
+     */
+    val emphasis: Boolean = false,
 )
 
 /**
@@ -59,13 +66,14 @@ class BookshelfViewModel(app: Application) : AndroidViewModel(app) {
         val sections = mutableListOf<BookshelfSection>()
 
         val reading = books
-            .filter { it.scrollProgress > 0.01f && it.scrollProgress < FINISHED }
+            .filter { it.scrollProgress > 0.01f && it.scrollProgress < ShelfDecor.FINISHED }
             .sortedByDescending { it.totalReadingSeconds }
         if (reading.isNotEmpty()) {
             sections += BookshelfSection(
                 title = "Reading now",
                 subtitle = null,
                 books = reading.map { it.asDisplay() },
+                emphasis = true,
             )
         }
 
@@ -125,10 +133,5 @@ class BookshelfViewModel(app: Application) : AndroidViewModel(app) {
             progress = book?.scrollProgress?.coerceIn(0f, 1f) ?: 0f,
             bookId = book?.id,
         )
-    }
-
-    private companion object {
-        /** Close enough to the end to call it read. */
-        const val FINISHED = 0.95f
     }
 }

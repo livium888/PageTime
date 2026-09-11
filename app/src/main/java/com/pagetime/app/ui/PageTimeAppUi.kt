@@ -193,7 +193,13 @@ fun PageTimeAppUi(
             composable("bookshelf") {
                 BookshelfScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") }
+                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
+                    // A book on the shelf you do not have still has to do
+                    // something when tapped, and where books come from is the
+                    // author's shelf.
+                    onOpenAuthor = { author ->
+                        navController.navigate("author/${URLEncoder.encode(author, "UTF-8")}")
+                    }
                 )
             }
             composable("shelf") {

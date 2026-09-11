@@ -16,7 +16,8 @@ class PagemarkSessionTest {
         state: PagemarkSession.State = PagemarkSession.State.QUEUED,
         priority: Int = PagemarkSession.DEFAULT_PRIORITY,
         dueAt: Long? = null,
-        reviewCount: Int = 0
+        reviewCount: Int = 0,
+        createdAt: Long = 100L
     ) = PagemarkEntity(
         id = id,
         bookId = "b1",
@@ -30,7 +31,7 @@ class PagemarkSessionTest {
         fsrsCardJson = null,
         dueAt = dueAt,
         reviewCount = reviewCount,
-        createdAt = 100L,
+        createdAt = createdAt,
         updatedAt = 100L
     )
 

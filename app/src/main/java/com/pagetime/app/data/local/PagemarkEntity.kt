@@ -24,6 +24,10 @@ import androidx.room.PrimaryKey
  *                 the same FSRS scheduler as learning cards) is when the chunk
  *                 is worth re-reading; when it is past due it returns to the
  *                 front of the queue.
+ * - HARVESTED   — retired by the reader: the chunk has given what it had. It
+ *                 is never due and never offered again, and the knowledge the
+ *                 reader kept from it lives on as questions rather than as a
+ *                 paragraph that comes back forever.
  *
  * Deleting a book deletes its pagemarks: the spans live inside the book, so
  * a chunk with nothing to open is just a ghost title.
@@ -56,7 +60,7 @@ data class PagemarkEntity(
     val endLocatorJson: String?,
     /** 0..1 position where the chunk currently ends. */
     val endFraction: Float,
-    /** PagemarkSession.State name: QUEUED, READING, SUSPENDED or DONE. */
+    /** PagemarkSession.State name: QUEUED, READING, SUSPENDED, DONE or HARVESTED. */
     val state: String,
     /** 1..5; higher chunks surface sooner in the queue. */
     val priority: Int,

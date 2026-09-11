@@ -27,6 +27,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.LumenDraftSource
 import com.pagetime.app.data.learning.ChapterPromptGenerator
+import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -511,6 +512,47 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun suspendChunkHere() {
         val chunk = activeChunk() ?: return
         viewModelScope.launch { pagemarkRepo.suspendChunk(chunk.id) }
+    }
+
+    /**
+     * Retires the open chunk: nothing more to keep, and it stops coming back.
+     *
+     * The end of the loop for a passage the reader has taken everything from.
+     * Nothing is scheduled — see PagemarkSession.harvest for why the chunk
+     * needed a terminus at all.
+     */
+    fun harvestChunkHere() {
+        val chunk = activeChunk() ?: return
+        viewModelScope.launch { pagemarkRepo.harvestChunk(chunk.id) }
+    }
+
+    /**
+     * Saves a question the reader wrote while inside a chunk.
+     *
+     * Written to the same table, on the same FSRS calendar and reviewed in the
+     * same sitting as the chapter flashcards — a question written by hand is
+     * not a different kind of card. This is the step that lets a chunk be
+     * finished with honestly: what the reader kept outlives the passage as
+     * something they can be asked, instead of the passage coming back forever.
+     */
+    fun saveChunkCard(prompt: String, answer: String, explanation: String?) {
+        val card = ChunkCard.create(
+            id = java.util.UUID.randomUUID().toString(),
+            bookId = bookId,
+            // A plain-text book has no chapters; the card still belongs to this
+            // book at the position it was written from.
+            chapterIndex = currentChapterIndex() ?: 0,
+            chapterTitle = currentChapterTitle(),
+            prompt = prompt,
+            answer = answer,
+            explanation = explanation,
+            sourceLocator = currentLocatorJson(),
+            sourceFraction = currentFraction(),
+            now = System.currentTimeMillis()
+        ) ?: return
+        viewModelScope.launch {
+            runCatching { container.database.learningCardDao().upsert(card) }
+        }
     }
 
     // endregion

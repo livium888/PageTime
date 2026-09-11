@@ -283,6 +283,9 @@ fun ReaderScreen(
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var showCloseChunk by remember { mutableStateOf(false) }
+    // The question sheet for a re-read chunk: the one place a chunk turns into
+    // something that outlives it.
+    var showChunkCard by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
@@ -690,7 +693,9 @@ fun ReaderScreen(
                         ChunkBanner(
                             title = chunk.title,
                             span = activeChunkSpan ?: "",
+                            reRead = PagemarkSession.isReRead(chunk),
                             palette = palette,
+                            onKeep = { showChunkCard = true },
                             onFinish = { showCloseChunk = true }
                         )
                     }
@@ -916,7 +921,27 @@ fun ReaderScreen(
         )
     }
 
+    if (showChunkCard) {
+        // The extract step, one tap from the chunk bar. What the reader writes
+        // here goes on the same FSRS calendar as the chapter questions, so the
+        // chunk can be retired without losing what was in it.
+        CardCreationSheet(
+            bookTitle = book?.title ?: "Book",
+            chapterLabel = chapterLabel,
+            title = "Keep a question from this chunk",
+            context = activePagemark?.let { chunk ->
+                "${chunk.title} \u00b7 ${activeChunkSpan.orEmpty()}"
+            },
+            onSave = { prompt, answer, explanation ->
+                showChunkCard = false
+                vm.saveChunkCard(prompt, answer, explanation)
+            },
+            onDismiss = { showChunkCard = false }
+        )
+    }
+
     if (showCloseChunk) {
+        val retiring = activePagemark?.let { PagemarkSession.isReRead(it) } == true
         // Closing a chunk is a review, not a checkout: the rating decides when
         // the chunk comes back. Only the three the reading chair offers — see
         // FirstReview for why Easy is not on the table seconds after reading.
@@ -925,20 +950,45 @@ fun ReaderScreen(
             title = { Text("Finish chunk") },
             text = {
                 Text(
-                    "How did reading this go? That decides when the passage comes back " +
-                        "for re-reading. The next chunk starts where you are now."
+                    if (retiring) {
+                        "How did reading this go? That decides when the passage comes back " +
+                            "for re-reading, and the next chunk starts where you are now. " +
+                            "If there is nothing left in this one worth keeping, retire it " +
+                            "instead and it stops coming back."
+                    } else {
+                        "How did reading this go? That decides when the passage comes back " +
+                            "for re-reading. The next chunk starts where you are now."
+                    }
                 )
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(1) }) {
-                        Text("Again")
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(1) }) {
+                            Text("Again")
+                        }
+                        TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(2) }) {
+                            Text("Hard")
+                        }
+                        TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(3) }) {
+                            Text("Good")
+                        }
                     }
-                    TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(2) }) {
-                        Text("Hard")
-                    }
-                    TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(3) }) {
-                        Text("Good")
+                    // Only on a re-read: retiring a chunk on the first pass would
+                    // be deciding there is nothing worth keeping in a passage the
+                    // reader has just met. After one pass, they know.
+                    if (retiring) {
+                        TextButton(
+                            onClick = {
+                                showCloseChunk = false
+                                vm.harvestChunkHere()
+                            }
+                        ) {
+                            Text("Nothing more to keep \u2014 retire this chunk")
+                        }
                     }
                 }
             }

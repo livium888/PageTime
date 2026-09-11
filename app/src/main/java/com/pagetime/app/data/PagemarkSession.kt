@@ -32,7 +32,7 @@ object PagemarkSession {
     const val DEFAULT_PRIORITY = 3
 
     enum class State {
-        QUEUED, READING, SUSPENDED, DONE
+        QUEUED, READING, SUSPENDED, DONE, HARVESTED
     }
 
     fun clampPriority(priority: Int): Int =
@@ -74,9 +74,15 @@ object PagemarkSession {
      *
      * A chunk that fell due is opened the same way a fresh one is; its FSRS
      * state stays on the row and is only updated when it is closed again.
+     *
+     * A HARVESTED chunk is the one exception, and it is returned untouched: a
+     * chunk the reader has retired has said it has nothing left to give, and
+     * quietly reopening it would be the app overruling them. Retirement is a
+     * decision, not a pause.
      */
-    fun begin(chunk: PagemarkEntity, now: Long = System.currentTimeMillis()): PagemarkEntity =
-        chunk.copy(
+    fun begin(chunk: PagemarkEntity, now: Long = System.currentTimeMillis()): PagemarkEntity {
+        if (stateOf(chunk) == State.HARVESTED) return chunk
+        return chunk.copy(
             state = State.READING.name,
             // The re-read is happening NOW, so the chunk is no longer due. Left
             // on the row it would be both READing and due at once, and the
@@ -84,6 +90,7 @@ object PagemarkSession {
             dueAt = null,
             updatedAt = now
         )
+    }
 
     /**
      * Pauses a chunk without judging it.
@@ -129,6 +136,50 @@ object PagemarkSession {
         updatedAt = now
     )
 
+    /**
+     * Retires a chunk: it has given what it had, and it does not come back.
+     *
+     * WHY A CHUNK NEEDS AN END
+     *
+     * Closing a chunk schedules it, and scheduling is a promise to read it
+     * again. Nothing in the loop could ever say "there is nothing left here" —
+     * so a chunk re-read well, re-read for the fourth time, re-read past the
+     * point of being able to say why, still came back on the FSRS calendar
+     * forever. That is a treadmill: the passage never becomes knowledge and
+     * never stops being work.
+     *
+     * Incremental reading has an end for every article, and it is this one: the
+     * material's purpose is fulfilled once what mattered in it has been turned
+     * into something recallable, at which point the passage is finished with.
+     * Retirement is that act, and the knowledge the reader kept lives on in the
+     * questions they made, not in the paragraph.
+     *
+     * The due time is cleared rather than kept: a retired chunk is not "due on
+     * Tuesday", it is not due. Its span, its history and its rating survive on
+     * the row, so retiring is a decision the reader can see, not a deletion.
+     */
+    fun harvest(chunk: PagemarkEntity, now: Long = System.currentTimeMillis()): PagemarkEntity =
+        chunk.copy(
+            state = State.HARVESTED.name,
+            dueAt = null,
+            updatedAt = now
+        )
+
+    /**
+     * Whether the chunk in hand is a re-read rather than a first pass.
+     *
+     * The two passes are not the same job. A first pass is for reading; a
+     * re-read is for taking something out of it — a question worth keeping — or
+     * for deciding there is nothing left. Saying the same sentence on the chunk
+     * bar for both was the app asking the reader to do the same thing twice and
+     * calling it incremental reading.
+     *
+     * [PagemarkEntity.reviewCount] is the honest signal: it is only ever
+     * incremented by closing a chunk with a rating, so a chunk that has been
+     * closed once has been read once.
+     */
+    fun isReRead(chunk: PagemarkEntity): Boolean = chunk.reviewCount > 0
+
     // endregion
 
     // region Queue ordering
@@ -143,6 +194,10 @@ object PagemarkSession {
     fun isActionable(chunk: PagemarkEntity, nowMillis: Long): Boolean = when (stateOf(chunk)) {
         State.READING, State.QUEUED, State.SUSPENDED -> true
         State.DONE -> chunk.dueAt != null && chunk.dueAt <= nowMillis
+        // Retired on purpose, and the whole point of retiring it is that it
+        // stops asking to be read. It stays in the list so the reader can see
+        // what they have finished with, and it is never drawn as due again.
+        State.HARVESTED -> false
     }
 
     /**
@@ -167,7 +222,12 @@ object PagemarkSession {
         )
         val scheduled = items.filter { stateOf(it) == State.DONE && (it.dueAt == null || it.dueAt > nowMillis) }
             .sortedBy { it.dueAt ?: Long.MAX_VALUE }
-        return reading + due + waiting + scheduled
+        // Retired chunks come last, most recently retired first: they are the
+        // record of what the reader has finished with, not a queue. Putting
+        // them anywhere else would make a done chunk look like work waiting.
+        val retired = items.filter { stateOf(it) == State.HARVESTED }
+            .sortedByDescending { it.updatedAt }
+        return reading + due + waiting + scheduled + retired
     }
 
     /** Due counts count ACTIONABLE chunks only: a chunk in mid-read is not "due". */

@@ -126,7 +126,10 @@ private fun EmptyQueue(modifier: Modifier = Modifier) {
                 "the foot of the page and say how it went \u2014 that passage comes " +
                 "back for re-reading when it is worth re-reading, and the next " +
                 "chunk is already waiting where you stopped. Every chunk that " +
-                "comes back shows up here.",
+                "comes back shows up here. When a chunk has given you everything " +
+                "it has, retire it from the Finish dialog and it stops coming back \u2014 " +
+                "retired chunks stay here, last, as the record of what you have " +
+                "finished with.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -183,21 +186,39 @@ private fun PagemarkCard(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpen) {
-                    Text(if (PagemarkSession.stateOf(chunk) == PagemarkSession.State.READING) "Continue" else "Read chunk")
-                }
-                Spacer(Modifier.weight(1f))
+            if (PagemarkSession.stateOf(chunk) == PagemarkSession.State.HARVESTED) {
+                // A retired chunk is not work, so it gets no button and no
+                // priority: there is nothing to open and nothing to order. Its
+                // span stays so the reader can see what they finished with, and
+                // the delete control above stays so they can let even that go.
                 Text(
-                    "P${chunk.priority}",
-                    style = MaterialTheme.typography.labelMedium,
+                    "Finished with \u2014 what you kept from it is in your cards.",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                IconButton(onClick = onLower, enabled = chunk.priority > PagemarkSession.MIN_PRIORITY) {
-                    Icon(Icons.Filled.Remove, contentDescription = "Lower priority")
-                }
-                IconButton(onClick = onRaise, enabled = chunk.priority < PagemarkSession.MAX_PRIORITY) {
-                    Icon(Icons.Filled.Add, contentDescription = "Raise priority")
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onOpen) {
+                        Text(
+                            if (PagemarkSession.stateOf(chunk) == PagemarkSession.State.READING) {
+                                "Continue"
+                            } else {
+                                "Read chunk"
+                            }
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "P${chunk.priority}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    IconButton(onClick = onLower, enabled = chunk.priority > PagemarkSession.MIN_PRIORITY) {
+                        Icon(Icons.Filled.Remove, contentDescription = "Lower priority")
+                    }
+                    IconButton(onClick = onRaise, enabled = chunk.priority < PagemarkSession.MAX_PRIORITY) {
+                        Icon(Icons.Filled.Add, contentDescription = "Raise priority")
+                    }
                 }
             }
         }
@@ -218,6 +239,7 @@ private fun stateLabel(chunk: PagemarkEntity, now: Long): String = when (
     PagemarkSession.State.QUEUED -> "Not started yet"
     PagemarkSession.State.SUSPENDED -> "Paused"
     PagemarkSession.State.DONE -> PagemarkSession.dueLabel(chunk.dueAt, now)
+    PagemarkSession.State.HARVESTED -> "Retired \u2014 nothing more to keep"
 }
 
 private fun stateIsDue(chunk: PagemarkEntity, now: Long): Boolean =

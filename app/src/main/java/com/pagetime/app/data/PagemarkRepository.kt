@@ -89,6 +89,23 @@ class PagemarkRepository(
     }
 
     /**
+     * Retires a chunk: it has given what it had, and it stops coming back.
+     *
+     * The one move the incremental-reading loop was missing. A chunk could be
+     * closed and scheduled, over and over, and there was no way to say it was
+     * finished with — so a passage the reader had long since taken everything
+     * from still arrived on the calendar like fresh work. Retiring it drops it
+     * out of the due count and the queue's actionable list while keeping the
+     * row, so the reader can still see the span and when they stopped reading
+     * it. Nothing is scheduled: retirement is not a very long interval, it is
+     * the absence of one.
+     */
+    suspend fun harvestChunk(id: String) {
+        val chunk = dao.get(id) ?: return
+        dao.upsert(PagemarkSession.harvest(chunk))
+    }
+
+    /**
      * Closes the chunk at the position it reached and schedules its re-read.
      *
      * Returns the next due time, or null if the chunk no longer exists.
@@ -165,6 +182,10 @@ class PagemarkRepository(
      */
     suspend fun resumeChunk(id: String) {
         val chunk = dao.get(id) ?: return
+        // A retired chunk is not reopened, and the reader is not sent to its
+        // start: aiming them at a chunk that will not open would land them in
+        // the book with no chunk in hand and no explanation.
+        if (PagemarkSession.stateOf(chunk) == PagemarkSession.State.HARVESTED) return
         // Starting a re-read of one chunk while another is mid-read suspends
         // the open one, exactly like startChunk does.
         dao.openChunk(chunk.bookId)?.let { open ->

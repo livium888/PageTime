@@ -301,4 +301,64 @@ class PagemarkSessionTest {
     }
 
     // endregion
+
+    // region Harvesting: the end of the loop
+
+    @Test
+    fun `harvesting retires the chunk and drops its schedule`() {
+        val harvested = PagemarkSession.harvest(
+            chunk(state = PagemarkSession.State.READING, dueAt = NOW + 5_000),
+            now = NOW
+        )
+        assertEquals(PagemarkSession.State.HARVESTED.name, harvested.state)
+        // Not a very long interval — the absence of one. A retired chunk is not
+        // "due on Tuesday", it is not due.
+        assertEquals(null, harvested.dueAt)
+        assertEquals(NOW, harvested.updatedAt)
+        // Retiring is not deleting: the span stays, so the reader can see what
+        // they finished with.
+        assertEquals(0.1f, harvested.startFraction)
+    }
+
+    @Test
+    fun `a retired chunk is never actionable, however overdue it looks`() {
+        val retired = chunk(state = PagemarkSession.State.HARVESTED, dueAt = NOW - 10_000)
+        assertFalse(PagemarkSession.isActionable(retired, NOW))
+    }
+
+    @Test
+    fun `a retired chunk is never counted as due`() {
+        val items = listOf(
+            chunk("retired", PagemarkSession.State.HARVESTED, dueAt = NOW - 1),
+            chunk("due", PagemarkSession.State.DONE, dueAt = NOW - 1)
+        )
+        assertEquals(1, PagemarkSession.dueCount(items, NOW))
+    }
+
+    @Test
+    fun `a retired chunk is not reopened`() {
+        // Retirement is a decision, not a pause. Opening it again because the
+        // queue row was tapped would be the app overruling the reader.
+        val retired = chunk(state = PagemarkSession.State.HARVESTED)
+        assertEquals(retired, PagemarkSession.begin(retired, now = NOW))
+    }
+
+    @Test
+    fun `retired chunks come last, most recently retired first`() {
+        val queued = chunk("queued", PagemarkSession.State.QUEUED)
+        val retiredOld = chunk("old", PagemarkSession.State.HARVESTED).copy(updatedAt = 10L)
+        val retiredNew = chunk("new", PagemarkSession.State.HARVESTED).copy(updatedAt = 90L)
+        val ordered = PagemarkSession.orderForQueue(listOf(retiredOld, queued, retiredNew), NOW)
+        assertEquals(listOf("queued", "new", "old"), ordered.map { it.id })
+    }
+
+    @Test
+    fun `a chunk is a re-read only after it has been closed once`() {
+        // reviewCount is the honest signal: it only ever moves when a chunk is
+        // closed with a rating, so a chunk with one on it has been read once.
+        assertFalse(PagemarkSession.isReRead(chunk(reviewCount = 0)))
+        assertTrue(PagemarkSession.isReRead(chunk(reviewCount = 1)))
+    }
+
+    // endregion
 }

@@ -21,12 +21,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+/**
+ * Writing a question by hand.
+ *
+ * The two places this is reached from want different words for the same act.
+ * The reader arriving from the chunk bar is finishing a re-read and taking
+ * something out of it, and [title]/[context] are there so the sheet can say so
+ * — "Keep a question from this chunk", over the span they are in — instead of
+ * asking them to work out why a generic card form has appeared while they were
+ * reading.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CardCreationSheet(
     bookTitle: String,
     chapterLabel: String?,
     suggestedPrompt: String? = null,
+    title: String = "Create a review card",
+    context: String? = null,
     onSave: (prompt: String, answer: String, explanation: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -43,11 +55,18 @@ fun CardCreationSheet(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Create a review card", style = MaterialTheme.typography.headlineSmall)
+            Text(title, style = MaterialTheme.typography.headlineSmall)
             Text(
                 "$bookTitle${chapterLabel?.let { " · $it" }.orEmpty()}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            context?.takeIf { it.isNotBlank() }?.let { line ->
+                Text(
+                    line,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             Text(
                 "Write a question you can answer later without looking back. This card will be scheduled offline by FSRS.",
                 style = MaterialTheme.typography.bodySmall,

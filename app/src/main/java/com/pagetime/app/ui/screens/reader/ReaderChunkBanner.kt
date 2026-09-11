@@ -57,7 +57,7 @@ internal fun ChunkMenuText(label: String, hint: String) {
 }
 
 /**
- * The chunk the reader is inside, and the one action that closes it.
+ * The chunk the reader is inside, and the actions that end it.
  *
  * WHY THIS IS ON THE SCREEN AND NOT IN THE MENU
  *
@@ -71,12 +71,28 @@ internal fun ChunkMenuText(label: String, hint: String) {
  * far into the book that chunk runs (its start and end are otherwise nowhere
  * on the screen), and carries the finish action — which is the only action
  * there is, because finishing a chunk opens the next one where this one ended.
+ *
+ * WHY A RE-READ SAYS SOMETHING DIFFERENT
+ *
+ * A first pass is for reading. A re-read is for taking something out of the
+ * passage, or for deciding there is nothing left in it — and the bar used to
+ * say the same sentence on both, as if the second, third and fourth pass over
+ * a page were the same job as the first. They are not: that repetition with no
+ * extraction is a treadmill, and it is exactly why re-read chunks felt like
+ * work with no point.
+ *
+ * So on a re-read the bar offers [onKeep], which opens the question sheet, and
+ * keeps Finish for a reader who is not ready to retire the chunk yet. The
+ * third choice — retiring it for good — lives in the Options menu, where the
+ * other chunk verbs are, because it is a decision rather than the next step.
  */
 @Composable
 internal fun ChunkBanner(
     title: String,
     span: String,
+    reRead: Boolean,
     palette: ReaderPalette,
+    onKeep: () -> Unit,
     onFinish: () -> Unit,
 ) {
     val accent = readerChunkAccent(palette)
@@ -109,12 +125,21 @@ internal fun ChunkBanner(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "Tap Finish when you stop \u2014 this part comes back in a few days.",
+                    if (reRead) {
+                        "Re-read pass \u2014 keep a question from it, or finish it again."
+                    } else {
+                        "Tap Finish when you stop \u2014 this part comes back in a few days."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = palette.secondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (reRead) {
+                TextButton(onClick = onKeep) {
+                    Text("Keep", color = accent)
+                }
             }
             TextButton(onClick = onFinish) {
                 Text("Finish", color = accent)

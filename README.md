@@ -60,6 +60,23 @@ calendar as flashcards, and opens the next chunk where you stopped. On the last
 page of the book there is nothing left to open, so finishing just closes the
 book's final chunk.
 
+**A re-read is a different job from a first read, and the bar says so.** A
+first pass asks only for **Finish**. A chunk that has already been read once
+offers **Keep** as well, which opens a sheet for the question the reader wants
+to take out of the passage and writes it into the same FSRS calendar as the
+chapter flashcards — same table, same review sitting, same window. This is the
+step the loop was missing: without it a chunk could only ever come back as the
+same chunk of text, and the passage never stopped being work.
+
+**And a chunk can be finished with.** The Finish dialog on a re-read carries
+one more choice — **Nothing more to keep — retire this chunk**: the chunk has
+given what it had, so nothing is scheduled and it never comes back. Retiring is
+not deleting — the span, the rating history and the row stay in the **Reading
+queue**, last and marked *Retired*, as the record of what the reader has
+finished with — and it is not a pause, so a retired chunk is not reopened by
+tapping it. What the reader kept from it lives on as the questions they wrote,
+which is the point: the passage is transport, the question is the cargo.
+
 While a chunk is in hand the reader says which part of the book it is: the bar
 names the chunk and its span (*34% → 41%*), and a coloured rule runs down the
 page margin over every page the chunk covers — start and end were previously

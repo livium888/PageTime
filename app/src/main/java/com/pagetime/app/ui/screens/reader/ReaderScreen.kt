@@ -109,6 +109,10 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -138,6 +142,7 @@ import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenDraft
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.MapMoment
+import com.pagetime.app.data.PagemarkSession
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.local.TextHighlightEntity
 import com.pagetime.app.data.local.ReaderSettings
@@ -261,6 +266,12 @@ fun ReaderScreen(
     val promptState by vm.promptState.collectAsStateWithLifecycle()
     val pagemarks by vm.pagemarks.collectAsStateWithLifecycle()
     val activePagemark: PagemarkEntity? = pagemarks.firstOrNull { it.state == "READING" }
+    // The span the reader is inside, in words. A chunk's start and end are
+    // otherwise nowhere on the screen, which is why the feature reads as
+    // invisible however well it works.
+    val activeChunkSpan: String? = activePagemark?.let {
+        PagemarkSession.spanLabel(it.startFraction, it.endFraction)
+    }
     val highlights by vm.highlights.collectAsStateWithLifecycle()
     val pendingHighlightStart by vm.pendingTxtHighlightStart.collectAsStateWithLifecycle()
 
@@ -451,6 +462,8 @@ fun ReaderScreen(
                 activeConceptId = activeConceptId,
                 goRequest = txtGoRequest,
                 highlights = highlights,
+                chunkStartFraction = activePagemark?.startFraction,
+                chunkEndFraction = activePagemark?.endFraction ?: 0f,
                 onPageChanged = { page, pageCount, pageStartOffset, pageEndOffset, userInitiated ->
                     textPageLabel = "Page ${page + 1} of $pageCount"
                     vm.onTextPageChanged(page, pageCount, userInitiated, pageStartOffset, pageEndOffset)
@@ -673,6 +686,14 @@ fun ReaderScreen(
                 exit = fadeOut()
             ) {
                 Column(horizontalAlignment = Alignment.End) {
+                    activePagemark?.let { chunk ->
+                        ChunkBanner(
+                            title = chunk.title,
+                            span = activeChunkSpan ?: "",
+                            palette = palette,
+                            onFinish = { showCloseChunk = true }
+                        )
+                    }
                     ReaderBottomBar(
                             palette = palette,
                             sessionSeconds = sessionSeconds,
@@ -901,19 +922,22 @@ fun ReaderScreen(
         // FirstReview for why Easy is not on the table seconds after reading.
         AlertDialog(
             onDismissRequest = { showCloseChunk = false },
-            title = { Text("Close chunk") },
+            title = { Text("Finish chunk") },
             text = {
-                Text("How did reading this chunk go? This decides when it comes back for re-reading.")
+                Text(
+                    "How did reading this go? That decides when the passage comes back " +
+                        "for re-reading. The next chunk starts where you are now."
+                )
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { showCloseChunk = false; vm.closeChunkHere(1) }) {
+                    TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(1) }) {
                         Text("Again")
                     }
-                    TextButton(onClick = { showCloseChunk = false; vm.closeChunkHere(2) }) {
+                    TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(2) }) {
                         Text("Hard")
                     }
-                    TextButton(onClick = { showCloseChunk = false; vm.closeChunkHere(3) }) {
+                    TextButton(onClick = { showCloseChunk = false; vm.finishChunkHere(3) }) {
                         Text("Good")
                     }
                 }
@@ -996,6 +1020,10 @@ private fun TextReaderHost(
     activeConceptId: String?,
     goRequest: Pair<Float, Long>?,
     highlights: List<TextHighlightEntity>,
+    /** Where the chunk the reader is inside begins; null when there is none. */
+    chunkStartFraction: Float?,
+    /** Where it currently ends. 0 for a chunk that has never been finished. */
+    chunkEndFraction: Float,
     onPageChanged: (page: Int, pageCount: Int, pageStartOffset: Int, pageEndOffset: Int, userInitiated: Boolean) -> Unit,
     onRestoreComplete: () -> Unit,
     onToggleChrome: () -> Unit
@@ -1164,11 +1192,34 @@ private fun TextReaderHost(
         }
     }
 
+    // The chunk the reader is inside, drawn as a bar down the page margin.
+    //
+    // The span is otherwise invisible: a reader could be three pages into a
+    // chunk or three pages past the end of one and the screen said the same
+    // thing. The bar covers exactly the pages the chunk covers — so it appears
+    // where the chunk starts, and for a chunk being re-read it also stops
+    // where the chunk ends. The open end of a chunk still being read is the
+    // page the reader is on, because that is where they are.
+    val chunkAccent = readerChunkAccent(palette)
+    val readingFraction = TextPageLayout.fractionForPage(pagerState.currentPage, pages.size)
+    // An unfinished chunk ends where the reader currently is: the span is only
+    // closed when they say where it stops.
+    val chunkSpanEnd = maxOf(chunkEndFraction, readingFraction)
+
     HorizontalPager(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
         userScrollEnabled = true
     ) { pageIndex ->
+        val pageCount = pages.size.coerceAtLeast(1)
+        val pageStartFraction = pageIndex.toFloat() / pageCount
+        val pageEndFraction = (pageIndex + 1f) / pageCount
+        val insideChunk = chunkStartFraction != null && PagemarkSession.coversSpan(
+            startFraction = chunkStartFraction,
+            endFraction = chunkSpanEnd,
+            spanStartFraction = pageStartFraction,
+            spanEndFraction = pageEndFraction
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1178,6 +1229,27 @@ private fun TextReaderHost(
                         val centerEnd = size.width * 2f / 3f
                         if (offset.x in centerStart..centerEnd) onToggleChrome()
                     }
+                }
+                // Drawn before the padding and the page background, which are
+                // what puts it in the margin: an opaque page painted over it
+                // afterwards would hide it, and drawing it inside the text
+                // column would put it against the first letter of every line.
+                // Nothing is laid out around it, so no line of text can be
+                // pushed off the page by it.
+                .drawBehind {
+                    if (!insideChunk) return@drawBehind
+                    drawRoundRect(
+                        color = chunkAccent,
+                        topLeft = Offset(
+                            settings.marginDp.dp.toPx() - 10.dp.toPx(),
+                            28.dp.toPx()
+                        ),
+                        size = Size(
+                            3.dp.toPx(),
+                            (size.height - 56.dp.toPx()).coerceAtLeast(24.dp.toPx())
+                        ),
+                        cornerRadius = CornerRadius(1.5.dp.toPx())
+                    )
                 }
                 .padding(horizontal = settings.marginDp.dp, vertical = 24.dp)
                 .background(palette.background)
@@ -1694,10 +1766,16 @@ private fun ReaderTopBar(
                             onBookmark()
                         }
                     )
-                    MenuSectionLabel("Chunks")
+                    MenuSectionLabel(if (activePagemark != null) "This chunk" else "Chunks")
                     if (activePagemark != null) {
                         DropdownMenuItem(
-                            text = { Text("Close chunk") },
+                            text = {
+                                ChunkMenuText(
+                                    label = "Finish chunk",
+                                    hint = "Marks the end where you are. The next chunk " +
+                                        "starts here; this one comes back in a few days."
+                                )
+                            },
                             leadingIcon = { Icon(Icons.Outlined.StopCircle, contentDescription = null) },
                             onClick = {
                                 optionsExpanded = false
@@ -1705,7 +1783,12 @@ private fun ReaderTopBar(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Suspend chunk") },
+                            text = {
+                                ChunkMenuText(
+                                    label = "Suspend chunk",
+                                    hint = "Pause it without rating it or scheduling anything."
+                                )
+                            },
                             leadingIcon = { Icon(Icons.Outlined.PauseCircle, contentDescription = null) },
                             onClick = {
                                 optionsExpanded = false
@@ -1714,7 +1797,13 @@ private fun ReaderTopBar(
                         )
                     } else {
                         DropdownMenuItem(
-                            text = { Text("Start chunk here") },
+                            text = {
+                                ChunkMenuText(
+                                    label = "Start a chunk here",
+                                    hint = "Read part of the book now and re-read it in a few " +
+                                        "days. You start once \u2014 after that you only finish."
+                                )
+                            },
                             leadingIcon = { Icon(Icons.Outlined.PlayCircle, contentDescription = null) },
                             onClick = {
                                 optionsExpanded = false

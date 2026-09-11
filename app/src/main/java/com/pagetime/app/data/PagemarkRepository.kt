@@ -124,6 +124,42 @@ class PagemarkRepository(
     }
 
     /**
+     * Finishes the chunk the reader is in: rates it, schedules its re-read,
+     * and opens the next chunk at the same position.
+     *
+     * This is the whole of the incremental-reading loop, and it is one call
+     * because it is one action. There is no "start" for the reader to tap
+     * before reading: the next chunk begins exactly where the last one ended,
+     * so the only thing they ever have to say is "I have stopped here".
+     *
+     * Returns the chunk opened at the reader's position, or null when they
+     * have just reached the end of the book and there is nothing left to open
+     * (see [PagemarkSession.opensNextChunk]).
+     */
+    suspend fun finishChunk(
+        id: String,
+        rating: Int,
+        endLocatorJson: String?,
+        endFraction: Float,
+        title: String? = null,
+        now: Instant = Instant.now()
+    ): PagemarkEntity? {
+        val chunk = dao.get(id) ?: return null
+        val end = endFraction.coerceIn(0f, 1f)
+        closeChunk(id, rating, endLocatorJson, end, now)
+        if (!PagemarkSession.opensNextChunk(end)) return null
+        // Ordered after the close on purpose: startChunk suspends whatever is
+        // mid-read in this book, which is the chunk just closed — but it is
+        // DONE by now, so it is left alone with its schedule intact.
+        return startChunk(
+            bookId = chunk.bookId,
+            startLocatorJson = endLocatorJson,
+            startFraction = end,
+            title = title?.takeIf { it != chunk.title }
+        )
+    }
+
+    /**
      * Re-opens a chunk (fresh, suspended, or due for re-reading) and aims the
      * reader at its start so "open from the queue" lands on the chunk.
      */

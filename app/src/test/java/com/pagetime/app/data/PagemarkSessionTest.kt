@@ -220,4 +220,85 @@ class PagemarkSessionTest {
     }
 
     // endregion
+
+    // region One action, not two
+
+    /** The default chunk here runs 10%–50% of the book. */
+    private fun covers(
+        spanStart: Float,
+        spanEnd: Float,
+        chunkStart: Float = 0.10f,
+        chunkEnd: Float = 0.50f
+    ) = PagemarkSession.coversSpan(
+        startFraction = chunkStart,
+        endFraction = chunkEnd,
+        spanStartFraction = spanStart,
+        spanEndFraction = spanEnd
+    )
+
+    @Test
+    fun `finishing short of the end of the book opens the next chunk`() {
+        assertTrue(PagemarkSession.opensNextChunk(0f))
+        assertTrue(PagemarkSession.opensNextChunk(0.42f))
+    }
+
+    @Test
+    fun `finishing at the end of the book opens nothing`() {
+        // A chunk opened on the last page could never be read, so the queue
+        // would carry a ghost that no sitting can ever clear.
+        assertFalse(PagemarkSession.opensNextChunk(PagemarkSession.END_OF_BOOK))
+        assertFalse(PagemarkSession.opensNextChunk(1f))
+    }
+
+    @Test
+    fun `a page overlapping the chunk's span is inside it`() {
+        assertTrue(covers(0.20f, 0.30f))
+        // Half a page of overlap counts: the reader is in the chunk.
+        assertTrue(covers(0.29f, 0.31f))
+    }
+
+    @Test
+    fun `a page that only touches the chunk's edge is outside it`() {
+        // The page ends exactly where the chunk starts, or starts exactly
+        // where it ends. Neither page is read as part of the chunk.
+        assertFalse(covers(0.00f, 0.10f))
+        assertFalse(covers(0.50f, 0.60f))
+    }
+
+    @Test
+    fun `an unfinished chunk covers nothing until the reader's position is its end`() {
+        // A chunk still being read has no end on its row (0), and a span that
+        // ends where it starts covers nothing — which is why the reader screen
+        // passes the reader's own position as the end.
+        assertFalse(covers(0.60f, 0.70f, chunkEnd = 0f))
+        assertTrue(covers(0.60f, 0.70f, chunkEnd = 0.65f))
+    }
+
+    @Test
+    fun `a finished chunk reads as a span and an unfinished one from its start`() {
+        assertEquals("34% \u2192 41%", PagemarkSession.spanLabel(0.34f, 0.41f))
+        assertEquals("from 34%", PagemarkSession.spanLabel(0.34f, 0f))
+        // An end that has not moved past the start is not an end at all.
+        assertEquals("from 50%", PagemarkSession.spanLabel(0.5f, 0.5f))
+    }
+
+    @Test
+    fun `a span label stays inside the book even for a stray fraction`() {
+        assertEquals("0% \u2192 100%", PagemarkSession.spanLabel(-0.5f, 2f))
+    }
+
+    @Test
+    fun `a due chunk says when it comes back rather than that it is scheduled`() {
+        assertEquals("Not scheduled", PagemarkSession.dueLabel(null, NOW))
+        assertEquals("Due now", PagemarkSession.dueLabel(NOW, NOW))
+        assertEquals("Due now", PagemarkSession.dueLabel(NOW - 60_000L, NOW))
+        // Never "Back in 0 min" a second after finishing a chunk.
+        assertEquals("Back in 1 min", PagemarkSession.dueLabel(NOW + 30_000L, NOW))
+        assertEquals("Back in 5 min", PagemarkSession.dueLabel(NOW + 5 * 60_000L, NOW))
+        assertEquals("Back in 1 h", PagemarkSession.dueLabel(NOW + 60 * 60_000L, NOW))
+        assertEquals("Back in 3 h", PagemarkSession.dueLabel(NOW + 3 * 3_600_000L, NOW))
+        assertEquals("Back in 3 days", PagemarkSession.dueLabel(NOW + 3 * 86_400_000L, NOW))
+    }
+
+    // endregion
 }

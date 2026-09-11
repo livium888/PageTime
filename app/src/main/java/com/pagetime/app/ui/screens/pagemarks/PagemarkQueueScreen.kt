@@ -121,10 +121,12 @@ private fun EmptyQueue(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Text(
             "Incremental reading reads a book in chunks instead of a single " +
-                "relentless pass. From the reader's Options menu, pick \u201cStart " +
-                "chunk here\u201d when you pause somewhere; finish a chunk and say " +
-                "how it went, and PageTime schedules that passage to come back " +
-                "when it is worth re-reading.",
+                "relentless pass. Open a book, choose \u201cStart a chunk here\u201d " +
+                "once, and read. When you stop, tap Finish on the chunk bar at " +
+                "the foot of the page and say how it went \u2014 that passage comes " +
+                "back for re-reading when it is worth re-reading, and the next " +
+                "chunk is already waiting where you stopped. Every chunk that " +
+                "comes back shows up here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -150,10 +152,26 @@ private fun PagemarkCard(
                         maxLines = 2
                     )
                     Spacer(Modifier.height(2.dp))
+                    // The span, because a chunk's start and end are otherwise
+                    // nowhere on the screen: the reader could not tell what
+                    // part of the book "Chunk 3" even is.
                     Text(
-                        "${row.bookTitle} · ${stateLabel(chunk)}",
+                        "${row.bookTitle} · " +
+                            PagemarkSession.spanLabel(chunk.startFraction, chunk.endFraction),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val now = System.currentTimeMillis()
+                    val label = stateLabel(chunk, now)
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (stateIsDue(chunk, now)) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                     )
                 }
                 IconButton(onClick = onDelete) {
@@ -186,12 +204,22 @@ private fun PagemarkCard(
     }
 }
 
-private fun stateLabel(chunk: PagemarkEntity): String = when (PagemarkSession.stateOf(chunk)) {
+/**
+ * What state a chunk is in, in words the reader can act on.
+ *
+ * "Scheduled" was the whole of what a finished chunk used to say, which is
+ * true and useless: the schedule is the point of the feature, so it is stated
+ * as a time — when this comes back — rather than as a state name.
+ */
+private fun stateLabel(chunk: PagemarkEntity, now: Long): String = when (
+    PagemarkSession.stateOf(chunk)
+) {
     PagemarkSession.State.READING -> "Reading now"
-    PagemarkSession.State.QUEUED -> "Queued"
-    PagemarkSession.State.SUSPENDED -> "Suspended"
-    PagemarkSession.State.DONE -> when (val due = chunk.dueAt) {
-        null -> "Scheduled"
-        else -> if (due <= System.currentTimeMillis()) "Due for re-reading" else "Scheduled"
-    }
+    PagemarkSession.State.QUEUED -> "Not started yet"
+    PagemarkSession.State.SUSPENDED -> "Paused"
+    PagemarkSession.State.DONE -> PagemarkSession.dueLabel(chunk.dueAt, now)
 }
+
+private fun stateIsDue(chunk: PagemarkEntity, now: Long): Boolean =
+    PagemarkSession.stateOf(chunk) == PagemarkSession.State.READING ||
+        (chunk.dueAt != null && chunk.dueAt <= now)

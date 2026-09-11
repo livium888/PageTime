@@ -480,15 +480,29 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    /** Closes the open chunk at the current position with a rating. */
-    fun closeChunkHere(rating: Int) {
+    /**
+     * Finishes the open chunk at the current position with a rating, and opens
+     * the next one where the reader stopped.
+     *
+     * The reader never taps "start": a chunk runs from wherever the last one
+     * ended to wherever they next say they have stopped. The only way to be
+     * inside the wrong span is to be reading somewhere else.
+     */
+    fun finishChunkHere(rating: Int) {
         val chunk = activeChunk() ?: return
+        val chapter = currentChapterTitle()
         viewModelScope.launch {
-            pagemarkRepo.closeChunk(
+            pagemarkRepo.finishChunk(
                 id = chunk.id,
                 rating = rating,
                 endLocatorJson = currentLocatorJson(),
-                endFraction = currentFraction()
+                endFraction = currentFraction(),
+                // Named after the chapter only when the reader has moved on to
+                // a different one; two chunks in one chapter would otherwise
+                // both be called after it, and be indistinguishable in the
+                // queue. The repository falls back to "Chunk N" for null, and
+                // the reader can rename it there.
+                title = chapter?.takeIf { it != chunk.title }
             )
         }
     }

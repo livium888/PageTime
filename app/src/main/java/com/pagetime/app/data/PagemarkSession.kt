@@ -2,6 +2,8 @@ package com.pagetime.app.data
 
 import com.pagetime.app.data.local.PagemarkEntity
 import io.github.openspacedrepetition.Rating
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * The rules of incremental reading, as pure functions.
@@ -179,4 +181,85 @@ object PagemarkSession {
      * already exist. The reader can rename it in the queue.
      */
     fun nextTitle(existingCount: Int): String = "Chunk ${existingCount + 1}"
+
+    // region One action, not two
+
+    /**
+     * Close enough to the end of the book that there is nothing left to chunk.
+     */
+    const val END_OF_BOOK = 0.995f
+
+    /**
+     * Whether finishing a chunk at [endFraction] should open the next one.
+     *
+     * WHY FINISHING IS ONE ACTION AND NOT TWO
+     *
+     * The reader used to have to tap "Start chunk here" before reading and
+     * "Close chunk" when they stopped — two taps for one idea, and the first
+     * one had to happen at exactly the right moment or the chunk silently
+     * covered the wrong span. But a chunk's end IS the next chunk's start:
+     * the reader stops where they stop, and the next sitting begins there.
+     * So there is only ever one action — "finish this chunk" — and it both
+     * closes the span that was read and opens the span that is next.
+     *
+     * The exception is the end of the book, where opening a chunk on the last
+     * page would leave a ghost in the queue that can never be read.
+     */
+    fun opensNextChunk(endFraction: Float): Boolean = endFraction < END_OF_BOOK
+
+    /**
+     * Whether a span of the book is inside a chunk.
+     *
+     * The one thing incremental reading has to be able to show and could not:
+     * where the chunk starts and where it ends. A plain-text page knows the
+     * span of the book it covers, so the two can be compared — and the page
+     * the reader is on is inside the chunk exactly when the spans overlap.
+     *
+     * The end passed in for a chunk still being read is the reader's own
+     * position, not the 0 the row holds: the span is open until they say where
+     * it stops.
+     */
+    fun coversSpan(
+        startFraction: Float,
+        endFraction: Float,
+        spanStartFraction: Float,
+        spanEndFraction: Float
+    ): Boolean =
+        spanEndFraction > startFraction && spanStartFraction < endFraction
+
+    /**
+     * The span of a chunk in words, because "start and end" is otherwise
+     * nowhere on the screen: "34% → 41%". A chunk that has not been finished
+     * has no end yet, so it reads "from 34%".
+     */
+    fun spanLabel(startFraction: Float, endFraction: Float): String {
+        val from = percent(startFraction)
+        val to = percent(endFraction)
+        return if (endFraction <= startFraction) "from $from" else "$from \u2192 $to"
+    }
+
+    /**
+     * When a chunk comes back, said as a time rather than as a state name.
+     *
+     * "Scheduled" tells the reader nothing they can act on; the whole point
+     * of the schedule is that the passage returns on a particular day.
+     */
+    fun dueLabel(dueAtMillis: Long?, nowMillis: Long): String {
+        if (dueAtMillis == null) return "Not scheduled"
+        val remaining = dueAtMillis - nowMillis
+        if (remaining <= 0L) return "Due now"
+        val minutes = remaining / 60_000L
+        return when {
+            // Hours rather than "tomorrow", because tomorrow is a claim about
+            // the calendar and this only knows the distance.
+            minutes < 60L -> "Back in ${minutes.coerceAtLeast(1L)} min"
+            minutes < 2_880L -> "Back in ${(minutes + 30L) / 60L} h"
+            else -> "Back in ${(minutes + 720L) / 1_440L} days"
+        }
+    }
+
+    private fun percent(fraction: Float): String =
+        String.format(Locale.US, "%d%%", (fraction.coerceIn(0f, 1f) * 100f).roundToInt())
+
+    // endregion
 }

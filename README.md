@@ -50,18 +50,32 @@ The offline model is **Qwen 2.5 0.5B Instruct (q8)**, an open Apache-2.0 model s
 
 ## Incremental reading (chunks)
 
-Read a book in chunks instead of one relentless pass. From the reader's
-**Options** menu, **Start chunk here** marks where you paused; **Close chunk**
-asks how it went (Again / Hard / Good — never Easy, for the same reason as the
-reading chair) and schedules the passage to come back on the same FSRS calendar
-as flashcards. Due chunks surface in the **Review** sitting too, between chapter
-cards and slip box notes, and one tap hands them to the reader. When the balance
-is empty and a blocked app opens, the "time is up" screen's **Read now** opens the
-reader on the next due chunk instead of the last book — the read-to-unlock loop
-and the re-read loop are the same loop. **Suspend chunk** pauses without judging. The **Reading queue**
-(Library home) shows everything: the chunk in hand first, due re-reads next,
-then the rest by priority (1–5, adjustable in the queue). Opening a chunk
-jumps the reader straight to its start.
+Read a book in chunks instead of one relentless pass. A chunk's end is the next
+chunk's start, so there is only ever one real action: **Start a chunk here**
+(Options → Chunks) opens the first chunk wherever you happen to be, and after
+that you simply read and tap **Finish** on the chunk bar at the foot of the page
+when you stop. Finishing asks how it went (Again / Hard / Good — never Easy, for
+the same reason as the reading chair), schedules that passage on the same FSRS
+calendar as flashcards, and opens the next chunk where you stopped. On the last
+page of the book there is nothing left to open, so finishing just closes the
+book's final chunk.
+
+While a chunk is in hand the reader says which part of the book it is: the bar
+names the chunk and its span (*34% → 41%*), and a coloured rule runs down the
+page margin over every page the chunk covers — start and end were previously
+nowhere on the screen, which is why the feature read as invisible however well
+it worked. **Finish chunk** and **Suspend chunk** are also on the Options menu,
+each with a line saying what it does; **Suspend chunk** pauses without judging.
+
+Due chunks surface in the **Review** sitting too, between chapter cards and slip
+box notes, and one tap hands them to the reader. When the balance is empty and a
+blocked app opens, the "time is up" screen's **Read now** opens the reader on the
+next due chunk instead of the last book — the read-to-unlock loop and the re-read
+loop are the same loop. The **Reading queue** (Library home) shows everything: the
+chunk in hand first, due re-reads next, then the rest by priority (1–5, adjustable
+in the queue). Each row names the book, the chunk's span, and when a finished
+chunk comes back (*Back in 3 days*), instead of the word "Scheduled"; opening a
+chunk jumps the reader straight to its start.
 
 ## Text highlights
 

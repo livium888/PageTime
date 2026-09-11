@@ -223,7 +223,8 @@ fun ReaderScreen(
     onOpenConcepts: (String) -> Unit = {},
     onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String, locatorJson: String?, textOffset: Int?) -> Unit = { _, _, _, _, _, _ -> },
     onOpenLumenCards: (String) -> Unit = {},
-    onOpenPagemarks: () -> Unit = {}
+    onOpenPagemarks: () -> Unit = {},
+    onOpenHighlights: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -593,7 +594,8 @@ fun ReaderScreen(
                 onStartHighlight = vm::startHighlightHere,
                 onEndHighlight = vm::endHighlightHere,
                 onClearHighlight = vm::clearPendingHighlight,
-                optionsMenuOpen = optionsMenuOpen
+                optionsMenuOpen = optionsMenuOpen,
+                onOpenHighlights = { onOpenHighlights(bookId) }
             )
         }
 
@@ -1502,6 +1504,7 @@ private fun ReaderTopBar(
     onStartHighlight: () -> Unit = {},
     onEndHighlight: () -> Unit = {},
     onClearHighlight: () -> Unit = {},
+    onOpenHighlights: () -> Unit = {},
     // Owned by the caller so the chrome's idle auto-hide can stand down while
     // this menu is open. Handing down the state object rather than a boolean and
     // a callback keeps the thirty-odd `optionsExpanded = false` rows below
@@ -1727,8 +1730,20 @@ private fun ReaderTopBar(
                             onOpenPagemarks()
                         }
                     )
+                    // Shown for both formats, unlike the mark-making items
+                    // below: an EPUB reader marks by drag-selection, and this
+                    // list is the only way to see what they marked. Those
+                    // highlights were stored with nothing able to read them.
+                    MenuSectionLabel("Highlights")
+                    DropdownMenuItem(
+                        text = { Text("View highlights") },
+                        leadingIcon = { Icon(Icons.Outlined.Highlight, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onOpenHighlights()
+                        }
+                    )
                     if (isTextBook) {
-                        MenuSectionLabel("Highlights")
                         if (pendingHighlightStart) {
                             DropdownMenuItem(
                                 text = { Text("End highlight here") },

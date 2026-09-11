@@ -104,7 +104,9 @@ class AppContainer(context: Context) {
 
     /** Persistent text highlights: marked spans in both book formats. */
     val highlightRepository = HighlightRepository(
-        dao = database.textHighlightDao()
+        dao = database.textHighlightDao(),
+        settingsRepository = settingsRepository,
+        bookDao = bookDao
     )
 
     val libraryRepository = LibraryRepository(

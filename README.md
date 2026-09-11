@@ -78,9 +78,15 @@ Mark passages while reading, in both formats:
   stored as whole-book character offsets, so it survives re-layout at any font
   size, and every page it touches renders with a green background.
 
-Highlights are stored per book and deleted with it; each one keeps the
-highlighted text itself, so a highlight can be turned into a Lumen card later
-without re-opening the book.
+**Options → View highlights** — shown for both formats — opens the list for the
+book you are in. Each row quotes the passage, says how far into the book it sits
+and when it was marked, opens the book at that spot, and can be deleted. Until
+now a highlight was stored, painted on the page, and then unreachable: nothing
+could list it, reopen it or remove it.
+
+Highlights are stored per book and deleted with it. Each one keeps the
+highlighted text itself, so the list can show a passage without re-reading it
+out of the book.
 
 ## Settings
 

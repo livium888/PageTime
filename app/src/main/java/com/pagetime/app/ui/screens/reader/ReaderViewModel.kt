@@ -550,10 +550,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    fun deleteHighlight(id: String) {
-        viewModelScope.launch { highlightRepo.delete(id) }
-    }
-
     // endregion
 
     // region Lumen cards

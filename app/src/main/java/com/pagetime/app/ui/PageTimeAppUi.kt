@@ -44,6 +44,7 @@ import com.pagetime.app.ui.screens.reader.ReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.flashcards.FlashcardsScreen
+import com.pagetime.app.ui.screens.highlights.HighlightsScreen
 import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.pagemarks.PagemarkQueueScreen
 import com.pagetime.app.ui.screens.review.ReviewSessionScreen
@@ -280,11 +281,26 @@ fun PageTimeAppUi(
             composable("ai_usage") {
                 AiUsageScreen(onBack = { navController.popBackStack() })
             }
+            // The highlights list is reached from the reader's Options menu, so
+            // it sits beside the reader rather than under a bottom tab: a
+            // reader wanting their marks is in the book, not in the library.
+            composable("highlights/{bookId}") { entry ->
+                HighlightsScreen(
+                    bookId = entry.arguments?.getString("bookId").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onOpenBook = { id ->
+                        navController.navigate("reader/$id") { launchSingleTop = true }
+                    }
+                )
+            }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
                 ReaderScreen(
                     bookId = bookId,
                     onBack = { navController.popBackStack() },
+                    onOpenHighlights = { highlightBookId ->
+                        navController.navigate("highlights/$highlightBookId")
+                    },
                     onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
                     onOpenLumenCards = { navController.navigate("lumen") },
                     onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->

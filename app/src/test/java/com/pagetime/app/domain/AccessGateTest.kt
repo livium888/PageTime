@@ -249,6 +249,62 @@ class AccessGateTest {
         assertFalse(GateState.loosensLength(1800, 600))
     }
 
+    // --- What the settings sliders may commit ---
+
+    /**
+     * The reported bug. The sliders clipped their range to the allowed
+     * direction, which pinned the thumb to the end of the range and turned
+     * every touch into a large move the one way it could go — touching the
+     * price slider made the reading target climb. The rule now lives here, on
+     * the committed value, so a touch means what it looks like: a small nudge
+     * raises the price a little, and a touch on the easy side changes nothing.
+     */
+    @Test
+    fun `a touch on a locked price slider raises it only as far as it looks`() {
+        assertEquals(COST, GateState.committedCostSeconds(COST, COST, canLoosenTheRules = false))
+        assertEquals(COST + 60, GateState.committedCostSeconds(COST, COST + 60, canLoosenTheRules = false))
+        // Left of the thumb: refused, so it cannot cheapen the gate.
+        assertEquals(COST, GateState.committedCostSeconds(COST, 900, canLoosenTheRules = false))
+    }
+
+    @Test
+    fun `app time in hand unlocks both directions of the price slider`() {
+        assertEquals(900L, GateState.committedCostSeconds(COST, 900, canLoosenTheRules = true))
+        assertEquals(COST + 60, GateState.committedCostSeconds(COST, COST + 60, canLoosenTheRules = true))
+    }
+
+    @Test
+    fun `the price slider cannot leave its bounds`() {
+        assertEquals(
+            GateState.MIN_SESSION_COST_SECONDS,
+            GateState.committedCostSeconds(COST, 0, canLoosenTheRules = true),
+        )
+        assertEquals(
+            GateState.MAX_SESSION_COST_SECONDS,
+            GateState.committedCostSeconds(COST, Long.MAX_VALUE, canLoosenTheRules = true),
+        )
+    }
+
+    /** Shorter is the strict direction for a session, so the clamp is mirrored. */
+    @Test
+    fun `a locked length slider only shortens`() {
+        assertEquals(LENGTH, GateState.committedLengthSeconds(LENGTH, LENGTH, canLoosenTheRules = false))
+        assertEquals(LENGTH - 60, GateState.committedLengthSeconds(LENGTH, LENGTH - 60, canLoosenTheRules = false))
+        assertEquals(LENGTH, GateState.committedLengthSeconds(LENGTH, LENGTH + 60, canLoosenTheRules = false))
+    }
+
+    @Test
+    fun `the length slider cannot leave its bounds`() {
+        assertEquals(
+            GateState.MIN_SESSION_LENGTH_SECONDS,
+            GateState.committedLengthSeconds(LENGTH, 0, canLoosenTheRules = true),
+        )
+        assertEquals(
+            GateState.MAX_SESSION_LENGTH_SECONDS,
+            GateState.committedLengthSeconds(LENGTH, Long.MAX_VALUE, canLoosenTheRules = true),
+        )
+    }
+
     // --- Degenerate configurations ---
 
     @Test

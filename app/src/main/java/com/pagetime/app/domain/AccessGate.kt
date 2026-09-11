@@ -249,6 +249,66 @@ data class GateState(
         fun loosensLength(currentSeconds: Long, proposedSeconds: Long): Boolean =
             proposedSeconds > currentSeconds
 
+        /**
+         * What the price slider may commit when a touch asks for [proposedSeconds].
+         *
+         * The slider used to clip its own travel instead of coming here: the
+         * range began at the current price, so the thumb sat at the far left
+         * end and the track still spanned the whole distance to the ceiling.
+         * Compose maps a touch across the whole track into the range, so a
+         * finger anywhere past the left edge read as "move a long way toward
+         * the maximum" — and because each write moved the range's start up to
+         * the new price, the next touch jumped again. Touching the slider made
+         * the reading target climb. That was the reported bug, and it was the
+         * mapping, not the rule.
+         *
+         * The slider keeps the FULL range now, so the thumb sits where the
+         * setting actually is and a touch near it means what it looks like.
+         * The direction is clamped here, which is the only thing that ever
+         * needed saying: a proposal in the strict direction is taken as given,
+         * and one in the easy direction only when the reader has app time in
+         * hand. Everything outside the range is pinned to it, exactly as the
+         * repository would pin it on the way to storage.
+         */
+        fun committedCostSeconds(
+            currentSeconds: Long,
+            proposedSeconds: Long,
+            canLoosenTheRules: Boolean,
+        ): Long = commit(
+            currentSeconds = currentSeconds.coerceIn(MIN_SESSION_COST_SECONDS, MAX_SESSION_COST_SECONDS),
+            proposedSeconds = proposedSeconds.coerceIn(MIN_SESSION_COST_SECONDS, MAX_SESSION_COST_SECONDS),
+            loosens = { current, proposed -> loosensCost(current, proposed) },
+            canLoosenTheRules = canLoosenTheRules,
+        )
+
+        /** The same rule for session length, where SHORTER is the strict direction. */
+        fun committedLengthSeconds(
+            currentSeconds: Long,
+            proposedSeconds: Long,
+            canLoosenTheRules: Boolean,
+        ): Long = commit(
+            currentSeconds = currentSeconds.coerceIn(MIN_SESSION_LENGTH_SECONDS, MAX_SESSION_LENGTH_SECONDS),
+            proposedSeconds = proposedSeconds.coerceIn(MIN_SESSION_LENGTH_SECONDS, MAX_SESSION_LENGTH_SECONDS),
+            loosens = { current, proposed -> loosensLength(current, proposed) },
+            canLoosenTheRules = canLoosenTheRules,
+        )
+
+        /**
+         * A proposal that would make the gate weaker is refused unless the
+         * reader has app time in hand; anything else stands. Returning the
+         * current value rather than null is what lets the slider leave the
+         * thumb alone instead of writing a number the repository would throw
+         * away a moment later.
+         */
+        private fun commit(
+            currentSeconds: Long,
+            proposedSeconds: Long,
+            loosens: (Long, Long) -> Boolean,
+            canLoosenTheRules: Boolean,
+        ): Long =
+            if (loosens(currentSeconds, proposedSeconds) && !canLoosenTheRules) currentSeconds
+            else proposedSeconds
+
         /** Before anything is known: off, so nothing is blocked on a guess. */
         val Unknown = GateState(
             switchedOn = false,

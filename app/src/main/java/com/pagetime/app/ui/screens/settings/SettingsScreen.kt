@@ -303,10 +303,13 @@ fun SettingsScreen(
                         BlockScreenText.span(gate.sessionCostSeconds),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    // The travel is clipped to the direction that is allowed,
-                    // rather than letting the thumb be dragged somewhere the
-                    // repository will refuse — a slider that springs back
-                    // reads as broken, not as a rule.
+                    // The range is the FULL range, and the allowed direction is
+                    // enforced when a value is committed instead of by clipping
+                    // the travel to half the track. Clipping it pinned the thumb
+                    // to the end of the range, which made every touch read as a
+                    // large move the one way it could go: touching the price
+                    // slider jumped the reading target halfway to the maximum,
+                    // over and over. See [GateState.committedCostSeconds].
                     val costMinutes = (gate.sessionCostSeconds / 60).toFloat()
                     val lengthMinutes = (gate.sessionLengthSeconds / 60).toFloat()
                     val costFloor = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()
@@ -314,29 +317,43 @@ fun SettingsScreen(
                     val lengthFloor = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()
                     val lengthCeiling = (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat()
 
-                    val costStart = if (gate.canLoosenTheRules) costFloor else costMinutes
-                    // Already at the strictest end with no room left to move:
-                    // the range would collapse to a point, so the control is
-                    // switched off rather than handed an empty span.
-                    val costMovable = costCeiling > costStart
                     Slider(
-                        value = costMinutes.coerceIn(costStart, costCeiling),
-                        onValueChange = { viewModel.setSessionCostSeconds(it.toLong() * 60) },
-                        valueRange = costStart..maxOf(costCeiling, costStart + 1f),
-                        enabled = costMovable
+                        value = costMinutes.coerceIn(costFloor, costCeiling),
+                        onValueChange = { proposed ->
+                            val next = GateState.committedCostSeconds(
+                                currentSeconds = gate.sessionCostSeconds,
+                                proposedSeconds = proposed.toLong() * 60,
+                                canLoosenTheRules = gate.canLoosenTheRules,
+                            )
+                            if (next != gate.sessionCostSeconds) {
+                                viewModel.setSessionCostSeconds(next)
+                            }
+                        },
+                        valueRange = costFloor..costCeiling,
+                        // Already at the top of the range with no app time in
+                        // hand, the control has nothing left it may do, so it is
+                        // switched off rather than left to swallow input.
+                        enabled = gate.canLoosenTheRules || costMinutes < costCeiling
                     )
                     Text("Session length", style = MaterialTheme.typography.titleMedium)
                     Text(
                         BlockScreenText.span(gate.sessionLengthSeconds),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    val lengthEnd = if (gate.canLoosenTheRules) lengthCeiling else lengthMinutes
-                    val lengthMovable = lengthEnd > lengthFloor
                     Slider(
-                        value = lengthMinutes.coerceIn(lengthFloor, lengthEnd.coerceAtLeast(lengthFloor)),
-                        onValueChange = { viewModel.setSessionLengthSeconds(it.toLong() * 60) },
-                        valueRange = lengthFloor..maxOf(lengthEnd, lengthFloor + 1f),
-                        enabled = lengthMovable
+                        value = lengthMinutes.coerceIn(lengthFloor, lengthCeiling),
+                        onValueChange = { proposed ->
+                            val next = GateState.committedLengthSeconds(
+                                currentSeconds = gate.sessionLengthSeconds,
+                                proposedSeconds = proposed.toLong() * 60,
+                                canLoosenTheRules = gate.canLoosenTheRules,
+                            )
+                            if (next != gate.sessionLengthSeconds) {
+                                viewModel.setSessionLengthSeconds(next)
+                            }
+                        },
+                        valueRange = lengthFloor..lengthCeiling,
+                        enabled = gate.canLoosenTheRules || lengthMinutes > lengthFloor
                     )
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

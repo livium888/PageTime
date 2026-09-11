@@ -97,6 +97,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -279,6 +280,12 @@ fun ReaderScreen(
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
     var controlsVisible by remember { mutableStateOf(true) }
+    // The Options dropdown is rendered inside the top bar, but the chrome's idle
+    // timer is owned here — and it has to stand down while that menu is open, or
+    // the menu is disposed with the bar while the reader is still working
+    // through it. A state object rather than a boolean plus a callback so the
+    // menu's rows keep closing it by plain assignment.
+    val optionsMenuOpen = remember { mutableStateOf(false) }
     var textPageLabel by remember { mutableStateOf<String?>(null) }
     var navigator by remember { mutableStateOf<EpubNavigatorFragment?>(null) }
     var chapterLabel by remember { mutableStateOf<String?>(null) }
@@ -312,8 +319,12 @@ fun ReaderScreen(
     }
 
     // Auto-hide the top controls after a short idle so reading becomes immersive.
-    LaunchedEffect(controlsVisible) {
-        if (!controlsVisible) return@LaunchedEffect
+    // Standing down while the Options menu is open is the point: a menu the
+    // reader is working through must not close itself, and dismissing it starts a
+    // fresh countdown rather than leaving the chrome to vanish the instant it
+    // shuts.
+    LaunchedEffect(controlsVisible, optionsMenuOpen.value) {
+        if (!controlsVisible || optionsMenuOpen.value) return@LaunchedEffect
         delay(5_000)
         controlsVisible = false
     }
@@ -581,7 +592,8 @@ fun ReaderScreen(
                 pendingHighlightStart = pendingHighlightStart != null,
                 onStartHighlight = vm::startHighlightHere,
                 onEndHighlight = vm::endHighlightHere,
-                onClearHighlight = vm::clearPendingHighlight
+                onClearHighlight = vm::clearPendingHighlight,
+                optionsMenuOpen = optionsMenuOpen
             )
         }
 
@@ -1489,9 +1501,14 @@ private fun ReaderTopBar(
     pendingHighlightStart: Boolean = false,
     onStartHighlight: () -> Unit = {},
     onEndHighlight: () -> Unit = {},
-    onClearHighlight: () -> Unit = {}
+    onClearHighlight: () -> Unit = {},
+    // Owned by the caller so the chrome's idle auto-hide can stand down while
+    // this menu is open. Handing down the state object rather than a boolean and
+    // a callback keeps the thirty-odd `optionsExpanded = false` rows below
+    // untouched.
+    optionsMenuOpen: MutableState<Boolean>
 ) {
-    var optionsExpanded by remember { mutableStateOf(false) }
+    var optionsExpanded by optionsMenuOpen
 
     TopAppBar(
         title = {

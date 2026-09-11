@@ -100,7 +100,10 @@ added:
 
 The reader's overflow menu is grouped the same way — Navigate, Study, Notes,
 Chunks, Highlights, Display, Transcript — so a two-dozen-row menu can be scanned
-by heading instead of read end to end.
+by heading instead of read end to end. It also stays open until the reader
+closes it: the chrome's idle fade stands down while a menu is up, so a long list
+no longer disappears mid-look, and dismissing the menu starts the countdown
+again.
 
 ## Requirements
 

@@ -8,8 +8,10 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import com.pagetime.app.data.TextHighlightSpans
 import com.pagetime.app.data.learning.ConceptHighlightMatcher
 import com.pagetime.app.data.local.ConceptEntity
+import com.pagetime.app.data.local.TextHighlightEntity
 
 /**
  * Builds an [AnnotatedString] where concept keywords found in [pageText] are
@@ -76,5 +78,59 @@ fun rememberAnnotatedPage(
         if (cursor < pageText.length) {
             append(pageText.substring(cursor))
         }
+    }
+}
+
+/** The background tint for reader-marked highlights. */
+private val ReaderHighlightBackground = Color(0xFF7CB342).copy(alpha = 0.30f)
+
+/**
+ * The page with persistent highlights merged in.
+ *
+ * Highlights are whole-book offsets; [pageStartOffset]..[pageEndOffset] is the
+ * page's window onto the text. Concept hints and reader highlights are two
+ * separate style layers and both survive the merge: overlapping spans simply
+ * carry both style annotations, which Compose merges per property at draw.
+ */
+@Composable
+fun rememberAnnotatedPageWithHighlights(
+    pageText: String,
+    pageStartOffset: Int,
+    pageEndOffset: Int,
+    highlights: List<TextHighlightEntity>,
+    concepts: List<ConceptEntity>,
+    level: String,
+    activeConceptId: String?
+): AnnotatedString {
+    val ranges = remember(pageText, pageStartOffset, pageEndOffset, highlights) {
+        TextHighlightSpans.txtPageRanges(highlights, pageStartOffset, pageEndOffset)
+    }
+    val concept = rememberAnnotatedPage(pageText, concepts, level, activeConceptId)
+    if (ranges.isEmpty()) return concept
+
+    val background = remember(pageText, ranges) {
+        buildAnnotatedString {
+            var cursor = 0
+            for ((start, end) in ranges) {
+                // The page text is trimmed at layout time, so a range touching
+                // the page edge may run past the rendered text; clamp it.
+                val safeStart = start.coerceIn(0, pageText.length)
+                val safeEnd = end.coerceIn(safeStart, pageText.length)
+                if (safeEnd <= safeStart) continue
+                if (safeStart > cursor) append(pageText.substring(cursor, safeStart))
+                withStyle(SpanStyle(background = ReaderHighlightBackground)) {
+                    append(pageText.substring(safeStart, safeEnd))
+                }
+                cursor = safeEnd
+            }
+            if (cursor < pageText.length) append(pageText.substring(cursor))
+        }
+    }
+    return remember(pageText, concept.spanStyles, background.spanStyles) {
+        AnnotatedString(
+            text = pageText,
+            spanStyles = concept.spanStyles + background.spanStyles,
+            paragraphStyles = concept.paragraphStyles
+        )
     }
 }

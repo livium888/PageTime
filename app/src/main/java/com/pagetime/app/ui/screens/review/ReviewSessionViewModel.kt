@@ -8,6 +8,7 @@ import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.LumenCardEntity
+import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.review.ChapterCardGrader
 import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.data.review.ReviewSessionState
@@ -35,6 +36,14 @@ data class ReviewItem(
     val bookId: String,
     /** Where the reader's own note came from, versus a generated question. */
     val fromChapter: Boolean,
+    /**
+     * A due reading chunk rather than a card.
+     *
+     * A chunk is not a question and is not graded here: the sitting's only
+     * job is to remind the reader the passage is due and hand them to the
+     * reader, where closing the chunk with a rating updates its schedule.
+     */
+    val isChunk: Boolean = false,
     /**
      * Which book and chapter this came from, for the line above the question.
      *
@@ -68,6 +77,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val reviewLog = container.database.learningReviewLogDao()
     private val settings = container.settingsRepository
     private val bookDao = container.database.bookDao()
+    private val pagemarks = container.pagemarkRepository
 
     /**
      * Grading for chapter flashcards, shared with the reading chair.
@@ -88,6 +98,9 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Which table each id came from, so the right one is graded. */
     private var chapterCardIds: Set<String> = emptySet()
+
+    /** Chunk ids, which are handed to the reader rather than graded. */
+    private var chunkIds: Set<String> = emptySet()
 
     /**
      * How to take back the last answer.
@@ -136,17 +149,28 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }.getOrDefault(emptyList())
 
+            // Due chunks join the sitting between chapter cards and slip box
+            // notes: re-reading is heavier than a flashcard but the memory
+            // loop is the same, and neither should have to wait for the other.
+            val chunks = runCatching {
+                pagemarks.dueChunks(threshold)
+            }.getOrDefault(emptyList())
+
             val titles = runCatching {
                 bookDao.getAll().associate { it.id to it.title }
             }.getOrDefault(emptyMap())
 
             chapterCardIds = chapter.map { it.id }.toSet()
+            chunkIds = chunks.map { it.id }.toSet()
             cards = (
                 chapter.map { it.asReviewItem(titles[it.bookId]) } +
+                    chunks.map { it.asReviewItem(titles[it.bookId]) } +
                     slips.map { it.asReviewItem(titles[it.bookId]) }
                 ).associateBy { it.id }
 
-            val session = ReviewSession.start(chapter.map { it.id } + slips.map { it.id })
+            val session = ReviewSession.start(
+                chapter.map { it.id } + chunks.map { it.id } + slips.map { it.id }
+            )
             _state.value = ReviewUiState(
                 loading = false,
                 session = session,
@@ -174,6 +198,17 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             ).joinToString(" · ").takeIf { it.isNotBlank() },
         )
     }
+
+    private fun PagemarkEntity.asReviewItem(bookTitle: String?): ReviewItem = ReviewItem(
+        id = id,
+        front = title,
+        back = "",
+        source = null,
+        bookId = bookId,
+        fromChapter = false,
+        sourceLabel = bookTitle,
+        isChunk = true,
+    )
 
     private fun LumenCardEntity.asReviewItem(bookTitle: String?): ReviewItem {
         val (front, back) = repository.trainingPrompt(this)
@@ -220,6 +255,9 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun grade(rating: LumenRating) {
         val current = _state.value.card ?: return
+        // A chunk is never graded from the sitting — its rating belongs to the
+        // reader's close-chunk flow, which is where the passage is fresh.
+        if (current.isChunk) return
         val before = _state.value
         viewModelScope.launch {
             // The reader came back. The backoff ladder is about being ignored,
@@ -280,6 +318,23 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 lastInterval = null,
                 canUndo = false,
             )
+        }
+    }
+
+    /**
+     * Hands a due chunk to the reader.
+     *
+     * The chunk is re-opened (READING, aimed at its start) and the caller
+     * navigates only once that write has landed — [onOpened] fires after
+     * [PagemarkRepository.resumeChunk] returns, so the reader cannot load
+     * before the pending source exists and open at the wrong place.
+     */
+    fun readChunk(onOpened: () -> Unit = {}) {
+        val current = _state.value.card ?: return
+        if (!current.isChunk) return
+        viewModelScope.launch {
+            runCatching { pagemarks.resumeChunk(current.id) }
+            onOpened()
         }
     }
 

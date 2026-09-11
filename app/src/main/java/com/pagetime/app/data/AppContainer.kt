@@ -70,7 +70,9 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_17_18,
                 AppDatabase.MIGRATION_18_19,
                 AppDatabase.MIGRATION_19_20,
-                AppDatabase.MIGRATION_20_21
+                AppDatabase.MIGRATION_20_21,
+                AppDatabase.MIGRATION_21_22,
+                AppDatabase.MIGRATION_22_23
             )
             .build()
 
@@ -93,6 +95,17 @@ class AppContainer(context: Context) {
     )
     val epubParser = EpubParser()
     val youtubeSearchApi = YouTubeSearchApi()
+
+    /** Incremental reading: chunks, priorities, and FSRS re-read schedules. */
+    val pagemarkRepository = PagemarkRepository(
+        dao = database.pagemarkDao(),
+        settingsRepository = settingsRepository
+    )
+
+    /** Persistent text highlights: marked spans in both book formats. */
+    val highlightRepository = HighlightRepository(
+        dao = database.textHighlightDao()
+    )
 
     val libraryRepository = LibraryRepository(
         bookDao = bookDao,

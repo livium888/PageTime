@@ -55,6 +55,8 @@ import com.pagetime.app.data.review.ReviewSessionState
 fun ReviewSessionScreen(
     onBack: () -> Unit,
     onOpenSource: (bookId: String) -> Unit = {},
+    /** A due chunk is handed to the reader rather than answered here. */
+    onReadChunk: (bookId: String) -> Unit = {},
     vm: ReviewSessionViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -93,6 +95,12 @@ fun ReviewSessionScreen(
                 state.loading -> Centered("Finding what is due…")
 
                 card == null -> Done(state.session, onBack)
+
+                card.isChunk -> ChunkReviewContent(
+                    card = card,
+                    onRead = { vm.readChunk { onReadChunk(card.bookId) } },
+                    onSkip = vm::skip,
+                )
 
                 else -> {
                     Column(
@@ -219,6 +227,65 @@ fun ReviewSessionScreen(
 private val ReviewUiState.finishedOrEmpty: Boolean
     get() = !loading && card == null
 
+/**
+ * A due chunk, offered for re-reading.
+ *
+ * Deliberately not the card layout: a chunk has no answer to reveal and no
+ * rating to give here. The rating belongs to the reader's close-chunk flow,
+ * where the passage is fresh — the same rule FirstReview applies to the
+ * reading chair. The sitting's only job is to surface the reminder and hand
+ * the reader to the passage.
+ */
+@Composable
+private fun ChunkReviewContent(
+    card: ReviewItem,
+    onRead: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    Column(
+        Modifier
+            .weight(1f)
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Text(
+            card.sourceLabel ?: "From your reading queue",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            card.front,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "This chunk is due for re-reading. Open it, read it again, and " +
+                "close it with a rating when you finish — it comes back later " +
+                "on the same schedule as your flashcards.",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Button(
+            onClick = onRead,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Read chunk") }
+        TextButton(
+            onClick = onSkip,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Skip for now") }
+    }
+}
+
 @Composable
 private fun Centered(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -237,8 +304,8 @@ private fun Done(session: ReviewSessionState, onBack: () -> Unit) {
             if (session.started == 0) {
                 Text("Nothing is due.", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Questions appear here once you keep one while reading, or put a " +
-                        "slip box card into training.",
+                    "Questions appear here once you keep one while reading, put a " +
+                        "slip box card into training, or finish a reading chunk.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

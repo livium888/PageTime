@@ -30,10 +30,14 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_OPEN_READER = "open_reader"
+        /** Optional: which book a blocked-app bounce should open. Null = last book. */
+        const val EXTRA_OPEN_READER_BOOK_ID = "open_reader_book_id"
     }
 
     private val importViewModel: BookImportViewModel by viewModels()
     private val openReaderState = mutableStateOf(false)
+    /** Set by the blocker when it handed the reader a due chunk. */
+    private val openReaderBookId = mutableStateOf<String?>(null)
 
     /**
      * Set when the launch came from a review reminder.
@@ -92,8 +96,10 @@ class MainActivity : FragmentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val openReview by openReviewState
+                    val openReaderBookId by openReaderBookId
                     PageTimeAppUi(
                         openReader = openReader,
+                        openReaderBookId = openReaderBookId,
                         openReview = openReview,
                         onReviewOpened = { openReviewState.value = false },
                     )
@@ -122,6 +128,7 @@ class MainActivity : FragmentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         openReaderState.value = intent?.getBooleanExtra(EXTRA_OPEN_READER, false) ?: false
+        openReaderBookId.value = intent?.getStringExtra(EXTRA_OPEN_READER_BOOK_ID)
         if (intent?.action == ReviewReminderWorker.ACTION_OPEN_REVIEW) {
             openReviewState.value = true
         }

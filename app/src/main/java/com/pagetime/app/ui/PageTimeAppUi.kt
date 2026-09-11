@@ -45,6 +45,7 @@ import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.flashcards.FlashcardsScreen
 import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
+import com.pagetime.app.ui.screens.pagemarks.PagemarkQueueScreen
 import com.pagetime.app.ui.screens.review.ReviewSessionScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
@@ -78,6 +79,8 @@ private val tabs = listOf(
 @Composable
 fun PageTimeAppUi(
     openReader: Boolean,
+    /** Which book a blocked-app bounce should open; null = the last book. */
+    openReaderBookId: String? = null,
     /** The launch came from a review reminder; go straight to the sitting. */
     openReview: Boolean = false,
     onReviewOpened: () -> Unit = {},
@@ -91,9 +94,9 @@ fun PageTimeAppUi(
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(openReader) {
+    LaunchedEffect(openReader, openReaderBookId) {
         if (openReader) {
-            navController.navigate("reader/last") { launchSingleTop = true }
+            navController.navigate("reader/${openReaderBookId ?: "last"}") { launchSingleTop = true }
         }
     }
 
@@ -179,6 +182,7 @@ fun PageTimeAppUi(
                     onDiscover = { navController.navigate("search") },
                     onOpenShelf = { navController.navigate("shelf") },
                     onOpenBookshelf = { navController.navigate("bookshelf") },
+                    onOpenPagemarks = { navController.navigate("pagemarks") },
                     onOpenAuthor = { author ->
                         navController.navigate("author/${URLEncoder.encode(author, "UTF-8")}")
                     }
@@ -194,6 +198,14 @@ fun PageTimeAppUi(
                 ShelfScreen(
                     onBack = { navController.popBackStack() },
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") }
+                )
+            }
+            composable("pagemarks") {
+                PagemarkQueueScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenBook = { bookId ->
+                        navController.navigate("reader/$bookId") { launchSingleTop = true }
+                    }
                 )
             }
             composable("author/{name}") { entry ->
@@ -228,7 +240,10 @@ fun PageTimeAppUi(
             composable("review") {
                 ReviewSessionScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") }
+                    onOpenSource = { bookId -> navController.navigate("reader/$bookId") },
+                    onReadChunk = { bookId ->
+                        navController.navigate("reader/$bookId") { launchSingleTop = true }
+                    }
                 )
             }
             composable("flashcards") {

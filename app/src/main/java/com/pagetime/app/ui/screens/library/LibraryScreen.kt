@@ -89,6 +89,8 @@ fun LibraryScreen(
     onOpenAuthor: (String) -> Unit = {},
     /** The shelves, drawn as books rather than listed. */
     onOpenBookshelf: () -> Unit = {},
+    /** The incremental-reading chunk queue. */
+    onOpenPagemarks: () -> Unit = {},
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -225,6 +227,11 @@ fun LibraryScreen(
                     text = "The ladder — what to read next",
                     onClick = onOpenShelf
                 )
+                Spacer(Modifier.height(Spacing.s))
+                AppPrimaryButton(
+                    text = "Reading queue — chunks & re-reads",
+                    onClick = onOpenPagemarks
+                )
             }
         } else {
             LazyColumn(
@@ -257,6 +264,13 @@ fun LibraryScreen(
                         text = "Bookshelf",
                         modifier = Modifier.fillMaxWidth(),
                         onClick = onOpenBookshelf
+                    )
+                }
+                item {
+                    AppPrimaryButton(
+                        text = "Reading queue — chunks & re-reads",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onOpenPagemarks
                     )
                 }
                 item {

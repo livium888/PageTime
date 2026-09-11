@@ -69,6 +69,11 @@ import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Highlight
+import androidx.compose.material.icons.outlined.PauseCircle
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -132,6 +137,8 @@ import com.pagetime.app.data.LumenAddress
 import com.pagetime.app.data.LumenDraft
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.MapMoment
+import com.pagetime.app.data.local.PagemarkEntity
+import com.pagetime.app.data.local.TextHighlightEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
@@ -159,7 +166,8 @@ private const val NAVIGATOR_TAG = "readium_navigator"
 /** Item ids for the actions added to the text-selection menu. */
 private const val MENU_EXPLAIN = 1
 private const val MENU_SIMPLER = 2
-private const val MENU_CAPTURE = 3
+private const val MENU_SAVE_HIGHLIGHT = 3
+private const val MENU_CAPTURE = 4
 
 private enum class TapZone { CENTER }
 
@@ -213,7 +221,8 @@ fun ReaderScreen(
     onBack: () -> Unit,
     onOpenConcepts: (String) -> Unit = {},
     onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String, locatorJson: String?, textOffset: Int?) -> Unit = { _, _, _, _, _, _ -> },
-    onOpenLumenCards: (String) -> Unit = {}
+    onOpenLumenCards: (String) -> Unit = {},
+    onOpenPagemarks: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -248,6 +257,10 @@ fun ReaderScreen(
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
     val bookSearch by vm.bookSearch.collectAsStateWithLifecycle()
     val promptState by vm.promptState.collectAsStateWithLifecycle()
+    val pagemarks by vm.pagemarks.collectAsStateWithLifecycle()
+    val activePagemark: PagemarkEntity? = pagemarks.firstOrNull { it.state == "READING" }
+    val highlights by vm.highlights.collectAsStateWithLifecycle()
+    val pendingHighlightStart by vm.pendingTxtHighlightStart.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -256,6 +269,7 @@ fun ReaderScreen(
     var showChapterReviewPrompt by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
+    var showCloseChunk by remember { mutableStateOf(false) }
     var showGoTo by remember { mutableStateOf(false) }
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
@@ -408,6 +422,7 @@ fun ReaderScreen(
                 },
                 onExplainSelection = vm::explainSelection,
                 onSimplifySelection = vm::simplifySelection,
+                onSaveHighlight = vm::saveEpubHighlight,
                 onCaptureSelection = { locatorJson, text ->
                     vm.captureLumenCard(selectionLocatorJson = locatorJson, selectedText = text)
                 }
@@ -423,9 +438,10 @@ fun ReaderScreen(
                 conceptLevel = settings.conceptHints,
                 activeConceptId = activeConceptId,
                 goRequest = txtGoRequest,
-                onPageChanged = { page, pageCount, pageStartOffset, userInitiated ->
+                highlights = highlights,
+                onPageChanged = { page, pageCount, pageStartOffset, pageEndOffset, userInitiated ->
                     textPageLabel = "Page ${page + 1} of $pageCount"
-                    vm.onTextPageChanged(page, pageCount, userInitiated, pageStartOffset)
+                    vm.onTextPageChanged(page, pageCount, userInitiated, pageStartOffset, pageEndOffset)
                 },
                 onRestoreComplete = vm::markTxtRestoreComplete,
                 onToggleChrome = { controlsVisible = !controlsVisible }
@@ -455,6 +471,11 @@ fun ReaderScreen(
                 currentLocator = currentLocator,
                 level = settings.conceptHints,
                 onConceptActivated = { activeConceptId = it }
+            )
+            EpubHighlightDecorationLayer(
+                navigator = navigator,
+                highlights = highlights,
+                currentLocator = currentLocator
             )
         }
 
@@ -551,7 +572,16 @@ fun ReaderScreen(
                 enhancementProgress = enhancementProgress,
                 lumenCapturing = lumenCapturing,
                 onCaptureLumen = vm::captureLumenCard,
-                onOpenLumen = { onOpenLumenCards(bookId) }
+                onOpenLumen = { onOpenLumenCards(bookId) },
+                activePagemark = activePagemark,
+                onStartPagemark = vm::startChunkHere,
+                onClosePagemark = { showCloseChunk = true },
+                onSuspendPagemark = vm::suspendChunkHere,
+                onOpenPagemarks = { onOpenPagemarks() },
+                pendingHighlightStart = pendingHighlightStart != null,
+                onStartHighlight = vm::startHighlightHere,
+                onEndHighlight = vm::endHighlightHere,
+                onClearHighlight = vm::clearPendingHighlight
             )
         }
 
@@ -851,6 +881,32 @@ fun ReaderScreen(
         )
     }
 
+    if (showCloseChunk) {
+        // Closing a chunk is a review, not a checkout: the rating decides when
+        // the chunk comes back. Only the three the reading chair offers — see
+        // FirstReview for why Easy is not on the table seconds after reading.
+        AlertDialog(
+            onDismissRequest = { showCloseChunk = false },
+            title = { Text("Close chunk") },
+            text = {
+                Text("How did reading this chunk go? This decides when it comes back for re-reading.")
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { showCloseChunk = false; vm.closeChunkHere(1) }) {
+                        Text("Again")
+                    }
+                    TextButton(onClick = { showCloseChunk = false; vm.closeChunkHere(2) }) {
+                        Text("Hard")
+                    }
+                    TextButton(onClick = { showCloseChunk = false; vm.closeChunkHere(3) }) {
+                        Text("Good")
+                    }
+                }
+            }
+        )
+    }
+
     if (showGoTo && book?.format == "txt" && textContent != null) {
         GoToSheet(
             progress = progress,
@@ -925,7 +981,8 @@ private fun TextReaderHost(
     conceptLevel: String,
     activeConceptId: String?,
     goRequest: Pair<Float, Long>?,
-    onPageChanged: (page: Int, pageCount: Int, pageStartOffset: Int, userInitiated: Boolean) -> Unit,
+    highlights: List<TextHighlightEntity>,
+    onPageChanged: (page: Int, pageCount: Int, pageStartOffset: Int, pageEndOffset: Int, userInitiated: Boolean) -> Unit,
     onRestoreComplete: () -> Unit,
     onToggleChrome: () -> Unit
 ) {
@@ -1045,6 +1102,7 @@ private fun TextReaderHost(
             pagerState.currentPage,
             pages.size,
             pages[pagerState.currentPage].startOffset,
+            pages[pagerState.currentPage].endOffset,
             false
         )
         onRestoreComplete()
@@ -1052,7 +1110,7 @@ private fun TextReaderHost(
             .collect { (page, scrolling) ->
                 lastFraction = TextPageLayout.fractionForPage(page, pages.size)
                 if (scrolling) {
-                    onPageChanged(page, pages.size, pages[page].startOffset, true)
+                    onPageChanged(page, pages.size, pages[page].startOffset, pages[page].endOffset, true)
                 }
             }
     }
@@ -1110,8 +1168,11 @@ private fun TextReaderHost(
                 .padding(horizontal = settings.marginDp.dp, vertical = 24.dp)
                 .background(palette.background)
         ) {
-            val annotatedText = rememberAnnotatedPage(
+            val annotatedText = rememberAnnotatedPageWithHighlights(
                 pageText = pages[pageIndex].text,
+                pageStartOffset = pages[pageIndex].startOffset,
+                pageEndOffset = pages[pageIndex].endOffset,
+                highlights = highlights,
                 concepts = concepts,
                 level = conceptLevel,
                 activeConceptId = activeConceptId
@@ -1146,6 +1207,7 @@ private fun ReadiumNavigatorHost(
     onRestoreComplete: () -> Unit,
     onExplainSelection: (term: String, before: String, after: String) -> Unit,
     onSimplifySelection: (passage: String) -> Unit,
+    onSaveHighlight: (locatorJson: String?, text: String) -> Unit,
     onCaptureSelection: (locatorJson: String?, text: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -1153,6 +1215,7 @@ private fun ReadiumNavigatorHost(
     val scope = rememberCoroutineScope()
     val currentOnExplain by rememberUpdatedState(onExplainSelection)
     val currentOnSimplify by rememberUpdatedState(onSimplifySelection)
+    val currentOnSaveHighlight by rememberUpdatedState(onSaveHighlight)
     val currentOnCapture by rememberUpdatedState(onCaptureSelection)
 
     val currentOnLocator by rememberUpdatedState(onLocatorChanged)
@@ -1235,7 +1298,8 @@ private fun ReadiumNavigatorHost(
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
                 menu.add(Menu.NONE, MENU_EXPLAIN, 0, "Explain here")
                 menu.add(Menu.NONE, MENU_SIMPLER, 1, "Say it simpler")
-                menu.add(Menu.NONE, MENU_CAPTURE, 2, "Capture this")
+                menu.add(Menu.NONE, MENU_SAVE_HIGHLIGHT, 2, "Save highlight")
+                menu.add(Menu.NONE, MENU_CAPTURE, 3, "Capture this")
                 return true
             }
 
@@ -1245,7 +1309,7 @@ private fun ReadiumNavigatorHost(
                 val navigator = fm.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
                     ?: return false
                 when (item.itemId) {
-                    MENU_EXPLAIN, MENU_SIMPLER, MENU_CAPTURE -> {
+                    MENU_EXPLAIN, MENU_SIMPLER, MENU_SAVE_HIGHLIGHT, MENU_CAPTURE -> {
                         // currentSelection() suspends, and the action mode has to
                         // be told now, so the work is launched and the menu closed
                         // rather than held open on an unfinished answer.
@@ -1262,6 +1326,11 @@ private fun ReadiumNavigatorHost(
                                     )
 
                                     MENU_SIMPLER -> currentOnSimplify(term)
+
+                                    MENU_SAVE_HIGHLIGHT -> currentOnSaveHighlight(
+                                        selection.locator.toJSON().toString(),
+                                        term
+                                    )
 
                                     else -> currentOnCapture(
                                         selection.locator.toJSON().toString(),
@@ -1411,7 +1480,16 @@ private fun ReaderTopBar(
     enhancementProgress: Pair<Int, Int>? = null,
     lumenCapturing: Boolean = false,
     onCaptureLumen: () -> Unit = {},
-    onOpenLumen: () -> Unit = {}
+    onOpenLumen: () -> Unit = {},
+    activePagemark: PagemarkEntity? = null,
+    onStartPagemark: () -> Unit = {},
+    onClosePagemark: () -> Unit = {},
+    onSuspendPagemark: () -> Unit = {},
+    onOpenPagemarks: () -> Unit = {},
+    pendingHighlightStart: Boolean = false,
+    onStartHighlight: () -> Unit = {},
+    onEndHighlight: () -> Unit = {},
+    onClearHighlight: () -> Unit = {}
 ) {
     var optionsExpanded by remember { mutableStateOf(false) }
 
@@ -1593,6 +1671,73 @@ private fun ReaderTopBar(
                             onOpenLumen()
                         }
                     )
+                    if (activePagemark != null) {
+                        DropdownMenuItem(
+                            text = { Text("Close chunk") },
+                            leadingIcon = { Icon(Icons.Outlined.StopCircle, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onClosePagemark()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Suspend chunk") },
+                            leadingIcon = { Icon(Icons.Outlined.PauseCircle, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onSuspendPagemark()
+                            }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = { Text("Start chunk here") },
+                            leadingIcon = { Icon(Icons.Outlined.PlayCircle, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onStartPagemark()
+                            }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Reading queue") },
+                        leadingIcon = { Icon(Icons.Outlined.PlaylistPlay, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onOpenPagemarks()
+                        }
+                    )
+                    if (isTextBook) {
+                        if (pendingHighlightStart) {
+                            DropdownMenuItem(
+                                text = { Text("End highlight here") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Highlight, contentDescription = null)
+                                },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onEndHighlight()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Cancel highlight") },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onClearHighlight()
+                                }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Start highlight here") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Highlight, contentDescription = null)
+                                },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onStartHighlight()
+                                }
+                            )
+                        }
+                    }
                     DropdownMenuItem(
                         text = { Text("Reading statistics") },
                         leadingIcon = { Icon(Icons.Outlined.BarChart, contentDescription = null) },

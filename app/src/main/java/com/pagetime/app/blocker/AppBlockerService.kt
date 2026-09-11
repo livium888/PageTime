@@ -9,7 +9,9 @@ import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
 import com.pagetime.app.MainActivity
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.domain.GateState
+import kotlinx.coroutines.launch
 
 class AppBlockerService : AccessibilityService() {
 
@@ -194,17 +196,53 @@ class AppBlockerService : AccessibilityService() {
         }
     }
 
+    /**
+     * Opens the reader, aimed at the next due chunk when there is one.
+     *
+     * The read-to-unlock loop and the re-read loop are the same loop: when the
+     * balance is empty the reader is the door, so it should open on the passage
+     * the schedule says is due rather than wherever the reader last stopped.
+     *
+     * The chunk is resumed (state READING, pending source written) BEFORE the
+     * activity launches, so the reader cannot load before its start position
+     * exists and open at the wrong place. Without a due chunk the intent carries
+     * no book id and the reader opens on the last book, exactly as before.
+     */
     private fun openReader() {
         controller?.releaseBlock()
         dismissTimeUp()
+        val app = application as? PageTimeApp
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(MainActivity.EXTRA_OPEN_READER, true)
         }
-        try {
-            startActivity(intent)
-        } catch (_: Exception) {
-            // Background activity launch refused; the user is at least out of the app.
+        val repository = app?.container?.pagemarkRepository
+        val scope = app?.container?.scope
+        if (repository == null || scope == null) {
+            // No app container to consult; plain open, as before.
+            try {
+                startActivity(intent)
+            } catch (_: Exception) {
+                // Background activity launch refused; the user is at least out of the app.
+            }
+            return
+        }
+        // The same lookahead the review sitting uses: a chunk due this evening
+        // is worth offering while the reader is here.
+        val threshold = ReviewSession.dueThreshold(System.currentTimeMillis())
+        scope.launch {
+            val chunk = runCatching { repository.dueChunks(threshold).firstOrNull() }.getOrNull()
+            if (chunk != null) {
+                runCatching { repository.resumeChunk(chunk.id) }
+                intent.putExtra(MainActivity.EXTRA_OPEN_READER_BOOK_ID, chunk.bookId)
+            }
+            mainHandler.post {
+                try {
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    // Background activity launch refused; the user is at least out of the app.
+                }
+            }
         }
     }
 }

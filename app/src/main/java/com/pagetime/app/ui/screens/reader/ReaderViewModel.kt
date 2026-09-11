@@ -18,6 +18,8 @@ import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenDraft
 import com.pagetime.app.data.asAnswer
 import com.pagetime.app.data.local.LumenCardEntity
+import com.pagetime.app.data.local.PagemarkEntity
+import com.pagetime.app.data.PagemarkSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -373,6 +375,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     @Volatile
     private var latestTxtPageOffset: Int = 0
 
+    /** Exact end offset (exclusive) of the current plain-text page. */
+    @Volatile
+    private var latestTxtPageEndOffset: Int = 0
+
     /** No writes until the Compose scroll restore has applied the saved fraction. */
     @Volatile
     private var txtRestoreComplete = false
@@ -389,10 +395,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageIndex: Int,
         pageCount: Int,
         userInitiated: Boolean,
-        pageStartOffset: Int = 0
+        pageStartOffset: Int = 0,
+        pageEndOffset: Int = 0
     ) {
         if (pageCount <= 0) return
         latestTxtPageOffset = pageStartOffset
+        latestTxtPageEndOffset = pageEndOffset
         val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
         _progress.value = fraction
         if (!userInitiated || !txtRestoreComplete) return
@@ -421,6 +429,132 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         } else {
             null to latestTxtOffset()
         }
+
+    // region Incremental reading (pagemarks)
+
+    private val pagemarkRepo = container.pagemarkRepository
+
+    /** Every chunk of this book, oldest first, for the Options menu and queue. */
+    val pagemarks = pagemarkRepo.observeForBook(bookId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private fun activeChunk(): PagemarkEntity? =
+        pagemarks.value.firstOrNull { it.state == PagemarkSession.State.READING.name }
+
+    /** The chapter the reader is inside, to name the chunk after it. */
+    private fun currentChapterTitle(): String? {
+        val publication = _publication.value ?: return null
+        val locator = latestLocator ?: return null
+        val index = publication.readingOrder.indexOfFirstWithHref(locator.href)
+        if (index < 0) return null
+        return publication.readingOrder[index].title
+    }
+
+    private fun currentFraction(): Float {
+        val book = _book.value ?: return _progress.value
+        return if (book.format == "epub") {
+            (latestLocator?.locations?.progression?.toFloat() ?: _progress.value).coerceIn(0f, 1f)
+        } else {
+            latestTxtFraction
+        }
+    }
+
+    private fun currentLocatorJson(): String? {
+        val book = _book.value ?: return null
+        return if (book.format == "epub") latestLocator?.toJSON()?.toString() else null
+    }
+
+    /**
+     * Starts a chunk at the current position. An already-open chunk is
+     * suspended silently — the reader moved on, they did not finish.
+     */
+    fun startChunkHere() {
+        if (_book.value == null) return
+        viewModelScope.launch {
+            pagemarkRepo.startChunk(
+                bookId = bookId,
+                startLocatorJson = currentLocatorJson(),
+                startFraction = currentFraction(),
+                title = currentChapterTitle()
+            )
+        }
+    }
+
+    /** Closes the open chunk at the current position with a rating. */
+    fun closeChunkHere(rating: Int) {
+        val chunk = activeChunk() ?: return
+        viewModelScope.launch {
+            pagemarkRepo.closeChunk(
+                id = chunk.id,
+                rating = rating,
+                endLocatorJson = currentLocatorJson(),
+                endFraction = currentFraction()
+            )
+        }
+    }
+
+    /** Pauses the open chunk without judging it. */
+    fun suspendChunkHere() {
+        val chunk = activeChunk() ?: return
+        viewModelScope.launch { pagemarkRepo.suspendChunk(chunk.id) }
+    }
+
+    // endregion
+
+    // region Text highlights
+
+    private val highlightRepo = container.highlightRepository
+
+    /** Every highlight of this book, for rendering and management. */
+    val highlights = highlightRepo.observeForBook(bookId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * The pending plain-text highlight start (whole-book char offset), or null.
+     *
+     * Set by "Start highlight here", consumed by "End highlight here". The
+     * two-tap anchor is what lets a highlight cross any number of pages in a
+     * paged reader that has no drag selection.
+     */
+    private val _pendingTxtHighlightStart = MutableStateFlow<Int?>(null)
+    val pendingTxtHighlightStart = _pendingTxtHighlightStart.asStateFlow()
+
+    /** Starts a plain-text highlight at the current page's start. */
+    fun startHighlightHere() {
+        val text = _textContent.value ?: return
+        if (text.isEmpty()) return
+        _pendingTxtHighlightStart.value = latestTxtPageOffset.coerceIn(0, text.length)
+    }
+
+    /** Ends the pending plain-text highlight at the current page's end. */
+    fun endHighlightHere() {
+        val text = _textContent.value ?: return
+        val start = _pendingTxtHighlightStart.value ?: return
+        _pendingTxtHighlightStart.value = null
+        val end = latestTxtPageEndOffset.coerceIn(start + 1, text.length)
+        viewModelScope.launch {
+            highlightRepo.createTxtSpan(bookId, start, end, text)
+        }
+    }
+
+    /** Abandons the pending highlight start. */
+    fun clearPendingHighlight() {
+        _pendingTxtHighlightStart.value = null
+    }
+
+    /** Marks the current Readium selection as a persistent highlight. */
+    fun saveEpubHighlight(locatorJson: String?, text: String) {
+        if (locatorJson.isNullOrBlank()) return
+        viewModelScope.launch {
+            highlightRepo.createEpubSpan(bookId, locatorJson, text)
+        }
+    }
+
+    fun deleteHighlight(id: String) {
+        viewModelScope.launch { highlightRepo.delete(id) }
+    }
+
+    // endregion
 
     // region Lumen cards
 

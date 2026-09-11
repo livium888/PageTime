@@ -36,9 +36,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LumenCardEntity::class,
         CardEmbeddingEntity::class,
         BookChunkEmbeddingEntity::class,
-        ShelfBookEntity::class
+        ShelfBookEntity::class,
+        PagemarkEntity::class,
+        TextHighlightEntity::class
     ],
-    version = 21,
+    version = 23,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -57,6 +59,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun cardEmbeddingDao(): CardEmbeddingDao
     abstract fun bookChunkEmbeddingDao(): BookChunkEmbeddingDao
     abstract fun shelfBookDao(): ShelfBookDao
+    abstract fun pagemarkDao(): PagemarkDao
+    abstract fun textHighlightDao(): TextHighlightDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -292,6 +296,78 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_shelf_books_shelfId_position " +
                         "ON shelf_books(shelfId, position)"
+                )
+            }
+        }
+
+        /**
+         * Incremental reading: chunks of a book with priorities and FSRS
+         * re-read schedules.
+         *
+         * A separate table from `books` because a book can hold many chunks
+         * and a chunk is a span, not a bookmark. ON DELETE CASCADE keeps the
+         * queue honest when the book it points into is removed.
+         */
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS pagemarks (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "bookId TEXT NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        "startLocatorJson TEXT, " +
+                        "startFraction REAL NOT NULL, " +
+                        "endLocatorJson TEXT, " +
+                        "endFraction REAL NOT NULL, " +
+                        "state TEXT NOT NULL, " +
+                        "priority INTEGER NOT NULL, " +
+                        "fsrsCardJson TEXT, " +
+                        "dueAt INTEGER, " +
+                        "reviewCount INTEGER NOT NULL DEFAULT 0, " +
+                        "lastRating INTEGER, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "updatedAt INTEGER NOT NULL, " +
+                        "FOREIGN KEY(bookId) REFERENCES books(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_pagemarks_bookId " +
+                        "ON pagemarks(bookId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_pagemarks_dueAt " +
+                        "ON pagemarks(dueAt)"
+                )
+            }
+        }
+
+        /**
+         * Persistent text highlights: spans marked while reading.
+         *
+         * Two anchor models share one table: plain-text spans are whole-book
+         * character offsets (so a span can cross any number of pages), EPUB
+         * highlights are Readium selection Locators. ON DELETE CASCADE keeps
+         * the marks honest when the book they live in is removed.
+         */
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS text_highlights (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "bookId TEXT NOT NULL, " +
+                        "kind TEXT NOT NULL, " +
+                        "startOffset INTEGER NOT NULL DEFAULT -1, " +
+                        "endOffset INTEGER NOT NULL DEFAULT -1, " +
+                        "startLocatorJson TEXT, " +
+                        "endLocatorJson TEXT, " +
+                        "quote TEXT NOT NULL, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "FOREIGN KEY(bookId) REFERENCES books(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_text_highlights_bookId " +
+                        "ON text_highlights(bookId)"
                 )
             }
         }

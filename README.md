@@ -48,6 +48,40 @@ Lumen card capture — the AI draft shown when you capture a card while reading 
 
 The offline model is **Qwen 2.5 0.5B Instruct (q8)**, an open Apache-2.0 model served by the litert-community Hugging Face org and executed on-device through Google's MediaPipe `tasks-genai` runtime. It is a single ~521 MB `.task` file downloaded once over Wi-Fi from **Settings → Offline model** and never bundled into the APK, so the app itself stays small until you opt in. When Settings opens, the app compares the installed file's size and ETag against a cheap HEAD request to the model host; if the model changed, **Settings → Offline model** shows *Update available* with a one-tap update — never automatic. Updates download to a temporary file and only replace the installed model after the size check passes, so a failed update leaves the working model untouched. Both providers share the same capture prompt and output contract, so switching providers does not change card quality expectations. Capture is always best-effort: if the selected provider fails or is unconfigured, the card is still drafted from the raw passage so reading is never blocked.
 
+## Incremental reading (chunks)
+
+Read a book in chunks instead of one relentless pass. From the reader's
+**Options** menu, **Start chunk here** marks where you paused; **Close chunk**
+asks how it went (Again / Hard / Good — never Easy, for the same reason as the
+reading chair) and schedules the passage to come back on the same FSRS calendar
+as flashcards. Due chunks surface in the **Review** sitting too, between chapter
+cards and slip box notes, and one tap hands them to the reader. When the balance
+is empty and a blocked app opens, the "time is up" screen's **Read now** opens the
+reader on the next due chunk instead of the last book — the read-to-unlock loop
+and the re-read loop are the same loop. **Suspend chunk** pauses without judging. The **Reading queue**
+(Library home) shows everything: the chunk in hand first, due re-reads next,
+then the rest by priority (1–5, adjustable in the queue). Opening a chunk
+jumps the reader straight to its start.
+
+## Text highlights
+
+Mark passages while reading, in both formats:
+
+- **EPUB** — select text as usual, then **Save highlight** from the selection
+  menu (the same menu that already offers *Capture this*). The Readium Locator
+  is stored, so a highlight covers the whole selected range, which inside one
+  chapter can span several rendered pages, and it is re-drawn on every page
+  turn via Readium's decoration API.
+- **Plain text** — the paged reader has no drag selection, so highlighting is
+  anchored instead: **Options → Start highlight here** marks the current page,
+  turn forward any number of pages, then **End highlight here**. The span is
+  stored as whole-book character offsets, so it survives re-layout at any font
+  size, and every page it touches renders with a green background.
+
+Highlights are stored per book and deleted with it; each one keeps the
+highlighted text itself, so a highlight can be turned into a Lumen card later
+without re-opening the book.
+
 ## Requirements
 
 - Android Studio (latest stable) or JDK 17 + the Android SDK.

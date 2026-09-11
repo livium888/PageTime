@@ -190,9 +190,8 @@ private fun stateLabel(chunk: PagemarkEntity): String = when (PagemarkSession.st
     PagemarkSession.State.READING -> "Reading now"
     PagemarkSession.State.QUEUED -> "Queued"
     PagemarkSession.State.SUSPENDED -> "Suspended"
-    PagemarkSession.State.DONE -> {
-        val due = chunk.dueAt ?: return "Scheduled"
-        val now = System.currentTimeMillis()
-        if (due <= now) "Due for re-reading" else "Scheduled"
+    PagemarkSession.State.DONE -> when (val due = chunk.dueAt) {
+        null -> "Scheduled"
+        else -> if (due <= System.currentTimeMillis()) "Due for re-reading" else "Scheduled"
     }
 }

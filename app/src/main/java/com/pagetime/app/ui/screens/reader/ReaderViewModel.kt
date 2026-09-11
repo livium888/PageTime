@@ -445,9 +445,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private fun currentChapterTitle(): String? {
         val publication = _publication.value ?: return null
         val locator = latestLocator ?: return null
-        val index = publication.readingOrder.indexOfFirstWithHref(locator.href)
+        val index = publication.readingOrder.indexOfFirstWithHref(locator.href) ?: return null
         if (index < 0) return null
-        return publication.readingOrder[index].title
+        return publication.readingOrder.getOrNull(index)?.title
     }
 
     private fun currentFraction(): Float {

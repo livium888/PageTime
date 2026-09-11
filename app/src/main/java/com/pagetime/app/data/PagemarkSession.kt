@@ -74,7 +74,14 @@ object PagemarkSession {
      * state stays on the row and is only updated when it is closed again.
      */
     fun begin(chunk: PagemarkEntity, now: Long = System.currentTimeMillis()): PagemarkEntity =
-        chunk.copy(state = State.READING.name, updatedAt = now)
+        chunk.copy(
+            state = State.READING.name,
+            // The re-read is happening NOW, so the chunk is no longer due. Left
+            // on the row it would be both READing and due at once, and the
+            // queue would draw it twice. Closing the chunk sets a fresh time.
+            dueAt = null,
+            updatedAt = now
+        )
 
     /**
      * Pauses a chunk without judging it.
@@ -147,8 +154,9 @@ object PagemarkSession {
      */
     fun orderForQueue(items: List<PagemarkEntity>, nowMillis: Long): List<PagemarkEntity> {
         val reading = items.filter { stateOf(it) == State.READING }
-        val due = items.filter { it.dueAt != null && it.dueAt <= nowMillis }
-            .sortedBy { it.dueAt }
+        val due = items.filter {
+            stateOf(it) == State.DONE && it.dueAt != null && it.dueAt <= nowMillis
+        }.sortedBy { it.dueAt }
         val waiting = items.filter {
             stateOf(it) == State.QUEUED || stateOf(it) == State.SUSPENDED
         }.sortedWith(

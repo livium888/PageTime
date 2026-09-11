@@ -106,7 +106,8 @@ class TextHighlightSpansTest {
         val quote = TextHighlightSpans.quoteForTxt(text, 0, 5_000)
         assertEquals(TextHighlightSpans.QUOTE_CAP_CHARS, quote.length)
 
-        assertEquals("mid", TextHighlightSpans.quoteForTxt("aa mid bb", 2, 5))
+        // End is exclusive, the same as every other offset in this model.
+        assertEquals("mid", TextHighlightSpans.quoteForTxt("aa mid bb", 3, 6))
         assertEquals("", TextHighlightSpans.quoteForTxt("", 0, 10))
         assertEquals("", TextHighlightSpans.quoteForTxt("abc", 3, 2))
     }

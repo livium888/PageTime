@@ -50,8 +50,10 @@ object TextHighlightSpans {
         val clipped = highlights
             .mapNotNull { txtRange(it) }
             .mapNotNull { range ->
-                val start = maxOf(range.first, pageStartOffset)
-                val end = minOf(range.last + 1, pageEndOffset)
+                // Page-relative, because the caller indexes into the page's own
+                // substring: the page window is subtracted back out here.
+                val start = maxOf(range.first, pageStartOffset) - pageStartOffset
+                val end = minOf(range.last + 1, pageEndOffset) - pageStartOffset
                 if (end > start) start to end else null
             }
         return mergeRanges(clipped)

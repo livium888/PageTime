@@ -54,6 +54,24 @@ class PagemarkSessionTest {
     }
 
     @Test
+    fun `opening a due chunk clears the due time it is now satisfying`() {
+        // Otherwise the chunk is READing and due at once, and the queue draws
+        // it in both groups.
+        val opened = PagemarkSession.begin(
+            chunk(state = PagemarkSession.State.DONE, dueAt = NOW - 500),
+            now = NOW
+        )
+        assertEquals(null, opened.dueAt)
+    }
+
+    @Test
+    fun `a chunk being read is never listed twice`() {
+        val reading = chunk("a", PagemarkSession.State.READING, dueAt = NOW - 500)
+        val ordered = PagemarkSession.orderForQueue(listOf(reading), NOW)
+        assertEquals(listOf("a"), ordered.map { it.id })
+    }
+
+    @Test
     fun `suspend only pauses a reading chunk`() {
         val suspended = PagemarkSession.suspend(chunk(state = PagemarkSession.State.READING, dueAt = 500L), now = NOW)
         assertEquals(PagemarkSession.State.SUSPENDED.name, suspended.state)

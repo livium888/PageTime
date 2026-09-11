@@ -1537,6 +1537,7 @@ private fun ReaderTopBar(
                     expanded = optionsExpanded,
                     onDismissRequest = { optionsExpanded = false }
                 ) {
+                    MenuSectionLabel("Navigate", first = true)
                     if (hasChapters) {
                         DropdownMenuItem(
                             text = { Text("Chapters") },
@@ -1565,6 +1566,7 @@ private fun ReaderTopBar(
                             onSearchBook()
                         }
                     )
+                    MenuSectionLabel("Study")
                     if (promptsOfferable) {
                         DropdownMenuItem(
                             text = {
@@ -1611,19 +1613,6 @@ private fun ReaderTopBar(
                         }
                     }
                     DropdownMenuItem(
-                        text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
-                        leadingIcon = {
-                            Icon(
-                                if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                                contentDescription = null
-                            )
-                        },
-                        onClick = {
-                            optionsExpanded = false
-                            onBookmark()
-                        }
-                    )
-                    DropdownMenuItem(
                         text = { Text(if (checkpointPresent) "Update learning checkpoint" else "Set learning checkpoint") },
                         leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
                         onClick = {
@@ -1639,6 +1628,7 @@ private fun ReaderTopBar(
                             onExplainBack()
                         }
                     )
+                    MenuSectionLabel("Notes")
                     DropdownMenuItem(
                         text = {
                             if (lumenCapturing) {
@@ -1671,6 +1661,20 @@ private fun ReaderTopBar(
                             onOpenLumen()
                         }
                     )
+                    DropdownMenuItem(
+                        text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
+                        leadingIcon = {
+                            Icon(
+                                if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                                contentDescription = null
+                            )
+                        },
+                        onClick = {
+                            optionsExpanded = false
+                            onBookmark()
+                        }
+                    )
+                    MenuSectionLabel("Chunks")
                     if (activePagemark != null) {
                         DropdownMenuItem(
                             text = { Text("Close chunk") },
@@ -1707,6 +1711,7 @@ private fun ReaderTopBar(
                         }
                     )
                     if (isTextBook) {
+                        MenuSectionLabel("Highlights")
                         if (pendingHighlightStart) {
                             DropdownMenuItem(
                                 text = { Text("End highlight here") },
@@ -1738,6 +1743,7 @@ private fun ReaderTopBar(
                             )
                         }
                     }
+                    MenuSectionLabel("Display")
                     DropdownMenuItem(
                         text = { Text("Reading statistics") },
                         leadingIcon = { Icon(Icons.Outlined.BarChart, contentDescription = null) },
@@ -1754,6 +1760,17 @@ private fun ReaderTopBar(
                             onSettings()
                         }
                     )
+                    DropdownMenuItem(
+                        text = { Text("Sleep timer") },
+                        leadingIcon = { Icon(Icons.Outlined.NightsStay, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onSleepTimer()
+                        }
+                    )
+                    if (onCopyTranscript != null || onShareTranscript != null || isTextBook) {
+                        MenuSectionLabel("Transcript")
+                    }
                     if (onCopyTranscript != null) {
                         DropdownMenuItem(
                             text = { Text("Copy transcript") },
@@ -1797,14 +1814,6 @@ private fun ReaderTopBar(
                             enabled = !enhancing
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text("Sleep timer") },
-                        leadingIcon = { Icon(Icons.Outlined.NightsStay, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onSleepTimer()
-                        }
-                    )
                 }
             }
         },

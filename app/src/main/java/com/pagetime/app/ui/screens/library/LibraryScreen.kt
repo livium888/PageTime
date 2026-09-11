@@ -66,6 +66,7 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import com.pagetime.app.ui.AppPrimaryButton
+import com.pagetime.app.ui.AppSecondaryButton
 import com.pagetime.app.ui.Spacing
 import com.pagetime.app.ui.formatMinutes
 
@@ -218,20 +219,22 @@ fun LibraryScreen(
                     onClick = launchImport
                 )
                 Spacer(Modifier.height(Spacing.s))
-                AppPrimaryButton(
-                    text = "Discover free books",
-                    onClick = onDiscover
-                )
-                Spacer(Modifier.height(Spacing.s))
-                AppPrimaryButton(
-                    text = "The ladder — what to read next",
-                    onClick = onOpenShelf
-                )
-                Spacer(Modifier.height(Spacing.s))
-                AppPrimaryButton(
-                    text = "Reading queue — chunks & re-reads",
-                    onClick = onOpenPagemarks
-                )
+                // Two alternatives beside the one action above, not two more
+                // things of the same weight. Four identical full-width
+                // buttons in a column told the reader nothing about which
+                // one to press.
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    AppSecondaryButton(
+                        text = "Discover",
+                        modifier = Modifier.weight(1f),
+                        onClick = onDiscover
+                    )
+                    AppSecondaryButton(
+                        text = "Ladder",
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenShelf
+                    )
+                }
             }
         } else {
             LazyColumn(
@@ -252,20 +255,9 @@ fun LibraryScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                 }
-                item {
-                    AppPrimaryButton(
-                        text = "The ladder — what to read next",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = onOpenShelf
-                    )
-                }
-                item {
-                    AppPrimaryButton(
-                        text = "Bookshelf",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = onOpenBookshelf
-                    )
-                }
+                // One action at full weight, the rest beside it at half.
+                // Five identical full-width buttons made the library feel
+                // like a menu with a book list attached to the bottom.
                 item {
                     AppPrimaryButton(
                         text = "Reading queue — chunks & re-reads",
@@ -274,22 +266,34 @@ fun LibraryScreen(
                     )
                 }
                 item {
-                    AppPrimaryButton(
-                        text = if (importing) "Importing…" else "Import EPUB or text",
-                        icon = Icons.Filled.Add,
-                        enabled = !importing,
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = launchImport
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        AppSecondaryButton(
+                            text = "Ladder",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenShelf
+                        )
+                        AppSecondaryButton(
+                            text = "Bookshelf",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenBookshelf
+                        )
+                    }
                 }
                 item {
-                    AppPrimaryButton(
-                        text = if (importing) "Importing…" else "Import YouTube transcript",
-                        icon = Icons.Filled.Add,
-                        enabled = !importing,
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = launchYouTubeImport
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        AppSecondaryButton(
+                            text = if (importing) "Importing…" else "Import file",
+                            enabled = !importing,
+                            modifier = Modifier.weight(1f),
+                            onClick = launchImport
+                        )
+                        AppSecondaryButton(
+                            text = "YouTube",
+                            enabled = !importing,
+                            modifier = Modifier.weight(1f),
+                            onClick = launchYouTubeImport
+                        )
+                    }
                 }
                 if (lastMapMoment != null) {
                     item {

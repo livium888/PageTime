@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessibilityNew
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
@@ -96,6 +97,7 @@ fun SettingsScreen(
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
     onAiUsage: () -> Unit,
+    onAiModels: () -> Unit,
     viewModel: SettingsViewModel = viewModel()
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -104,19 +106,7 @@ fun SettingsScreen(
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
-    val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
-    val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
-    val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
-    val lumenPrompt by viewModel.lumenPrompt.collectAsStateWithLifecycle()
-    val lumenPromptIsCustom by viewModel.lumenPromptIsCustom.collectAsStateWithLifecycle()
-    val geminiViewModel: GeminiSettingsViewModel = viewModel()
-    val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
-    val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
-    val geminiHasUserKey by geminiViewModel.hasUserKey.collectAsStateWithLifecycle()
-    val geminiStatus by geminiViewModel.status.collectAsStateWithLifecycle()
-    var geminiKeyInput by remember { mutableStateOf("") }
-    var modelMenuExpanded by remember { mutableStateOf(false) }
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -131,9 +121,6 @@ fun SettingsScreen(
                 ?.readText()
                 ?.take(4_000)
     }
-
-    // Cheap HEAD against the model host; best-effort and silent on failure.
-    LaunchedEffect(Unit) { viewModel.checkForModelUpdate() }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Settings") }) }
@@ -395,30 +382,7 @@ fun SettingsScreen(
                 label = "Permissions & setup",
                 onClick = onPermissions
             )
-            SectionHeader("Comprehension")
-            Spacer(Modifier.height(4.dp))
-
-            AiAnalysisSettingsCard(
-                level = aiSettings.analysisLevel,
-                onSelect = viewModel::setAiAnalysisLevel
-            )
-            GenerationModeSettingsCard(
-                mode = aiSettings.generationMode,
-                onSelect = viewModel::setGenerationMode
-            )
-            AppSettingsRow(
-                icon = Icons.Outlined.History,
-                label = "AI usage & statistics",
-                onClick = onAiUsage
-            )
-
-            SectionHeader("Slip box")
-            CapturePromptCard(
-                prompt = lumenPrompt,
-                isCustom = lumenPromptIsCustom,
-                onSave = viewModel::setLumenPrompt,
-                onReset = viewModel::resetLumenPrompt
-            )
+            SectionHeader("Learning")
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -450,67 +414,23 @@ fun SettingsScreen(
                 }
             }
 
-            LlmProviderSettingsCard(
-                provider = llmProvider,
-                onSelect = viewModel::setLlmProvider
-            )
-
-            OfflineModelSettingsCard(
-                status = lumenModelStatus,
-                downloadStats = viewModel.downloadStats.collectAsStateWithLifecycle().value,
-                modelUrl = viewModel.lumenModelUrl.collectAsStateWithLifecycle().value,
-                onSetModelUrl = viewModel::setLumenModelUrl,
-                cloudRescue = viewModel.lumenCloudRescue.collectAsStateWithLifecycle().value,
-                onSetCloudRescue = viewModel::setLumenCloudRescue,
-                onDownload = viewModel::downloadOfflineModel,
-                onCheckForUpdate = viewModel::checkForModelUpdate,
-                onDelete = viewModel::deleteOfflineModel
-            )
-
+            SectionHeader("Notifications")
             ReviewRemindersCard(
                 enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
                 onChange = viewModel::setReviewReminders,
             )
 
-            CaptureSizeCard(
-                captureChars = viewModel.captureChars.collectAsStateWithLifecycle().value,
-                onSelect = viewModel::setCaptureChars,
+            SectionHeader("AI & models")
+            AppSettingsRow(
+                icon = Icons.Outlined.AutoAwesome,
+                label = "Models & prompts",
+                subtitle = "The provider, the on-device model, and the capture prompt",
+                onClick = onAiModels
             )
-
-            EmbeddingModelSettingsCard(
-                status = viewModel.embeddingModelStatus.collectAsStateWithLifecycle().value,
-                selfTest = viewModel.embeddingSelfTest.collectAsStateWithLifecycle().value,
-                selfTestRunning =
-                    viewModel.embeddingSelfTestRunning.collectAsStateWithLifecycle().value,
-                pending = viewModel.embeddingPending.collectAsStateWithLifecycle().value,
-                indexing = viewModel.embeddingIndexing.collectAsStateWithLifecycle().value,
-                onDownload = viewModel::downloadEmbeddingModel,
-                onDelete = viewModel::deleteEmbeddingModel,
-                onSelfTest = viewModel::runEmbeddingSelfTest,
-                onIndexAll = viewModel::indexAllCards,
-                onRefreshPending = viewModel::refreshEmbeddingPending,
-            )
-
-            GeminiSettingsCard(
-                keyInput = geminiKeyInput,
-                onKeyInputChange = { geminiKeyInput = it },
-                hasUserKey = geminiHasUserKey,
-                models = geminiModels,
-                selectedModel = selectedGeminiModel,
-                modelMenuExpanded = modelMenuExpanded,
-                onModelMenuExpandedChange = { modelMenuExpanded = it },
-                onSelectModel = {
-                    geminiViewModel.selectModel(it)
-                    modelMenuExpanded = false
-                },
-                status = geminiStatus,
-                onSaveKey = { geminiViewModel.saveKey(geminiKeyInput) },
-                onTestSavedKey = geminiViewModel::testSavedKey,
-                onClearKey = {
-                    geminiViewModel.clearKey()
-                    geminiKeyInput = ""
-                },
-                onRefresh = geminiViewModel::refreshModels
+            AppSettingsRow(
+                icon = Icons.Outlined.History,
+                label = "AI usage & statistics",
+                onClick = onAiUsage
             )
 
             SectionHeader("Support")
@@ -532,7 +452,7 @@ fun SettingsScreen(
  * the request past the budget that used to kill the process.
  */
 @Composable
-private fun CapturePromptCard(
+internal fun CapturePromptCard(
     prompt: String,
     isCustom: Boolean,
     onSave: (String) -> Unit,
@@ -690,7 +610,7 @@ private fun CrashDiagnosticsCard(crashLogText: String?) {
 }
 
 @Composable
-private fun LlmProviderSettingsCard(
+internal fun LlmProviderSettingsCard(
     provider: LlmProviderKind,
     onSelect: (LlmProviderKind) -> Unit,
 ) {
@@ -753,7 +673,7 @@ private fun LlmProviderSettingsCard(
  * the only place that can be caught.
  */
 @Composable
-private fun EmbeddingModelSettingsCard(
+internal fun EmbeddingModelSettingsCard(
     status: EmbeddingModelStatus,
     selfTest: List<String>,
     selfTestRunning: Boolean,
@@ -890,7 +810,7 @@ private fun EmbeddingModelSettingsCard(
 }
 
 @Composable
-private fun OfflineModelSettingsCard(
+internal fun OfflineModelSettingsCard(
     status: LumenModelStatus,
     downloadStats: LumenDownloadStats?,
     modelUrl: String,
@@ -1021,7 +941,7 @@ private fun OfflineModelSettingsCard(
  * number is a setting and the reader can settle it in three captures.
  */
 @Composable
-private fun CaptureSizeCard(captureChars: Int, onSelect: (Int) -> Unit) {
+internal fun CaptureSizeCard(captureChars: Int, onSelect: (Int) -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(16.dp),
@@ -1200,7 +1120,7 @@ private fun formatModelMb(bytes: Long): String =
     "%.1f".format(bytes / 1_048_576.0)
 
 @Composable
-private fun AiAnalysisSettingsCard(
+internal fun AiAnalysisSettingsCard(
     level: AiAnalysisLevel,
     onSelect: (AiAnalysisLevel) -> Unit
 ) {
@@ -1236,7 +1156,7 @@ private fun AiAnalysisSettingsCard(
 }
 
 @Composable
-private fun GenerationModeSettingsCard(
+internal fun GenerationModeSettingsCard(
     mode: GenerationMode,
     onSelect: (GenerationMode) -> Unit
 ) {
@@ -1272,7 +1192,7 @@ private fun GenerationModeSettingsCard(
 }
 
 @Composable
-private fun GeminiSettingsCard(
+internal fun GeminiSettingsCard(
     keyInput: String,
     onKeyInputChange: (String) -> Unit,
     hasUserKey: Boolean,

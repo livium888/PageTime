@@ -170,6 +170,41 @@ class BalanceManager(
 
     suspend fun flashcardReward(): Long = repository.flashcardRewardSeconds()
 
+    /**
+     * Sets the price of a session. Returns whether the change was accepted.
+     *
+     * The fence lives here and not in the screen because a rule enforced only
+     * by a slider's travel is a rule enforced by one caller. The screen clips
+     * the thumb so the reader is never offered a move that will be refused;
+     * this is what makes the refusal true.
+     *
+     * Serialized with every other mutation for the same reason startSession
+     * is: reading the gate and then writing against it must not interleave
+     * with a session starting or expiring in between.
+     */
+    suspend fun setSessionCostSeconds(seconds: Long): Boolean = mutex.withLock {
+        val state = stateOf(repository.settings.first(), System.currentTimeMillis())
+        if (!state.canLoosenTheRules &&
+            GateState.loosensCost(state.sessionCostSeconds, seconds)
+        ) {
+            return@withLock false
+        }
+        repository.setSessionCostSeconds(seconds)
+        true
+    }
+
+    /** The same fence on session length, whose easy direction is longer. */
+    suspend fun setSessionLengthSeconds(seconds: Long): Boolean = mutex.withLock {
+        val state = stateOf(repository.settings.first(), System.currentTimeMillis())
+        if (!state.canLoosenTheRules &&
+            GateState.loosensLength(state.sessionLengthSeconds, seconds)
+        ) {
+            return@withLock false
+        }
+        repository.setSessionLengthSeconds(seconds)
+        true
+    }
+
     suspend fun setFlashcardReward(seconds: Long) = repository.setFlashcardRewardSeconds(seconds)
 
     /**

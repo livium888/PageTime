@@ -162,16 +162,20 @@ data class GateState(
      * blocked app in the first place. So the escape and the front door have
      * the same price, and there is nothing to be gained by reaching for it.
      *
-     * The session price and length used to be fenced the same way, on the
-     * argument that a cheaper session dissolves the gate and that is a bigger
-     * escape than unblocking one app. It was a worse trade than it looked. A
-     * price has a strict direction and an easy one, and outside a session only
-     * the strict one was accepted — so a single touch on the slider pinned the
-     * price at its ceiling, and the reader could not bring it back down until
-     * they had read the eight hours they had just accidentally demanded of
-     * themselves. The terms are the reader's own commitment, and they are now
-     * theirs to set in either direction. What actually gates access — the
-     * blocked list, and the day-long cooling-off on the switch — stays priced.
+     * The session price and length are fenced the same way, and for a bigger
+     * reason: a cheaper session does not open one app, it dissolves the gate.
+     *
+     * This fence was removed once and is back. Not because the rule was
+     * wrong — because the slider implementing it wrote to storage on every
+     * frame of the drag, so its lower bound climbed under the reader's finger
+     * and a single touch ratcheted the price to its eight-hour ceiling, which
+     * they then could not undo until they had read eight hours they never
+     * meant to ask for. That was an interaction bug wearing the rule's
+     * clothes. The slider now holds a draft and commits once, on release, and
+     * freezes its bounds for the length of the drag; see [costBounds].
+     *
+     * So the strict direction is always free — more reading, shorter
+     * sessions, any time. The easy direction costs what entry costs.
      */
     val canLoosenTheRules: Boolean
         get() = !enabled || sessionActive
@@ -217,6 +221,76 @@ data class GateState(
 
         const val MIN_SESSION_LENGTH_SECONDS = 5L * 60
         const val MAX_SESSION_LENGTH_SECONDS = 2L * 60 * 60
+
+        /**
+         * Whether a proposed price makes the gate cheaper.
+         *
+         * Cheaper is the easy direction: less reading for the same app time.
+         */
+        fun loosensCost(currentSeconds: Long, proposedSeconds: Long): Boolean =
+            proposedSeconds < currentSeconds
+
+        /** Longer sessions for the same reading is the easy direction too. */
+        fun loosensLength(currentSeconds: Long, proposedSeconds: Long): Boolean =
+            proposedSeconds > currentSeconds
+
+        /**
+         * How far the session-price control may travel, in seconds.
+         *
+         * WHY THIS IS A RANGE AND NOT A VETO
+         *
+         * A slider the reader can drag anywhere and that then springs back
+         * reads as broken rather than as a rule. Clipping the travel to the
+         * direction that is allowed says the same thing without the lie.
+         *
+         * THE BUG THIS MUST NOT BRING BACK
+         *
+         * The first version of this fence was correct and unusable, for a
+         * reason that had nothing to do with the rule. The screen wrote every
+         * frame of the drag, so the lower bound — which is the stored value —
+         * climbed while the finger was still down, and the same finger
+         * position kept meaning a larger number. One touch ratcheted the price
+         * to its eight-hour ceiling, and the reader then could not bring it
+         * back down until they had read the eight hours they never meant to
+         * ask for. The fence was removed to escape that.
+         *
+         * It is safe now because the screen no longer writes mid-drag: it
+         * holds a draft and commits once, on release, and it freezes these
+         * bounds for the length of the drag so a session expiring under the
+         * reader's thumb cannot move them either. This function is pure and
+         * has no idea about any of that, which is exactly why the rule can be
+         * tested and the interaction cannot.
+         */
+        fun costBounds(currentSeconds: Long, canLoosen: Boolean): LongRange {
+            val current = currentSeconds.coerceIn(
+                MIN_SESSION_COST_SECONDS,
+                MAX_SESSION_COST_SECONDS,
+            )
+            // Clamped first, or a stored value from outside the range would
+            // produce an inverted one and the control would have negative
+            // travel.
+            return if (canLoosen) {
+                MIN_SESSION_COST_SECONDS..MAX_SESSION_COST_SECONDS
+            } else {
+                current..MAX_SESSION_COST_SECONDS
+            }
+        }
+
+        /** The same fence on session length, whose strict direction is shorter. */
+        fun lengthBounds(currentSeconds: Long, canLoosen: Boolean): LongRange {
+            val current = currentSeconds.coerceIn(
+                MIN_SESSION_LENGTH_SECONDS,
+                MAX_SESSION_LENGTH_SECONDS,
+            )
+            return if (canLoosen) {
+                MIN_SESSION_LENGTH_SECONDS..MAX_SESSION_LENGTH_SECONDS
+            } else {
+                MIN_SESSION_LENGTH_SECONDS..current
+            }
+        }
+
+        /** Whether a fenced control has any travel left at all. */
+        fun hasTravel(bounds: LongRange): Boolean = bounds.last > bounds.first
 
         /**
          * The ceiling on banked credit: two sessions' worth.

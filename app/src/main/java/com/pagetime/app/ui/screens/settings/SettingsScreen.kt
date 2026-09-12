@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
+import kotlin.math.roundToLong
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -117,6 +118,12 @@ fun SettingsScreen(
     var flashcardRewardDraft by remember { mutableStateOf<Long?>(null) }
     var costDraftMinutes by remember { mutableStateOf<Float?>(null) }
     var lengthDraftMinutes by remember { mutableStateOf<Float?>(null) }
+    // The travel a fenced slider was given when the drag began, held until the
+    // finger comes up. The gate ticks once a second, so without this a session
+    // expiring mid-drag would move the bounds under the reader's thumb — the
+    // same class of fault as the write-every-frame ratchet these drafts fixed.
+    var costBoundsHeld by remember { mutableStateOf<LongRange?>(null) }
+    var lengthBoundsHeld by remember { mutableStateOf<LongRange?>(null) }
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -249,10 +256,30 @@ fun SettingsScreen(
                 // enforcement is on, so the reader can set their terms before
                 // turning the gate on.
                 Text("Session settings", style = MaterialTheme.typography.titleMedium)
-                val costFloor = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()
-                val costCeiling = (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat()
-                val lengthFloor = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()
-                val lengthCeiling = (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat()
+
+                // Outside a session the terms move only in the strict
+                // direction. Making them easier dissolves the gate outright,
+                // which is a bigger escape than unblocking one app, so it
+                // costs the same thing: app time already in hand.
+                if (!gate.canLoosenTheRules) {
+                    Text(
+                        "These can be made stricter any time. Making them easier — cheaper " +
+                            "sessions, or longer ones — needs app time in hand, the same " +
+                            "price as unblocking an app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                // Bounds are frozen for the length of a drag and only ever
+                // read live when no finger is down. Recomputing them mid-drag
+                // is what made the first version of this fence unusable.
+                val costBounds = costBoundsHeld
+                    ?: GateState.costBounds(gate.sessionCostSeconds, gate.canLoosenTheRules)
+                val costStart = (costBounds.first / 60).toFloat()
+                val costEnd = (costBounds.last / 60).toFloat()
+                val costMovable = GateState.hasTravel(costBounds)
 
                 Text("Reading per session", style = MaterialTheme.typography.titleSmall)
                 Text(
@@ -265,15 +292,32 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Slider(
-                    value = costDraftMinutes ?: (gate.sessionCostSeconds / 60).toFloat(),
-                    onValueChange = { costDraftMinutes = it },
-                    onValueChangeFinished = {
-                        costDraftMinutes?.let { viewModel.setSessionCostSeconds(it.toLong() * 60) }
-                        costDraftMinutes = null
+                    value = (costDraftMinutes ?: (gate.sessionCostSeconds / 60).toFloat())
+                        .coerceIn(costStart, maxOf(costEnd, costStart)),
+                    onValueChange = {
+                        // Freeze on the first movement, not on release.
+                        if (costBoundsHeld == null) costBoundsHeld = costBounds
+                        costDraftMinutes = it
                     },
-                    valueRange = costFloor..costCeiling
+                    onValueChangeFinished = {
+                        costDraftMinutes?.let {
+                            viewModel.setSessionCostSeconds(it.roundToLong() * 60)
+                        }
+                        costDraftMinutes = null
+                        costBoundsHeld = null
+                    },
+                    // Never a single point: a range of zero width throws.
+                    valueRange = costStart..maxOf(costEnd, costStart + 1f),
+                    enabled = costMovable
                 )
                 Spacer(Modifier.height(12.dp))
+
+                val lengthBounds = lengthBoundsHeld
+                    ?: GateState.lengthBounds(gate.sessionLengthSeconds, gate.canLoosenTheRules)
+                val lengthStart = (lengthBounds.first / 60).toFloat()
+                val lengthEnd = (lengthBounds.last / 60).toFloat()
+                val lengthMovable = GateState.hasTravel(lengthBounds)
+
                 Text("Session length", style = MaterialTheme.typography.titleSmall)
                 Text(
                     BlockScreenText.span(gate.sessionLengthSeconds),
@@ -285,13 +329,21 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Slider(
-                    value = lengthDraftMinutes ?: (gate.sessionLengthSeconds / 60).toFloat(),
-                    onValueChange = { lengthDraftMinutes = it },
-                    onValueChangeFinished = {
-                        lengthDraftMinutes?.let { viewModel.setSessionLengthSeconds(it.toLong() * 60) }
-                        lengthDraftMinutes = null
+                    value = (lengthDraftMinutes ?: (gate.sessionLengthSeconds / 60).toFloat())
+                        .coerceIn(lengthStart, maxOf(lengthEnd, lengthStart)),
+                    onValueChange = {
+                        if (lengthBoundsHeld == null) lengthBoundsHeld = lengthBounds
+                        lengthDraftMinutes = it
                     },
-                    valueRange = lengthFloor..lengthCeiling
+                    onValueChangeFinished = {
+                        lengthDraftMinutes?.let {
+                            viewModel.setSessionLengthSeconds(it.roundToLong() * 60)
+                        }
+                        lengthDraftMinutes = null
+                        lengthBoundsHeld = null
+                    },
+                    valueRange = lengthStart..maxOf(lengthEnd, lengthStart + 1f),
+                    enabled = lengthMovable
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))

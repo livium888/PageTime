@@ -8,9 +8,11 @@ import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.library.EpubParser
 import com.pagetime.app.data.library.PdfFigureExtractor
 import com.pagetime.app.data.library.PdfTextExtractor
+import com.pagetime.app.data.library.PdfToEpub
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher

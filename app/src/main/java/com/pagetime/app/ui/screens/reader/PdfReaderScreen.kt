@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -38,8 +39,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,7 +50,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -121,6 +122,9 @@ fun PdfReaderScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var menuExpanded by remember { mutableStateOf(false) }
     var showGoToPage by remember { mutableStateOf(false) }
+    var showCreateFlashcard by remember { mutableStateOf(false) }
+    var extractedText by remember { mutableStateOf<String?>(null) }
+    var isExtracting by remember { mutableStateOf(false) }
 
     val backgroundColor = if (isDark) Color(0xFF1A1A1A) else Color(0xFFF5F5F5)
     val controlsColor = if (isDark) Color.White.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.8f)
@@ -142,9 +146,9 @@ fun PdfReaderScreen(
             val repo = app.container.libraryRepository
             val pdfFile = repo.pdfSourceFile(book)
             if (pdfFile != null && pdfFile.exists()) {
-                vm.open(pdfFile.absolutePath)
+                vm.open(pdfFile.absolutePath, bookId)
             } else {
-                vm.open(book.localPath)
+                vm.open(book.localPath, bookId)
             }
         }
     }
@@ -162,6 +166,8 @@ fun PdfReaderScreen(
     }
 
     val scrollState = rememberLazyListState()
+
+    val scope = rememberCoroutineScope()
 
     // Go to page: scroll the LazyColumn
     LaunchedEffect(showGoToPage) {
@@ -283,6 +289,23 @@ fun PdfReaderScreen(
                             text = { Text("Actual size") },
                             onClick = { menuExpanded = false; scale = 2.5f }
                         )
+                        DropdownMenuItem(
+                            text = { 
+                                if (isExtracting) Text("Extracting…") 
+                                else Text("Create flashcard from this page") 
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                isExtracting = true
+                                scope.launch {
+                                    val text = vm.extractPageText(state.currentPage)
+                                    extractedText = text
+                                    isExtracting = false
+                                    showCreateFlashcard = text != null
+                                }
+                            },
+                            enabled = !isExtracting
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -300,10 +323,25 @@ fun PdfReaderScreen(
             onGoToPage = { page ->
                 showGoToPage = false
                 vm.goToPage(page)
-                // Scroll to the page in the LazyColumn
-                // The LazyColumn will recompose with the new page
             },
             onDismiss = { showGoToPage = false }
+        )
+    }
+
+    // --- Flashcard creation dialog ---
+    if (showCreateFlashcard && extractedText != null) {
+        FlashcardFromPageDialog(
+            pageText = extractedText!!,
+            pageIndex = state.currentPage,
+            onSave = { front, back ->
+                vm.saveFlashcard(front, back, extractedText, state.currentPage)
+                showCreateFlashcard = false
+                extractedText = null
+            },
+            onDismiss = {
+                showCreateFlashcard = false
+                extractedText = null
+            }
         )
     }
 }
@@ -437,6 +475,76 @@ private fun GoToPageDialog(
                 },
                 enabled = text.toIntOrNull()?.let { it in 1..pageCount } == true
             ) { Text("Go") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/**
+ * Dialog for creating a flashcard from extracted PDF page text.
+ * Shows the full page text and lets the user write a question and answer.
+ */
+@Composable
+private fun FlashcardFromPageDialog(
+    pageText: String,
+    pageIndex: Int,
+    onSave: (front: String, back: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var front by remember { mutableStateOf("") }
+    var back by remember { mutableStateOf("") }
+    var showPageText by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create flashcard") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Page ${pageIndex + 1}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = front,
+                    onValueChange = { front = it },
+                    label = { Text("Question") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                OutlinedTextField(
+                    value = back,
+                    onValueChange = { back = it },
+                    label = { Text("Answer") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                TextButton(onClick = { showPageText = !showPageText }) {
+                    Text(if (showPageText) "Hide page text" else "Show page text")
+                }
+                if (showPageText) {
+                    Text(
+                        pageText.take(2000) + if (pageText.length > 2000) "…" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(8.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(front.trim(), back.trim()) },
+                enabled = front.isNotBlank() && back.isNotBlank()
+            ) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

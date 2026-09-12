@@ -1,0 +1,44 @@
+# Crash path investigation notes
+
+## Root cause: per-request native model load/close cycle
+**MediaPipeLlmProvider.infer()** created a new `LlmInference` instance on every
+capture request and closed it immediately. Each load allocates ~800 MB of
+contiguous native memory for the 521 MB Qwen q8 weights. The repeated
+allocate/free cycle on a phone with limited RAM triggers a native OOM
+(SIGABRT/SIGSEGV) that:
+- kills the process immediately — no Kotlin try/catch can catch it
+- leaves no Java crash log (Android's CrashReporter only catches Java exceptions)
+- manifests as "the app disappears" with no trace
+
+This is the crash the user sees on every Lumen card capture with the offline model.
+
+## Fix: session-scoped model caching (MediaPipeLlmProvider.kt)
+- The model is now loaded ONCE per session and reused across requests.
+- A reference count tracks in-flight requests; the model is only closed when
+  the last user returns.
+- `acquireModel()` checks file size + integrity before reusing the cache, so a
+  re-downloaded model is detected and reloaded.
+- `reset()` is called when the store status changes away from Ready (re-download,
+  corruption), so the cached handle is invalidated promptly.
+- Debug logging: free memory before load, model size on load, reuse events.
+
+## Download progress fix (LumenModelStore.kt)
+- The downloader now reports progress at least every 250 ms (was: every 512 KB).
+- Also fires on the first ~2% of the download so the UI immediately shows movement
+  instead of "0 MB" for several seconds on slow connections.
+- The UI already shows MB-based progress (formatModelMb); this fix makes the
+  live counter actually move.
+
+## Why no crash log was captured
+- Native SIGABRT/SIGSEGV bypasses the JVM entirely.
+- Android's `CrashReporter` only logs Java/Kotlin uncaught exceptions.
+- The native MediaPipe runtime abort is handled by the OS's crash handler, not
+  the app's — so `crash-*.log` files are never created.
+- The only fix is to prevent the native crash (done: session caching).
+
+## Remaining risk
+- If the device genuinely cannot provide ~800 MB contiguous native memory even
+  once, the first load will still fail. The `hasEnoughNativeMemory()` preflight
+  and `nativeFailed` flag handle this gracefully (fallback to non-AI draft).
+- A truly corrupt model file that passes the ZIP check but fails at native load
+  time would still crash; the ZIP check is our best defense today.

@@ -110,6 +110,7 @@ fun LibraryScreen(
     var showYouTubeDialog by remember { mutableStateOf(false) }
     var replaceBook by remember { mutableStateOf<BookEntity?>(null) }
     var pasteBook by remember { mutableStateOf<BookEntity?>(null) }
+    var openPdfBook by remember { mutableStateOf<BookEntity?>(null) }
     val replacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val book = replaceBook
         replaceBook = null
@@ -316,7 +317,10 @@ fun LibraryScreen(
                     val isReformatting by viewModel.reformatting.collectAsStateWithLifecycle()
                     BookRow(
                         book = book,
-                        onClick = { onOpenBook(book.id) },
+                        onClick = {
+                            if (book.format == "pdf") openPdfBook = book
+                            else onOpenBook(book.id)
+                        },
                         onAuthorClick = { onOpenAuthor(book.author) },
                         onDelete = { viewModel.delete(book) },
                         onReformat = { viewModel.reformatWithAI(book.id) },
@@ -359,6 +363,29 @@ fun LibraryScreen(
                 viewModel.importYouTubeUrl(url) { imported -> onOpenBook(imported.id) }
             },
             onDismiss = { showYouTubeDialog = false }
+        )
+    }
+
+    // PDF open-choice dialog: read as text (EPUB) or native PDF reader
+    openPdfBook?.let { book ->
+        AlertDialog(
+            onDismissRequest = { openPdfBook = null },
+            title = { Text(book.title) },
+            text = {
+                Text("How would you like to read this PDF?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    openPdfBook = null
+                    onOpenPdf(book.id)
+                }) { Text("Original PDF") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    openPdfBook = null
+                    onOpenBook(book.id)
+                }) { Text("Reflowed text") }
+            }
         )
     }
 }

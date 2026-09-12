@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.TextHighlightEntity
+import com.pagetime.app.data.local.isReadiumBook
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +49,7 @@ class HighlightsViewModel(
     init {
         viewModelScope.launch {
             val book = bookDao.getById(bookId)
-            val isText = book?.format != "epub"
+            val isText = book?.isReadiumBook != true
             // A plain-text percentage needs the book's length. One read for the
             // whole list, and skipped entirely for EPUBs, whose locators carry
             // their own progression.

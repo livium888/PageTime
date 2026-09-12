@@ -73,8 +73,8 @@ import com.pagetime.app.ui.formatMinutes
 
 private val IMPORT_MIME_TYPES = arrayOf(
     "application/epub+zip",
-    // A PDF is imported as text: the document is parsed once on the phone and
-    // read in the app's own reader, so the picker has to offer it.
+    // A PDF is converted to an EPUB on the phone, once, at import — so the
+    // picker has to offer it, and importing one is slower than importing a book.
     "application/pdf",
     "text/plain",
     "text/*",

@@ -8,7 +8,9 @@ import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
+import com.pagetime.app.data.library.PdfFigureExtractor
 import com.pagetime.app.data.library.PdfTextExtractor
+import com.pagetime.app.data.library.PdfToEpub
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
@@ -99,6 +101,12 @@ class AppContainer(context: Context) {
     /** Lifts a PDF's text out when it is imported; see [PdfTextExtractor] for the trade. */
     val pdfTextExtractor = PdfTextExtractor(appContext)
 
+    /** Cuts the figures out of a PDF's pages, so a converted book keeps them. */
+    val pdfFigureExtractor = PdfFigureExtractor(appContext)
+
+    /** Writes a PDF's pages back out as the EPUB the reader actually opens. */
+    val pdfToEpub = PdfToEpub()
+
     val youtubeSearchApi = YouTubeSearchApi()
 
     /** Incremental reading: chunks, priorities, and FSRS re-read schedules. */
@@ -119,6 +127,8 @@ class AppContainer(context: Context) {
         downloader = BookDownloader(appContext),
         epubParser = epubParser,
         pdfTextExtractor = pdfTextExtractor,
+        pdfFigureExtractor = pdfFigureExtractor,
+        pdfToEpub = pdfToEpub,
         settingsRepository = settingsRepository,
         context = appContext,
         aiUsageRepository = aiUsageRepository
@@ -283,5 +293,12 @@ class AppContainer(context: Context) {
     init {
         blockController.start()
         usageReconciler.start()
+        // PDFs imported before a PDF was converted at import are still sitting
+        // in the library as extracted text. Both files are on disk, so they can
+        // be rebuilt in the background — and until one is, it keeps reading the
+        // way it did, because the reader asks the file rather than the format.
+        scope.launch {
+            runCatching { libraryRepository.upgradeLegacyPdfBooks() }
+        }
     }
 }

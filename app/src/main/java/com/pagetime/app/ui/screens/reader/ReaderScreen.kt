@@ -146,6 +146,7 @@ import com.pagetime.app.data.PagemarkSession
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.local.TextHighlightEntity
 import com.pagetime.app.data.local.ReaderSettings
+import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
@@ -455,10 +456,11 @@ fun ReaderScreen(
                 }
             )
 
-            // Anything that is not an EPUB is text this app lays out itself,
-            // including the text lifted out of a PDF (see PdfTextExtractor), so
-            // a PDF gets the paged reader with its own settings, saved position,
-            // highlights and chunks rather than a second reader of its own.
+            // A book no layout engine owns is text this app lays out itself:
+            // an imported .txt, a YouTube transcript, or a PDF imported before
+            // PDFs were converted on import (see PdfToEpub). A PDF imported
+            // since is an EPUB by the time it reaches here, and Readium reads it
+            // — figures and all — through the branch above.
             book?.isReflowedText == true && textContent != null -> TextReaderHost(
                 content = textContent!!,
                 initialFraction = initialTextFraction,
@@ -1027,7 +1029,7 @@ fun ReaderScreen(
                 }
                 fromToc
                     ?: publication?.readingOrder?.getOrNull(index)?.title?.takeIf { it.isNotBlank() }
-                    ?: book?.takeIf { it.format != "epub" }?.title
+                    ?: book?.takeIf { !it.isReadiumBook }?.title
                     ?: "Chapter ${index + 1}"
             },
             onQueryChanged = vm::onSearchQueryChanged,

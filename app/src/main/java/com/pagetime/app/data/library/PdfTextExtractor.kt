@@ -16,11 +16,12 @@ class ScannedPdfException(message: String) : Exception(message)
  *
  * A PDF page is a fixed sheet of paper, and this app's reader changes font,
  * size, line height and margins — settings that only mean anything for text
- * that can re-flow. So a PDF is not rendered here: its text is lifted out once,
- * tidied by [PdfTextCleaner], and written beside the document as an ordinary
- * text book. From then on the paged text reader owns it exactly as it owns an
- * imported .txt, which is what makes saved positions, highlights, chunk reading
- * and Explain Back work on a PDF without any of them knowing a PDF exists.
+ * that can re-flow. So a PDF is not rendered here: its text is lifted out, page
+ * by page, and [PdfToEpub] writes those pages back out as a book the EPUB
+ * engine can lay out. From then on Readium owns it exactly as it owns a
+ * downloaded .epub, which is what makes saved positions, highlights, chunk
+ * reading and Explain Back work on a PDF without any of them knowing a PDF
+ * exists — and what will let figures ride along with the text as `<img>`s.
  *
  * All of this happens on the phone. Nothing is uploaded and no service is
  * involved.
@@ -33,23 +34,29 @@ class ScannedPdfException(message: String) : Exception(message)
  *    scans needs OCR, which this app does not do.
  *  - Two-column pages come out interleaved: a PDF's text carries no column
  *    information this extractor uses.
- *  - Figures, tables and formulas become placeholders or jumbled words.
- *  - The page counter counts the book's pages after re-flow, not the PDF's
- *    printed page numbers.
+ *  - Figures are not text and are not here: they are cut from the page by
+ *    [PdfFigureExtractor], as pictures of the region they occupied. A formula
+ *    written as text comes through as text, and one set as a drawing comes
+ *    through as a picture of itself.
+ *  - The page counter counts the book's pages after re-flow. Chapter entries
+ *    are labelled with the printed page numbers, so a figure can still be
+ *    cited as "page 42".
  *
- * Keeping the page itself on screen — faithful layout, real figures, a scan
- * that can only be looked at — is a separate step with a separate engine
- * (Pdfium), and it is why the original document is kept beside its text.
+ * The original document is kept beside the generated book: it is what makes
+ * this re-runnable, and what figures are cut from as they are added.
  */
 class PdfTextExtractor(private val context: Context) {
 
     /**
-     * Lifts [source]'s text into [destination] and returns how many characters
-     * of actual reading text were found.
+     * Every page's raw text, in reading order, for [PdfToEpub] to lay out.
+     *
+     * Raw, not tidied: the tidying pass needs the whole document at once (a
+     * running head is only recognisable as one by comparing pages), so it lives
+     * in [PdfTextCleaner] and is applied to this list rather than here.
      *
      * @throws ScannedPdfException when the document has essentially no text.
      */
-    fun extractTo(source: File, destination: File): Int {
+    fun pages(source: File): List<String> {
         // Cheap, idempotent, and required before any PDFBox call: it hands the
         // library this app's AssetManager so it can reach its own resources
         // (font metrics, glyph names) that ship inside the AAR.
@@ -66,11 +73,7 @@ class PdfTextExtractor(private val context: Context) {
                     "PageTime does not do yet."
             )
         }
-
-        val text = PdfTextCleaner.clean(pages)
-        destination.parentFile?.mkdirs()
-        destination.writeText(text)
-        return characters
+        return pages
     }
 
     /** Every page's raw text, in reading order, capped at a very long book. */

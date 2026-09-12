@@ -35,12 +35,19 @@ package com.pagetime.app.data.library
  */
 internal object PdfTextCleaner {
 
-    /** The whole document as paragraphs, blank-line separated. */
-    fun clean(pages: List<String>): String {
+    /**
+     * One tidied text per page, the list in the same order it came in.
+     *
+     * Page by page rather than the whole document at once because the reader
+     * gets one document per page — which is also what makes a figure's page
+     * unambiguous. The furniture pass still sees the whole document, since a
+     * running head is only recognisable by its repetition across pages.
+     */
+    fun cleanPerPage(pages: List<String>): List<String> {
         val running = runningLines(pages)
-        return pages
-            .flatMap { page -> paragraphs(page.lines(), running) }
-            .joinToString(BLANK_LINE)
+        return pages.map { page ->
+            paragraphs(page.lines(), running).joinToString(BLANK_LINE)
+        }
     }
 
     /**

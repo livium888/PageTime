@@ -17,7 +17,9 @@ This is a native **Kotlin + Jetpack Compose** Android app.
    or share — no API key needed. Imported files are copied into PageTime's
    private storage and remain available offline.
 2. **Read** — an immersive in-app reader powered by Readium for EPUB pagination
-   and exact locators. Plain-text books use stable, swipeable pages with saved
+   and exact locators; an imported PDF is converted into an EPUB on import, so
+   it (and its figures) reads exactly like a downloaded book. Plain-text books
+   use stable, swipeable pages with saved
    positions and book-style typography. Reader settings include serif/sans/mono fonts,
    sepia and night themes, spacing, margins, and a per-reader brightness override.
    A timer banks browsing time while the reader is open.
@@ -121,23 +123,47 @@ out of the book.
 
 ## PDF reading
 
-**A PDF is read as its text, not as its pages.** **Library → +** accepts a
-`.pdf`, and what happens next is a conversion rather than an import: the text is
-lifted out of the document on the phone, tidied, and stored beside it as an
-ordinary text book. From then on the PDF *is* one — the same paged reader, the
-same fonts, sepia and night themes, the same saved position, highlights, chunk
-reading, Go to, Explain Back and timer. Nothing is uploaded, no service is
-involved, and it happens once at import, so opening the book afterwards costs
-nothing.
+**A PDF becomes an EPUB.** **Library → +** accepts a `.pdf`, and what happens
+next is a conversion rather than an import: its text and its figures are lifted
+out of the document on the phone, and the pages are written back out as a book
+Readium renders. From then on the PDF *is* a book — the same engine as a
+downloaded `.epub`, the same fonts, sepia and night themes, the same saved
+position, highlights, chunk reading, Go to, Explain Back and timer. Nothing is
+uploaded, no service is involved, and it happens once at import, so opening the
+book afterwards costs nothing.
 
 That choice comes from what this app does with a book. Re-flowing text at the
 reader's font size, remembering a position in it, highlighting a span of it and
-cutting it into chunks are all operations on text. A PDF page is a fixed sheet
-of paper, and Readium has no PDF engine of its own — its open-source path is
-Pdfium, which renders pages and hands the rest of the app nothing to work with.
-So the text is extracted with **PdfBox-Android** (the Apache PDFBox port,
-Apache-2.0) and the paged text reader — the one that already reads `.txt` files
-and YouTube transcripts — owns the result.
+cutting it into chunks are all operations a layout engine and a Locator do well.
+A PDF page is a fixed sheet of paper, and Readium has no PDF engine of its own —
+its open-source path is Pdfium, which renders pages and hands the rest of the
+app nothing to work with. So the text is extracted with **PdfBox-Android** (the
+Apache PDFBox port, Apache-2.0) and written into an EPUB by `PdfToEpub`, one
+XHTML document per printed page. Importing a PDF therefore needs no new reading
+code at all: highlights, positions and chapters work because the book is an
+ordinary EPUB.
+
+**Figures come along.** Diagrams, photographs, charts, maps and sparse tables
+are cut out of the page and placed at the end of their own page's text, at the
+column's width, so nothing has to be pinched and zoomed. `PdfFigureExtractor`
+borrows the idea behind k2pdfopt (the engine behind KOReader's reflow): rather
+than try to understand the document, it rasterizes the page, finds the blocks of
+ink that touch each other, and keeps the ones **the page's own text does not
+account for** — a paragraph is covered by its line boxes, a chart is not. That
+one rule catches photographs, vector diagrams and tables without a table
+parser, and each region is then re-rendered from the page at 1200 px wide, so a
+line drawing comes back sharp rather than as a blurry grab.
+
+A figure is written as a real image file in the archive and referenced with an
+`<img>`, which is exactly how an illustrated EPUB carries its plates — the
+reason a downloaded book's pictures work is that they are files the text points
+at, not anything special about conversion.
+
+**One document per page, deliberately.** It costs a few hundred small files and
+buys three things: chapter entries labelled with the printed page number (so
+"see page 42" is a real place), a paragraph that never straddles a page boundary
+in the reader's own pagination, and a figure that belongs unambiguously to the
+page it came from.
 
 **What the tidy-up does.** Extraction gives back what the page looks like, not
 what it reads like: a paragraph arrives as one line per line, running heads and
@@ -152,10 +178,19 @@ which is how a chapter title reads next to a paragraph; and "co-" before
 **What it will not do, deliberately.** A scanned PDF — photographs of pages —
 has no text to lift, so it is refused with a message that says exactly that
 instead of being imported as an empty book; reading scans needs OCR, which this
-does not do. Two-column papers can come out interleaved, because nothing in the
-extracted text says where a column ends. Figures, tables and formulas become
-placeholders or jumbled words. The page counter counts the book's pages after
-re-flow, not the document's printed numbers.
+does not do. Two-column papers can come out interleaved, because the extracted
+text carries no column information. A dense table is mostly text, so it may
+re-flow as prose instead of arriving as a picture of the printed grid — a
+figure's placement says "on this page", not "between these two paragraphs".
+And the page counter counts the book's pages after re-flow; the chapter list is
+what carries the document's own page numbers.
+
+**Importing is the expensive moment.** Text extraction and figure detection both
+walk the whole document, so a 400-page PDF takes noticeably longer to import
+than an EPUB — once. A book with no figures costs only the look for them: a page
+that is mostly text is never rendered. Figures are capped (300 per book, 60 MB
+total), and a picture that turns out to be a photograph is stored as JPEG and
+kept only when that is the smaller of the two.
 
 **It costs about 10 MB of APK.** PdfBox-Android brings BouncyCastle (three jars)
 with it for encrypted documents, and release builds do not minify, so all of it
@@ -163,11 +198,17 @@ ships. What that buys is opening a password-protected PDF rather than refusing
 one; excluding it is a one-line change in `app/build.gradle.kts` if the APK ever
 needs the space back.
 
-**The original document is kept.** It sits beside the extracted text under the
-same id and is deleted with the book. Nothing reads it yet: it is there for the
-"read the original page" step, which is where faithful layout, real figures and
-scans belong — a different engine doing a different job, not a worse version of
-this one.
+**The original document is kept.** It sits beside the generated EPUB under the
+same id and is deleted with the book. It is what figures are cut from and what
+makes the conversion re-runnable — and PDFs imported before this existed are
+converted in the background on first launch afterwards, keeping their place in
+the library. It is also where the "read the original page" step will look: a
+second engine for faithful layout and scans, not a worse version of this one.
+
+**Expected to improve.** Figures are detected by drawing, not by understanding,
+so a figure's position is exact but its neighbours are approximate, and a dense
+table is a judgement call. If a real textbook comes out badly, the interesting
+failure is a page that is mostly figure: that is what to report.
 
 ## Bookshelf
 
@@ -269,9 +310,10 @@ Then pick which apps to block in **Settings → Manage blocked apps**. To add a 
   accessibility service.
 - "Reading time" is counted while the reader is open and the screen is on; it
   does not yet verify physical presence. (See roadmap.)
-- A PDF is read as its text, not as printed pages, so figures and tables do not
-  survive and a scanned document cannot be read at all. See
-  [PDF reading](#pdf-reading) for why, and for what is kept.
+- A PDF is converted to an EPUB on import, which means it is re-flowed rather
+  than shown as printed pages: a figure arrives as a picture of the region it
+  occupied, a dense table may re-flow as text, and a scanned document cannot be
+  read at all. See [PDF reading](#pdf-reading) for why, and for what is kept.
 
 ## Project structure
 
@@ -286,7 +328,7 @@ app/src/main/java/com/pagetime/app/
 │   ├── openlibrary/                    # Open Library + Internet Archive client
 │   ├── youtube/                         # YouTube transcript fetcher + search API
 │   ├── download/                        # file downloader
-│   ├── library/                         # EPUB parser + PDF text extraction
+│   ├── library/                         # EPUB parser, PDF → EPUB conversion, figure extraction
 │   └── AppContainer.kt, *Repository.kt  # manual DI + repositories
 ├── domain/BalanceManager.kt             # reading → browsing conversion
 └── ui/                                  # Compose theme, nav, and screens
@@ -294,9 +336,10 @@ app/src/main/java/com/pagetime/app/
 
 ## Roadmap ideas
 
-- **PDF: read the original page.** Show the document as it was printed — real
-  layout and figures, and scans that can only be looked at — with Pdfium as a
-  second engine behind a button, beside the text view that is the default.
+- **PDF: read the original page.** Show the document as it was printed — and
+  scans that can only be looked at — with Pdfium (or Android's own
+  `PdfRenderer`) as a second view behind a button, beside the re-flowed book
+  that is the default.
 - **OCR for scanned PDFs**, so a photograph of a page can be read rather than
   refused.
 - EPUB search, highlights, and richer annotation tools.

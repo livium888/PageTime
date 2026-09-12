@@ -5,6 +5,7 @@ import android.net.Uri
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LearningCheckpoint
+import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.library.EpubParser
 import java.io.File
 import java.util.zip.ZipFile
@@ -46,7 +47,7 @@ class LearningContextExtractor(
         // here rather than left to each caller to remember — running it on the
         // main dispatcher freezes the reader until the parse finishes.
         return withContext(Dispatchers.IO) {
-            if (book.format == "epub") {
+            if (book.isReadiumBook) {
                 extractEpub(book, chapterIndex, checkpoint, currentLocatorJson, maxCharacters)
             } else {
                 extractText(book, chapterIndex, checkpoint, currentTextOffset, maxCharacters)
@@ -128,7 +129,7 @@ class LearningContextExtractor(
         // A plain-text book has no chapter structure to walk, so it is one
         // unit. That is not a compromise here: its offsets then index the whole
         // file, which is exactly the coordinate the text reader navigates by.
-        if (book.format != "epub") return@withContext if (File(book.localPath).isFile) 1 else 0
+        if (!book.isReadiumBook) return@withContext if (File(book.localPath).isFile) 1 else 0
         runCatching {
             val extracted = File(context.cacheDir, "epub/${book.id}")
             epubParser.parse(File(book.localPath), extracted, extractAssets = false).chapters.size
@@ -143,7 +144,7 @@ class LearningContextExtractor(
     suspend fun chapterText(book: BookEntity, chapterIndex: Int): String =
         withContext(Dispatchers.IO) {
             runCatching {
-                if (book.format != "epub") {
+                if (!book.isReadiumBook) {
                     return@runCatching if (chapterIndex == 0) File(book.localPath).readText() else ""
                 }
                 val extracted = File(context.cacheDir, "epub/${book.id}")

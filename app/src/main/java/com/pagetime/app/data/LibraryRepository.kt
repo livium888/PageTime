@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.library.EpubParser
+import com.pagetime.app.data.library.PdfFigureExtractor
 import com.pagetime.app.data.library.PdfTextExtractor
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
@@ -24,6 +25,8 @@ class LibraryRepository(
     private val downloader: BookDownloader,
     private val epubParser: EpubParser,
     private val pdfTextExtractor: PdfTextExtractor,
+    private val pdfFigureExtractor: PdfFigureExtractor,
+    private val pdfToEpub: PdfToEpub,
     private val settingsRepository: SettingsRepository,
     private val context: Context,
     private val aiUsageRepository: AiUsageRepository? = null
@@ -167,28 +170,43 @@ class LibraryRepository(
             } else {
                 null
             }
-            // A PDF is read as text, so the text is lifted out now — once,
-            // here, off the main thread — and the reader opens that file. The
-            // document stays where it landed, so its pages can still be shown
-            // as they were printed later, and so deleting the book takes both.
-            val localPath = if (format == "pdf") {
-                val extracted = File(booksDir, "$id.txt")
-                try {
-                    pdfTextExtractor.extractTo(destination, extracted)
-                } catch (error: Throwable) {
-                    // Nothing reached the library, so the copy of the document
-                    // must not be left behind for a book that does not exist.
-                    runCatching { destination.delete() }
-                    throw error
-                }
-                extracted.absolutePath
-            } else {
-                destination.absolutePath
-            }
             val title = metadata?.title
                 ?.takeIf { it.isNotBlank() }
                 ?: displayName.substringBeforeLast('.', displayName).ifBlank { "Imported book" }
             val author = metadata?.author?.takeIf { it.isNotBlank() } ?: "Unknown author"
+            // A PDF becomes an EPUB here — once, off the main thread. Its text
+            // comes out of the document and the book the reader opens is the
+            // EPUB Readium lays out, which is what lets figures ride along with
+            // the text and what makes highlights, positions and chunks work on a
+            // PDF exactly as they do on a downloaded book. The document itself
+            // stays where it landed, so the conversion can be re-run and so
+            // figures can be cut from it.
+            val localPath = if (format == "pdf") {
+                val generated = File(booksDir, "$id.epub")
+                try {
+                    val pages = pdfTextExtractor.pages(destination)
+                    pdfToEpub.convert(
+                        source = destination,
+                        destination = generated,
+                        title = title,
+                        author = author,
+                        pages = pages,
+                        // Figures are cut from the same document, once, here.
+                        // A book with none converts to a plain text book and
+                        // costs nothing but the look for them.
+                        figures = pdfFigureExtractor.figures(destination, pages.size)
+                    )
+                } catch (error: Throwable) {
+                    // Nothing reached the library, so neither file may be left
+                    // behind for a book that does not exist.
+                    runCatching { destination.delete() }
+                    runCatching { generated.delete() }
+                    throw error
+                }
+                generated.absolutePath
+            } else {
+                destination.absolutePath
+            }
             BookEntity(
                 id = id,
                 title = title,
@@ -249,11 +267,10 @@ class LibraryRepository(
     /**
      * The PDF a PDF book was made from, or null for every other format.
      *
-     * A PDF book's [BookEntity.localPath] is the text extracted from the
+     * A PDF book's [BookEntity.localPath] is the EPUB generated from the
      * document, so the document itself is a second file stored beside it under
-     * the same id. Nothing reads it yet: it is kept for the separate "read the
-     * original page" step, and so that deleting a book does not leave the
-     * document behind.
+     * the same id. It is what the conversion is re-run from and what figures are
+     * cut out of, and it is deleted with the book rather than left behind.
      */
     fun pdfSourceFile(book: BookEntity): File? {
         if (book.format != "pdf") return null
@@ -261,10 +278,57 @@ class LibraryRepository(
         return File(text.parentFile, "${text.nameWithoutExtension}.pdf")
     }
 
+    /**
+     * Converts PDF books imported before PDFs were converted at import.
+     *
+     * Until then a PDF was stored as extracted text and read by the paged text
+     * reader. Both the text file and the document are still on disk, so the book
+     * can simply be rebuilt — no re-downloading, no losing the reader's place.
+     *
+     * Until a book is converted it keeps working the way it did, because
+     * [isReadiumBook] asks about the file rather than the format. A conversion
+     * that fails is recorded beside the document and not retried on every
+     * launch, which matters when the failure is a 400-page book that has to be
+     * parsed again to fail again.
+     */
+    suspend fun upgradeLegacyPdfBooks() = withContext(Dispatchers.IO) {
+        val legacy = bookDao.getAll().filter {
+            it.format == "pdf" && !it.isReadiumBook
+        }
+        for (book in legacy) {
+            val source = pdfSourceFile(book) ?: continue
+            if (!source.isFile) continue
+            val failure = File(source.parentFile, "${source.nameWithoutExtension}.conversion-failed")
+            if (failure.exists()) continue
+            runCatching {
+                val generated = File(source.parentFile, "${source.nameWithoutExtension}.epub")
+                val pages = pdfTextExtractor.pages(source)
+                pdfToEpub.convert(
+                    source = source,
+                    destination = generated,
+                    title = book.title,
+                    author = book.author,
+                    pages = pages,
+                    figures = pdfFigureExtractor.figures(source, pages.size)
+                )
+                bookDao.upsert(book.copy(localPath = generated.absolutePath))
+                // The extracted text is no longer what the reader opens.
+                runCatching { File(book.localPath).delete() }
+            }.onFailure { error ->
+                runCatching { failure.writeText(error.message.orEmpty()) }
+            }
+        }
+    }
+
     suspend fun deleteBook(book: BookEntity) = withContext(Dispatchers.IO) {
         bookDao.deleteById(book.id)
         runCatching { File(book.localPath).delete() }
-        pdfSourceFile(book)?.let { source -> runCatching { source.delete() } }
+        pdfSourceFile(book)?.let { source ->
+            runCatching { source.delete() }
+            // The note left behind by a conversion that failed; it belongs to
+            // this book and goes with it.
+            runCatching { File(source.parentFile, "${source.nameWithoutExtension}.conversion-failed").delete() }
+        }
         runCatching { File(context.cacheDir, "epub/${book.id}").deleteRecursively() }
     }
 

@@ -11,6 +11,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.local.LearningCheckpoint
+import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.ConceptMap
 import com.pagetime.app.data.CaptureDiagnostic
@@ -194,7 +195,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             // finished loading; make sure the timer actually starts.
             if (resumed) tryStartTicker()
 
-            _bookmarkPresent.value = if (loaded.format == "epub") {
+            _bookmarkPresent.value = if (loaded.isReadiumBook) {
                 settingsRepository.savedBookmarkLocator(loaded.id) != null
             } else {
                 settingsRepository.savedBookmarkScroll(loaded.id) != null
@@ -202,7 +203,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             _checkpointPresent.value = settingsRepository.learningCheckpoint() != null
 
             val pendingSource = settingsRepository.consumePendingReaderSource(loaded.id)
-            if (loaded.format == "epub") {
+            if (loaded.isReadiumBook) {
                 withContext(Dispatchers.IO) {
                     openEpub(loaded, pendingSource?.locatorJson)
                 }
@@ -426,7 +427,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     }
 
     fun currentLearningPosition(): Pair<String?, Int?> =
-        if (_book.value?.format == "epub") {
+        if (_book.value?.isReadiumBook == true) {
             latestLocator?.toJSON()?.toString() to null
         } else {
             null to latestTxtOffset()
@@ -454,7 +455,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private fun currentFraction(): Float {
         val book = _book.value ?: return _progress.value
-        return if (book.format == "epub") {
+        return if (book.isReadiumBook) {
             (latestLocator?.locations?.progression?.toFloat() ?: _progress.value).coerceIn(0f, 1f)
         } else {
             latestTxtFraction
@@ -463,7 +464,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private fun currentLocatorJson(): String? {
         val book = _book.value ?: return null
-        return if (book.format == "epub") latestLocator?.toJSON()?.toString() else null
+        return if (book.isReadiumBook) latestLocator?.toJSON()?.toString() else null
     }
 
     /**
@@ -698,9 +699,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 val selection = selectedText?.trim().orEmpty()
                 if (selection.length >= LumenCapture.MIN_SELECTION_PASSAGE_CHARS) {
                     // The reader selected enough to be the passage itself.
-                    chapterIndex = if (b.format == "epub") currentChapterIndex() ?: 0 else null
+                    chapterIndex = if (b.isReadiumBook) currentChapterIndex() ?: 0 else null
                     passage = selection
-                } else if (b.format == "epub") {
+                } else if (b.isReadiumBook) {
                     chapterIndex = currentChapterIndex() ?: 0
                     // The passage ends where the reader pointed and runs back
                     // whole paragraphs from there. Selected text is the exact
@@ -741,13 +742,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 // line shows whether the passage itself is frozen (same length /
                 // start text) or the AI is at fault.
                 val positionInfo =
-                    when (b.format) {
-                        "epub" -> {
-                            val locator = latestLocator
-                            "href=${locator?.href} progression=${locator?.locations?.progression} " +
-                                "position=${locator?.locations?.position}"
-                        }
-                        else -> "fraction=$latestTxtFraction pageOffset=$latestTxtPageOffset"
+                    if (b.isReadiumBook) {
+                        val locator = latestLocator
+                        "href=${locator?.href} progression=${locator?.locations?.progression} " +
+                            "position=${locator?.locations?.position}"
+                    } else {
+                        "fraction=$latestTxtFraction pageOffset=$latestTxtPageOffset"
                     }
                 Log.d(
                     "LumenCapture",
@@ -762,7 +762,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 )
                 pendingLumenContext = PendingLumenContext(
                     draft = draft,
-                    locatorJson = if (b.format == "epub") {
+                    locatorJson = if (b.isReadiumBook) {
                         latestLocator?.toJSON()?.toString()
                     } else null,
                     chapterIndex = chapterIndex,
@@ -1020,20 +1020,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun setLearningCheckpoint() {
         val b = _book.value ?: return
         persistenceScope.launch {
-            when (b.format) {
-                "epub" -> {
-                    val locator = latestLocator ?: return@launch
-                    if (!locatorRestoreComplete) return@launch
-                    settingsRepository.saveLearningCheckpoint(
-                        LearningCheckpoint(locator.toJSON().toString(), null, null)
-                    )
-                }
-                else -> {
-                    if (!txtRestoreComplete) return@launch
-                    settingsRepository.saveLearningCheckpoint(
-                        LearningCheckpoint(null, latestTxtOffset(), latestTxtFraction)
-                    )
-                }
+            if (b.isReadiumBook) {
+                val locator = latestLocator ?: return@launch
+                if (!locatorRestoreComplete) return@launch
+                settingsRepository.saveLearningCheckpoint(
+                    LearningCheckpoint(locator.toJSON().toString(), null, null)
+                )
+            } else {
+                if (!txtRestoreComplete) return@launch
+                settingsRepository.saveLearningCheckpoint(
+                    LearningCheckpoint(null, latestTxtOffset(), latestTxtFraction)
+                )
             }
             _checkpointPresent.value = true
         }
@@ -1062,16 +1059,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _bookmarkPresent.value = false
                 return@launch
             }
-            when (b.format) {
-                "epub" -> {
-                    val locator = latestLocator ?: return@launch
-                    if (!locatorRestoreComplete) return@launch
-                    settingsRepository.saveBookmarkLocator(b.id, locator.toJSON().toString())
-                }
-                else -> {
-                    if (!txtRestoreComplete) return@launch
-                    settingsRepository.saveBookmarkScroll(b.id, latestTxtFraction)
-                }
+            if (b.isReadiumBook) {
+                val locator = latestLocator ?: return@launch
+                if (!locatorRestoreComplete) return@launch
+                settingsRepository.saveBookmarkLocator(b.id, locator.toJSON().toString())
+            } else {
+                if (!txtRestoreComplete) return@launch
+                settingsRepository.saveBookmarkScroll(b.id, latestTxtFraction)
             }
             _bookmarkPresent.value = true
         }
@@ -1224,14 +1218,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Persists the most recent position immediately (exit, background, checkpoint). */
     private fun persistPositionNow() {
         val b = _book.value ?: return
-        when (b.format) {
-            "epub" -> {
-                if (!ReaderPositionPolicy.canPersist(locatorRestoreComplete)) return
-                if (latestLocator == null) return
-                locatorSaveJob?.cancel()
-                persistenceScope.launch { saveLocator() }
-            }
-            else -> persistTextPositionNow(latestTxtFraction)
+        if (b.isReadiumBook) {
+            if (!ReaderPositionPolicy.canPersist(locatorRestoreComplete)) return
+            if (latestLocator == null) return
+            locatorSaveJob?.cancel()
+            persistenceScope.launch { saveLocator() }
+        } else {
+            persistTextPositionNow(latestTxtFraction)
         }
     }
 

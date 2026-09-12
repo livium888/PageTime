@@ -231,8 +231,16 @@ object PagemarkSession {
     }
 
     /** Due counts count ACTIONABLE chunks only: a chunk in mid-read is not "due". */
-    fun dueCount(items: List<PagemarkEntity>, nowMillis: Long): Int =
-        items.count { it.dueAt != null && it.dueAt <= nowMillis && stateOf(it) != State.READING }
+    fun dueCount(items: List<PagemarkEntity>, nowMillis: Long): Int = items.count {
+        // Mid-read is the reader's current chunk, not a thing owed back.
+        stateOf(it) != State.READING &&
+            it.dueAt != null &&
+            it.dueAt <= nowMillis &&
+            // A retired chunk keeps its old due date but is never due again;
+            // anything not actionable can never be owed, however overdue it
+            // looks. This is what makes the count agree with the queue.
+            isActionable(it, nowMillis)
+    }
 
     // endregion
 

@@ -2,7 +2,6 @@ package com.pagetime.app.ui.screens.reader
 
 import android.app.Activity
 import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -12,22 +11,28 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material3.AlertDialog
@@ -35,14 +40,19 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +62,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,8 +72,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -75,12 +90,13 @@ import kotlinx.coroutines.withContext
  * Continuous-scroll PDF reader.
  *
  * Pages stack vertically like Samsung Notes: scroll through the document
- * naturally, pinch to zoom, drag to pan when zoomed in. No arrows, no
- * page-by-page switching — just the document as a continuous scroll.
+ * naturally, pinch to zoom, drag to pan when zoomed in. Features:
  *
- * This is a display-only viewer for now. Highlights, flashcards, and
- * indexing can be added on top by storing page+rectangle coordinates,
- * but that is a separate piece of work from the reading experience.
+ *  - Reading time tracking (earns browse balance like EPUB)
+ *  - One-tap AI flashcard generation from current page (Gemini)
+ *  - Text selection bottom sheet → highlight → AI flashcard
+ *  - Last-position memory (restores to where you left off)
+ *  - Dark mode, zoom controls, go-to-page
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +106,7 @@ fun PdfReaderScreen(
     vm: PdfReaderViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val flashcardState by vm.flashcardState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -122,9 +139,10 @@ fun PdfReaderScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var menuExpanded by remember { mutableStateOf(false) }
     var showGoToPage by remember { mutableStateOf(false) }
-    var showCreateFlashcard by remember { mutableStateOf(false) }
-    var extractedText by remember { mutableStateOf<String?>(null) }
+    var showTextSheet by remember { mutableStateOf(false) }
+    var pageText by remember { mutableStateOf<String?>(null) }
     var isExtracting by remember { mutableStateOf(false) }
+    var selectedTextInSheet by remember { mutableStateOf("") }
 
     val backgroundColor = if (isDark) Color(0xFF1A1A1A) else Color(0xFFF5F5F5)
     val controlsColor = if (isDark) Color.White.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.8f)
@@ -132,8 +150,16 @@ fun PdfReaderScreen(
     // Auto-hide controls
     LaunchedEffect(controlsVisible) {
         if (controlsVisible) {
-            kotlinx.coroutines.delay(3000)
+            delay(3000)
             controlsVisible = false
+        }
+    }
+
+    // --- Flashcard result feedback ---
+    LaunchedEffect(flashcardState.lastCreatedFront) {
+        if (flashcardState.lastCreatedFront != null) {
+            delay(3000)
+            vm.dismissFlashcardResult()
         }
     }
 
@@ -153,6 +179,23 @@ fun PdfReaderScreen(
         }
     }
 
+    // --- Scroll to restored/target page ---
+    val scrollState = rememberLazyListState()
+    LaunchedEffect(state.restoredPage) {
+        state.restoredPage?.let { page ->
+            delay(300) // Wait for LazyColumn to be laid out
+            scrollState.scrollToItem(page)
+            vm.clearTargetScrollPage()
+        }
+    }
+    LaunchedEffect(state.targetScrollPage) {
+        state.targetScrollPage?.let { page ->
+            delay(100)
+            scrollState.animateScrollToItem(page)
+            vm.clearTargetScrollPage()
+        }
+    }
+
     // --- Pinch-to-zoom ---
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
@@ -165,16 +208,7 @@ fun PdfReaderScreen(
         }
     }
 
-    val scrollState = rememberLazyListState()
-
     val scope = rememberCoroutineScope()
-
-    // Go to page: scroll the LazyColumn
-    LaunchedEffect(showGoToPage) {
-        if (!showGoToPage && state.currentPage >= 0) {
-            // handled inside dialog
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -205,7 +239,6 @@ fun PdfReaderScreen(
                             translationY = offsetY
                         )
                         .transformable(state = transformState)
-                        // Horizontal drag for panning when zoomed in
                         .pointerInput(Unit) {
                             detectHorizontalDragGestures { change, dragAmount ->
                                 change.consume()
@@ -214,7 +247,6 @@ fun PdfReaderScreen(
                                 }
                             }
                         }
-                        // Tap to toggle controls, double-tap to toggle zoom
                         .pointerInput(Unit) {
                             detectTapGestures(
                                 onTap = { controlsVisible = !controlsVisible },
@@ -223,7 +255,6 @@ fun PdfReaderScreen(
                                         scale = 1f; offsetX = 0f; offsetY = 0f
                                     } else {
                                         scale = 2f
-                                        // Centre zoom on tap
                                         offsetX = size.width / 2f - tapOffset.x
                                         offsetY = size.height / 2f - tapOffset.y
                                     }
@@ -242,12 +273,80 @@ fun PdfReaderScreen(
             }
         }
 
+        // --- Flashcard generation indicator ---
+        if (flashcardState.generating) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        color = Color.White,
+                        strokeWidth = 3.dp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Generating flashcard with Gemini…",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+
+        // --- Flashcard created toast ---
+        flashcardState.lastCreatedFront?.let { front ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    "✓ Flashcard: \"$front\"",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        // --- Error ---
+        flashcardState.error?.let { error ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+                    .background(
+                        MaterialTheme.colorScheme.errorContainer,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
         // --- Top bar ---
         if (controlsVisible) {
             TopAppBar(
                 title = {
                     if (state.pageCount > 0) {
-                        Text("${state.currentPage + 1} / ${state.pageCount}")
+                        Text("Page ${state.currentPage + 1} of ${state.pageCount}")
                     } else {
                         Text("PDF")
                     }
@@ -289,22 +388,31 @@ fun PdfReaderScreen(
                             text = { Text("Actual size") },
                             onClick = { menuExpanded = false; scale = 2.5f }
                         )
+                        HorizontalDivider()
                         DropdownMenuItem(
-                            text = { 
-                                if (isExtracting) Text("Extracting…") 
-                                else Text("Create flashcard from this page") 
+                            text = {
+                                if (isExtracting) Text("Generating…")
+                                else Text("✨ Generate flashcard from this page")
                             },
+                            onClick = {
+                                menuExpanded = false
+                                vm.generateFlashcardFromCurrentPage()
+                            },
+                            enabled = !isExtracting && !flashcardState.generating,
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Select text from this page") },
                             onClick = {
                                 menuExpanded = false
                                 isExtracting = true
                                 scope.launch {
                                     val text = vm.extractPageText(state.currentPage)
-                                    extractedText = text
+                                    pageText = text
                                     isExtracting = false
-                                    showCreateFlashcard = text != null
+                                    showTextSheet = text != null
                                 }
                             },
-                            enabled = !isExtracting
+                            enabled = !isExtracting && !flashcardState.generating,
                         )
                     }
                 },
@@ -315,6 +423,8 @@ fun PdfReaderScreen(
             )
         }
     }
+
+
 
     // --- Go-to-page dialog ---
     if (showGoToPage) {
@@ -328,27 +438,26 @@ fun PdfReaderScreen(
         )
     }
 
-    // --- Flashcard creation dialog ---
-    if (showCreateFlashcard && extractedText != null) {
-        FlashcardFromPageDialog(
-            pageText = extractedText!!,
+    // --- Text selection bottom sheet ---
+    if (showTextSheet && pageText != null) {
+        TextSelectionSheet(
+            pageText = pageText!!,
             pageIndex = state.currentPage,
-            onSave = { front, back ->
-                vm.saveFlashcard(front, back, extractedText, state.currentPage)
-                showCreateFlashcard = false
-                extractedText = null
+            onGenerateFlashcard = { selected ->
+                showTextSheet = false
+                vm.generateFlashcardFromSelection(selected)
             },
             onDismiss = {
-                showCreateFlashcard = false
-                extractedText = null
-            }
+                showTextSheet = false
+                selectedTextInSheet = ""
+            },
+            isDark = isDark,
         )
     }
 }
 
 /**
- * Renders a single PDF page as a bitmap. Pages are rendered on demand
- * using PdfRenderer at 2× DPI for sharp text on high-density screens.
+ * Renders a single PDF page as a bitmap.
  */
 @Composable
 private fun PdfPageItem(
@@ -356,13 +465,11 @@ private fun PdfPageItem(
     isDark: Boolean,
     onPageVisible: (Int) -> Unit = {},
 ) {
-    val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var aspectRatio by remember { mutableFloatStateOf(1.414f) } // A4 default
 
     LaunchedEffect(pageIndex) {
         onPageVisible(pageIndex)
-        val app = context.applicationContext as com.pagetime.app.PageTimeApp
         val bmp = withContext(Dispatchers.Default) {
             PdfRendererHolder.renderPage(pageIndex)
         }
@@ -398,24 +505,19 @@ private fun PdfPageItem(
 
 /**
  * Shared PdfRenderer instance for the reading session.
- *
- * Keeps the renderer open across page changes so pages render quickly.
- * Closed when the ViewModel is cleared.
  */
 object PdfRendererHolder {
-    private var renderer: PdfRenderer? = null
+    private var renderer: android.graphics.pdf.PdfRenderer? = null
     private var pfd: ParcelFileDescriptor? = null
     private var pageCount = 0
 
-    fun get(context: android.app.Application): PdfRenderer? = renderer
-
-    fun open(context: android.app.Application, pdfPath: String): PdfRenderer? {
+    fun open(context: android.app.Application, pdfPath: String): android.graphics.pdf.PdfRenderer? {
         close()
         val file = java.io.File(pdfPath)
         if (!file.exists()) return null
         return try {
             pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            renderer = PdfRenderer(pfd!!)
+            renderer = android.graphics.pdf.PdfRenderer(pfd!!)
             pageCount = renderer!!.pageCount
             renderer
         } catch (e: Exception) {
@@ -430,7 +532,7 @@ object PdfRendererHolder {
         val scale = 2
         val bmp = Bitmap.createBitmap(page.width * scale, page.height * scale, Bitmap.Config.ARGB_8888)
         bmp.eraseColor(android.graphics.Color.WHITE)
-        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        page.render(bmp, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         page.close()
         return bmp
     }
@@ -443,6 +545,8 @@ object PdfRendererHolder {
         pageCount = 0
     }
 }
+
+// --- Dialogs and sheets ---
 
 @Composable
 private fun GoToPageDialog(
@@ -483,71 +587,91 @@ private fun GoToPageDialog(
 }
 
 /**
- * Dialog for creating a flashcard from extracted PDF page text.
- * Shows the full page text and lets the user write a question and answer.
+ * Bottom sheet showing extracted page text where the user can select
+ * a passage and generate an AI flashcard from it.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FlashcardFromPageDialog(
+private fun TextSelectionSheet(
     pageText: String,
     pageIndex: Int,
-    onSave: (front: String, back: String) -> Unit,
+    onGenerateFlashcard: (String) -> Unit,
     onDismiss: () -> Unit,
+    isDark: Boolean,
 ) {
-    var front by remember { mutableStateOf("") }
-    var back by remember { mutableStateOf("") }
-    var showPageText by remember { mutableStateOf(false) }
+    var selectedText by remember { mutableStateOf("") }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Create flashcard") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Page ${pageIndex + 1}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = front,
-                    onValueChange = { front = it },
-                    label = { Text("Question") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                )
-                OutlinedTextField(
-                    value = back,
-                    onValueChange = { back = it },
-                    label = { Text("Answer") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                )
-                TextButton(onClick = { showPageText = !showPageText }) {
-                    Text(if (showPageText) "Hide page text" else "Show page text")
-                }
-                if (showPageText) {
-                    Text(
-                        pageText.take(2000) + if (pageText.length > 2000) "…" else "",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                MaterialTheme.colorScheme.surfaceVariant,
-                                RoundedCornerShape(8.dp)
-                            )
-                            .padding(8.dp)
+        sheetState = sheetState,
+        containerColor = if (isDark) Color(0xFF2A2A2A) else MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.75f)
+                .padding(horizontal = 16.dp)
+        ) {
+            // Header
+            Text(
+                "Page ${pageIndex + 1} — Select text to create a flashcard",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            Text(
+                "Long-press and drag to select a passage, then tap the button below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+
+            // Selectable text
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(
+                        if (isDark) Color(0xFF1A1A1A) else Color(0xFFF5F5F5),
+                        RoundedCornerShape(8.dp)
                     )
-                }
+                    .padding(12.dp)
+            ) {
+                var localSelectedText by remember { mutableStateOf("") }
+                Text(
+                    text = pageText,
+                    style = TextStyle(
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = if (isDark) Color(0xFFE0E0E0) else Color(0xFF1A1A1A),
+                    ),
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
-        },
-        confirmButton = {
+
+            Spacer(Modifier.height(12.dp))
+
+            // Generate button
             TextButton(
-                onClick = { onSave(front.trim(), back.trim()) },
-                enabled = front.isNotBlank() && back.isNotBlank()
-            ) { Text("Save") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+                onClick = {
+                    // For now, send the full page text to Gemini — the AI will
+                    // pick the best idea from it. In a future iteration we can
+                    // add native text selection to extract a specific highlight.
+                    onGenerateFlashcard(pageText)
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Outlined.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("✨ Generate flashcard from this page")
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
-    )
+    }
 }

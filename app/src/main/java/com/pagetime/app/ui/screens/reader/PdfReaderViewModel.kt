@@ -2,6 +2,7 @@ package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
 import android.os.SystemClock
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
@@ -20,8 +21,8 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.File
 
 /**
- * Manages PDF reading state, reading-time tracking, and text extraction
- * for flashcard creation.
+ * Manages PDF reading state, reading-time tracking, text extraction,
+ * AI-powered flashcard generation via Gemini, and last-position memory.
  *
  * Reading time is credited the same way the EPUB reader does it:
  * every second of foreground reading earns browse balance (or gate credit)
@@ -43,6 +44,10 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var readingStartTime = 0L
     private var currentBookId: String? = null
 
+    // --- AI flashcard state ---
+    private val _flashcardState = MutableStateFlow(FlashcardUiState())
+    val flashcardState = _flashcardState.asStateFlow()
+
     fun open(pdfPath: String, bookId: String) {
         if (_state.value.pageCount > 0) return
         currentBookId = bookId
@@ -54,7 +59,14 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
             val renderer = PdfRendererHolder.open(getApplication(), pdfPath)
             if (renderer != null) {
-                _state.value = PdfState(pageCount = renderer.pageCount, loading = false)
+                // Restore last read position
+                val savedPage = settingsRepository.getPdfPage(bookId)
+                _state.value = PdfState(
+                    pageCount = renderer.pageCount,
+                    currentPage = savedPage.coerceIn(0, renderer.pageCount - 1),
+                    loading = false,
+                    restoredPage = savedPage.coerceIn(0, renderer.pageCount - 1),
+                )
                 startReading()
             } else {
                 _state.value = PdfState(error = "Cannot open PDF")
@@ -71,7 +83,6 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             while (true) {
                 delay(1000)
                 pendingSeconds++
-                // Credit one second of reading
                 balanceManager.earnFromReading(1L)
             }
         }
@@ -83,7 +94,6 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
         if (pendingSeconds > 0) {
             val seconds = pendingSeconds
             pendingSeconds = 0
-            // Extra flush in case earnFromReading missed any
             viewModelScope.launch {
                 val bookId = currentBookId ?: return@launch
                 container.libraryRepository.addReadingSeconds(bookId, seconds.toLong())
@@ -97,7 +107,6 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
         val current = _state.value
         if (pageIndex != current.currentPage) {
             _state.value = current.copy(currentPage = pageIndex)
-            // Persist current page
             val bookId = currentBookId ?: return
             viewModelScope.launch {
                 settingsRepository.savePdfPage(bookId, pageIndex)
@@ -108,14 +117,18 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun goToPage(page: Int) {
         val current = _state.value
         if (page in 0 until current.pageCount) {
-            _state.value = current.copy(currentPage = page)
+            _state.value = current.copy(currentPage = page, targetScrollPage = page)
         }
     }
 
-    // --- Text extraction for flashcards ---
+    fun clearTargetScrollPage() {
+        _state.value = _state.value.copy(targetScrollPage = null)
+    }
+
+    // --- Text extraction ---
 
     /**
-     * Extract text from the current page using PdfBox.
+     * Extract text from a specific page using PdfBox.
      * Returns the text content of the page, or null on failure.
      */
     suspend fun extractPageText(pageIndex: Int): String? {
@@ -142,10 +155,115 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- AI-powered flashcard generation ---
+
     /**
-     * Save a flashcard created from the current PDF page.
-     * The source is stored as a page-based locator for future reference.
+     * One-tap: extract the current page text and send it to Gemini to
+     * auto-generate a flashcard. No typing required.
      */
+    fun generateFlashcardFromCurrentPage() {
+        val bookId = currentBookId ?: return
+        val pageIndex = _state.value.currentPage
+        _flashcardState.value = FlashcardUiState(generating = true)
+        viewModelScope.launch {
+            try {
+                val app = getApplication<PageTimeApp>()
+                val bookDao = app.container.database.bookDao()
+                val book = bookDao.getById(bookId)
+                if (book == null) {
+                    _flashcardState.value = FlashcardUiState(error = "Book not found")
+                    return@launch
+                }
+                val text = extractPageText(pageIndex)
+                if (text.isNullOrBlank()) {
+                    _flashcardState.value = FlashcardUiState(error = "No text found on this page")
+                    return@launch
+                }
+                // Use the same LumenRepository.draft() that the EPUB reader uses
+                val draft = lumenRepo.draft(book, text)
+                // Auto-save the card
+                val sourceJson = """{"type":"pdf","page":$pageIndex}"""
+                lumenRepo.save(
+                    book = book,
+                    front = draft.front,
+                    back = draft.back,
+                    quote = draft.quote,
+                    sourceLocatorJson = sourceJson,
+                    sourceChapterIndex = pageIndex,
+                    sourceFraction = pageIndex.toFloat() / (_state.value.pageCount.coerceAtLeast(1)),
+                    afterIndex = null,
+                )
+                val app2 = getApplication<Application>()
+                Toast.makeText(
+                    app2,
+                    "Flashcard created: \"${draft.front.take(50)}\"",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                _flashcardState.value = FlashcardUiState(
+                    lastCreatedFront = draft.front,
+                    lastCreatedBack = draft.back,
+                )
+            } catch (e: Exception) {
+                _flashcardState.value = FlashcardUiState(
+                    error = "Failed to generate flashcard: ${e.message}"
+                )
+            }
+        }
+    }
+
+    /**
+     * Generate a flashcard from user-selected text (highlight → flashcard).
+     */
+    fun generateFlashcardFromSelection(selectedText: String) {
+        val bookId = currentBookId ?: return
+        val pageIndex = _state.value.currentPage
+        if (selectedText.isBlank()) return
+        _flashcardState.value = FlashcardUiState(generating = true)
+        viewModelScope.launch {
+            try {
+                val app = getApplication<PageTimeApp>()
+                val bookDao = app.container.database.bookDao()
+                val book = bookDao.getById(bookId)
+                if (book == null) {
+                    _flashcardState.value = FlashcardUiState(error = "Book not found")
+                    return@launch
+                }
+                val draft = lumenRepo.draft(book, selectedText)
+                val sourceJson = """{"type":"pdf","page":$pageIndex}"""
+                lumenRepo.save(
+                    book = book,
+                    front = draft.front,
+                    back = draft.back,
+                    quote = draft.quote,
+                    sourceLocatorJson = sourceJson,
+                    sourceChapterIndex = pageIndex,
+                    sourceFraction = pageIndex.toFloat() / (_state.value.pageCount.coerceAtLeast(1)),
+                    afterIndex = null,
+                )
+                val app2 = getApplication<Application>()
+                Toast.makeText(
+                    app2,
+                    "Flashcard created: \"${draft.front.take(50)}\"",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                _flashcardState.value = FlashcardUiState(
+                    lastCreatedFront = draft.front,
+                    lastCreatedBack = draft.back,
+                )
+            } catch (e: Exception) {
+                _flashcardState.value = FlashcardUiState(
+                    error = "Failed to generate flashcard: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun dismissFlashcardResult() {
+        _flashcardState.value = FlashcardUiState()
+    }
+
+    // --- Manual flashcard save (from the selection bottom sheet) ---
+
     fun saveFlashcard(front: String, back: String, source: String?, pageIndex: Int) {
         val bookId = currentBookId ?: return
         viewModelScope.launch {
@@ -153,7 +271,6 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 val app = getApplication<PageTimeApp>()
                 val bookDao = app.container.database.bookDao()
                 val book = bookDao.getById(bookId) ?: return@launch
-                // Store source info as a simple locator
                 val sourceJson = """{"type":"pdf","page":$pageIndex}"""
                 lumenRepo.save(
                     book = book,
@@ -163,7 +280,7 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     sourceLocatorJson = sourceJson,
                     sourceChapterIndex = pageIndex,
                     sourceFraction = pageIndex.toFloat() / (_state.value.pageCount.coerceAtLeast(1)),
-                    afterIndex = null
+                    afterIndex = null,
                 )
             } catch (e: Exception) {
                 // Card save failed silently
@@ -183,4 +300,15 @@ data class PdfState(
     val currentPage: Int = 0,
     val loading: Boolean = true,
     val error: String? = null,
+    /** Page to scroll to after the LazyColumn is ready. */
+    val restoredPage: Int? = null,
+    /** Explicit scroll target from "Go to page" dialog. */
+    val targetScrollPage: Int? = null,
+)
+
+data class FlashcardUiState(
+    val generating: Boolean = false,
+    val error: String? = null,
+    val lastCreatedFront: String? = null,
+    val lastCreatedBack: String? = null,
 )

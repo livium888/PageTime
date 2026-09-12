@@ -155,27 +155,23 @@ data class GateState(
         }
 
     /**
-     * Whether the rules may be made EASIER right now.
+     * Whether an app may be taken off the blocked list right now.
      *
-     * The rule that makes the rest of this mean anything, and it has to cover
-     * every way out, not just the obvious one. Taking an app off the blocked
-     * list is one. Dragging the price of a session down to fifteen minutes is
-     * another, and it is worse: it does not merely unblock one app, it
-     * dissolves the whole gate, from the settings screen, while locked out.
+     * This is the gate's one escape hatch, and it costs what entry costs: a
+     * session — the same unspent app time that would let the reader into the
+     * blocked app in the first place. So the escape and the front door have
+     * the same price, and there is nothing to be gained by reaching for it.
      *
-     * Loosening therefore costs what entry costs — a session, which is the
-     * same two hours. The escape and the front door have the same price, so
-     * there is nothing to be gained by reaching for the escape.
-     *
-     * TIGHTENING IS ALWAYS ALLOWED
-     *
-     * Blocking another app, raising the price, shortening the session: none of
-     * those is an escape, and making someone earn the right to be stricter
-     * with themselves would be perverse. The asymmetry is the whole design.
-     *
-     * The hard lock overrides this in the tightening direction; that is
-     * checked by its own screen, because a hard lock is about a promise the
-     * reader made and has nothing to do with what they have read.
+     * The session price and length used to be fenced the same way, on the
+     * argument that a cheaper session dissolves the gate and that is a bigger
+     * escape than unblocking one app. It was a worse trade than it looked. A
+     * price has a strict direction and an easy one, and outside a session only
+     * the strict one was accepted — so a single touch on the slider pinned the
+     * price at its ceiling, and the reader could not bring it back down until
+     * they had read the eight hours they had just accidentally demanded of
+     * themselves. The terms are the reader's own commitment, and they are now
+     * theirs to set in either direction. What actually gates access — the
+     * blocked list, and the day-long cooling-off on the switch — stays priced.
      */
     val canLoosenTheRules: Boolean
         get() = !enabled || sessionActive
@@ -209,10 +205,10 @@ data class GateState(
         /**
          * The shortest session cost the settings screen will accept.
          *
-         * Not zero, and not five minutes. A cost you can lower to nothing
-         * while standing at the block screen is an "open" button with extra
-         * steps. Fifteen minutes is enough to try the mechanism for one
-         * evening without committing to two hours of it.
+         * Not zero: a price of nothing is an open door with extra steps, and
+         * the gate would stop meaning anything the moment the slider reached
+         * it. Fifteen minutes is enough to try the mechanism for one evening
+         * without committing to two hours of it.
          */
         const val MIN_SESSION_COST_SECONDS = 15L * 60
 
@@ -233,81 +229,6 @@ data class GateState(
          */
         fun maxCreditFor(sessionCostSeconds: Long): Long =
             (sessionCostSeconds.coerceAtLeast(0L)) * 2
-
-        /**
-         * Whether a proposed session price is a loosening.
-         *
-         * Cheaper is easier. Written as a named function rather than a `<`
-         * at the call site because the direction is not self-evident for a
-         * cost — the number going DOWN is the gate getting weaker — and the
-         * one place it is written down should say so.
-         */
-        fun loosensCost(currentSeconds: Long, proposedSeconds: Long): Boolean =
-            proposedSeconds < currentSeconds
-
-        /** Longer sessions are easier, so the direction is the other way round. */
-        fun loosensLength(currentSeconds: Long, proposedSeconds: Long): Boolean =
-            proposedSeconds > currentSeconds
-
-        /**
-         * What the price slider may commit when a touch asks for [proposedSeconds].
-         *
-         * The slider used to clip its own travel instead of coming here: the
-         * range began at the current price, so the thumb sat at the far left
-         * end and the track still spanned the whole distance to the ceiling.
-         * Compose maps a touch across the whole track into the range, so a
-         * finger anywhere past the left edge read as "move a long way toward
-         * the maximum" — and because each write moved the range's start up to
-         * the new price, the next touch jumped again. Touching the slider made
-         * the reading target climb. That was the reported bug, and it was the
-         * mapping, not the rule.
-         *
-         * The slider keeps the FULL range now, so the thumb sits where the
-         * setting actually is and a touch near it means what it looks like.
-         * The direction is clamped here, which is the only thing that ever
-         * needed saying: a proposal in the strict direction is taken as given,
-         * and one in the easy direction only when the reader has app time in
-         * hand. Everything outside the range is pinned to it, exactly as the
-         * repository would pin it on the way to storage.
-         */
-        fun committedCostSeconds(
-            currentSeconds: Long,
-            proposedSeconds: Long,
-            canLoosenTheRules: Boolean,
-        ): Long = commit(
-            currentSeconds = currentSeconds.coerceIn(MIN_SESSION_COST_SECONDS, MAX_SESSION_COST_SECONDS),
-            proposedSeconds = proposedSeconds.coerceIn(MIN_SESSION_COST_SECONDS, MAX_SESSION_COST_SECONDS),
-            loosens = { current, proposed -> loosensCost(current, proposed) },
-            canLoosenTheRules = canLoosenTheRules,
-        )
-
-        /** The same rule for session length, where SHORTER is the strict direction. */
-        fun committedLengthSeconds(
-            currentSeconds: Long,
-            proposedSeconds: Long,
-            canLoosenTheRules: Boolean,
-        ): Long = commit(
-            currentSeconds = currentSeconds.coerceIn(MIN_SESSION_LENGTH_SECONDS, MAX_SESSION_LENGTH_SECONDS),
-            proposedSeconds = proposedSeconds.coerceIn(MIN_SESSION_LENGTH_SECONDS, MAX_SESSION_LENGTH_SECONDS),
-            loosens = { current, proposed -> loosensLength(current, proposed) },
-            canLoosenTheRules = canLoosenTheRules,
-        )
-
-        /**
-         * A proposal that would make the gate weaker is refused unless the
-         * reader has app time in hand; anything else stands. Returning the
-         * current value rather than null is what lets the slider leave the
-         * thumb alone instead of writing a number the repository would throw
-         * away a moment later.
-         */
-        private fun commit(
-            currentSeconds: Long,
-            proposedSeconds: Long,
-            loosens: (Long, Long) -> Boolean,
-            canLoosenTheRules: Boolean,
-        ): Long =
-            if (loosens(currentSeconds, proposedSeconds) && !canLoosenTheRules) currentSeconds
-            else proposedSeconds
 
         /** Before anything is known: off, so nothing is blocked on a guess. */
         val Unknown = GateState(

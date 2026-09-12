@@ -182,22 +182,22 @@ class AccessGateTest {
         assertFalse(g.canRemoveBlockedApps)
     }
 
-    // --- Changing the rules, which is another way out ---
+    // --- Taking an app off the blocked list, which is the way out ---
 
     /**
-     * The hole this closes. Unblocking one app is an escape; dragging the
-     * price of a session down to fifteen minutes dissolves the whole gate,
-     * from the settings screen, while locked out and most motivated to.
+     * The hole this closes. The app the reader blocked is the one thing
+     * standing between them and the app they are reaching for, so removing it
+     * while locked out is the escape the price exists to cover.
      */
     @Test
-    fun `the rules cannot be made easier while locked out`() {
+    fun `the blocked list cannot be loosened while locked out`() {
         assertFalse(gate(credit = 0).canLoosenTheRules)
         assertFalse(gate(credit = COST).canLoosenTheRules)
         assertFalse(gate(disableAt = T0 + GateState.COOLING_OFF_MILLIS).canLoosenTheRules)
     }
 
     @Test
-    fun `the rules can be made easier with app time in hand`() {
+    fun `the blocked list can be loosened with app time in hand`() {
         assertTrue(gate(sessionRemaining = 60).canLoosenTheRules)
     }
 
@@ -206,9 +206,9 @@ class AccessGateTest {
         assertTrue(gate(switchedOn = false).canLoosenTheRules)
     }
 
-    /** Unblocking an app is one instance of the general rule, not a separate one. */
+    /** Unblocking an app is the general rule's one remaining instance. */
     @Test
-    fun `unblocking an app follows the same rule as changing the price`() {
+    fun `unblocking an app is the thing that has to be earned`() {
         listOf(
             gate(credit = 0),
             gate(sessionRemaining = 60),
@@ -219,90 +219,24 @@ class AccessGateTest {
     }
 
     /**
-     * The direction is not self-evident for a price: the number going DOWN is
-     * the gate getting weaker.
+     * The terms of a session are the reader's, in either direction, at any
+     * time. They were fenced once — lowering the price counted as an escape
+     * and waited for app time in hand — but outside a session that left only
+     * the stricter direction on the slider, so a single touch could pin the
+     * price at its ceiling with no way back down.
+     *
+     * What remains is the range itself, applied on the way to storage so every
+     * caller passes it. A price of zero would be an open door with extra
+     * steps, which is why the floor is fifteen minutes rather than nothing.
      */
     @Test
-    fun `a cheaper session is a loosening and a dearer one is not`() {
-        assertTrue(GateState.loosensCost(currentSeconds = 7200, proposedSeconds = 900))
-        assertFalse(GateState.loosensCost(currentSeconds = 7200, proposedSeconds = 14400))
-        assertFalse(GateState.loosensCost(currentSeconds = 7200, proposedSeconds = 7200))
-    }
-
-    @Test
-    fun `a longer session is a loosening and a shorter one is not`() {
-        assertTrue(GateState.loosensLength(currentSeconds = 1800, proposedSeconds = 3600))
-        assertFalse(GateState.loosensLength(currentSeconds = 1800, proposedSeconds = 600))
-        assertFalse(GateState.loosensLength(currentSeconds = 1800, proposedSeconds = 1800))
-    }
-
-    /**
-     * Tightening is always available. Making someone earn the right to be
-     * stricter with themselves would be perverse, and the asymmetry is the
-     * whole design.
-     */
-    @Test
-    fun `tightening is never something that has to be earned`() {
-        val lockedOut = gate(credit = 0)
-        assertFalse(lockedOut.canLoosenTheRules)
-        assertFalse(GateState.loosensCost(7200, 14400))
-        assertFalse(GateState.loosensLength(1800, 600))
-    }
-
-    // --- What the settings sliders may commit ---
-
-    /**
-     * The reported bug. The sliders clipped their range to the allowed
-     * direction, which pinned the thumb to the end of the range and turned
-     * every touch into a large move the one way it could go — touching the
-     * price slider made the reading target climb. The rule now lives here, on
-     * the committed value, so a touch means what it looks like: a small nudge
-     * raises the price a little, and a touch on the easy side changes nothing.
-     */
-    @Test
-    fun `a touch on a locked price slider raises it only as far as it looks`() {
-        assertEquals(COST, GateState.committedCostSeconds(COST, COST, canLoosenTheRules = false))
-        assertEquals(COST + 60, GateState.committedCostSeconds(COST, COST + 60, canLoosenTheRules = false))
-        // Left of the thumb: refused, so it cannot cheapen the gate.
-        assertEquals(COST, GateState.committedCostSeconds(COST, 900, canLoosenTheRules = false))
-    }
-
-    @Test
-    fun `app time in hand unlocks both directions of the price slider`() {
-        assertEquals(900L, GateState.committedCostSeconds(COST, 900, canLoosenTheRules = true))
-        assertEquals(COST + 60, GateState.committedCostSeconds(COST, COST + 60, canLoosenTheRules = true))
-    }
-
-    @Test
-    fun `the price slider cannot leave its bounds`() {
-        assertEquals(
-            GateState.MIN_SESSION_COST_SECONDS,
-            GateState.committedCostSeconds(COST, 0, canLoosenTheRules = true),
-        )
-        assertEquals(
-            GateState.MAX_SESSION_COST_SECONDS,
-            GateState.committedCostSeconds(COST, Long.MAX_VALUE, canLoosenTheRules = true),
-        )
-    }
-
-    /** Shorter is the strict direction for a session, so the clamp is mirrored. */
-    @Test
-    fun `a locked length slider only shortens`() {
-        assertEquals(LENGTH, GateState.committedLengthSeconds(LENGTH, LENGTH, canLoosenTheRules = false))
-        assertEquals(LENGTH - 60, GateState.committedLengthSeconds(LENGTH, LENGTH - 60, canLoosenTheRules = false))
-        assertEquals(LENGTH, GateState.committedLengthSeconds(LENGTH, LENGTH + 60, canLoosenTheRules = false))
-    }
-
-    @Test
-    fun `the length slider cannot leave its bounds`() {
-        assertEquals(
-            GateState.MIN_SESSION_LENGTH_SECONDS,
-            GateState.committedLengthSeconds(LENGTH, 0, canLoosenTheRules = true),
-        )
-        assertEquals(
-            GateState.MAX_SESSION_LENGTH_SECONDS,
-            GateState.committedLengthSeconds(LENGTH, Long.MAX_VALUE, canLoosenTheRules = true),
-        )
+    fun `the price of a session can never be nothing`() {
+        assertTrue(GateState.MIN_SESSION_COST_SECONDS > 0)
+        assertTrue(GateState.MIN_SESSION_COST_SECONDS < GateState.DEFAULT_SESSION_COST_SECONDS)
+        assertTrue(GateState.MAX_SESSION_COST_SECONDS > GateState.DEFAULT_SESSION_COST_SECONDS)
+        assertTrue(GateState.MIN_SESSION_LENGTH_SECONDS > 0)
+        assertTrue(GateState.MIN_SESSION_LENGTH_SECONDS < GateState.DEFAULT_SESSION_LENGTH_SECONDS)
+        assertTrue(GateState.MAX_SESSION_LENGTH_SECONDS > GateState.DEFAULT_SESSION_LENGTH_SECONDS)
     }
 
     // --- Degenerate configurations ---

@@ -115,6 +115,8 @@ fun SettingsScreen(
     // finger (it appeared stuck); the value is committed once on release.
     var ratioDraft by remember { mutableStateOf<Double?>(null) }
     var flashcardRewardDraft by remember { mutableStateOf<Long?>(null) }
+    var costDraftMinutes by remember { mutableStateOf<Float?>(null) }
+    var lengthDraftMinutes by remember { mutableStateOf<Float?>(null) }
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -277,80 +279,7 @@ fun SettingsScreen(
                     )
                 }
 
-                if (gate.enabled) {
-                    Spacer(Modifier.height(8.dp))
-                    // Both sliders can only be moved in the strict direction
-                    // outside a session. Making the gate cheaper is the same
-                    // kind of escape as unblocking an app — a bigger one, in
-                    // fact, since it dissolves the whole thing — so it costs
-                    // the same: app time in hand.
-                    if (!gate.canLoosenTheRules) {
-                        Text(
-                            "These can be made stricter any time. Making them easier needs " +
-                                "app time in hand — the same price as unblocking an app.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(4.dp))
-                    }
-                    Text("Reading per session", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        BlockScreenText.span(gate.sessionCostSeconds),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    // The range is the FULL range, and the allowed direction is
-                    // enforced when a value is committed instead of by clipping
-                    // the travel to half the track. Clipping it pinned the thumb
-                    // to the end of the range, which made every touch read as a
-                    // large move the one way it could go: touching the price
-                    // slider jumped the reading target halfway to the maximum,
-                    // over and over. See [GateState.committedCostSeconds].
-                    val costMinutes = (gate.sessionCostSeconds / 60).toFloat()
-                    val lengthMinutes = (gate.sessionLengthSeconds / 60).toFloat()
-                    val costFloor = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()
-                    val costCeiling = (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat()
-                    val lengthFloor = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()
-                    val lengthCeiling = (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat()
-
-                    Slider(
-                        value = costMinutes.coerceIn(costFloor, costCeiling),
-                        onValueChange = { proposed ->
-                            val next = GateState.committedCostSeconds(
-                                currentSeconds = gate.sessionCostSeconds,
-                                proposedSeconds = proposed.toLong() * 60,
-                                canLoosenTheRules = gate.canLoosenTheRules,
-                            )
-                            if (next != gate.sessionCostSeconds) {
-                                viewModel.setSessionCostSeconds(next)
-                            }
-                        },
-                        valueRange = costFloor..costCeiling,
-                        // Already at the top of the range with no app time in
-                        // hand, the control has nothing left it may do, so it is
-                        // switched off rather than left to swallow input.
-                        enabled = gate.canLoosenTheRules || costMinutes < costCeiling
-                    )
-                    Text("Session length", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        BlockScreenText.span(gate.sessionLengthSeconds),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = lengthMinutes.coerceIn(lengthFloor, lengthCeiling),
-                        onValueChange = { proposed ->
-                            val next = GateState.committedLengthSeconds(
-                                currentSeconds = gate.sessionLengthSeconds,
-                                proposedSeconds = proposed.toLong() * 60,
-                                canLoosenTheRules = gate.canLoosenTheRules,
-                            )
-                            if (next != gate.sessionLengthSeconds) {
-                                viewModel.setSessionLengthSeconds(next)
-                            }
-                        },
-                        valueRange = lengthFloor..lengthCeiling,
-                        enabled = gate.canLoosenTheRules || lengthMinutes > lengthFloor
-                    )
-                } else {
+                if (!gate.enabled) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
@@ -378,24 +307,87 @@ fun SettingsScreen(
                         valueRange = 0.5f..3.0f,
                         steps = 4
                     )
-
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text("Flashcard reward", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Each correct flashcard answer earns ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of browsing. \"Again\" always earns nothing.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = (flashcardRewardDraft ?: flashcardRewardSeconds).toFloat(),
-                        onValueChange = { flashcardRewardDraft = it.toLong() },
-                        onValueChangeFinished = {
-                            flashcardRewardDraft?.let(viewModel::setFlashcardReward)
-                            flashcardRewardDraft = null
-                        },
-                        valueRange = 0f..120f,
-                        steps = 23
-                    )
                 }
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // The reader's own terms, shown whether or not the gate is on.
+                // They used to sit inside the "gate is on" branch, so the only
+                // way to choose them was to enrol first and then adjust them
+                // while they already applied — and outside a session the price
+                // accepted only the stricter direction, so one touch pinned it
+                // at the eight-hour ceiling with no way back down. See
+                // SettingsRepository.setSessionCostSeconds.
+                val costFloor = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()
+                val costCeiling = (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat()
+                val lengthFloor = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()
+                val lengthCeiling = (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat()
+
+                Text("Reading per session", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    BlockScreenText.span(gate.sessionCostSeconds),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "How much focused reading buys one session.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = costDraftMinutes ?: (gate.sessionCostSeconds / 60).toFloat(),
+                    onValueChange = { costDraftMinutes = it },
+                    onValueChangeFinished = {
+                        costDraftMinutes?.let { viewModel.setSessionCostSeconds(it.toLong() * 60) }
+                        costDraftMinutes = null
+                    },
+                    valueRange = costFloor..costCeiling
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("Session length", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    BlockScreenText.span(gate.sessionLengthSeconds),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "The app time one session buys, spent only while you use it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = lengthDraftMinutes ?: (gate.sessionLengthSeconds / 60).toFloat(),
+                    onValueChange = { lengthDraftMinutes = it },
+                    onValueChangeFinished = {
+                        lengthDraftMinutes?.let { viewModel.setSessionLengthSeconds(it.toLong() * 60) }
+                        lengthDraftMinutes = null
+                    },
+                    valueRange = lengthFloor..lengthCeiling
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // The reward is paid in whichever currency is live: reading
+                // credit under the gate, browse seconds with it off.
+                Text("Flashcard reward", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Each correct flashcard answer " +
+                        (if (gate.enabled) {
+                            "banks ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of reading credit"
+                        } else {
+                            "earns ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of browsing"
+                        }) +
+                        ". \"Again\" always earns nothing.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = (flashcardRewardDraft ?: flashcardRewardSeconds).toFloat(),
+                    onValueChange = { flashcardRewardDraft = it.toLong() },
+                    onValueChangeFinished = {
+                        flashcardRewardDraft?.let(viewModel::setFlashcardReward)
+                        flashcardRewardDraft = null
+                    },
+                    valueRange = 0f..120f,
+                    steps = 23
+                )
             }
 
             SectionHeader("Protection")

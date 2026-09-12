@@ -245,85 +245,16 @@ fun SettingsScreen(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Earn the day", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "${BlockScreenText.span(gate.sessionCostSeconds)} of reading buys " +
-                                "${BlockScreenText.span(gate.sessionLengthSeconds)} of app time, " +
-                                "spent only while you use them. No minute-for-minute trading, " +
-                                "and no pause button.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = gate.switchedOn,
-                        onCheckedChange = { viewModel.setGateSwitchedOn(it) }
-                    )
-                }
-
-                if (gate.windingDown) {
-                    // The switch reads off; the gate is still on for a day.
-                    // Saying so is the whole point — a delay the reader only
-                    // discovers by being blocked would feel like a bug.
-                    Text(
-                        "Switching off in " + BlockScreenText.span(gate.secondsUntilDisabled) +
-                            ". Until then the gate still applies. Turn it back on any time.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                if (!gate.enabled) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            formatMinutes(balanceSeconds),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text("Reading rate", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    // The fixed slider: drafts locally during the drag and
-                    // commits once on release, so the flow can't re-emit
-                    // mid-drag and fight the finger.
-                    Slider(
-                        value = ratioDraft?.toFloat() ?: ratio.toFloat(),
-                        onValueChange = { ratioDraft = it.toDouble() },
-                        onValueChangeFinished = {
-                            ratioDraft?.let(viewModel::setRatio)
-                            ratioDraft = null
-                        },
-                        valueRange = 0.5f..3.0f,
-                        steps = 4
-                    )
-                }
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // The reader's own terms, shown whether or not the gate is on.
-                // They used to sit inside the "gate is on" branch, so the only
-                // way to choose them was to enrol first and then adjust them
-                // while they already applied — and outside a session the price
-                // accepted only the stricter direction, so one touch pinned it
-                // at the eight-hour ceiling with no way back down. See
-                // SettingsRepository.setSessionCostSeconds.
+                // Session configuration — always visible, whether or not
+                // enforcement is on, so the reader can set their terms before
+                // turning the gate on.
+                Text("Session settings", style = MaterialTheme.typography.titleMedium)
                 val costFloor = (GateState.MIN_SESSION_COST_SECONDS / 60).toFloat()
                 val costCeiling = (GateState.MAX_SESSION_COST_SECONDS / 60).toFloat()
                 val lengthFloor = (GateState.MIN_SESSION_LENGTH_SECONDS / 60).toFloat()
                 val lengthCeiling = (GateState.MAX_SESSION_LENGTH_SECONDS / 60).toFloat()
 
-                Text("Reading per session", style = MaterialTheme.typography.titleMedium)
+                Text("Reading per session", style = MaterialTheme.typography.titleSmall)
                 Text(
                     BlockScreenText.span(gate.sessionCostSeconds),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -343,7 +274,7 @@ fun SettingsScreen(
                     valueRange = costFloor..costCeiling
                 )
                 Spacer(Modifier.height(12.dp))
-                Text("Session length", style = MaterialTheme.typography.titleMedium)
+                Text("Session length", style = MaterialTheme.typography.titleSmall)
                 Text(
                     BlockScreenText.span(gate.sessionLengthSeconds),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -367,7 +298,7 @@ fun SettingsScreen(
 
                 // The reward is paid in whichever currency is live: reading
                 // credit under the gate, browse seconds with it off.
-                Text("Flashcard reward", style = MaterialTheme.typography.titleMedium)
+                Text("Flashcard reward", style = MaterialTheme.typography.titleSmall)
                 Text(
                     "Each correct flashcard answer " +
                         (if (gate.enabled) {
@@ -388,6 +319,66 @@ fun SettingsScreen(
                     valueRange = 0f..120f,
                     steps = 23
                 )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Earn the day", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "${BlockScreenText.span(gate.sessionCostSeconds)} of reading buys " +
+                                "${BlockScreenText.span(gate.sessionLengthSeconds)} of app time, " +
+                                "spent only while you use them. No minute-for-minute trading, " +
+                                "and no pause button.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = gate.switchedOn,
+                        onCheckedChange = { viewModel.setGateSwitchedOn(it) }
+                    )
+                }
+
+                if (gate.windingDown) {
+                    Text(
+                        "Switching off in " + BlockScreenText.span(gate.secondsUntilDisabled) +
+                            ". Until then the gate still applies. Turn it back on any time.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                if (!gate.enabled) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            formatMinutes(balanceSeconds),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Reading rate", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = ratioDraft?.toFloat() ?: ratio.toFloat(),
+                        onValueChange = { ratioDraft = it.toDouble() },
+                        onValueChangeFinished = {
+                            ratioDraft?.let(viewModel::setRatio)
+                            ratioDraft = null
+                        },
+                        valueRange = 0.5f..3.0f,
+                        steps = 4
+                    )
+                }
             }
 
             SectionHeader("Protection")

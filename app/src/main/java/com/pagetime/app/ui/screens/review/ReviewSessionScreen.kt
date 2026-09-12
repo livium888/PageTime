@@ -25,6 +25,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -238,9 +242,29 @@ fun ReviewSessionScreen(
                                     }
                                 }
                             }
-                            if (state.rewardSeconds > 0) {
+                            // Earned-time feedback: brief flash after a correct answer
+                            // so the reader sees the reward rather than trusting it.
+                            AnimatedVisibility(
+                                visible = state.earnedFeedback != null,
+                                enter = fadeIn(tween(200)),
+                                exit = fadeOut(tween(400)),
+                            ) {
                                 Text(
-                                    "Correct answers earn ${state.rewardSeconds}s · \"Again\" earns nothing",
+                                    text = state.earnedFeedback ?: "",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                            if (state.rewardSeconds > 0) {
+                                val running = state.totalEarnedThisSitting
+                                Text(
+                                    if (running > 0) {
+                                        "${state.rewardSeconds}s per answer · " +
+                                            "${running}s earned this session"
+                                    } else {
+                                        "${state.rewardSeconds}s per answer · \"Again\" earns nothing"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

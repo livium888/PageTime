@@ -75,6 +75,10 @@ data class ReviewUiState(
     val intervalPreviews: Map<LumenRating, String> = emptyMap(),
     /** Browse seconds a correct answer banks; zero hides the note. */
     val rewardSeconds: Long = 0,
+    /** Brief feedback shown after a correct answer, e.g. "+30s". Cleared on next card. */
+    val earnedFeedback: String? = null,
+    /** Running total of seconds earned this sitting. */
+    val totalEarnedThisSitting: Long = 0,
 )
 
 class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
@@ -253,7 +257,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reveal() {
-        _state.value = _state.value.copy(revealed = true, lastInterval = null)
+        _state.value = _state.value.copy(revealed = true, lastInterval = null, earnedFeedback = null)
     }
 
     /**
@@ -294,19 +298,26 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             }.getOrNull()
             // Correct recall banks the configured bonus. AGAIN proves nothing
             // and earns nothing — guessing can never mint app time.
+            var earnedThisCard = 0L
             if (rating != LumenRating.AGAIN) {
-                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+                runCatching {
+                    balanceManager.earnFromFlashcard(ratingCorrect = true)
+                    earnedThisCard = balanceManager.flashcardReward()
+                }
             }
             val advanced = ReviewSession.grade(_state.value.session, failed = rating == LumenRating.AGAIN)
             undoStep = restore?.let {
                 UndoStep(session = before.session, card = before.card, restore = it)
             }
+            val prev = _state.value
             _state.value = _state.value.copy(
                 session = advanced,
                 card = advanced.current?.let { cards[it] },
                 revealed = false,
                 lastInterval = nextDue?.let { formatNextReview(it) },
                 canUndo = undoStep != null,
+                earnedFeedback = if (earnedThisCard > 0) "+${earnedThisCard}s" else null,
+                totalEarnedThisSitting = prev.totalEarnedThisSitting + earnedThisCard,
             )
             refreshPreviews()
         }
@@ -401,6 +412,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             revealed = false,
             lastInterval = null,
             canUndo = false,
+            earnedFeedback = null,
         )
     }
 

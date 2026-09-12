@@ -108,16 +108,7 @@ fun SettingsScreen(
     val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
-    val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
-    val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
-    val geminiViewModel: GeminiSettingsViewModel = viewModel()
-    val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
-    val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
-    val geminiHasUserKey by geminiViewModel.hasUserKey.collectAsStateWithLifecycle()
-    val geminiStatus by geminiViewModel.status.collectAsStateWithLifecycle()
-    var geminiKeyInput by remember { mutableStateOf("") }
-    var modelMenuExpanded by remember { mutableStateOf(false) }
 
     // Local drag state for the reading-rate slider. Writing to DataStore on
     // every drag tick made the flow re-emit mid-drag and the thumb fight the
@@ -853,6 +844,8 @@ internal fun EmbeddingModelSettingsCard(
 @Composable
 internal fun OfflineModelSettingsCard(
     status: LumenModelStatus,
+    offlineProblem: String?,
+    onRetryOfflineAi: () -> Unit,
     downloadStats: LumenDownloadStats?,
     modelUrl: String,
     onSetModelUrl: (String?) -> Unit,
@@ -873,6 +866,30 @@ internal fun OfflineModelSettingsCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // The installed model can be present, intact and switched off at the
+            // same time. Saying so here is the whole point: without it the reader
+            // sees "Installed" and still gets plain drafts, with nothing in the
+            // app explaining the difference.
+            if (offlineProblem != null) {
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text(
+                    "Offline AI is switched off",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    "$offlineProblem. The app switched the model off on purpose: a " +
+                        "failure inside the native runtime takes the whole app down with " +
+                        "it, so captures fall back to the plain on-device draft instead. " +
+                        "Close other apps and try again — this is usually memory.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onRetryOfflineAi, modifier = Modifier.fillMaxWidth()) {
+                    Text("Try offline AI again")
+                }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            }
             when (status) {
                 is LumenModelStatus.NotDownloaded -> {
                     Text(

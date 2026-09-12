@@ -100,6 +100,22 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         container.lumenModelStore.status
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LumenModelStatus.NotDownloaded)
 
+    /**
+     * Why the on-device model is switched off, or null when it is healthy.
+     *
+     * Shown on the AI & models screen. A model that stops being consulted
+     * without saying so is what made every capture after the first look broken
+     * while nothing in the app admitted it.
+     */
+    val offlineAiProblem: StateFlow<String?> = container.localLlmProvider.offlineProblem
+
+    /**
+     * Clears a recorded offline failure so the next capture tries the on-device
+     * model again, rather than making the reader re-download the weights to get
+     * it back.
+     */
+    fun retryOfflineAi() = container.localLlmProvider.retryOfflineAi()
+
     val embeddingModelStatus =
         container.embeddingModelStore.status
             .stateIn(

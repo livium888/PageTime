@@ -67,6 +67,21 @@ object NativeTombstone {
         }
     }
 
+    /**
+     * Forgets a recorded death so a deliberate retry starts clean.
+     *
+     * The auto-disable is a brake, not a verdict. A surviving marker proves the
+     * process died inside a native phase, but not that the model is unusable —
+     * an OS kill, a low-memory kill, or a one-off load failure all leave the same
+     * marker behind. Without this the reader's only way back to the on-device
+     * model would be deleting and re-downloading the weights, which is a punishment
+     * for a failure that may never repeat.
+     */
+    fun clear() {
+        offlineDisabledByTombstone = false
+        lastDeathSummary = null
+    }
+
     /** Writes the "entering phase" marker. Fsyncs to survive an immediate kill. */
     fun enterPhase(context: Context, phase: Phase) {
         try {

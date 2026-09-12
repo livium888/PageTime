@@ -14,6 +14,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -57,6 +60,20 @@ class MediaPipeLlmProvider(
     var nativeFailed = false
         private set
 
+    private val _offlineProblem = MutableStateFlow<String?>(null)
+
+    /**
+     * Why offline inference is switched off right now, or null when it is
+     * healthy.
+     *
+     * Exposed so the AI & models screen can say it out loud. It used to be a
+     * private flag, which meant the model could quietly stop being used and the
+     * reader would have no way to learn that, or to undo it, from the app. A
+     * failure the reader cannot see is indistinguishable from the app being
+     * broken.
+     */
+    val offlineProblem: StateFlow<String?> = _offlineProblem.asStateFlow()
+
     /**
      * Tracks the model file's size at the last load, so a re-download that
      * replaces the file at the same path is detected and the stale native
@@ -75,6 +92,8 @@ class MediaPipeLlmProvider(
         runCatching { NativeTombstone.checkOnProcessStart(context) }
         if (NativeTombstone.offlineDisabledByTombstone) {
             nativeFailed = true
+            _offlineProblem.value = NativeTombstone.lastDeathSummary
+                ?: "Offline AI was switched off after a previous crash"
             Log.e(TAG, "Offline inference disabled: ${NativeTombstone.lastDeathSummary}")
         }
         // Observe the store's status so a model replacement (re-download) or
@@ -149,9 +168,26 @@ class MediaPipeLlmProvider(
         } catch (error: Throwable) {
             Log.e(TAG, "Offline model failed", error)
             nativeFailed = true
+            _offlineProblem.value = error.message ?: "The offline model failed"
             scope.launch { dropCachedModel("failure") }
             Result.failure(error)
         }
+    }
+
+    /**
+     * Releases the brake set by a previous offline failure, so the next capture
+     * tries the on-device model again.
+     *
+     * The auto-disable exists so a device that dies inside the native runtime
+     * cannot crash-loop the reader. It is deliberately not permanent: the reader
+     * asks for this from the model screen, having been told what went wrong and
+     * how to give the next attempt the best chance.
+     */
+    fun retryOfflineAi() {
+        nativeFailed = false
+        _offlineProblem.value = null
+        NativeTombstone.clear()
+        Log.d(TAG, "Offline inference re-enabled by the reader")
     }
 
     /**

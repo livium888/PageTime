@@ -60,6 +60,7 @@ fun AiModelsScreen(
     val aiSettings by viewModel.aiSettings.collectAsStateWithLifecycle()
     val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
     val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
+    val offlineAiProblem by viewModel.offlineAiProblem.collectAsStateWithLifecycle()
     val lumenPrompt by viewModel.lumenPrompt.collectAsStateWithLifecycle()
     val lumenPromptIsCustom by viewModel.lumenPromptIsCustom.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
@@ -104,6 +105,8 @@ fun AiModelsScreen(
             SectionHeader("On-device model")
             OfflineModelSettingsCard(
                 status = lumenModelStatus,
+                offlineProblem = offlineAiProblem,
+                onRetryOfflineAi = viewModel::retryOfflineAi,
                 downloadStats = viewModel.downloadStats.collectAsStateWithLifecycle().value,
                 modelUrl = viewModel.lumenModelUrl.collectAsStateWithLifecycle().value,
                 onSetModelUrl = viewModel::setLumenModelUrl,

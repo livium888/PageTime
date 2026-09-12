@@ -41,6 +41,7 @@ import com.pagetime.app.ui.screens.bookshelf.BookshelfScreen
 import com.pagetime.app.ui.screens.shelf.AuthorShelfScreen
 import com.pagetime.app.ui.screens.shelf.ShelfScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
+import com.pagetime.app.ui.screens.reader.PdfReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
 import com.pagetime.app.ui.screens.flashcards.FlashcardsScreen
@@ -180,6 +181,7 @@ fun PageTimeAppUi(
             composable("library") {
                 LibraryScreen(
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
+                    onOpenPdf = { bookId -> navController.navigate("pdf-reader/$bookId") },
                     onOpenConcepts = { bookId -> navController.navigate("concepts/$bookId") },
                     onDiscover = { navController.navigate("search") },
                     onOpenShelf = { navController.navigate("shelf") },
@@ -297,6 +299,13 @@ fun PageTimeAppUi(
                     onOpenBook = { id ->
                         navController.navigate("reader/$id") { launchSingleTop = true }
                     }
+                )
+            }
+            composable("pdf-reader/{bookId}") { entry ->
+                val bookId = entry.arguments?.getString("bookId") ?: return@composable
+                PdfReaderScreen(
+                    bookId = bookId,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable("reader/{bookId}") { entry ->

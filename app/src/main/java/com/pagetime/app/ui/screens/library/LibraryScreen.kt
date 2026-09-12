@@ -96,6 +96,8 @@ fun LibraryScreen(
     onOpenBookshelf: () -> Unit = {},
     /** The incremental-reading chunk queue. */
     onOpenPagemarks: () -> Unit = {},
+    /** Open a PDF in the native reader (page-by-page, not reflowed). */
+    onOpenPdf: (String) -> Unit = {},
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -329,7 +331,10 @@ fun LibraryScreen(
                         } else null,
                         onShare = if (book.isReflowedText) {
                             { viewModel.shareTranscript(book) }
-                        } else null
+                        } else null,
+                        onOpenPdf = if (book.format == "pdf") {
+                            { onOpenPdf(book.id) }
+                        } else null,
                     )
                 }
             }
@@ -403,7 +408,9 @@ private fun BookRow(
     onCopy: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
     /** Tapping the author opens everything else they wrote. */
-    onAuthorClick: (() -> Unit)? = null
+    onAuthorClick: (() -> Unit)? = null,
+    /** Open the original PDF instead of the reflowed EPUB. */
+    onOpenPdf: (() -> Unit)? = null,
 ) {
     Surface(
         onClick = onClick,
@@ -527,6 +534,10 @@ private fun BookRow(
                         text = { Text(if (isReformatting) "Formatting…" else "Enhance with AI") },
                         onClick = { if (!isReformatting) { actionsExpanded = false; onReformat() } },
                         enabled = !isReformatting
+                    )
+                    if (onOpenPdf != null && book.format == "pdf") DropdownMenuItem(
+                        text = { Text("Read original PDF") },
+                        onClick = { actionsExpanded = false; onOpenPdf() }
                     )
                     DropdownMenuItem(
                         text = { Text("Delete book") },

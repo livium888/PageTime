@@ -6,6 +6,7 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pagetime.app.PageTimeApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,9 +29,11 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private var renderer: PdfRenderer? = null
     private var pfd: ParcelFileDescriptor? = null
+    private var bookId: String? = null
 
-    /** Open a PDF file and prepare for reading. */
-    fun open(pdfPath: String) {
+    /** Open a PDF file and prepare for reading. Restores the last position. */
+    fun open(pdfPath: String, bookId: String) {
+        this.bookId = bookId
         viewModelScope.launch {
             val file = File(pdfPath)
             if (!file.exists()) {
@@ -41,9 +44,10 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
                 renderer = PdfRenderer(pfd!!)
                 val count = renderer!!.pageCount
+                // Restore last position
+                val savedPage = restorePosition(bookId)
                 _state.value = PdfState(pageCount = count)
-                // Pre-render the first page
-                renderPage(0)
+                renderPage(savedPage.coerceIn(0, count - 1))
             } catch (e: Exception) {
                 _state.value = PdfState(error = "Cannot open PDF: ${e.message}")
             }
@@ -84,6 +88,29 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             bitmap = bitmap,
             loading = false
         )
+        // Save position
+        bookId?.let { savePosition(it, pageIndex) }
+    }
+
+    /** Save the current page so re-entering the PDF resumes here. */
+    private fun savePosition(bookId: String, page: Int) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<PageTimeApp>()
+                val settings = app.container.settingsRepository
+                // Reuse the same DataStore key pattern as text offset, namespaced by book id
+                settings.savePdfPage(bookId, page)
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** Restore the last-read page, defaulting to 0. */
+    private suspend fun restorePosition(bookId: String): Int {
+        return try {
+            val app = getApplication<PageTimeApp>()
+            val settings = app.container.settingsRepository
+            settings.getPdfPage(bookId)
+        } catch (_: Exception) { 0 }
     }
 
     override fun onCleared() {

@@ -331,6 +331,15 @@ class SettingsRepository(private val context: Context) {
     private fun textOffsetKey(bookId: String) =
         intPreferencesKey("text_offset_$bookId")
 
+    private fun pdfPageKey(bookId: String) = intPreferencesKey("pdf_page_$bookId")
+
+    suspend fun savePdfPage(bookId: String, page: Int) {
+        context.dataStore.edit { it[pdfPageKey(bookId)] = page }
+    }
+
+    suspend fun getPdfPage(bookId: String): Int =
+        context.dataStore.data.first()[pdfPageKey(bookId)] ?: 0
+
     private fun locatorKey(bookId: String) =
         stringPreferencesKey("locator_$bookId")
 

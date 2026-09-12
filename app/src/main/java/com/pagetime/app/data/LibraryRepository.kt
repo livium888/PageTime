@@ -6,9 +6,11 @@ import android.provider.OpenableColumns
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.library.EpubParser
+import com.pagetime.app.data.library.PdfTextExtractor
 import com.pagetime.app.data.local.BookDao
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,7 @@ class LibraryRepository(
     private val bookDao: BookDao,
     private val downloader: BookDownloader,
     private val epubParser: EpubParser,
+    private val pdfTextExtractor: PdfTextExtractor,
     private val settingsRepository: SettingsRepository,
     private val context: Context,
     private val aiUsageRepository: AiUsageRepository? = null
@@ -116,9 +119,15 @@ class LibraryRepository(
     }
 
     /**
-     * Imports an EPUB or plain-text document selected with Android's system picker.
-     * The provider URI is copied into app-private storage, so the book remains
-     * readable after the user removes the original file or its temporary URI grant.
+     * Imports an EPUB, PDF or plain-text document selected with Android's system
+     * picker. The provider URI is copied into app-private storage, so the book
+     * remains readable after the user removes the original file or its temporary
+     * URI grant.
+     *
+     * A PDF is converted to text on the way in — see [PdfTextExtractor] — because
+     * everything this app does to a book (re-laying it out at the reader's font
+     * size, saving a position in it, highlighting a span of it, cutting it into
+     * chunks) is done to text.
      */
     suspend fun importLocalBook(uri: Uri): Result<BookEntity> = withContext(Dispatchers.IO) {
         runCatching {
@@ -136,8 +145,12 @@ class LibraryRepository(
             val extension = displayName.substringAfterLast('.', "").lowercase()
             val format = when {
                 extension == "epub" || mimeType == "application/epub+zip" -> "epub"
+                // Checked before the text types: a PDF's own type is
+                // application/pdf, but plenty of providers hand back
+                // application/octet-stream and rely on the file name.
+                extension == "pdf" || mimeType == "application/pdf" -> "pdf"
                 extension in setOf("txt", "text", "md") || mimeType.startsWith("text/") -> "txt"
-                else -> error("Choose an EPUB or plain-text file")
+                else -> error("Choose an EPUB, PDF or plain-text file")
             }
             val id = "local-${UUID.randomUUID()}"
             val booksDir = File(context.filesDir, "books").apply { mkdirs() }
@@ -154,6 +167,24 @@ class LibraryRepository(
             } else {
                 null
             }
+            // A PDF is read as text, so the text is lifted out now — once,
+            // here, off the main thread — and the reader opens that file. The
+            // document stays where it landed, so its pages can still be shown
+            // as they were printed later, and so deleting the book takes both.
+            val localPath = if (format == "pdf") {
+                val extracted = File(booksDir, "$id.txt")
+                try {
+                    pdfTextExtractor.extractTo(destination, extracted)
+                } catch (error: Throwable) {
+                    // Nothing reached the library, so the copy of the document
+                    // must not be left behind for a book that does not exist.
+                    runCatching { destination.delete() }
+                    throw error
+                }
+                extracted.absolutePath
+            } else {
+                destination.absolutePath
+            }
             val title = metadata?.title
                 ?.takeIf { it.isNotBlank() }
                 ?: displayName.substringBeforeLast('.', displayName).ifBlank { "Imported book" }
@@ -163,7 +194,7 @@ class LibraryRepository(
                 title = title,
                 author = author,
                 format = format,
-                localPath = destination.absolutePath,
+                localPath = localPath,
                 coverUrl = null,
                 addedAt = System.currentTimeMillis()
             ).also { bookDao.upsert(it) }
@@ -173,7 +204,7 @@ class LibraryRepository(
     suspend fun replaceTextTranscript(bookId: String, editedText: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val book = bookDao.getById(bookId) ?: error("Book not found")
-            require(book.format == "txt") { "Only text transcripts can be replaced" }
+            require(book.isReflowedText) { "Only text books can be replaced" }
             val edited = editedText.trim()
             require(edited.isNotBlank()) { "The pasted transcript is empty" }
             val original = File(book.localPath)
@@ -187,7 +218,7 @@ class LibraryRepository(
     suspend fun replaceTextTranscript(bookId: String, uri: Uri): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val book = bookDao.getById(bookId) ?: error("Book not found")
-            require(book.format == "txt") { "Only text transcripts can be replaced" }
+            require(book.isReflowedText) { "Only text books can be replaced" }
             val input = context.contentResolver.openInputStream(uri) ?: error("Could not open the selected file")
             val edited = input.bufferedReader().use { it.readText() }.trim()
             require(edited.isNotBlank()) { "The selected text file is empty" }
@@ -215,9 +246,25 @@ class LibraryRepository(
     fun rawBackupFile(book: BookEntity): File =
         File(File(book.localPath).parentFile, "${File(book.localPath).nameWithoutExtension}.raw.txt")
 
+    /**
+     * The PDF a PDF book was made from, or null for every other format.
+     *
+     * A PDF book's [BookEntity.localPath] is the text extracted from the
+     * document, so the document itself is a second file stored beside it under
+     * the same id. Nothing reads it yet: it is kept for the separate "read the
+     * original page" step, and so that deleting a book does not leave the
+     * document behind.
+     */
+    fun pdfSourceFile(book: BookEntity): File? {
+        if (book.format != "pdf") return null
+        val text = File(book.localPath)
+        return File(text.parentFile, "${text.nameWithoutExtension}.pdf")
+    }
+
     suspend fun deleteBook(book: BookEntity) = withContext(Dispatchers.IO) {
         bookDao.deleteById(book.id)
         runCatching { File(book.localPath).delete() }
+        pdfSourceFile(book)?.let { source -> runCatching { source.delete() } }
         runCatching { File(context.cacheDir, "epub/${book.id}").deleteRecursively() }
     }
 

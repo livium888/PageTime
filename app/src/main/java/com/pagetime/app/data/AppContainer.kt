@@ -8,6 +8,7 @@ import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
+import com.pagetime.app.data.library.PdfTextExtractor
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
@@ -94,6 +95,10 @@ class AppContainer(context: Context) {
         gutenberg = gutenbergApi,
     )
     val epubParser = EpubParser()
+
+    /** Lifts a PDF's text out when it is imported; see [PdfTextExtractor] for the trade. */
+    val pdfTextExtractor = PdfTextExtractor(appContext)
+
     val youtubeSearchApi = YouTubeSearchApi()
 
     /** Incremental reading: chunks, priorities, and FSRS re-read schedules. */
@@ -113,6 +118,7 @@ class AppContainer(context: Context) {
         bookDao = bookDao,
         downloader = BookDownloader(appContext),
         epubParser = epubParser,
+        pdfTextExtractor = pdfTextExtractor,
         settingsRepository = settingsRepository,
         context = appContext,
         aiUsageRepository = aiUsageRepository

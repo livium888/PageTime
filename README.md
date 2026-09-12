@@ -12,8 +12,8 @@ This is a native **Kotlin + Jetpack Compose** Android app.
 
 1. **Discover, download, or import** — search four free ebook sources (Standard
    Ebooks, Gutenberg via Gutendex, Open Library + Internet Archive, and YouTube
-   transcripts), or use **Library → +** to import an EPUB or plain-text file from
-   your phone. YouTube transcripts are fetched directly in-app from any video URL
+   transcripts), or use **Library → +** to import an EPUB, PDF or plain-text file
+   from your phone. YouTube transcripts are fetched directly in-app from any video URL
    or share — no API key needed. Imported files are copied into PageTime's
    private storage and remain available offline.
 2. **Read** — an immersive in-app reader powered by Readium for EPUB pagination
@@ -119,6 +119,56 @@ Highlights are stored per book and deleted with it. Each one keeps the
 highlighted text itself, so the list can show a passage without re-reading it
 out of the book.
 
+## PDF reading
+
+**A PDF is read as its text, not as its pages.** **Library → +** accepts a
+`.pdf`, and what happens next is a conversion rather than an import: the text is
+lifted out of the document on the phone, tidied, and stored beside it as an
+ordinary text book. From then on the PDF *is* one — the same paged reader, the
+same fonts, sepia and night themes, the same saved position, highlights, chunk
+reading, Go to, Explain Back and timer. Nothing is uploaded, no service is
+involved, and it happens once at import, so opening the book afterwards costs
+nothing.
+
+That choice comes from what this app does with a book. Re-flowing text at the
+reader's font size, remembering a position in it, highlighting a span of it and
+cutting it into chunks are all operations on text. A PDF page is a fixed sheet
+of paper, and Readium has no PDF engine of its own — its open-source path is
+Pdfium, which renders pages and hands the rest of the app nothing to work with.
+So the text is extracted with **PdfBox-Android** (the Apache PDFBox port,
+Apache-2.0) and the paged text reader — the one that already reads `.txt` files
+and YouTube transcripts — owns the result.
+
+**What the tidy-up does.** Extraction gives back what the page looks like, not
+what it reads like: a paragraph arrives as one line per line, running heads and
+page numbers arrive once per page, and a word split across a line keeps its
+hyphen. Three passes in `PdfTextCleaner` fix that — a line that repeats at the
+margins of most pages, and a standalone page number, are dropped; lines are
+rejoined into paragraphs, starting a new one where the line before ended short —
+a sentence ending well before the margin, or a line far too short to be prose,
+which is how a chapter title reads next to a paragraph; and "co-" before
+"operate" is joined into one word while "1920-" before "1945" keeps its dash.
+
+**What it will not do, deliberately.** A scanned PDF — photographs of pages —
+has no text to lift, so it is refused with a message that says exactly that
+instead of being imported as an empty book; reading scans needs OCR, which this
+does not do. Two-column papers can come out interleaved, because nothing in the
+extracted text says where a column ends. Figures, tables and formulas become
+placeholders or jumbled words. The page counter counts the book's pages after
+re-flow, not the document's printed numbers.
+
+**It costs about 10 MB of APK.** PdfBox-Android brings BouncyCastle (three jars)
+with it for encrypted documents, and release builds do not minify, so all of it
+ships. What that buys is opening a password-protected PDF rather than refusing
+one; excluding it is a one-line change in `app/build.gradle.kts` if the APK ever
+needs the space back.
+
+**The original document is kept.** It sits beside the extracted text under the
+same id and is deleted with the book. Nothing reads it yet: it is there for the
+"read the original page" step, which is where faithful layout, real figures and
+scans belong — a different engine doing a different job, not a worse version of
+this one.
+
 ## Bookshelf
 
 **Library → Bookshelf** is every shelf in one unit, with the books drawn as
@@ -209,7 +259,7 @@ PageTime needs three special permissions, all configured from
    launch PageTime reconciles this audit trail against its balance ledger and
    retroactively charges any blocked-app time the live ticker missed.
 
-Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB or plain-text file. Create a Gemini API key from Google AI Studio and add it under **Settings → AI & models → Cloud key** if you want explanation feedback, or switch **Settings → AI & models → Provider** to *Offline model* to draft Lumen cards entirely on-device without a key.
+Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB, PDF or plain-text file. Create a Gemini API key from Google AI Studio and add it under **Settings → AI & models → Cloud key** if you want explanation feedback, or switch **Settings → AI & models → Provider** to *Offline model* to draft Lumen cards entirely on-device without a key.
 
 ## Honest limitations
 
@@ -219,6 +269,9 @@ Then pick which apps to block in **Settings → Manage blocked apps**. To add a 
   accessibility service.
 - "Reading time" is counted while the reader is open and the screen is on; it
   does not yet verify physical presence. (See roadmap.)
+- A PDF is read as its text, not as printed pages, so figures and tables do not
+  survive and a scanned document cannot be read at all. See
+  [PDF reading](#pdf-reading) for why, and for what is kept.
 
 ## Project structure
 
@@ -233,7 +286,7 @@ app/src/main/java/com/pagetime/app/
 │   ├── openlibrary/                    # Open Library + Internet Archive client
 │   ├── youtube/                         # YouTube transcript fetcher + search API
 │   ├── download/                        # file downloader
-│   ├── library/                         # EPUB parser/extractor
+│   ├── library/                         # EPUB parser + PDF text extraction
 │   └── AppContainer.kt, *Repository.kt  # manual DI + repositories
 ├── domain/BalanceManager.kt             # reading → browsing conversion
 └── ui/                                  # Compose theme, nav, and screens
@@ -241,6 +294,11 @@ app/src/main/java/com/pagetime/app/
 
 ## Roadmap ideas
 
+- **PDF: read the original page.** Show the document as it was printed — real
+  layout and figures, and scans that can only be looked at — with Pdfium as a
+  second engine behind a button, beside the text view that is the default.
+- **OCR for scanned PDFs**, so a photograph of a page can be read rather than
+  refused.
 - EPUB search, highlights, and richer annotation tools.
 - A "browse minute" schedule (daily cap, different ratios per app).
 - Strict mode / emergency unlock for unavoidable app use.

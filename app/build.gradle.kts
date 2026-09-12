@@ -156,6 +156,18 @@ dependencies {
     implementation(libs.readium.navigator)
     implementation(libs.androidx.fragment.ktx)
 
+    // PdfBox-Android: the Apache PDFBox port, used for ONE thing — lifting the
+    // text out of a PDF when it is imported (see PdfTextExtractor). There is no
+    // PDF renderer in this app: Readium has no PDF engine of its own, and a
+    // page image could not be re-laid-out at the reader's font size anyway.
+    //
+    // It carries BouncyCastle (three jars, ~7 MB) for encrypted documents.
+    // Release builds have minification off, so all of it ships. The cost is
+    // accepted for now because refusing an encrypted PDF is worse than paying
+    // for the ability to open one; dropping it is a one-line exclusion if the
+    // APK ever needs to shrink.
+    implementation(libs.pdfbox.android)
+
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     debugImplementation(libs.androidx.ui.tooling)

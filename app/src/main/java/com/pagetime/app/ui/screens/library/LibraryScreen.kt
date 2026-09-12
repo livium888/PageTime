@@ -64,6 +64,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.MapMoment
+import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import com.pagetime.app.ui.AppPrimaryButton
 import com.pagetime.app.ui.AppSecondaryButton
@@ -72,6 +73,9 @@ import com.pagetime.app.ui.formatMinutes
 
 private val IMPORT_MIME_TYPES = arrayOf(
     "application/epub+zip",
+    // A PDF is imported as text: the document is parsed once on the phone and
+    // read in the app's own reader, so the picker has to offer it.
+    "application/pdf",
     "text/plain",
     "text/*",
     "application/octet-stream"
@@ -206,7 +210,7 @@ fun LibraryScreen(
                 )
                 Spacer(Modifier.height(Spacing.s))
                 Text(
-                    "Download from Discover — or import an EPUB or plain-text file from your phone.",
+                    "Download from Discover — or import an EPUB, PDF or plain-text file from your phone.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -320,10 +324,10 @@ fun LibraryScreen(
                         hasRawBackup = viewModel.hasRawBackup(book),
                         isReformatting = book.id in isReformatting,
                         reformatProgress = reformatProgress[book.id],
-                        onCopy = if (book.format == "txt") {
+                        onCopy = if (book.isReflowedText) {
                             { viewModel.copyTranscript(book) }
                         } else null,
-                        onShare = if (book.format == "txt") {
+                        onShare = if (book.isReflowedText) {
                             { viewModel.shareTranscript(book) }
                         } else null
                     )
@@ -507,11 +511,11 @@ private fun BookRow(
                         text = { Text("Share transcript") },
                         onClick = { actionsExpanded = false; onShare() }
                     )
-                    if (onPaste != null && book.format == "txt") DropdownMenuItem(
+                    if (onPaste != null && book.isReflowedText) DropdownMenuItem(
                         text = { Text("Paste edited transcript") },
                         onClick = { actionsExpanded = false; onPaste() }
                     )
-                    if (onReplace != null && book.format == "txt") DropdownMenuItem(
+                    if (onReplace != null && book.isReflowedText) DropdownMenuItem(
                         text = { Text("Upload edited transcript") },
                         onClick = { actionsExpanded = false; onReplace() }
                     )
@@ -519,7 +523,7 @@ private fun BookRow(
                         text = { Text("Restore original transcript") },
                         onClick = { actionsExpanded = false; onRestore() }
                     )
-                    if (onReformat != null && book.format == "txt") DropdownMenuItem(
+                    if (onReformat != null && book.isReflowedText) DropdownMenuItem(
                         text = { Text(if (isReformatting) "Formatting…" else "Enhance with AI") },
                         onClick = { if (!isReformatting) { actionsExpanded = false; onReformat() } },
                         enabled = !isReformatting
@@ -531,7 +535,7 @@ private fun BookRow(
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (false && onReformat != null && book.format == "txt") {
+                if (false && onReformat != null && book.isReflowedText) {
                     IconButton(
                         onClick = onReformat,
                         enabled = !isReformatting

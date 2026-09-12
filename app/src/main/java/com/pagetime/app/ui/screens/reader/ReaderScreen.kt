@@ -146,6 +146,7 @@ import com.pagetime.app.data.PagemarkSession
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.local.TextHighlightEntity
 import com.pagetime.app.data.local.ReaderSettings
+import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.ui.formatClock
 import com.pagetime.app.ui.formatMinutes
 import kotlinx.coroutines.launch
@@ -454,7 +455,11 @@ fun ReaderScreen(
                 }
             )
 
-            book?.format == "txt" && textContent != null -> TextReaderHost(
+            // Anything that is not an EPUB is text this app lays out itself,
+            // including the text lifted out of a PDF (see PdfTextExtractor), so
+            // a PDF gets the paged reader with its own settings, saved position,
+            // highlights and chunks rather than a second reader of its own.
+            book?.isReflowedText == true && textContent != null -> TextReaderHost(
                 content = textContent!!,
                 initialFraction = initialTextFraction,
                 initialOffset = initialTextOffset,
@@ -535,7 +540,7 @@ fun ReaderScreen(
             ReaderTopBar(
                 title = book?.title ?: "Reading",
                 hasChapters = tocEntries != null,
-                hasGoTo = book?.format == "txt" && textContent != null,
+                hasGoTo = book?.isReflowedText == true && textContent != null,
                 balanceSeconds = balanceSeconds,
                 bookmarkPresent = bookmarkPresent,
                 checkpointPresent = checkpointPresent,
@@ -594,7 +599,7 @@ fun ReaderScreen(
                         )
                     }
                 },
-                isTextBook = book?.format == "txt" && textContent != null,
+                isTextBook = book?.isReflowedText == true && textContent != null,
                 enhancing = enhancing,
                 onEnhance = vm::enhanceWithAI,
                 enhancementProgress = enhancementProgress,
@@ -995,7 +1000,7 @@ fun ReaderScreen(
         )
     }
 
-    if (showGoTo && book?.format == "txt" && textContent != null) {
+    if (showGoTo && book?.isReflowedText == true && textContent != null) {
         GoToSheet(
             progress = progress,
             onSeek = { fraction ->
@@ -1035,7 +1040,7 @@ fun ReaderScreen(
                 // which is the same coordinate capture already uses to fetch
                 // chapter text. Its offset becomes a fraction of the chapter,
                 // because that is what both readers can be told to go to.
-                if (book?.format == "txt") {
+                if (book?.isReflowedText == true) {
                     txtGoRequest = hit.progression to SystemClock.elapsedRealtime()
                 } else {
                     val link = publication?.readingOrder?.getOrNull(hit.chapterIndex)

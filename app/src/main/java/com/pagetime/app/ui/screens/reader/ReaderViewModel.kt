@@ -11,6 +11,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.ReaderSettings
 import com.pagetime.app.data.local.LearningCheckpoint
+import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.ConceptMap
 import com.pagetime.app.data.CaptureDiagnostic
 import com.pagetime.app.data.LumenCapture
@@ -765,7 +766,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                         latestLocator?.toJSON()?.toString()
                     } else null,
                     chapterIndex = chapterIndex,
-                    fraction = if (b.format == "txt") latestTxtFraction else 0f
+                    fraction = if (b.isReflowedText) latestTxtFraction else 0f
                 )
                 // Where should this new slip continue the line? Ranked locally
                 // against the whole box — Luhmann filed behind the thought it
@@ -1079,7 +1080,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Enhance the transcript with AI formatting (speaker labels, paragraphs, etc.). */
     fun enhanceWithAI() {
         val b = _book.value ?: return
-        if (b.format != "txt") return
+        // Any book this app lays out as text, a PDF's extracted text included:
+        // tidying bad extraction is exactly what this is for.
+        if (!b.isReflowedText) return
         if (_enhancing.value) return
         val gemini = container.geminiLearningClient
         if (!gemini.isConfigured) {

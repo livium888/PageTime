@@ -35,6 +35,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
 import android.Manifest
 import android.content.pm.PackageManager
@@ -107,6 +108,22 @@ fun SettingsScreen(
     val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
+    val llmProvider by viewModel.llmProvider.collectAsStateWithLifecycle()
+    val lumenModelStatus by viewModel.lumenModelStatus.collectAsStateWithLifecycle()
+    val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
+    val geminiViewModel: GeminiSettingsViewModel = viewModel()
+    val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
+    val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
+    val geminiHasUserKey by geminiViewModel.hasUserKey.collectAsStateWithLifecycle()
+    val geminiStatus by geminiViewModel.status.collectAsStateWithLifecycle()
+    var geminiKeyInput by remember { mutableStateOf("") }
+    var modelMenuExpanded by remember { mutableStateOf(false) }
+
+    // Local drag state for the reading-rate slider. Writing to DataStore on
+    // every drag tick made the flow re-emit mid-drag and the thumb fight the
+    // finger (it appeared stuck); the value is committed once on release.
+    var ratioDraft by remember { mutableStateOf<Double?>(null) }
+    var flashcardRewardDraft by remember { mutableStateOf<Long?>(null) }
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -357,11 +374,35 @@ fun SettingsScreen(
                         "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    // The fixed slider: drafts locally during the drag and
+                    // commits once on release, so the flow can't re-emit
+                    // mid-drag and fight the finger.
                     Slider(
-                        value = ratio.toFloat(),
-                        onValueChange = { viewModel.setRatio(it.toDouble()) },
+                        value = ratioDraft?.toFloat() ?: ratio.toFloat(),
+                        onValueChange = { ratioDraft = it.toDouble() },
+                        onValueChangeFinished = {
+                            ratioDraft?.let(viewModel::setRatio)
+                            ratioDraft = null
+                        },
                         valueRange = 0.5f..3.0f,
                         steps = 4
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text("Flashcard reward", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Each correct flashcard answer earns ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of browsing. \"Again\" always earns nothing.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = (flashcardRewardDraft ?: flashcardRewardSeconds).toFloat(),
+                        onValueChange = { flashcardRewardDraft = it.toLong() },
+                        onValueChangeFinished = {
+                            flashcardRewardDraft?.let(viewModel::setFlashcardReward)
+                            flashcardRewardDraft = null
+                        },
+                        valueRange = 0f..120f,
+                        steps = 23
                     )
                 }
             }

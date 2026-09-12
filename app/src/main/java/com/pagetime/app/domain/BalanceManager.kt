@@ -161,6 +161,31 @@ class BalanceManager(
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
 
+    /**
+     * Browse seconds earned per correct flashcard review (HARD/GOOD/EASY).
+     * Configurable in Settings; AGAIN earns nothing.
+     */
+    val flashcardRewardSeconds: Flow<Long> =
+        repository.settings.map { it.flashcardRewardSeconds }
+
+    suspend fun flashcardReward(): Long = repository.flashcardRewardSeconds()
+
+    suspend fun setFlashcardReward(seconds: Long) = repository.setFlashcardRewardSeconds(seconds)
+
+    /**
+     * Award the flashcard bonus for one correctly recalled review. AGAIN earns
+     * nothing, so guessing your way to browse time is impossible by design.
+     */
+    suspend fun earnFromFlashcard(ratingCorrect: Boolean) {
+        if (!ratingCorrect) return
+        val seconds = repository.flashcardRewardSeconds()
+        if (seconds <= 0) return
+        mutex.withLock {
+            repository.addBrowseBalanceSeconds(seconds)
+        }
+        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
+    }
+
     suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {
         repository.setBrowseBalanceSeconds(seconds.coerceAtLeast(0L))
     }

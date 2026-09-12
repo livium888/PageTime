@@ -54,10 +54,22 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
+      # Every run used to publish the artifact under the same name, so the
+      # downloaded file could not say which build it was and an older run's APK
+      # was indistinguishable from the newest one. Naming it for the app version
+      # and the commit makes the file itself the answer to "which build is on my
+      # phone?" — Settings shows the same version string.
+      - name: Name this build
+        id: build-name
+        run: |
+          VERSION=$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          [ -n "$VERSION" ] || VERSION=unknown
+          echo "name=pagetime-${VERSION}-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: pagetime-release-apk
+          name: ${{ steps.build-name.outputs.name }}
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14

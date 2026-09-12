@@ -133,14 +133,14 @@ class PdfFigureExtractor(private val context: Context) {
             val xScale = pageWidth / columns
             val yScale = pageHeight / rows
             val regions = mutableListOf<RectF>()
-            explore(ink, columns, rows) { left, top, right, bottom, cells ->
+            explore(ink, columns, rows) { cellLeft, cellTop, cellRight, cellBottom, cells ->
                 val raw = RectF(
-                    left * xScale,
-                    top * yScale,
-                    (right + 1) * xScale,
-                    (bottom + 1) * yScale,
+                    cellLeft * xScale,
+                    cellTop * yScale,
+                    (cellRight + 1) * xScale,
+                    (cellBottom + 1) * yScale,
                 )
-                val cellArea = (right - left + 1).toLong() * (bottom - top + 1).toLong()
+                val cellArea = (cellRight - cellLeft + 1).toLong() * (cellBottom - cellTop + 1).toLong()
                 val density = if (cellArea == 0L) 0f else cells.toFloat() / cellArea
                 val candidate = RectF(raw).apply {
                     inset(-PADDING_PT, -PADDING_PT)

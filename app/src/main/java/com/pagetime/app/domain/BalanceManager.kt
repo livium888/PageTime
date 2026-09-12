@@ -175,13 +175,21 @@ class BalanceManager(
     /**
      * Award the flashcard bonus for one correctly recalled review. AGAIN earns
      * nothing, so guessing your way to browse time is impossible by design.
+     *
+     * Under the access gate the reward banks reading credit toward the next
+     * session — the same currency reading earns — rather than growing a browse
+     * balance the gate makes unspendable.
      */
     suspend fun earnFromFlashcard(ratingCorrect: Boolean) {
         if (!ratingCorrect) return
         val seconds = repository.flashcardRewardSeconds()
         if (seconds <= 0) return
         mutex.withLock {
-            repository.addBrowseBalanceSeconds(seconds)
+            if (repository.gateEnabled()) {
+                repository.addReadingCredit(seconds)
+            } else {
+                repository.addBrowseBalanceSeconds(seconds)
+            }
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }

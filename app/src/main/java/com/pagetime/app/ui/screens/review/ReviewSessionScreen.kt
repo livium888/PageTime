@@ -201,21 +201,49 @@ fun ReviewSessionScreen(
                             // Four ratings rather than right/wrong: FSRS uses
                             // the difference to decide how far to push the next
                             // interval, and collapsing them throws that away.
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                LumenRating.entries.forEach { rating ->
-                                    val label = rating.label
-                                    if (rating == LumenRating.AGAIN) {
-                                        Button(
-                                            onClick = { vm.grade(rating) },
+                            // Anki-style 2×2 grid: two buttons per row with
+                            // each next-interval caption on its own line under
+                            // the button, so long captions can never overlap
+                            // the labels or each other.
+                            LumenRating.entries.chunked(2).forEach { row ->
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    row.forEach { rating ->
+                                        val label = rating.label
+                                        val caption = state.intervalPreviews[rating]
+                                        Column(
                                             modifier = Modifier.weight(1f),
-                                        ) { Text(label, maxLines = 1) }
-                                    } else {
-                                        OutlinedButton(
-                                            onClick = { vm.grade(rating) },
-                                            modifier = Modifier.weight(1f),
-                                        ) { Text(label, maxLines = 1) }
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            if (rating == LumenRating.AGAIN) {
+                                                Button(
+                                                    onClick = { vm.grade(rating) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) { Text(label, maxLines = 1) }
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = { vm.grade(rating) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) { Text(label, maxLines = 1) }
+                                            }
+                                            Text(
+                                                text = caption ?: " ",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                        }
                                     }
                                 }
+                            }
+                            if (state.rewardSeconds > 0) {
+                                Text(
+                                    "Correct answers earn ${state.rewardSeconds}s · \"Again\" earns nothing",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                     }

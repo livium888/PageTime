@@ -1560,6 +1560,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             runCatching {
                 chapterCardGrader.grade(cardId, applied, java.time.Instant.now(), keepIfUnjudged = true)
             }
+            // Answering in the chair is a review too: correct recall banks the
+            // same configured bonus a review sitting pays. Again earns nothing.
+            if (applied != com.pagetime.app.data.LumenRating.AGAIN) {
+                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+            }
             // The reader now owns a card with a date on it, and this is the
             // moment to ask whether the app may say so when that date comes.
             // Quantum Country asks at exactly this point and for exactly this

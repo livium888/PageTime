@@ -67,6 +67,14 @@ data class ReviewUiState(
     val lastInterval: String? = null,
     /** Whether the last answer can still be taken back. */
     val canUndo: Boolean = false,
+    /**
+     * Anki-style next-interval captions per rating ("10m", "2d"), computed by
+     * simulating the scheduler for the card on screen. Buttons show them so
+     * the reader sees the cost of a rating before committing to it.
+     */
+    val intervalPreviews: Map<LumenRating, String> = emptyMap(),
+    /** Browse seconds a correct answer banks; zero hides the note. */
+    val rewardSeconds: Long = 0,
 )
 
 class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
@@ -78,6 +86,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = container.settingsRepository
     private val bookDao = container.database.bookDao()
     private val pagemarks = container.pagemarkRepository
+    private val balanceManager = container.balanceManager
 
     /**
      * Grading for chapter flashcards, shared with the reading chair.
@@ -176,7 +185,9 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 session = session,
                 card = session.current?.let { cards[it] },
                 revealed = false,
+                rewardSeconds = runCatching { balanceManager.flashcardReward() }.getOrDefault(0L),
             )
+            refreshPreviews()
         }
     }
 
@@ -281,6 +292,11 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                     due
                 }
             }.getOrNull()
+            // Correct recall banks the configured bonus. AGAIN proves nothing
+            // and earns nothing — guessing can never mint app time.
+            if (rating != LumenRating.AGAIN) {
+                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+            }
             val advanced = ReviewSession.grade(_state.value.session, failed = rating == LumenRating.AGAIN)
             undoStep = restore?.let {
                 UndoStep(session = before.session, card = before.card, restore = it)
@@ -292,6 +308,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 lastInterval = nextDue?.let { formatNextReview(it) },
                 canUndo = undoStep != null,
             )
+            refreshPreviews()
         }
     }
 
@@ -335,6 +352,40 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { pagemarks.resumeChunk(current.id) }
             onOpened()
+        }
+    }
+
+    /**
+     * Recomputes the per-button interval captions for the card now on screen.
+     * A failed lookup simply leaves the map empty and the buttons captionless.
+     */
+    private fun refreshPreviews() {
+        val item = _state.value.card ?: run {
+            _state.value = _state.value.copy(intervalPreviews = emptyMap())
+            return
+        }
+        if (item.isChunk) {
+            _state.value = _state.value.copy(intervalPreviews = emptyMap())
+            return
+        }
+        viewModelScope.launch {
+            val now = Instant.now()
+            val json: String? = runCatching {
+                if (item.id in chapterCardIds) {
+                    learningCards.get(item.id)?.fsrsCardJson
+                } else {
+                    repository.trainingSnapshot(item.id)?.fsrsCardJson
+                }
+            }.getOrNull()
+            if (json == null) {
+                _state.value = _state.value.copy(intervalPreviews = emptyMap())
+                return@launch
+            }
+            val previews = LumenRating.entries.mapNotNull { rating ->
+                grader.previewNextDue(json, rating, now)
+                    ?.let { due -> rating to formatIntervalShort(due, now) }
+            }.toMap()
+            _state.value = _state.value.copy(intervalPreviews = previews)
         }
     }
 

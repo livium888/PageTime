@@ -48,6 +48,24 @@ class ChapterCardGrader(
     )
 
     /**
+     * Simulates a rating against a card's current scheduler state and returns
+     * when the card would next come due. Nothing is written, so it is safe to
+     * call for all four ratings on every card reveal — this is what puts the
+     * Anki-style interval captions on the rating buttons.
+     */
+    fun previewNextDue(
+        fsrsCardJson: String,
+        rating: LumenRating,
+        now: Instant,
+    ): Instant? {
+        val old = runCatching { FsrsCardCodec.fromJson(fsrsCardJson) }.getOrNull() ?: return null
+        return runCatching {
+            val result = scheduler.reviewCard(old, rating.toFsrs(), now, null)
+            result.card().due ?: now.plusSeconds(86_400)
+        }.getOrNull()
+    }
+
+    /**
      * Records an answer.
      *
      * Two writes, the same two LumenRepository.rateTraining does: the

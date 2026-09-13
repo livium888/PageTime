@@ -7,7 +7,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.FsrsCardCodec
-import com.pagetime.app.data.LumenRepository
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.domain.BalanceManager
 import io.github.openspacedrepetition.Card
@@ -33,6 +32,10 @@ import java.util.UUID
  * Recall tab with FSRS scheduling, grading, notifications, and time
  * earning via [BalanceManager.earnFromFlashcard].
  *
+ * Flashcards are generated using [GeminiLearningClient.generateChapterPrompts],
+ * the same pipeline the EPUB reader uses for proper Q/A flashcards with
+ * questions, answers, and explanations — NOT the Lumen slip-box pipeline.
+ *
  * Reading time is credited via [BalanceManager.earnFromReading].
  */
 class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
@@ -43,7 +46,7 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val container = (app as PageTimeApp).container
     private val balanceManager: BalanceManager = container.balanceManager
     private val settingsRepository = container.settingsRepository
-    private val lumenRepo: LumenRepository = container.lumenRepository
+    private val geminiClient = container.geminiLearningClient
     private val learningCardDao = container.database.learningCardDao()
 
     // --- Reading timer ---
@@ -162,8 +165,13 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     // --- AI-powered flashcard generation (Learning Cards) ---
 
     /**
-     * One-tap: extract the current page text, send it to Gemini, and save
-     * the result as a Learning Card — immediately due for recall review.
+     * One-tap: extract the current page text, send it to Gemini via the
+     * chapter prompt pipeline (same as EPUB reader), and save the result
+     * as a Learning Card — immediately due for recall review.
+     *
+     * This uses [GeminiLearningClient.generateChapterPrompts] which produces
+     * proper Q/A flashcards with questions, answers, and explanations —
+     * NOT the Lumen slip-box pipeline.
      */
     fun generateFlashcardFromCurrentPage() {
         val bookId = currentBookId ?: return
@@ -183,23 +191,39 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     _flashcardState.value = FlashcardUiState(error = "No text found on this page")
                     return@launch
                 }
-                val draft = lumenRepo.draft(book, text)
-                saveAsLearningCard(
-                    bookId = bookId,
-                    front = draft.front,
-                    back = draft.back,
-                    sourceQuote = draft.quote,
-                    pageIndex = pageIndex,
+                // Use the Gemini chapter prompt pipeline for proper Q/A flashcards
+                val prompts = geminiClient.generateChapterPrompts(
+                    bookTitle = book.title,
+                    chapterTitle = "Page ${pageIndex + 1}",
+                    passages = listOf(text),
+                    insist = true,
                 )
-                val app2 = getApplication<Application>()
+                if (prompts.isEmpty()) {
+                    _flashcardState.value = FlashcardUiState(
+                        error = "Gemini could not generate a flashcard from this page. Try a page with more content."
+                    )
+                    return@launch
+                }
+                // Save each generated prompt as a Learning Card
+                for (raw in prompts.take(3)) {
+                    saveAsLearningCard(
+                        bookId = bookId,
+                        prompt = raw.prompt,
+                        answer = raw.answer,
+                        explanation = raw.explanation,
+                        sourceQuote = raw.sourceQuote,
+                        cardType = if (raw.isCloze) LearningCardEntity.TYPE_CLOZE else LearningCardEntity.TYPE_QA,
+                        pageIndex = pageIndex,
+                    )
+                }
                 Toast.makeText(
-                    app2,
-                    "Flashcard created: \"${draft.front.take(50)}\"",
+                    getApplication<Application>(),
+                    "${prompts.size.coerceAtMost(3)} flashcard${if (prompts.size > 1) "s" else ""} created from page ${pageIndex + 1}",
                     Toast.LENGTH_SHORT,
                 ).show()
                 _flashcardState.value = FlashcardUiState(
-                    lastCreatedFront = draft.front,
-                    lastCreatedBack = draft.back,
+                    lastCreatedFront = prompts.first().prompt,
+                    lastCreatedBack = prompts.first().answer,
                 )
             } catch (e: Exception) {
                 _flashcardState.value = FlashcardUiState(
@@ -211,6 +235,7 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Generate a flashcard from user-selected text → Learning Card.
+     * Uses the same Gemini pipeline as above.
      */
     fun generateFlashcardFromSelection(selectedText: String) {
         val bookId = currentBookId ?: return
@@ -226,23 +251,37 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     _flashcardState.value = FlashcardUiState(error = "Book not found")
                     return@launch
                 }
-                val draft = lumenRepo.draft(book, selectedText)
-                saveAsLearningCard(
-                    bookId = bookId,
-                    front = draft.front,
-                    back = draft.back,
-                    sourceQuote = draft.quote,
-                    pageIndex = pageIndex,
+                val prompts = geminiClient.generateChapterPrompts(
+                    bookTitle = book.title,
+                    chapterTitle = "Page ${pageIndex + 1}",
+                    passages = listOf(selectedText),
+                    insist = true,
                 )
-                val app2 = getApplication<Application>()
+                if (prompts.isEmpty()) {
+                    _flashcardState.value = FlashcardUiState(
+                        error = "Gemini could not generate a flashcard from this text."
+                    )
+                    return@launch
+                }
+                for (raw in prompts.take(3)) {
+                    saveAsLearningCard(
+                        bookId = bookId,
+                        prompt = raw.prompt,
+                        answer = raw.answer,
+                        explanation = raw.explanation,
+                        sourceQuote = raw.sourceQuote,
+                        cardType = if (raw.isCloze) LearningCardEntity.TYPE_CLOZE else LearningCardEntity.TYPE_QA,
+                        pageIndex = pageIndex,
+                    )
+                }
                 Toast.makeText(
-                    app2,
-                    "Flashcard created: \"${draft.front.take(50)}\"",
+                    getApplication<Application>(),
+                    "${prompts.size.coerceAtMost(3)} flashcard${if (prompts.size > 1) "s" else ""} created",
                     Toast.LENGTH_SHORT,
                 ).show()
                 _flashcardState.value = FlashcardUiState(
-                    lastCreatedFront = draft.front,
-                    lastCreatedBack = draft.back,
+                    lastCreatedFront = prompts.first().prompt,
+                    lastCreatedBack = prompts.first().answer,
                 )
             } catch (e: Exception) {
                 _flashcardState.value = FlashcardUiState(
@@ -255,12 +294,16 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Saves a card into the learning_cards table (recall system) with
      * FSRS scheduling so it is immediately due for review.
+     *
+     * Uses proper fields: prompt, answer, explanation, sourceQuote, cardType.
      */
     private suspend fun saveAsLearningCard(
         bookId: String,
-        front: String,
-        back: String,
+        prompt: String,
+        answer: String,
+        explanation: String,
         sourceQuote: String,
+        cardType: String,
         pageIndex: Int,
     ) {
         val now = System.currentTimeMillis()
@@ -274,12 +317,13 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             chapterIndex = pageIndex,
             chapterTitle = null,
             topic = null,
-            prompt = front.trim(),
-            answer = back.trim(),
-            explanation = null,
+            prompt = prompt.trim(),
+            answer = answer.trim(),
+            explanation = explanation.trim().takeIf { it.isNotBlank() },
             sourceLocator = sourceLocator,
             sourceFraction = fraction,
             sourceQuote = sourceQuote.trim(),
+            cardType = cardType,
             fsrsCardJson = fsrsCard,
             createdAt = now,
             updatedAt = now,

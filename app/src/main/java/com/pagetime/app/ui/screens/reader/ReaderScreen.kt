@@ -1485,6 +1485,11 @@ private fun ReadiumNavigatorHost(
     // never point at words that are no longer chosen.
     var epubGrab by remember { mutableStateOf<EpubGrab?>(null) }
     var epubGrabRect by remember { mutableStateOf<RectF?>(null) }
+    // True while snapToSentence or stepSentence is writing a new selection into
+    // the page. Readium rebuilds its ActionMode when the selection changes,
+    // which fires onDestroyActionMode — and without this guard the grab would
+    // be cleared before the chips could render.
+    var epubSnapping by remember { mutableStateOf(false) }
 
     /**
      * Widens the word the reader just long-pressed into its whole sentence.
@@ -1496,6 +1501,7 @@ private fun ReadiumNavigatorHost(
      * it had already been applied would keep answering itself.
      */
     suspend fun snapToSentence(nav: EpubNavigatorFragment) {
+        epubSnapping = true
         try {
             val block = ReadiumSentenceGrab.read(nav) ?: return
             val decision = ReadiumSentenceGrab.decide(block) ?: return
@@ -1516,12 +1522,15 @@ private fun ReadiumNavigatorHost(
             // Best effort: a book Readium cannot reach into keeps the ordinary
             // word selection and the ordinary menu.
             t.printStackTrace()
+        } finally {
+            epubSnapping = false
         }
     }
 
     /** Pulls one more sentence into a grab already held. */
     suspend fun stepSentence(nav: EpubNavigatorFragment, forward: Boolean) {
         val grab = epubGrab ?: return
+        epubSnapping = true
         try {
             val decision = ReadiumSentenceGrab.decideStep(
                 text = grab.text,
@@ -1536,6 +1545,8 @@ private fun ReadiumNavigatorHost(
             epubGrabRect = nav.currentSelection()?.rect
         } catch (t: Throwable) {
             t.printStackTrace()
+        } finally {
+            epubSnapping = false
         }
     }
 
@@ -1644,7 +1655,10 @@ private fun ReadiumNavigatorHost(
                 // highlight" then keeps the sentence, and Explain answers about
                 // the sentence rather than about a word.
                 val live = fm.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
-                if (live != null) scope.launch { snapToSentence(live) }
+                if (live != null) {
+                    epubSnapping = true
+                    scope.launch { snapToSentence(live) }
+                }
                 return true
             }
 
@@ -1693,9 +1707,14 @@ private fun ReadiumNavigatorHost(
             }
 
             override fun onDestroyActionMode(mode: ActionMode) {
-                // The selection is gone, so the arrows have nothing to point at.
-                epubGrab = null
-                epubGrabRect = null
+                // The selection is gone, so the arrows have nothing to point at,
+                // unless we are the ones who just changed it (snapToSentence /
+                // stepSentence). Readium rebuilds its ActionMode when a new
+                // selection is written, which fires this callback immediately.
+                if (!epubSnapping) {
+                    epubGrab = null
+                    epubGrabRect = null
+                }
             }
         }
 

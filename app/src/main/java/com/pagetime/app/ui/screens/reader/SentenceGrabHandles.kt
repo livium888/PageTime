@@ -3,6 +3,7 @@ package com.pagetime.app.ui.screens.reader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -11,6 +12,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -37,6 +39,11 @@ private val GrabHandleSize = 34.dp
  * in. A span that runs over a page turn is clipped to this page by the caller,
  * so the start arrow appears on the page the sentence starts on and the end
  * arrow on the page it ends on.
+ *
+ * When [layout] is null (the very first composition after a grab, before
+ * onTextLayout has fired), the arrows are rendered at a reasonable estimated
+ * position: top-left for backward, bottom-right for forward. They snap to the
+ * exact character positions on the next recomposition when layout is available.
  */
 @Composable
 fun SentenceGrabHandles(
@@ -46,41 +53,69 @@ fun SentenceGrabHandles(
     onExtendBackward: () -> Unit,
     onExtendForward: () -> Unit
 ) {
-    if (span == null || layout == null) return
-
-    val textLength = layout.layoutInput.text.length
-    if (textLength <= 0) return
-
-    // getBoundingBox throws on an offset outside the text, and a span clipped
-    // to this page can sit one character past the end when the page text is
-    // trimmed at layout time.
-    val firstBox = runCatching { layout.getBoundingBox(span.first.coerceIn(0, textLength - 1)) }
-        .getOrNull() ?: return
-    val lastBox = runCatching { layout.getBoundingBox((span.second - 1).coerceIn(0, textLength - 1)) }
-        .getOrNull() ?: return
+    if (span == null) return
 
     val sizePx = with(LocalDensity.current) { GrabHandleSize.roundToPx() }
-    val maxX = (layout.size.width - sizePx).coerceAtLeast(0)
-    val maxY = (layout.size.height - sizePx).coerceAtLeast(0)
 
-    // Above the first character, below the last, and never off the page: a
-    // handle that cannot be reached is a sentence that cannot be extended.
-    GrabHandle(
-        x = firstBox.left.roundToInt().coerceIn(0, maxX),
-        y = (firstBox.top.roundToInt() - sizePx).coerceIn(0, maxY),
-        icon = Icons.Filled.KeyboardArrowUp,
-        description = "Extend the highlight one sentence back",
-        palette = palette,
-        onClick = onExtendBackward
-    )
-    GrabHandle(
-        x = (lastBox.right.roundToInt() - sizePx).coerceIn(0, maxX),
-        y = lastBox.bottom.roundToInt().coerceIn(0, maxY),
-        icon = Icons.Filled.KeyboardArrowDown,
-        description = "Extend the highlight one sentence on",
-        palette = palette,
-        onClick = onExtendForward
-    )
+    if (layout != null) {
+        val textLength = layout.layoutInput.text.length
+        if (textLength <= 0) return
+
+        // getBoundingBox throws on an offset outside the text, and a span clipped
+        // to this page can sit one character past the end when the page text is
+        // trimmed at layout time.
+        val firstBox = runCatching { layout.getBoundingBox(span.first.coerceIn(0, textLength - 1)) }
+            .getOrNull() ?: return
+        val lastBox = runCatching { layout.getBoundingBox((span.second - 1).coerceIn(0, textLength - 1)) }
+            .getOrNull() ?: return
+
+        val maxX = (layout.size.width - sizePx).coerceAtLeast(0)
+        val maxY = (layout.size.height - sizePx).coerceAtLeast(0)
+
+        // Above the first character, below the last, and never off the page: a
+        // handle that cannot be reached is a sentence that cannot be extended.
+        GrabHandle(
+            x = firstBox.left.roundToInt().coerceIn(0, maxX),
+            y = (firstBox.top.roundToInt() - sizePx).coerceIn(0, maxY),
+            icon = Icons.Filled.KeyboardArrowUp,
+            description = "Extend the highlight one sentence back",
+            palette = palette,
+            onClick = onExtendBackward
+        )
+        GrabHandle(
+            x = (lastBox.right.roundToInt() - sizePx).coerceIn(0, maxX),
+            y = lastBox.bottom.roundToInt().coerceIn(0, maxY),
+            icon = Icons.Filled.KeyboardArrowDown,
+            description = "Extend the highlight one sentence on",
+            palette = palette,
+            onClick = onExtendForward
+        )
+    } else {
+        // Layout not yet available — show handles at estimated positions so the
+        // grab is immediately interactive. They snap to the exact character
+        // positions on the next recomposition when onTextLayout fires.
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Backward: top-left corner of the text area.
+            GrabHandle(
+                x = 0,
+                y = 0,
+                icon = Icons.Filled.KeyboardArrowUp,
+                description = "Extend the highlight one sentence back",
+                palette = palette,
+                onClick = onExtendBackward
+            )
+            // Forward: bottom-left corner of the text area.
+            GrabHandle(
+                x = 0,
+                y = 0,
+                icon = Icons.Filled.KeyboardArrowDown,
+                description = "Extend the highlight one sentence on",
+                palette = palette,
+                onClick = onExtendForward,
+                modifier = Modifier.align(Alignment.BottomStart)
+            )
+        }
+    }
 }
 
 /**
@@ -98,10 +133,11 @@ private fun GrabHandle(
     icon: ImageVector,
     description: String,
     palette: ReaderPalette,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .offset { IntOffset(x, y) }
             .size(GrabHandleSize)
             .clip(CircleShape)

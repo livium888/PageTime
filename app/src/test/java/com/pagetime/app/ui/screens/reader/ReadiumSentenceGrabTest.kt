@@ -1,11 +1,10 @@
 package com.pagetime.app.ui.screens.reader
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 /**
  * The Readium half of the sentence grab cannot be run without a phone and a web
@@ -31,9 +30,7 @@ class ReadiumSentenceGrabTest {
 
     @Test
     fun `the sentence at the caret is the one chosen`() {
-        val decision = assertNotNull(
-            ReadiumSentenceGrab.decide(block("The cat sat. The dog ran.", at = 5))
-        )
+        val decision = ReadiumSentenceGrab.decide(block("The cat sat. The dog ran.", at = 5))!!
         assertEquals(0, decision.start)
         assertEquals(12, decision.end)
     }
@@ -43,21 +40,17 @@ class ReadiumSentenceGrabTest {
         // The guard against ping-pong: applying a span fires selectionchange,
         // which makes Readium rebuild its selection state, which brings the
         // menu back. Without this the snap would re-apply for ever.
-        val decision = assertNotNull(
-            ReadiumSentenceGrab.decide(
-                block("The cat sat. The dog ran.", at = 5, selectionStart = 0, selectionEnd = 12)
-            )
-        )
+        val decision = ReadiumSentenceGrab.decide(
+            block("The cat sat. The dog ran.", at = 5, selectionStart = 0, selectionEnd = 12)
+        )!!
         assertFalse(decision.needsApply)
     }
 
     @Test
     fun `a one-word selection is widened`() {
-        val decision = assertNotNull(
-            ReadiumSentenceGrab.decide(
-                block("The cat sat. The dog ran.", at = 5, selectionStart = 4, selectionEnd = 7)
-            )
-        )
+        val decision = ReadiumSentenceGrab.decide(
+            block("The cat sat. The dog ran.", at = 5, selectionStart = 4, selectionEnd = 7)
+        )!!
         assertTrue(decision.needsApply)
         assertEquals(12, decision.end)
     }
@@ -101,7 +94,7 @@ class ReadiumSentenceGrabTest {
             {"key":"body>div:nth-of-type(1)>p:nth-of-type(2)","text":"Hello there.","at":6,
              "selStart":0,"selEnd":5}
         """.trimIndent()
-        val parsed = assertNotNull(ReadiumSentenceGrab.parseRead(json))
+        val parsed = ReadiumSentenceGrab.parseRead(json)!!
         assertEquals("body>div:nth-of-type(1)>p:nth-of-type(2)", parsed.key)
         assertEquals("Hello there.", parsed.text)
         assertEquals(6, parsed.at)
@@ -181,17 +174,17 @@ class ReadiumSentenceGrabTest {
             "apply" to ReadiumSentenceGrab.applyScript("body", "h", 0, 1)
         )) {
             assertEquals(
+                "$name script has unbalanced braces",
                 script.count { it == '{' },
-                script.count { it == '}' },
-                "$name script has unbalanced braces"
+                script.count { it == '}' }
             )
             assertEquals(
+                "$name script has unbalanced parentheses",
                 script.count { it == '(' },
-                script.count { it == ')' },
-                "$name script has unbalanced parentheses"
+                script.count { it == ')' }
             )
-            assertTrue(script.startsWith("(function ()"), "$name script is not an IIFE")
-            assertTrue(script.endsWith("})()"), "$name script does not close its IIFE")
+            assertTrue("$name script is not an IIFE", script.startsWith("(function ()"))
+            assertTrue("$name script does not close its IIFE", script.endsWith("})()"))
         }
     }
 }

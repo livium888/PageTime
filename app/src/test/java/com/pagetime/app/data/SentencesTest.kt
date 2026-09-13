@@ -1,9 +1,9 @@
 package com.pagetime.app.data
 
 import com.pagetime.app.data.Sentences.Span
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
 
 /**
  * The sentence kernel decides which words a highlight holds, so it is pinned

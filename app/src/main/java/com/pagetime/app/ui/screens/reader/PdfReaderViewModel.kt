@@ -159,15 +159,46 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
      * composition away, so without this every page above the reader would
      * briefly claim a height that is not its own, the list would re-measure
      * its scroll offset against those heights, and the reader would come back
-     * somewhere else on the page than they left. Small, never persisted, and
-     * discarded with the ViewModel.
+     * somewhere else on the page than they left.
+     *
+     * The value is the page's width divided by its height — the direction
+     * `Modifier.aspectRatio` takes, so a taller-than-wide page comes out below
+     * 1. Held the other way round it laid every page out at half the height
+     * its bitmap needed. Small, never persisted, and discarded with the
+     * ViewModel.
      */
-    private val _pageAspects = MutableStateFlow<Map<Int, Float>>(emptyMap())
-    val pageAspects: StateFlow<Map<Int, Float>> = _pageAspects.asStateFlow()
+    private val _pageRatios = MutableStateFlow<Map<Int, Float>>(emptyMap())
+    val pageRatios: StateFlow<Map<Int, Float>> = _pageRatios.asStateFlow()
 
-    fun recordPageAspect(pageIndex: Int, aspect: Float) {
-        if (aspect <= 0f || _pageAspects.value[pageIndex] == aspect) return
-        _pageAspects.value = _pageAspects.value + (pageIndex to aspect)
+    fun recordPageRatio(pageIndex: Int, ratio: Float) {
+        if (ratio <= 0f || _pageRatios.value[pageIndex] == ratio) return
+        _pageRatios.value = _pageRatios.value + (pageIndex to ratio)
+    }
+
+    /**
+     * Where the reader is now: which page, and how far down it.
+     *
+     * Not the same thing as [PdfState.restoredPage], which is only where the
+     * book was OPENED and is cleared as soon as it has been honoured. This
+     * follows the reader, and exists for one reason: rotation. Android hands a
+     * list back its scroll offset in pixels, and a page's height depends on
+     * the screen's width, so the offset that was halfway down a page in
+     * portrait points somewhere else entirely in landscape. A fraction of the
+     * page does not move when the phone does.
+     *
+     * Held here because the ViewModel is the one thing in this screen that
+     * survives a rotation, and read by the screen at the moment the new layout
+     * appears. Deliberately not a StateFlow: nothing recomposes on it, it is
+     * read once, on the way in.
+     */
+    private var readingAnchor: ReadingAnchor? = null
+
+    fun currentReadingAnchor(): ReadingAnchor? = readingAnchor
+
+    fun recordReadingAnchor(page: Int, fraction: Float) {
+        val next = ReadingAnchor(page, ReaderPositionPolicy.clampFraction(fraction))
+        if (readingAnchor == next) return
+        readingAnchor = next
     }
 
     // --- Text extraction ---
@@ -428,3 +459,14 @@ data class FlashcardUiState(
     val lastCreatedFront: String? = null,
     val lastCreatedBack: String? = null,
 )
+
+/**
+ * How far into the document the reader is: which page, and how far down it.
+ *
+ * The fraction is of the whole list item rather than of the page artwork,
+ * because the item is what the list scrolls. The item is a page plus the
+ * page-start marker above it, and the marker's height is fixed, which is what
+ * makes the fraction transferable: the part of the item that scales with the
+ * screen is the page, and it scales by the same amount everywhere.
+ */
+data class ReadingAnchor(val page: Int, val fraction: Float)

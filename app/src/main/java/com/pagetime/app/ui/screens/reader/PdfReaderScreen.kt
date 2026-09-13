@@ -58,12 +58,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,7 +77,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -112,7 +118,7 @@ fun PdfReaderScreen(
     val flashcardState by vm.flashcardState.collectAsStateWithLifecycle()
     // Measured page shapes, so a page reclaimed by the lazy list comes back at
     // its true height instead of settling into it.
-    val pageAspects by vm.pageAspects.collectAsStateWithLifecycle()
+    val pageRatios by vm.pageRatios.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -153,6 +159,18 @@ fun PdfReaderScreen(
     var pageText by remember { mutableStateOf<String?>(null) }
     var isExtracting by remember { mutableStateOf(false) }
     var selectedTextInSheet by remember { mutableStateOf("") }
+
+    // --- Where the reader is, for when the phone turns ---
+    // The width is what a rotation changes, and with it the height of every
+    // page: a page is drawn full-bleed, so a wider screen means a taller page.
+    // The anchor is captured during composition, before the new layout can
+    // re-report the old pixel offset as though it still meant something; the
+    // scroll observer further down only starts after this has been read.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val density = LocalDensity.current
+    val markerHeightPx = with(density) { PageMarkerHeight.toPx() }
+    val anchorOnEntry = remember(screenWidthDp) { vm.currentReadingAnchor() }
+    var listWidthPx by remember { mutableIntStateOf(0) }
 
     val backgroundColor = if (isDark) Color(0xFF1A1A1A) else Color(0xFFF5F5F5)
     val controlsColor = if (isDark) Color.White.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.8f)
@@ -210,6 +228,39 @@ fun PdfReaderScreen(
         }
     }
 
+    // --- Remember the place as a fraction, not a number of pixels ---
+    // Android's own restore of a list's scroll offset is in pixels, which a
+    // rotation invalidates; this is the value that is kept instead.
+    LaunchedEffect(scrollState) {
+        snapshotFlow {
+            val index = scrollState.firstVisibleItemIndex
+            val item = scrollState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+            Triple(index, scrollState.firstVisibleItemScrollOffset, item?.size ?: 0)
+        }.collect { (index, offset, size) ->
+            vm.recordReadingAnchor(index, ReaderPositionPolicy.fractionOf(offset, size))
+        }
+    }
+
+    // --- Put the reader back on the line they were on ---
+    // Runs on the new layout after a rotation (and after any other
+    // recreation), where the list has just restored a pixel offset that no
+    // longer points at the same place. The fraction does, so the offset is
+    // recomputed from the page's height at the new width.
+    LaunchedEffect(screenWidthDp, state.pageCount) {
+        val anchor = anchorOnEntry ?: return@LaunchedEffect
+        if (state.pageCount == 0) return@LaunchedEffect
+        val width = if (listWidthPx > 0) {
+            listWidthPx
+        } else {
+            snapshotFlow { listWidthPx }.first { it > 0 }
+        }
+        val itemHeight = markerHeightPx + width / (pageRatios[anchor.page] ?: A4_PAGE_RATIO)
+        scrollState.scrollToItem(
+            anchor.page,
+            ReaderPositionPolicy.offsetFor(anchor.fraction, itemHeight),
+        )
+    }
+
     // --- Pinch-to-zoom ---
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
@@ -246,6 +297,7 @@ fun PdfReaderScreen(
                     state = scrollState,
                     modifier = Modifier
                         .fillMaxSize()
+                        .onSizeChanged { listWidthPx = it.width }
                         .graphicsLayer(
                             scaleX = scale,
                             scaleY = scale,
@@ -277,15 +329,18 @@ fun PdfReaderScreen(
                         }
                 ) {
                     items(state.pageCount) { pageIndex ->
-                        PdfPageItem(
-                            pageIndex = pageIndex,
-                            isDark = isDark,
-                            knownAspect = pageAspects[pageIndex],
-                            onPageVisible = { vm.markPage(it) },
-                            onPageMeasured = { index, aspect ->
-                                vm.recordPageAspect(index, aspect)
-                            },
-                        )
+                        Column(Modifier.fillMaxWidth()) {
+                            PageStartMarker(pageIndex = pageIndex, isDark = isDark)
+                            PdfPageItem(
+                                pageIndex = pageIndex,
+                                isDark = isDark,
+                                knownRatio = pageRatios[pageIndex],
+                                onPageVisible = { vm.markPage(it) },
+                                onPageSized = { index, ratio ->
+                                    vm.recordPageRatio(index, ratio)
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -508,25 +563,62 @@ private val PdfDarkPageFilter: ColorFilter = ColorFilter.colorMatrix(
     )
 )
 
+/** A4, as the placeholder shape for a page whose bitmap has not arrived yet. */
+private const val A4_PAGE_RATIO = 0.7071f // 210 / 297, width over height
+
+/**
+ * The strip that marks where a page begins.
+ *
+ * Pages are drawn edge to edge, so without this there is nothing between the
+ * end of one and the start of the next — in dark mode not even a colour
+ * change, just one continuous black column. The label names the page that
+ * starts below it, which is what makes a page boundary legible while a page
+ * taller than the screen is still being scrolled through.
+ *
+ * Fixed height on purpose: the reading position is remembered as a fraction of
+ * the whole list item, so this strip has to measure the same before and after a
+ * rotation for the page under it to come back in the same place.
+ */
+private val PageMarkerHeight = 30.dp
+
+@Composable
+private fun PageStartMarker(pageIndex: Int, isDark: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PageMarkerHeight)
+            .padding(start = 16.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = "Page ${pageIndex + 1}",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = if (isDark) Color.White.copy(alpha = 0.5f) else Color.Black.copy(alpha = 0.36f),
+        )
+    }
+}
+
 /**
  * Renders a single PDF page as a bitmap.
  *
- * [knownAspect] is this session's measured shape for the page, when it has
- * been seen before. Seeding from it is what lets a rotated view come back to
- * the same place: a placeholder that claims the wrong height moves everything
- * below it, and the list keeps its scroll offset in pixels.
+ * [knownRatio] is this session's measured shape for the page — its width
+ * divided by its height, which is the direction `Modifier.aspectRatio` takes —
+ * when it has been seen before. Seeding from it is what lets a rotated view
+ * come back to the same place: a placeholder that claims the wrong height
+ * moves everything below it, and the list keeps its scroll offset in pixels.
  */
 @Composable
 private fun PdfPageItem(
     pageIndex: Int,
     isDark: Boolean,
-    knownAspect: Float?,
+    knownRatio: Float?,
     onPageVisible: (Int) -> Unit = {},
-    onPageMeasured: (Int, Float) -> Unit = { _, _ -> },
+    onPageSized: (Int, Float) -> Unit = { _, _ -> },
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var aspectRatio by remember(pageIndex) {
-        mutableFloatStateOf(knownAspect ?: 1.414f) // A4 until measured
+    var pageRatio by remember(pageIndex) {
+        mutableFloatStateOf(knownRatio ?: A4_PAGE_RATIO)
     }
 
     LaunchedEffect(pageIndex) {
@@ -535,10 +627,16 @@ private fun PdfPageItem(
             PdfRendererHolder.renderPage(pageIndex)
         }
         if (bmp != null) {
-            val aspect = bmp.height.toFloat() / bmp.width.toFloat()
-            aspectRatio = aspect
+            // Width over height, which is what `aspectRatio` expects. Passed
+            // the other way round it sized the slot at half the height the
+            // page needed, so a page's bitmap overflowed and was covered by
+            // the one after it — the reason the start of a page could not be
+            // seen, and the reason the markers above needed a layout that
+            // matches the artwork before they could show it.
+            val ratio = bmp.width.toFloat() / bmp.height.toFloat()
+            pageRatio = ratio
             bitmap = bmp
-            onPageMeasured(pageIndex, aspect)
+            onPageSized(pageIndex, ratio)
         }
     }
 
@@ -554,14 +652,14 @@ private fun PdfPageItem(
             colorFilter = if (isDark) PdfDarkPageFilter else null,
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(aspectRatio)
+                .aspectRatio(pageRatio)
                 .background(pageColor)
         )
     } else {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(aspectRatio)
+                .aspectRatio(pageRatio)
                 .background(pageColor),
             contentAlignment = Alignment.Center
         ) {

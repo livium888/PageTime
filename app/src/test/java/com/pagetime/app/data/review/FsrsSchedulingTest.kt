@@ -89,7 +89,10 @@ class FsrsSchedulingTest {
         )
 
         assertEquals(State.REVIEW, result.card().state)
-        assertTrue(result.card().due.isAfter(now.plus(Duration.ofDays(1))))
+        // At least a day, which is the shortest interval FSRS will give a
+        // graduated card — days, not the ten minutes the old schedule had
+        // already queued up for it.
+        assertTrue(dueDays(result) >= 1L)
     }
 
     @Test
@@ -135,14 +138,18 @@ class FsrsSchedulingTest {
 
     @Test
     fun `a minimum interval raises a day scale result that came in under it`() {
-        val result = FsrsScheduling.review(
-            policy = SchedulingPolicy(minimumIntervalDays = 5),
-            card = reviewCard(stability = 1.0),
-            rating = Rating.GOOD,
-            now = now,
-            seed = FsrsScheduling.seed("c", Rating.GOOD.value),
+        // A shaky card FSRS would bring back in about a fortnight, under a
+        // floor of ninety days.
+        val policy = SchedulingPolicy(minimumIntervalDays = 90)
+        val natural = FsrsScheduling.review(
+            policy.copy(minimumIntervalDays = 1), reviewCard(stability = 1.0), Rating.GOOD, now, 7L,
         )
-        assertEquals(5L, dueDays(result))
+        assertTrue("expected a natural interval under the floor", dueDays(natural) < 90L)
+
+        val raised = FsrsScheduling.review(
+            policy, reviewCard(stability = 1.0), Rating.GOOD, now, 7L,
+        )
+        assertEquals(90L, dueDays(raised))
     }
 
     @Test

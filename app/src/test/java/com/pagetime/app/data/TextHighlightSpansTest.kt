@@ -101,6 +101,34 @@ class TextHighlightSpansTest {
     }
 
     @Test
+    fun `clipToPage maps a whole-book span onto one page`() {
+        // The reader's live sentence grab is clipped with the same arithmetic a
+        // stored highlight uses, so a sentence spanning a page turn paints on
+        // both pages instead of vanishing.
+        assertEquals(400 to 500, TextHighlightSpans.clipToPage(400, 1_000, 0, 500))
+        assertEquals(0 to 400, TextHighlightSpans.clipToPage(400, 1_000, 500, 900))
+        assertEquals(0 to 100, TextHighlightSpans.clipToPage(400, 1_000, 900, 1_400))
+    }
+
+    @Test
+    fun `clipToPage yields nothing off the page or for an empty span`() {
+        assertNull(TextHighlightSpans.clipToPage(100, 200, 500, 900))
+        assertNull(TextHighlightSpans.clipToPage(700, 700, 500, 900))
+        assertNull(TextHighlightSpans.clipToPage(700, 600, 500, 900))
+        assertNull(TextHighlightSpans.clipToPage(0, 100, 500, 500))
+    }
+
+    @Test
+    fun `an exclusive end at the page edge keeps that last character`() {
+        // Page [0,100): a span ending at 100 keeps its character 99, which is
+        // what makes the last character of a page highlightable at all.
+        assertEquals(0 to 100, TextHighlightSpans.clipToPage(0, 100, 0, 100))
+        assertEquals(0 to 1, TextHighlightSpans.clipToPage(100, 101, 100, 200))
+        // A span beginning exactly where the page ends belongs to the next page.
+        assertNull(TextHighlightSpans.clipToPage(100, 150, 0, 100))
+    }
+
+    @Test
     fun `quotes are capped and clipped to the text`() {
         val text = "x".repeat(5_000)
         val quote = TextHighlightSpans.quoteForTxt(text, 0, 5_000)

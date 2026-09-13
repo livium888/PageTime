@@ -22,6 +22,7 @@ import com.pagetime.app.data.asAnswer
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.PagemarkSession
+import com.pagetime.app.data.Sentences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,6 +45,23 @@ import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
 import org.readium.r2.shared.util.mediatype.MediaType
 import java.io.File
+
+/**
+ * A sentence the reader has grabbed, and what the screen needs to show it.
+ *
+ * [start] and [end] are whole-book character offsets — the same coordinate
+ * stored highlights use, so saving one needs no translation. [reveal] is the
+ * offset to bring on screen after a step: the new end when extending forward,
+ * the new start when extending back, because a step that happens off screen is
+ * indistinguishable from a step that did nothing. [previous] is the span as it
+ * was, so one over-reach costs a tap to undo rather than the whole grab.
+ */
+data class SentenceGrab(
+    val start: Int,
+    val end: Int,
+    val reveal: Int,
+    val previous: Pair<Int, Int>? = null
+)
 
 class ReaderViewModel(private val app: Application, private val bookId: String) : AndroidViewModel(app) {
 
@@ -615,6 +633,104 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Abandons the pending highlight start. */
     fun clearPendingHighlight() {
         _pendingTxtHighlightStart.value = null
+    }
+
+    /**
+     * The sentence being grabbed right now, or null.
+     *
+     * The second way to mark text in a plain-text book, and the one a thumb can
+     * actually manage. "Start highlight here" and "End highlight here" can only
+     * mark whole pages — the page is the only thing that knows its own offsets —
+     * so until now a reader could not keep a single sentence. This finds the
+     * sentence at the point they pressed and stepping widens it, sentence by
+     * sentence, without ever asking them to drag a handle to a character.
+     */
+    private val _sentenceGrab = MutableStateFlow<SentenceGrab?>(null)
+    val sentenceGrab = _sentenceGrab.asStateFlow()
+
+    /** Grabs the sentence containing [textOffset], a whole-book character offset. */
+    fun grabSentenceAt(textOffset: Int) {
+        val text = _textContent.value ?: return
+        val span = Sentences.spanAt(text, textOffset) ?: return
+        _sentenceGrab.value = SentenceGrab(span.start, span.end, span.start)
+    }
+
+    /** Pulls the next sentence into the grab. */
+    fun extendSentenceGrab() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        val next = Sentences.next(text, Sentences.Span(grab.start, grab.end)) ?: return
+        _sentenceGrab.value = SentenceGrab(
+            start = grab.start,
+            end = next.end,
+            reveal = next.end - 1,
+            previous = grab.start to grab.end
+        )
+    }
+
+    /** Pulls the previous sentence into the grab. */
+    fun extendSentenceGrabBack() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        val previous = Sentences.previous(text, Sentences.Span(grab.start, grab.end)) ?: return
+        _sentenceGrab.value = SentenceGrab(
+            start = previous.start,
+            end = grab.end,
+            reveal = previous.start,
+            previous = grab.start to grab.end
+        )
+    }
+
+    /**
+     * Widens the grab to its whole paragraph.
+     *
+     * The escape hatch for a sentence that was cut in two by an abbreviation
+     * nobody has heard of, and for the common case where the sentence is right
+     * but the thought is one sentence longer than its punctuation suggests.
+     */
+    fun grabWholeParagraph() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        val paragraph = Sentences.paragraphAt(text, grab.start) ?: return
+        if (paragraph.start == grab.start && paragraph.end == grab.end) return
+        _sentenceGrab.value = SentenceGrab(
+            start = paragraph.start,
+            end = paragraph.end,
+            reveal = paragraph.start,
+            previous = grab.start to grab.end
+        )
+    }
+
+    /** Puts the grab back to the span before the last step, or drops it. */
+    fun undoSentenceGrabStep() {
+        val grab = _sentenceGrab.value ?: return
+        val previous = grab.previous
+        _sentenceGrab.value = if (previous == null) {
+            null
+        } else {
+            SentenceGrab(previous.first, previous.second, previous.first)
+        }
+    }
+
+    fun clearSentenceGrab() {
+        _sentenceGrab.value = null
+    }
+
+    /**
+     * Keeps what was grabbed.
+     *
+     * A sentence is written as an ordinary plain-text highlight, so it renders,
+     * lists, opens from the list and can be turned into a card exactly like the
+     * page-aligned marks the old two-tap flow produced — it is simply tighter
+     * than one page.
+     */
+    fun saveSentenceGrab() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        _sentenceGrab.value = null
+        viewModelScope.launch {
+            highlightRepo.createTxtSpan(bookId, grab.start, grab.end, text)
+        }
     }
 
     /** Marks the current Readium selection as a persistent highlight. */

@@ -1,5 +1,7 @@
 package com.pagetime.app.ui.screens.reader
 
+import android.graphics.RectF
+
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
@@ -120,6 +122,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -143,6 +146,7 @@ import com.pagetime.app.data.LumenDraft
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.MapMoment
 import com.pagetime.app.data.PagemarkSession
+import com.pagetime.app.data.TextHighlightSpans
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.local.TextHighlightEntity
 import com.pagetime.app.data.local.ReaderSettings
@@ -170,6 +174,16 @@ import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
 
 private const val NAVIGATOR_TAG = "readium_navigator"
+
+/**
+ * The plain-text page's own vertical padding.
+ *
+ * Named because the long-press maths has to subtract it to turn a tap into a
+ * character: the gesture handler sits outside the padding and the text does
+ * not. Two literals that have to agree is how a tap starts selecting the line
+ * above the word.
+ */
+private val PageVerticalPadding = 24.dp
 
 /** Item ids for the actions added to the text-selection menu. */
 private const val MENU_EXPLAIN = 1
@@ -276,6 +290,7 @@ fun ReaderScreen(
     }
     val highlights by vm.highlights.collectAsStateWithLifecycle()
     val pendingHighlightStart by vm.pendingTxtHighlightStart.collectAsStateWithLifecycle()
+    val sentenceGrab by vm.sentenceGrab.collectAsStateWithLifecycle()
 
     val palette = paletteFor(settings.theme)
 
@@ -472,6 +487,11 @@ fun ReaderScreen(
                 activeConceptId = activeConceptId,
                 goRequest = txtGoRequest,
                 highlights = highlights,
+                sentenceGrab = sentenceGrab,
+                onGrabSentence = vm::grabSentenceAt,
+                onExtendGrabForward = vm::extendSentenceGrab,
+                onExtendGrabBackward = vm::extendSentenceGrabBack,
+                onClearGrab = vm::clearSentenceGrab,
                 chunkStartFraction = activePagemark?.startFraction,
                 chunkEndFraction = activePagemark?.endFraction ?: 0f,
                 onPageChanged = { page, pageCount, pageStartOffset, pageEndOffset, userInitiated ->
@@ -645,6 +665,21 @@ fun ReaderScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // A grabbed sentence's controls, sitting in the same bottom stack as
+            // the status line and the bottom bar so they cannot cover each
+            // other. The page keeps the two arrows; the verbs live here, where
+            // a thumb already is.
+            if (sentenceGrab != null) {
+                SentenceGrabBar(
+                    canUndo = sentenceGrab?.previous != null,
+                    palette = palette,
+                    onSave = vm::saveSentenceGrab,
+                    onParagraph = vm::grabWholeParagraph,
+                    onUndo = vm::undoSentenceGrabStep,
+                    onCancel = vm::clearSentenceGrab,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
             // Clear of the gesture bar when the chrome is hidden. With the
             // chrome showing, the bar below already occupies that space, so
             // padding here as well would float the question needlessly high.
@@ -1077,6 +1112,13 @@ private fun TextReaderHost(
     activeConceptId: String?,
     goRequest: Pair<Float, Long>?,
     highlights: List<TextHighlightEntity>,
+    /** The sentence being grabbed, in whole-book offsets, or null. */
+    sentenceGrab: SentenceGrab?,
+    /** Called with a whole-book offset when a sentence is long-pressed. */
+    onGrabSentence: (Int) -> Unit,
+    onExtendGrabForward: () -> Unit,
+    onExtendGrabBackward: () -> Unit,
+    onClearGrab: () -> Unit,
     /** Where the chunk the reader is inside begins; null when there is none. */
     chunkStartFraction: Float?,
     /** Where it currently ends. 0 for a chunk that has never been finished. */
@@ -1096,6 +1138,12 @@ private fun TextReaderHost(
     val screenH = configuration.screenHeightDp.dp
     val textMeasurer = rememberTextMeasurer()
     val baseStyle = MaterialTheme.typography.bodyLarge
+    // Where the text actually starts inside the page box, in pixels. The tap
+    // handler is attached outside the padding, so this is what turns a tap
+    // into a character offset in the words themselves.
+    val pagePadding = with(density) {
+        Offset(settings.marginDp.dp.toPx(), PageVerticalPadding.toPx())
+    }
 
     var pagesState by remember { mutableStateOf<List<TextPage>?>(null) }
     var layoutProgress by remember { mutableStateOf(0f) }
@@ -1214,6 +1262,15 @@ private fun TextReaderHost(
             }
     }
 
+    // A step can push the grabbed sentence past the page it started on — on off
+    // the bottom, back off the top — so the screen follows it. Without this the
+    // arrow looks like it did nothing until the reader happens to turn a page.
+    LaunchedEffect(sentenceGrab?.reveal, sentenceGrab?.start, sentenceGrab?.end) {
+        val reveal = sentenceGrab?.reveal ?: return@LaunchedEffect
+        val page = TextPageLayout.pageForOffset(pages, reveal)
+        if (page != pagerState.currentPage) pagerState.animateScrollToPage(page)
+    }
+
     // The volume keys, for as long as this reader is on screen.
     //
     // Registered here rather than in the screen above because only this
@@ -1277,15 +1334,58 @@ private fun TextReaderHost(
             spanStartFraction = pageStartFraction,
             spanEndFraction = pageEndFraction
         )
+        // The grab clipped to this page, in the page's own coordinates — the
+        // same arithmetic a stored highlight uses, so a sentence that runs over
+        // a page turn paints on both pages and each arrow appears on the page
+        // holding its end.
+        val localGrab = remember(sentenceGrab, pageIndex, pages) {
+            sentenceGrab?.let {
+                TextHighlightSpans.clipToPage(
+                    start = it.start,
+                    end = it.end,
+                    pageStartOffset = pages[pageIndex].startOffset,
+                    pageEndOffset = pages[pageIndex].endOffset
+                )
+            }
+        }
+        // Per page, so a long-press can be turned into a character offset.
+        var textLayout by remember(pageIndex) { mutableStateOf<TextLayoutResult?>(null) }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        val centerStart = size.width / 3f
-                        val centerEnd = size.width * 2f / 3f
-                        if (offset.x in centerStart..centerEnd) onToggleChrome()
-                    }
+                // One handler, not two. A second pointerInput on the Text would
+                // take the down event before this one saw it, and the middle
+                // tap that toggles the chrome would stop working everywhere the
+                // words are — which is everywhere.
+                //
+                // Keyed on the pages as well as the grab: a gesture handler
+                // keeps the values it was built with, so after a re-pagination
+                // an unkeyed one keeps converting taps against the old page
+                // list and selects the wrong words.
+                .pointerInput(sentenceGrab != null, pageIndex, pages, pagePadding) {
+                    detectTapGestures(
+                        onTap = { offset ->
+                            val centerStart = size.width / 3f
+                            val centerEnd = size.width * 2f / 3f
+                            // A grab is a mode, and a tap anywhere gets out of
+                            // it — including the middle of the page, where a
+                            // reader's first instinct is to make it go away.
+                            if (sentenceGrab != null) {
+                                onClearGrab()
+                            } else if (offset.x in centerStart..centerEnd) {
+                                onToggleChrome()
+                            }
+                        },
+                        onLongPress = { offset ->
+                            val layout = textLayout ?: return@detectTapGestures
+                            val inText = Offset(
+                                offset.x - pagePadding.x,
+                                offset.y - pagePadding.y
+                            )
+                            val index = layout.getOffsetForPosition(inText)
+                            onGrabSentence(pages[pageIndex].startOffset + index)
+                        }
+                    )
                 }
                 // Drawn before the padding and the page background, which are
                 // what puts it in the margin: an opaque page painted over it
@@ -1308,7 +1408,7 @@ private fun TextReaderHost(
                         cornerRadius = CornerRadius(1.5.dp.toPx())
                     )
                 }
-                .padding(horizontal = settings.marginDp.dp, vertical = 24.dp)
+                .padding(horizontal = settings.marginDp.dp, vertical = PageVerticalPadding)
                 .background(palette.background)
         ) {
             val annotatedText = rememberAnnotatedPageWithHighlights(
@@ -1318,12 +1418,23 @@ private fun TextReaderHost(
                 highlights = highlights,
                 concepts = concepts,
                 level = conceptLevel,
-                activeConceptId = activeConceptId
+                activeConceptId = activeConceptId,
+                pendingSpan = sentenceGrab?.let { it.start to it.end }
             )
             Text(
                 text = annotatedText,
                 style = readerTextStyle(MaterialTheme.typography.bodyLarge, settings),
                 color = palette.text,
+                onTextLayout = { textLayout = it }
+            )
+            // Inside the padded content box, so the arrows sit against the words
+            // in the same coordinates the text was laid out in.
+            SentenceGrabHandles(
+                span = localGrab,
+                layout = textLayout,
+                palette = palette,
+                onExtendBackward = onExtendGrabBackward,
+                onExtendForward = onExtendGrabForward
             )
         }
     }
@@ -1366,6 +1477,68 @@ private fun ReadiumNavigatorHost(
 
     var container by remember { mutableStateOf<FrameLayout?>(null) }
 
+    // The sentence Readium currently has selected.
+    //
+    // Kept here rather than in the view model because a Readium selection does
+    // not outlive its web view: it is not a saved highlight and nothing else
+    // depends on it. Cleared when the selection is dismissed, so the arrows
+    // never point at words that are no longer chosen.
+    var epubGrab by remember { mutableStateOf<EpubGrab?>(null) }
+    var epubGrabRect by remember { mutableStateOf<RectF?>(null) }
+
+    /**
+     * Widens the word the reader just long-pressed into its whole sentence.
+     *
+     * Runs on every selection being made, and is idempotent by design: the
+     * second time round the selection already *is* the sentence, so nothing is
+     * written to the page. That matters, because writing a selection makes
+     * Readium rebuild its own selection state, and a snap that could not notice
+     * it had already been applied would keep answering itself.
+     */
+    suspend fun snapToSentence(nav: EpubNavigatorFragment) {
+        try {
+            val block = ReadiumSentenceGrab.read(nav) ?: return
+            val decision = ReadiumSentenceGrab.decide(block) ?: return
+            if (decision.needsApply &&
+                !ReadiumSentenceGrab.apply(nav, block.key, block.head, decision.start, decision.end)
+            ) {
+                return
+            }
+            epubGrab = EpubGrab(
+                key = block.key,
+                head = block.head,
+                text = block.text,
+                start = decision.start,
+                end = decision.end
+            )
+            epubGrabRect = nav.currentSelection()?.rect
+        } catch (t: Throwable) {
+            // Best effort: a book Readium cannot reach into keeps the ordinary
+            // word selection and the ordinary menu.
+            t.printStackTrace()
+        }
+    }
+
+    /** Pulls one more sentence into a grab already held. */
+    suspend fun stepSentence(nav: EpubNavigatorFragment, forward: Boolean) {
+        val grab = epubGrab ?: return
+        try {
+            val decision = ReadiumSentenceGrab.decideStep(
+                text = grab.text,
+                start = grab.start,
+                end = grab.end,
+                forward = forward
+            ) ?: return
+            if (!ReadiumSentenceGrab.apply(nav, grab.key, grab.head, decision.start, decision.end)) {
+                return
+            }
+            epubGrab = grab.copy(start = decision.start, end = decision.end)
+            epubGrabRect = nav.currentSelection()?.rect
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
+    }
+
     // The volume keys, for as long as this book is open.
     //
     // Readium owns EPUB pagination, so a page turn is a request to the
@@ -1388,14 +1561,37 @@ private fun ReadiumNavigatorHost(
         onDispose { ReaderPageTurns.unregister() }
     }
 
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { ctx ->
-            FrameLayout(ctx).apply {
-                id = R.id.readium_container
-            }.also { container = it }
+    /**
+     * Steps the sentence grab, finding the navigator by tag.
+     *
+     * Looked up rather than remembered: the selection lives in the fragment,
+     * and the ActionMode callback already finds it this way. A remembered
+     * reference can outlive the fragment it points at, and a navigator that no
+     * longer holds the selection is a step that silently does nothing.
+     */
+    fun stepGrab(forward: Boolean) {
+        val nav = fragmentManager?.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+            ?: return
+        scope.launch { stepSentence(nav, forward = forward) }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                FrameLayout(ctx).apply {
+                    id = R.id.readium_container
+                }.also { container = it }
+            }
+        )
+        if (epubGrab != null) {
+            EpubSentenceGrabChips(
+                rect = epubGrabRect,
+                onStepBack = { stepGrab(forward = false) },
+                onStepForward = { stepGrab(forward = true) }
+            )
         }
-    )
+    }
 
     // initialLocatorJson is deliberately NOT a key: the ViewModel now refreshes it
     // on every position save, and re-keying would tear down and recreate the live
@@ -1443,6 +1639,12 @@ private fun ReadiumNavigatorHost(
                 menu.add(Menu.NONE, MENU_SIMPLER, 1, "Say it simpler")
                 menu.add(Menu.NONE, MENU_SAVE_HIGHLIGHT, 2, "Save highlight")
                 menu.add(Menu.NONE, MENU_CAPTURE, 3, "Capture this")
+                // The long press selected a word. The reader meant the sentence,
+                // so it is widened to one before the menu can be used: "Save
+                // highlight" then keeps the sentence, and Explain answers about
+                // the sentence rather than about a word.
+                val live = fm.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment
+                if (live != null) scope.launch { snapToSentence(live) }
                 return true
             }
 
@@ -1490,7 +1692,11 @@ private fun ReadiumNavigatorHost(
                 }
             }
 
-            override fun onDestroyActionMode(mode: ActionMode) = Unit
+            override fun onDestroyActionMode(mode: ActionMode) {
+                // The selection is gone, so the arrows have nothing to point at.
+                epubGrab = null
+                epubGrabRect = null
+            }
         }
 
         try {

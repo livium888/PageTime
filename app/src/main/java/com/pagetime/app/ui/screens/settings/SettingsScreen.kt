@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessibilityNew
@@ -26,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,7 +38,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Slider
 import kotlin.math.roundToLong
 import android.Manifest
 import android.content.pm.PackageManager
@@ -60,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import android.content.ClipData
@@ -111,20 +113,6 @@ fun SettingsScreen(
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
-
-    // Local drag state for the reading-rate slider. Writing to DataStore on
-    // every drag tick made the flow re-emit mid-drag and the thumb fight the
-    // finger (it appeared stuck); the value is committed once on release.
-    var ratioDraft by remember { mutableStateOf<Double?>(null) }
-    var flashcardRewardDraft by remember { mutableStateOf<Long?>(null) }
-    var costDraftMinutes by remember { mutableStateOf<Float?>(null) }
-    var lengthDraftMinutes by remember { mutableStateOf<Float?>(null) }
-    // The travel a fenced slider was given when the drag began, held until the
-    // finger comes up. The gate ticks once a second, so without this a session
-    // expiring mid-drag would move the bounds under the reader's thumb — the
-    // same class of fault as the write-every-frame ratchet these drafts fixed.
-    var costBoundsHeld by remember { mutableStateOf<LongRange?>(null) }
-    var lengthBoundsHeld by remember { mutableStateOf<LongRange?>(null) }
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -273,104 +261,79 @@ fun SettingsScreen(
                     Spacer(Modifier.height(4.dp))
                 }
 
-                // Bounds are frozen for the length of a drag and only ever
-                // read live when no finger is down. Recomputing them mid-drag
-                // is what made the first version of this fence unusable.
-                val costBounds = costBoundsHeld
-                    ?: GateState.costBounds(gate.sessionCostSeconds, gate.canLoosenTheRules)
-                val costStart = (costBounds.first / 60).toFloat()
-                val costEnd = (costBounds.last / 60).toFloat()
-                val costMovable = GateState.hasTravel(costBounds)
+                // The bounds are the gate's, not the screen's, and they move
+                // with it: while the reader has no app time in hand the terms
+                // may only be made stricter. Typing is the one instrument that
+                // can hold that rule honestly — a slider can only refuse by
+                // springing back, which reads as broken, and it cannot show the
+                // number the reader actually asked for.
+                val costBounds =
+                    GateState.costBounds(gate.sessionCostSeconds, gate.canLoosenTheRules)
+                TypedSettingField(
+                    title = "Reading per session",
+                    help = "How much focused reading buys one session.",
+                    current = BlockScreenText.span(gate.sessionCostSeconds),
+                    inputLabel = "Minutes of reading",
+                    inputHint = "e.g. 90",
+                    allowDecimal = false,
+                    enabled = GateState.hasTravel(costBounds),
+                    enabledNote =
+                        "Already at the ceiling — ${BlockScreenText.span(costBounds.last)} of " +
+                            "reading per session. That is as cheap as the price can be.",
+                    minAllowed = costBounds.first / 60.0,
+                    maxAllowed = costBounds.last / 60.0,
+                    unit = "minutes",
+                    fenceNote = if (gate.canLoosenTheRules) null else COST_FENCE_NOTE,
+                    describe = { BlockScreenText.span((it * 60).roundToLong()) },
+                    onCommit = { viewModel.setSessionCostSeconds((it * 60).roundToLong()) },
+                )
 
-                Text("Reading per session", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    BlockScreenText.span(gate.sessionCostSeconds),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "How much focused reading buys one session.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = (costDraftMinutes ?: (gate.sessionCostSeconds / 60).toFloat())
-                        .coerceIn(costStart, maxOf(costEnd, costStart)),
-                    onValueChange = {
-                        // Freeze on the first movement, not on release.
-                        if (costBoundsHeld == null) costBoundsHeld = costBounds
-                        costDraftMinutes = it
-                    },
-                    onValueChangeFinished = {
-                        costDraftMinutes?.let {
-                            viewModel.setSessionCostSeconds(it.roundToLong() * 60)
-                        }
-                        costDraftMinutes = null
-                        costBoundsHeld = null
-                    },
-                    // Never a single point: a range of zero width throws.
-                    valueRange = costStart..maxOf(costEnd, costStart + 1f),
-                    enabled = costMovable
-                )
-                Spacer(Modifier.height(12.dp))
-
-                val lengthBounds = lengthBoundsHeld
-                    ?: GateState.lengthBounds(gate.sessionLengthSeconds, gate.canLoosenTheRules)
-                val lengthStart = (lengthBounds.first / 60).toFloat()
-                val lengthEnd = (lengthBounds.last / 60).toFloat()
-                val lengthMovable = GateState.hasTravel(lengthBounds)
-
-                Text("Session length", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    BlockScreenText.span(gate.sessionLengthSeconds),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "The app time one session buys, spent only while you use it.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = (lengthDraftMinutes ?: (gate.sessionLengthSeconds / 60).toFloat())
-                        .coerceIn(lengthStart, maxOf(lengthEnd, lengthStart)),
-                    onValueChange = {
-                        if (lengthBoundsHeld == null) lengthBoundsHeld = lengthBounds
-                        lengthDraftMinutes = it
-                    },
-                    onValueChangeFinished = {
-                        lengthDraftMinutes?.let {
-                            viewModel.setSessionLengthSeconds(it.roundToLong() * 60)
-                        }
-                        lengthDraftMinutes = null
-                        lengthBoundsHeld = null
-                    },
-                    valueRange = lengthStart..maxOf(lengthEnd, lengthStart + 1f),
-                    enabled = lengthMovable
+                val lengthBounds =
+                    GateState.lengthBounds(gate.sessionLengthSeconds, gate.canLoosenTheRules)
+                TypedSettingField(
+                    title = "Session length",
+                    help = "The app time one session buys, spent only while you use it.",
+                    current = BlockScreenText.span(gate.sessionLengthSeconds),
+                    inputLabel = "Minutes of app time",
+                    inputHint = "e.g. 30",
+                    allowDecimal = false,
+                    enabled = GateState.hasTravel(lengthBounds),
+                    enabledNote =
+                        "Already at the floor — ${BlockScreenText.span(lengthBounds.first)} per " +
+                            "session, the shortest allowed. Longer sessions need app time in hand.",
+                    minAllowed = lengthBounds.first / 60.0,
+                    maxAllowed = lengthBounds.last / 60.0,
+                    unit = "minutes",
+                    fenceNote = if (gate.canLoosenTheRules) null else LENGTH_FENCE_NOTE,
+                    describe = { BlockScreenText.span((it * 60).roundToLong()) },
+                    onCommit = { viewModel.setSessionLengthSeconds((it * 60).roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                 // The reward is paid in whichever currency is live: reading
-                // credit under the gate, browse seconds with it off.
-                Text("Flashcard reward", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Each correct flashcard answer " +
+                // credit under the gate, browse seconds with it off. Typed
+                // rather than dragged because the slider's 23 steps could only
+                // express multiples of five, and a reward is a number a reader
+                // may want exactly.
+                TypedSettingField(
+                    title = "Flashcard reward",
+                    help = "Each correct flashcard answer " +
                         (if (gate.enabled) {
-                            "banks ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of reading credit"
+                            "banks $flashcardRewardSeconds seconds of reading credit"
                         } else {
-                            "earns ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of browsing"
+                            "earns $flashcardRewardSeconds seconds of browsing"
                         }) +
                         ". \"Again\" always earns nothing.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = (flashcardRewardDraft ?: flashcardRewardSeconds).toFloat(),
-                    onValueChange = { flashcardRewardDraft = it.toLong() },
-                    onValueChangeFinished = {
-                        flashcardRewardDraft?.let(viewModel::setFlashcardReward)
-                        flashcardRewardDraft = null
-                    },
-                    valueRange = 0f..120f,
-                    steps = 23
+                    current = "$flashcardRewardSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 45",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_FLASHCARD_REWARD_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setFlashcardReward(it.roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -416,20 +379,19 @@ fun SettingsScreen(
                         )
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("Reading rate", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = ratioDraft?.toFloat() ?: ratio.toFloat(),
-                        onValueChange = { ratioDraft = it.toDouble() },
-                        onValueChangeFinished = {
-                            ratioDraft?.let(viewModel::setRatio)
-                            ratioDraft = null
-                        },
-                        valueRange = 0.5f..3.0f,
-                        steps = 4
+                    TypedSettingField(
+                        title = "Reading rate",
+                        help = "1 minute of reading earns ${"%.1f".format(ratio)} minutes of " +
+                            "browsing.",
+                        current = "${"%.1f".format(ratio)} min of browsing per minute read",
+                        inputLabel = "Minutes of browsing",
+                        inputHint = "e.g. 1.5",
+                        allowDecimal = true,
+                        minAllowed = MIN_READING_RATE,
+                        maxAllowed = MAX_READING_RATE,
+                        unit = "min per min",
+                        describe = { "×${"%.1f".format(it)}" },
+                        onCommit = { viewModel.setRatio(it) },
                     )
                 }
             }
@@ -1595,3 +1557,151 @@ private fun ReviewRemindersCard(
         }
     }
 }
+
+/**
+ * A time setting the reader types instead of drags.
+ *
+ * These four were sliders, and a slider is the wrong instrument for a number
+ * the gate fences. Its travel is fixed while the range it may take moves with
+ * the gate; its steps hide the value (a twenty-three-step reward slider cannot
+ * say 47 seconds, and a ratio slider's five positions cannot say 1.2); and the
+ * one thing it always allows — a nudge in either direction — is the one thing
+ * this screen sometimes has to refuse.
+ *
+ * Out of range is REFUSED, not clamped. A typed 5 minutes that silently became
+ * the 15-minute floor would be the app deciding the reader's terms for them,
+ * and nothing on the screen would have said it had.
+ */
+@Composable
+private fun TypedSettingField(
+    title: String,
+    help: String,
+    current: String,
+    inputLabel: String,
+    inputHint: String,
+    allowDecimal: Boolean,
+    minAllowed: Double,
+    maxAllowed: Double,
+    unit: String,
+    describe: (Double) -> String,
+    onCommit: (Double) -> Unit,
+    enabled: Boolean = true,
+    enabledNote: String? = null,
+    fenceNote: String? = null,
+) {
+    var draft by rememberSaveable(title) { mutableStateOf("") }
+    val typed = draft.trim().toDoubleOrNull()
+    val inRange = typed != null && typed >= minAllowed && typed <= maxAllowed
+
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    Text(current, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(
+        help,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    if (!enabled) {
+        // Nothing left to set in either direction: at the ceiling of a price or
+        // the floor of a session. Said plainly rather than left as a dead
+        // control the reader would keep tapping.
+        Text(
+            enabledNote.orEmpty(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = draft,
+                // Filtered as it is typed, so the error state can only mean a
+                // real mistake — a stray minus, or a second decimal point.
+                onValueChange = { text ->
+                    draft = text.filter { char ->
+                        char.isDigit() || (allowDecimal && char == '.')
+                    }
+                },
+                label = { Text(inputLabel) },
+                placeholder = { Text(inputHint) },
+                singleLine = true,
+                isError = draft.isNotBlank() && !inRange,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (allowDecimal) KeyboardType.Decimal else KeyboardType.Number
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            FilledTonalButton(
+                onClick = {
+                    typed?.let(onCommit)
+                    // Cleared on commit so the field can never disagree with
+                    // the value printed above it.
+                    draft = ""
+                },
+                enabled = inRange
+            ) {
+                val label = if (typed != null && inRange) describe(typed) else ""
+                Text(if (label.isEmpty()) "Set" else "Set $label")
+            }
+        }
+        Text(
+            "Allowed now: ${typedNumberLabel(minAllowed)} – " +
+                "${typedNumberLabel(maxAllowed)} $unit.",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        val trimmed = draft.trim()
+        val refusal = if (trimmed.isEmpty()) {
+            null
+        } else if (typed == null) {
+            "Refused — \"$trimmed\" is not a number."
+        } else if (typed < minAllowed || typed > maxAllowed) {
+            "Refused — ${describe(typed)} is outside what is allowed right now."
+        } else {
+            null
+        }
+        if (refusal != null) {
+            Text(
+                refusal,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        fenceNote?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
+/**
+ * The two fences, in the reader's words.
+ *
+ * The rule is the gate's, not the screen's: with no app time in hand the terms
+ * may only be made stricter. Each field says what that means for itself,
+ * because "you cannot do that" without a reason is how a fence starts to look
+ * like a bug.
+ */
+private const val COST_FENCE_NOTE =
+    "Right now the price can only go up — a cheaper session needs app time in hand."
+
+private const val LENGTH_FENCE_NOTE =
+    "Right now sessions can only get shorter — a longer one needs app time in hand."
+
+/** The reward slider's old range, kept as the field's bounds. */
+private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
+
+/** The reading-rate slider's old range, kept as the field's bounds. */
+private const val MIN_READING_RATE = 0.5
+private const val MAX_READING_RATE = 3.0
+
+/** A typed number as it reads back: 90, or 1.5 when it is not whole. */
+private fun typedNumberLabel(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString() else "%.1f".format(value)

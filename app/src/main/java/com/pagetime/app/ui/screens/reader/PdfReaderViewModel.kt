@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -133,6 +134,40 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearTargetScrollPage() {
         _state.value = _state.value.copy(targetScrollPage = null)
+    }
+
+    /**
+     * Forgets the position the document was opened at.
+     *
+     * [PdfState.restoredPage] is set once, when the PDF opens, and its whole
+     * job is to put the reader back where they left the book. It is NOT where
+     * they are now — the list's own scroll state is, and that is what Android
+     * hands back after a rotation. Left set, this restore ran again on every
+     * recreation and dragged the reader back to the page the book happened to
+     * open on, so turning the phone threw the reading away and turning it back
+     * did it a second time.
+     */
+    fun clearRestoredPage() {
+        _state.value = _state.value.copy(restoredPage = null)
+    }
+
+    /**
+     * The shape of each page, remembered for the session.
+     *
+     * A page is rendered off the main thread, and until its bitmap arrives the
+     * list gives the slot a default A4 shape. Rotating the device throws the
+     * composition away, so without this every page above the reader would
+     * briefly claim a height that is not its own, the list would re-measure
+     * its scroll offset against those heights, and the reader would come back
+     * somewhere else on the page than they left. Small, never persisted, and
+     * discarded with the ViewModel.
+     */
+    private val _pageAspects = MutableStateFlow<Map<Int, Float>>(emptyMap())
+    val pageAspects: StateFlow<Map<Int, Float>> = _pageAspects.asStateFlow()
+
+    fun recordPageAspect(pageIndex: Int, aspect: Float) {
+        if (aspect <= 0f || _pageAspects.value[pageIndex] == aspect) return
+        _pageAspects.value = _pageAspects.value + (pageIndex to aspect)
     }
 
     // --- Text extraction ---

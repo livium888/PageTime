@@ -61,12 +61,15 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -107,6 +110,9 @@ fun PdfReaderScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val flashcardState by vm.flashcardState.collectAsStateWithLifecycle()
+    // Measured page shapes, so a page reclaimed by the lazy list comes back at
+    // its true height instead of settling into it.
+    val pageAspects by vm.pageAspects.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -132,10 +138,14 @@ fun PdfReaderScreen(
     }
 
     // --- Zoom / pan state ---
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-    var isDark by remember { mutableStateOf(false) }
+    // Saveable rather than merely remembered: turning the phone builds a new
+    // Activity, and plain `remember` came back at 1x with dark mode off. The
+    // page appeared to move because the view around it had been rebuilt, not
+    // because the reader asked it to.
+    var scale by rememberSaveable { mutableStateOf(1f) }
+    var offsetX by rememberSaveable { mutableStateOf(0f) }
+    var offsetY by rememberSaveable { mutableStateOf(0f) }
+    var isDark by rememberSaveable { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var menuExpanded by remember { mutableStateOf(false) }
     var showGoToPage by remember { mutableStateOf(false) }
@@ -185,7 +195,11 @@ fun PdfReaderScreen(
         state.restoredPage?.let { page ->
             delay(300) // Wait for LazyColumn to be laid out
             scrollState.scrollToItem(page)
-            vm.clearTargetScrollPage()
+            // Consumed, not merely scrolled to. Leaving it set is what made
+            // rotation jump back to the page the book was opened at: the
+            // effect re-ran on every recreation and won against the position
+            // the list had saved for itself.
+            vm.clearRestoredPage()
         }
     }
     LaunchedEffect(state.targetScrollPage) {
@@ -266,7 +280,11 @@ fun PdfReaderScreen(
                         PdfPageItem(
                             pageIndex = pageIndex,
                             isDark = isDark,
+                            knownAspect = pageAspects[pageIndex],
                             onPageVisible = { vm.markPage(it) },
+                            onPageMeasured = { index, aspect ->
+                                vm.recordPageAspect(index, aspect)
+                            },
                         )
                     }
                 }
@@ -457,16 +475,59 @@ fun PdfReaderScreen(
 }
 
 /**
+ * The filter that makes a rendered PDF page dark.
+ *
+ * A page arrives as one bitmap. The renderer draws white paper and black ink
+ * and has no notion of a theme, so there is no text node to recolour and no
+ * vector to re-draw — the pixels are the only lever. The handle used here is
+ * the one every reader ends up with, "smart invert": invert the lightness,
+ * then rotate the hue 180° so it comes back. Black ink on white paper becomes
+ * white on black, and a colour diagram keeps roughly its own hue instead of
+ * turning cyan.
+ *
+ * The two steps are composed by hand into a single 4x5 matrix, which is
+ * possible because the hue rotation's rows each sum to one: rotating after an
+ * inversion is the same as negating the rotation and adding 255. Doing it at
+ * DRAW time rather than at render time means the toggle is instant and the
+ * cached page bitmaps never have to be re-rendered.
+ *
+ * WHAT THIS CANNOT DO. A page is a single bitmap, so the text and the figures
+ * on it cannot be separated: a photograph or a colour plate is inverted along
+ * with everything else and comes back as a negative. There is no "dark text,
+ * untouched images" setting to offer here without re-rendering the document,
+ * which PdfRenderer does not do.
+ */
+private val PdfDarkPageFilter: ColorFilter = ColorFilter.colorMatrix(
+    ColorMatrix(
+        floatArrayOf(
+            0.574f, -1.430f, -0.144f, 0f, 255f,
+            -0.426f, -0.430f, -0.144f, 0f, 255f,
+            -0.426f, -1.430f, 0.856f, 0f, 255f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+    )
+)
+
+/**
  * Renders a single PDF page as a bitmap.
+ *
+ * [knownAspect] is this session's measured shape for the page, when it has
+ * been seen before. Seeding from it is what lets a rotated view come back to
+ * the same place: a placeholder that claims the wrong height moves everything
+ * below it, and the list keeps its scroll offset in pixels.
  */
 @Composable
 private fun PdfPageItem(
     pageIndex: Int,
     isDark: Boolean,
+    knownAspect: Float?,
     onPageVisible: (Int) -> Unit = {},
+    onPageMeasured: (Int, Float) -> Unit = { _, _ -> },
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var aspectRatio by remember { mutableFloatStateOf(1.414f) } // A4 default
+    var aspectRatio by remember(pageIndex) {
+        mutableFloatStateOf(knownAspect ?: 1.414f) // A4 until measured
+    }
 
     LaunchedEffect(pageIndex) {
         onPageVisible(pageIndex)
@@ -474,28 +535,34 @@ private fun PdfPageItem(
             PdfRendererHolder.renderPage(pageIndex)
         }
         if (bmp != null) {
-            aspectRatio = bmp.height.toFloat() / bmp.width.toFloat()
+            val aspect = bmp.height.toFloat() / bmp.width.toFloat()
+            aspectRatio = aspect
             bitmap = bmp
+            onPageMeasured(pageIndex, aspect)
         }
     }
 
+    // The slot is the paper: the colour of the page it is waiting for, so
+    // nothing flashes white on the way in.
+    val pageColor = if (isDark) Color.Black else Color.White
     val bmp = bitmap
     if (bmp != null) {
         Image(
             bitmap = bmp.asImageBitmap(),
             contentDescription = "Page ${pageIndex + 1}",
             contentScale = ContentScale.FillWidth,
+            colorFilter = if (isDark) PdfDarkPageFilter else null,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .background(if (isDark) Color(0xFF2A2A2A) else Color.White)
+                .background(pageColor)
         )
     } else {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .background(if (isDark) Color(0xFF2A2A2A) else Color.White),
+                .background(pageColor),
             contentAlignment = Alignment.Center
         ) {
             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)

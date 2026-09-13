@@ -215,6 +215,13 @@ class AppContainer(context: Context) {
             gemini = geminiLearningClient,
             usage = aiUsageRepository,
             passageDao = database.chapterPassageDao(),
+            // The passages the vectors pick are paragraphs; the questions have
+            // to be written from more of the chapter than that, so the text
+            // goes with them. The same reader the index was built with, so a
+            // passage's offsets index the string handed back here.
+            chapterText = { book, chapter ->
+                learningContextExtractor.chapterText(book, chapter)
+            },
         )
 
     val lumenRepository = LumenRepository(

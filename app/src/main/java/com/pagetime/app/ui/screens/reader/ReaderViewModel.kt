@@ -453,6 +453,23 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         return publication.readingOrder.getOrNull(index)?.title
     }
 
+    /**
+     * A chapter's own title, by index.
+     *
+     * Asked for by the index rather than taken from the current locator because
+     * that is the index the flashcards are being made for — and because a title
+     * the model is given is a context cue, which is the difference between
+     * asking about "the blockade" and asking about the Continental System. It
+     * is also what the card is filed under in the Flashcards list.
+     *
+     * Null for a book with no chapter structure, where the generator falls back
+     * to "Chapter N".
+     */
+    private fun chapterTitleFor(chapterIndex: Int): String? {
+        val publication = _publication.value ?: return null
+        return publication.readingOrder.getOrNull(chapterIndex)?.title?.takeIf { it.isNotBlank() }
+    }
+
     private fun currentFraction(): Float {
         val book = _book.value ?: return _progress.value
         return if (book.isReadiumBook) {
@@ -1445,7 +1462,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     _promptState.value = _promptState.value.copy(stage = stage)
                 }
                 val result = chapterPrompts.generateForPassages(
-                    b, chapterIndex, null, ordinals, onStage,
+                    b, chapterIndex, chapterTitleFor(chapterIndex), ordinals, onStage,
                 )
                 // The chapter's pending set is re-read rather than replaced:
                 // this run only covers the chosen passages, and overwriting
@@ -1489,9 +1506,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     _promptState.value = _promptState.value.copy(stage = stage)
                 }
                 val result = if (fresh) {
-                    chapterPrompts.regenerate(b, chapterIndex, null, onStage)
+                    chapterPrompts.regenerate(b, chapterIndex, chapterTitleFor(chapterIndex), onStage)
                 } else {
-                    chapterPrompts.generate(b, chapterIndex, null, onStage = onStage)
+                    chapterPrompts.generate(
+                        b, chapterIndex, chapterTitleFor(chapterIndex), onStage = onStage,
+                    )
                 }
                 val state = _promptState.value
                 _promptState.value = state.copy(

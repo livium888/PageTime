@@ -7,6 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.FsrsCardCodec
+import com.pagetime.app.data.learning.ChapterPromptRules
+import com.pagetime.app.data.learning.RawPrompt
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.domain.BalanceManager
 import io.github.openspacedrepetition.Card
@@ -198,14 +200,32 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     passages = listOf(text),
                     insist = true,
                 )
-                if (prompts.isEmpty()) {
+                // The model's output is checked before any of it is saved.
+                //
+                // Nothing here used to be checked: this path called the writer
+                // directly and wrote every prompt it returned straight into the
+                // database, which is how a quote that is not on the page, a
+                // question with its own answer inside it, and a cloze with no
+                // deletion in it all became scheduled reviews. A card is
+                // rehearsed for months, so a wrong one installs a falsehood on
+                // purpose — the same rules that guard the chapter pipeline
+                // guard this one.
+                val accepted = checkPromptsAgainstText(prompts, text)
+                if (accepted.isEmpty()) {
                     _flashcardState.value = FlashcardUiState(
-                        error = "Gemini could not generate a flashcard from this page. Try a page with more content."
+                        error = if (prompts.isEmpty()) {
+                            "Gemini could not generate a flashcard from this page. " +
+                                "Try a page with more content."
+                        } else {
+                            "${prompts.size} question${if (prompts.size == 1) "" else "s"} came " +
+                                "back and none passed the checks — usually a quote that is not " +
+                                "actually on the page. Nothing was saved."
+                        }
                     )
                     return@launch
                 }
                 // Save each generated prompt as a Learning Card
-                for (raw in prompts.take(3)) {
+                for (raw in accepted.take(3)) {
                     saveAsLearningCard(
                         bookId = bookId,
                         prompt = raw.prompt,
@@ -218,12 +238,12 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 Toast.makeText(
                     getApplication<Application>(),
-                    "${prompts.size.coerceAtMost(3)} flashcard${if (prompts.size > 1) "s" else ""} created from page ${pageIndex + 1}",
+                    "${accepted.size.coerceAtMost(3)} flashcard${if (accepted.size > 1) "s" else ""} created from page ${pageIndex + 1}",
                     Toast.LENGTH_SHORT,
                 ).show()
                 _flashcardState.value = FlashcardUiState(
-                    lastCreatedFront = prompts.first().prompt,
-                    lastCreatedBack = prompts.first().answer,
+                    lastCreatedFront = accepted.first().prompt,
+                    lastCreatedBack = accepted.first().answer,
                 )
             } catch (e: Exception) {
                 _flashcardState.value = FlashcardUiState(
@@ -257,13 +277,20 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     passages = listOf(selectedText),
                     insist = true,
                 )
-                if (prompts.isEmpty()) {
+                val accepted = checkPromptsAgainstText(prompts, selectedText)
+                if (accepted.isEmpty()) {
                     _flashcardState.value = FlashcardUiState(
-                        error = "Gemini could not generate a flashcard from this text."
+                        error = if (prompts.isEmpty()) {
+                            "Gemini could not generate a flashcard from this text."
+                        } else {
+                            "${prompts.size} question${if (prompts.size == 1) "" else "s"} came " +
+                                "back and none passed the checks — usually a quote that is not " +
+                                "actually in the selection. Nothing was saved."
+                        }
                     )
                     return@launch
                 }
-                for (raw in prompts.take(3)) {
+                for (raw in accepted.take(3)) {
                     saveAsLearningCard(
                         bookId = bookId,
                         prompt = raw.prompt,
@@ -276,12 +303,12 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 Toast.makeText(
                     getApplication<Application>(),
-                    "${prompts.size.coerceAtMost(3)} flashcard${if (prompts.size > 1) "s" else ""} created",
+                    "${accepted.size.coerceAtMost(3)} flashcard${if (accepted.size > 1) "s" else ""} created",
                     Toast.LENGTH_SHORT,
                 ).show()
                 _flashcardState.value = FlashcardUiState(
-                    lastCreatedFront = prompts.first().prompt,
-                    lastCreatedBack = prompts.first().answer,
+                    lastCreatedFront = accepted.first().prompt,
+                    lastCreatedBack = accepted.first().answer,
                 )
             } catch (e: Exception) {
                 _flashcardState.value = FlashcardUiState(
@@ -290,6 +317,27 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /**
+     * The prompts fit to be remembered, out of what the model returned.
+     *
+     * The passage is the text the prompts were written from, and it is what
+     * every check is made against: a supporting quote has to be in it, an
+     * explanation has to say something it does not already say, a cloze has to
+     * be a sentence of it with one deletion. A prompt that fails is dropped
+     * rather than corrected — the reader pays for a card once and rehearses it
+     * for months, so fewer is the cheap mistake.
+     */
+    private fun checkPromptsAgainstText(prompts: List<RawPrompt>, passage: String): List<RawPrompt> =
+        ChapterPromptRules.sift(
+            // One passage, so every prompt can only have come from it. An index
+            // the model got wrong — a 1-based count, most often — is normalised
+            // rather than throwing the whole answer away; the quote is still
+            // checked against the page itself, which is the check that decides
+            // whether the question is grounded in anything.
+            prompts.map { if (it.passageIndex == 0) it else it.copy(passageIndex = 0) },
+            listOf(passage),
+        ).accepted
 
     /**
      * Saves a card into the learning_cards table (recall system) with
@@ -315,7 +363,10 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             id = UUID.randomUUID().toString(),
             bookId = bookId,
             chapterIndex = pageIndex,
-            chapterTitle = null,
+            // A PDF page is this reader's unit of text, so it is the card's
+            // chapter. Left null, every card from every PDF showed no source
+            // at all in the Flashcards list.
+            chapterTitle = "Page ${pageIndex + 1}",
             topic = null,
             prompt = prompt.trim(),
             answer = answer.trim(),

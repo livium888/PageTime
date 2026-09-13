@@ -22,10 +22,11 @@ import java.util.UUID
  * THE WHOLE PIPELINE, IN ORDER
  *
  * The chapter is already chunked and embedded by the search index. Those
- * vectors choose a handful of distinct, on-topic passages. Only those passages
- * go to the model — a few hundred tokens rather than a whole chapter, which is
- * both much cheaper and much better grounded. What comes back is checked
- * locally, and what survives is written down as PENDING.
+ * vectors choose a handful of distinct, on-topic passages, and each passage is
+ * then widened into the stretch of chapter around it — a prompt area, not a
+ * paragraph. Only those go to the model: a few thousand tokens rather than a
+ * whole chapter, which is both much cheaper and much better grounded. What
+ * comes back is checked locally, and what survives is written down as PENDING.
  *
  * NOTHING IS A CARD UNTIL A PERSON SAYS SO
  *
@@ -82,6 +83,16 @@ class ChapterPromptGenerator(
      * chapter generated with this null is one nobody can explain afterwards.
      */
     private val passageDao: ChapterPassageDao? = null,
+    /**
+     * The chapter as text, so a chosen passage can be widened into the prose
+     * around it rather than staying the paragraph-sized piece the search index
+     * cut. See [ChapterTopics.select].
+     *
+     * Defaulted to nothing rather than required: a caller without the book is
+     * left with the passages exactly as the index made them, which is what the
+     * tests want and what a book that cannot be re-parsed gets.
+     */
+    private val chapterText: suspend (BookEntity, Int) -> String = { _, _ -> "" },
 ) {
 
     /** Whether this chapter could produce prompts at all. */
@@ -133,7 +144,13 @@ class ChapterPromptGenerator(
         if (rows.isEmpty()) return Result(Outcome.NOT_INDEXED)
 
         onStage(Stage(Phase.CHOOSING))
-        val all = ChapterTopics.select(rows)
+        // Read once per generation, and only when it is actually needed: this
+        // unzips and parses the book, and it is the one input that decides how
+        // much of the chapter each question is written from.
+        val chapter = runCatching { chapterText(book, chapterIndex) }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+        val all = ChapterTopics.select(rows, chapterText = chapter)
         val topics = if (onlyOrdinals.isEmpty()) all else all.filter { it.ordinal in onlyOrdinals }
         if (topics.isEmpty()) return Result(Outcome.NOTHING_IN_CHAPTER)
         val insist = onlyOrdinals.isNotEmpty()

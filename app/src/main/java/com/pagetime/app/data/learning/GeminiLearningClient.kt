@@ -202,7 +202,14 @@ class GeminiLearningClient(
                 .put("parts", JSONArray().put(JSONObject().put("text", instructions)))))
             .put("generationConfig", JSONObject()
                 .put("responseMimeType", "application/json")
-                .put("responseSchema", schema))
+                .put("responseSchema", schema)
+                // Written down rather than left to the API's default of 1.0,
+                // which is the setting for a creative task. This is an
+                // extraction: the fact is in the passage, and the only useful
+                // thing the model can do with freedom is invent one. The same
+                // setting the Lumen card draft uses, so the two card types
+                // cannot drift apart on this.
+                .put("temperature", 0.4))
             .toString()
         val request = Request.Builder()
             .url("$endpointBase/models/${currentModel()}:generateContent")

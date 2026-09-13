@@ -15,6 +15,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.blocker.BlockEnforcementPolicy
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
@@ -220,6 +221,9 @@ class SettingsRepository(private val context: Context) {
 
 
         val PDF_DARK = booleanPreferencesKey("pdf_reader_dark")
+
+        /** Small/medium/large review card text; see [CardTextSize]. */
+        val CARD_TEXT_SIZE = stringPreferencesKey("review_card_text_size")
 
         val READER_WARMTH = floatPreferencesKey("reader_warmth")
         val READER_NIGHT_DIM = floatPreferencesKey("reader_night_dim")
@@ -582,6 +586,21 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setRemindersPermissionAsked(value: Boolean) {
         context.dataStore.edit { it[Keys.REVIEW_REMINDERS_ASKED] = value }
+    }
+
+    /**
+     * How large the review card's own text is drawn.
+     *
+     * A separate Flow rather than a field on [Settings] because it is a reading
+     * comfort setting, like [readerSettings], and it is read by a screen that
+     * has no other use for the settings bundle.
+     */
+    val cardTextSize: Flow<CardTextSize> = context.dataStore.data.map { p ->
+        CardTextSize.fromKey(p[Keys.CARD_TEXT_SIZE])
+    }
+
+    suspend fun setCardTextSize(size: CardTextSize) {
+        context.dataStore.edit { it[Keys.CARD_TEXT_SIZE] = size.key }
     }
 
     /** Reminders stay quiet until this instant. Orbit offers the same escape. */

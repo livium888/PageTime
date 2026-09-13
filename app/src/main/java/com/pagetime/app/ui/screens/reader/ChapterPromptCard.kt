@@ -12,7 +12,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,6 +27,7 @@ import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.review.FirstReview
+import com.pagetime.app.ui.screens.review.AnswerBar
 
 /**
  * A question about the paragraph just read, offered rather than imposed.
@@ -142,27 +142,23 @@ fun ChapterPromptCard(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        chairRatings.forEach { rating ->
-                            // Again is the filled one, as in the review
-                            // sitting, so the same answer is in the same place
-                            // wherever the reader meets a question.
-                            if (rating == LumenRating.AGAIN) {
-                                Button(
-                                    onClick = { onGrade(rating) },
-                                    modifier = Modifier.weight(1f),
-                                ) { Text(chairLabel(rating), maxLines = 1) }
-                            } else {
-                                OutlinedButton(
-                                    onClick = { onGrade(rating) },
-                                    modifier = Modifier.weight(1f),
-                                ) { Text(chairLabel(rating), maxLines = 1) }
-                            }
-                        }
-                    }
+                    // The same bar the review sitting draws, deliberately:
+                    // the same answer in the same place and the same colour, so
+                    // a reader who has learnt that the rightmost button means
+                    // "knew it" is not taught a second layout. The labels
+                    // differ because the words should — see [chairLabel] — but
+                    // nothing else does.
+                    //
+                    // The card's text is NOT scaled by the sitting's text-size
+                    // setting. This card lives inside the page the reader is
+                    // already reading, at the size they chose for that page, and
+                    // giving it a second, independent size would put two type
+                    // scales on one screen and make one of them wrong.
+                    AnswerBar(
+                        ratings = chairRatings,
+                        onGrade = onGrade,
+                        label = ::chairLabel,
+                    )
                     TextButton(onClick = onSkip) { Text("Bad question — throw it away") }
                 }
 

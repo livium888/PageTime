@@ -9,11 +9,14 @@ import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.PagemarkEntity
+import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.ChapterCardGrader
 import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.data.review.ReviewSessionState
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -105,6 +108,22 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(ReviewUiState())
     val state = _state.asStateFlow()
+
+    /**
+     * How large the card's own text is drawn.
+     *
+     * Held outside [ReviewUiState] on purpose. `load()` replaces the whole state
+     * object when the due query returns, so a size kept inside it would be
+     * clobbered back to the default by whichever finished last — a race that
+     * would show up as the reader's choice silently reverting on some launches
+     * and not others. A separate flow cannot be overwritten by that path at all.
+     */
+    val cardTextSize = settings.cardTextSize
+        .stateIn(viewModelScope, SharingStarted.Eagerly, CardTextSize.DEFAULT)
+
+    fun setCardTextSize(size: CardTextSize) {
+        viewModelScope.launch { runCatching { settings.setCardTextSize(size) } }
+    }
 
     /** Cards held for the whole sitting; the session itself only carries ids. */
     private var cards: Map<String, ReviewItem> = emptyMap()

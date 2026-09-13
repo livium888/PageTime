@@ -1671,6 +1671,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         com.pagetime.app.data.review.ChapterCardGrader(
             container.database.learningCardDao(),
             container.database.learningReviewLogDao(),
+            container.schedulers,
         )
     }
 

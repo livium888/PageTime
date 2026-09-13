@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -103,6 +104,7 @@ fun SettingsScreen(
     onUsageAudit: () -> Unit,
     onAiUsage: () -> Unit,
     onAiModels: () -> Unit,
+    onScheduling: () -> Unit,
     viewModel: SettingsViewModel = viewModel()
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -448,6 +450,14 @@ fun SettingsScreen(
             ReviewRemindersCard(
                 enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
                 onChange = viewModel::setReviewReminders,
+            )
+
+            SectionHeader("Review scheduling")
+            AppSettingsRow(
+                icon = Icons.Outlined.Schedule,
+                label = "Scheduling",
+                subtitle = "Learning steps, intervals and retention",
+                onClick = onScheduling
             )
 
             SectionHeader("AI & models")

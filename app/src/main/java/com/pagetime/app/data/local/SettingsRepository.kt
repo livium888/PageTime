@@ -16,6 +16,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.review.CardTextSize
+import com.pagetime.app.data.review.SchedulingPolicy
+import com.pagetime.app.data.review.Steps
 import com.pagetime.app.blocker.BlockEnforcementPolicy
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
@@ -224,6 +226,16 @@ class SettingsRepository(private val context: Context) {
 
         /** Small/medium/large review card text; see [CardTextSize]. */
         val CARD_TEXT_SIZE = stringPreferencesKey("review_card_text_size")
+
+        // Anki's deck options, in the subset FSRS leaves standing; see
+        // [SchedulingPolicy]. Steps are stored in Anki's own syntax ("10m",
+        // "1m 10m 1d") and the empty string is a real value meaning no steps.
+        val LEARNING_STEPS = stringPreferencesKey("scheduler_learning_steps")
+        val RELEARNING_STEPS = stringPreferencesKey("scheduler_relearning_steps")
+        val MINIMUM_INTERVAL_DAYS = intPreferencesKey("scheduler_minimum_interval_days")
+        val MAXIMUM_INTERVAL_DAYS = intPreferencesKey("scheduler_maximum_interval_days")
+        val DESIRED_RETENTION = floatPreferencesKey("scheduler_desired_retention")
+        val FUZZING_ENABLED = booleanPreferencesKey("scheduler_fuzzing_enabled")
 
         val READER_WARMTH = floatPreferencesKey("reader_warmth")
         val READER_NIGHT_DIM = floatPreferencesKey("reader_night_dim")
@@ -601,6 +613,47 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setCardTextSize(size: CardTextSize) {
         context.dataStore.edit { it[Keys.CARD_TEXT_SIZE] = size.key }
+    }
+
+    /**
+     * How the reader has asked to be scheduled; see [SchedulingPolicy].
+     *
+     * Read per review rather than captured once at startup, so a change in
+     * Settings applies to the next card answered instead of the next launch.
+     * The scheduler used to be built once when the app started, which meant a
+     * setting could sit on screen looking saved while nothing acted on it.
+     */
+    val schedulingPolicy: Flow<SchedulingPolicy> = context.dataStore.data.map { p ->
+        val defaults = SchedulingPolicy()
+        SchedulingPolicy(
+            // A stored key that will not parse falls back to the default rather
+            // than to an empty list: a corrupt value must not silently switch
+            // the reader onto "no steps", which is a real and quite different
+            // schedule. Blank is only ever "no steps" when it was stored as
+            // blank, by the reader saying so.
+            learningSteps = p[Keys.LEARNING_STEPS]?.let(Steps::parse) ?: defaults.learningSteps,
+            relearningSteps = p[Keys.RELEARNING_STEPS]?.let(Steps::parse) ?: defaults.relearningSteps,
+            minimumIntervalDays = p[Keys.MINIMUM_INTERVAL_DAYS] ?: defaults.minimumIntervalDays,
+            maximumIntervalDays = p[Keys.MAXIMUM_INTERVAL_DAYS] ?: defaults.maximumIntervalDays,
+            desiredRetention = (p[Keys.DESIRED_RETENTION] ?: defaults.desiredRetention.toFloat())
+                .toDouble(),
+            fuzzingEnabled = p[Keys.FUZZING_ENABLED] ?: defaults.fuzzingEnabled,
+        ).normalised()
+    }
+
+    /** The policy as it stands right now, for a caller that is about to schedule something. */
+    suspend fun currentSchedulingPolicy(): SchedulingPolicy = schedulingPolicy.first()
+
+    suspend fun setSchedulingPolicy(policy: SchedulingPolicy) {
+        val normalised = policy.normalised()
+        context.dataStore.edit {
+            it[Keys.LEARNING_STEPS] = Steps.format(normalised.learningSteps)
+            it[Keys.RELEARNING_STEPS] = Steps.format(normalised.relearningSteps)
+            it[Keys.MINIMUM_INTERVAL_DAYS] = normalised.minimumIntervalDays
+            it[Keys.MAXIMUM_INTERVAL_DAYS] = normalised.maximumIntervalDays
+            it[Keys.DESIRED_RETENTION] = normalised.desiredRetention.toFloat()
+            it[Keys.FUZZING_ENABLED] = normalised.fuzzingEnabled
+        }
     }
 
     /** Reminders stay quiet until this instant. Orbit offers the same escape. */

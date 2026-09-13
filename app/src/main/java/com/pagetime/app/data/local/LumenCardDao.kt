@@ -24,6 +24,10 @@ interface LumenCardDao {
     @Query("SELECT * FROM lumen_cards WHERE id = :id LIMIT 1")
     suspend fun get(id: String): LumenCardEntity?
 
+    /** Every card, for moving existing reviews onto a new schedule. Read once, on demand. */
+    @Query("SELECT * FROM lumen_cards")
+    suspend fun allForReschedule(): List<LumenCardEntity>
+
     @Query("SELECT * FROM lumen_cards WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<LumenCardEntity>
 

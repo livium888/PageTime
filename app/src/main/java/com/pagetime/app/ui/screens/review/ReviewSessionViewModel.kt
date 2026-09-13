@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
@@ -13,12 +14,34 @@ import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.ChapterCardGrader
 import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.data.review.ReviewSessionState
+import io.github.openspacedrepetition.State
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
+
+/**
+ * Whether a card's own schedule puts it in a sitting starting now.
+ *
+ * The FSRS state is the part a SQL query cannot see and the part that matters:
+ * a card still inside a learning step waits for its step, while a graduated card
+ * due this evening is pulled forward on purpose. See
+ * [ReviewSession.shouldAnswerNow] for why those two are treated differently.
+ *
+ * No scheduler state at all is treated as still learning, which is what a card
+ * with no state is; so is a state that will not parse. Both are the recoverable
+ * direction — a card shown later than it might have been, rather than a card
+ * yanked out of a step it was deliberately given.
+ */
+internal fun answersNow(dueAt: Long?, fsrsCardJson: String?, nowMillis: Long): Boolean {
+    if (dueAt == null) return true
+    val inLearning = runCatching {
+        fsrsCardJson == null || FsrsCardCodec.fromJson(fsrsCardJson).state != State.REVIEW
+    }.getOrDefault(true)
+    return ReviewSession.shouldAnswerNow(dueAt, inLearning, nowMillis)
+}
 
 /**
  * One thing to answer, whatever kind of card it came from.
@@ -98,13 +121,14 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Grading for chapter flashcards, shared with the reading chair.
      *
-     * It builds its own scheduler, matching the one LumenRepository builds.
-     * The important thing is that both card types, and both places a card can
-     * be answered, go through the SAME FSRS configuration — two schedulers
-     * with different parameters would give the same reader different intervals
-     * depending on where they happened to answer.
+     * The important thing is that both card types, and both places a card can be
+     * answered, go through the SAME FSRS configuration — two schedulers with
+     * different parameters would give the same reader different intervals
+     * depending on where they happened to answer. It is handed the container's
+     * [com.pagetime.app.data.review.CardScheduler] rather than building one, so
+     * that is now true by construction instead of by comment.
      */
-    private val grader = ChapterCardGrader(learningCards, reviewLog)
+    private val grader = ChapterCardGrader(learningCards, reviewLog, container.schedulers)
 
     private val _state = MutableStateFlow(ReviewUiState())
     val state = _state.asStateFlow()
@@ -166,27 +190,35 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             // card falling due this evening should be answered while the
             // reader is here.
             val threshold = ReviewSession.dueThreshold(now.toEpochMilli())
+            val nowMillis = now.toEpochMilli()
 
             // Chapter flashcards first. They are the point of the feature, and
             // a reader who has both should not have to wade through slip box
             // notes to reach them.
+            //
+            // Each list is filtered afterwards rather than queried more
+            // tightly, because whether a card belongs in this sitting depends
+            // on its FSRS state, and that lives inside fsrsCardJson rather than
+            // in a column a WHERE clause could read. The cost is parsing up to a
+            // hundred short JSON objects per sitting, which is nothing next to
+            // the query that produced them.
             val chapter = runCatching {
                 learningCards.dueCards(threshold, ReviewSession.MAX_SESSION)
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).filter { answersNow(it.dueAt, it.fsrsCardJson, nowMillis) }
 
             val slips = runCatching {
                 repository.dueCards(
                     now = Instant.ofEpochMilli(threshold),
                     limit = ReviewSession.MAX_SESSION - chapter.size,
                 )
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).filter { answersNow(it.dueAt, it.fsrsCardJson, nowMillis) }
 
             // Due chunks join the sitting between chapter cards and slip box
             // notes: re-reading is heavier than a flashcard but the memory
             // loop is the same, and neither should have to wait for the other.
             val chunks = runCatching {
                 pagemarks.dueChunks(threshold)
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).filter { answersNow(it.dueAt, it.fsrsCardJson, nowMillis) }
 
             val titles = runCatching {
                 bookDao.getAll().associate { it.id to it.title }
@@ -412,7 +444,7 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val previews = LumenRating.entries.mapNotNull { rating ->
-                grader.previewNextDue(json, rating, now)
+                grader.previewNextDue(item.id, json, rating, now)
                     ?.let { due -> rating to formatIntervalShort(due, now) }
             }.toMap()
             _state.value = _state.value.copy(intervalPreviews = previews)

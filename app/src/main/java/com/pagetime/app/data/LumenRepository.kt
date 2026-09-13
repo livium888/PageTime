@@ -6,9 +6,9 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.review.CardScheduler
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
-import io.github.openspacedrepetition.Scheduler
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -95,10 +95,15 @@ class LumenRepository(
      * quality, and must never be able to cost the reader their note.
      */
     private val onCardTextChanged: (LumenCardEntity) -> Unit = {},
-    private val scheduler: Scheduler = Scheduler.builder()
-        .desiredRetention(0.9)
-        .enableFuzzing(false)
-        .build()
+    /**
+     * The one scheduler, injected rather than built here.
+     *
+     * This class used to build its own with fuzzing switched off while
+     * [com.pagetime.app.data.review.ChapterCardGrader] built one with fuzzing
+     * on, so the same rating was fuzzed or not depending on the kind of card.
+     * See [CardScheduler].
+     */
+    private val schedulers: CardScheduler = CardScheduler.DEFAULT,
 ) {
     fun diagContext(): Context = captureDiagContext()
     fun observeAll(): Flow<List<LumenCardEntity>> = dao.observeAll()
@@ -690,7 +695,7 @@ class LumenRepository(
         val existing = dao.get(cardId) ?: return null
         val oldJson = existing.fsrsCardJson ?: return null
         val oldCard = FsrsCardCodec.fromJson(oldJson)
-        val result = scheduler.reviewCard(oldCard, rating.toFsrs(), now, null)
+        val result = schedulers.review(cardId, oldCard, rating.toFsrs(), now)
         var persisted = result.card()
         var nextDue = persisted.due ?: now.plusSeconds(86_400)
         if (persisted.due == null) {

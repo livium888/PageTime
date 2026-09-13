@@ -82,7 +82,49 @@ object ReviewSession {
      */
     const val LOOKAHEAD_MILLIS = 16L * 60L * 60L * 1000L
 
+    /**
+     * How early a card that is still in a learning step may be shown.
+     *
+     * Twenty minutes, which is Anki's own default for exactly this ("if there's
+     * nothing else to study, Anki will show learning cards up to 20 minutes
+     * early").
+     */
+    const val EARLY_GRACE_MILLIS = 20L * 60L * 1000L
+
     fun dueThreshold(nowMillis: Long): Long = nowMillis + LOOKAHEAD_MILLIS
+
+    /**
+     * Whether a card due at [dueAt] belongs in a sitting started at [nowMillis].
+     *
+     * THE LOOKAHEAD DOES NOT APPLY TO A LEARNING STEP
+     *
+     * The lookahead above exists so that a card falling due this evening is
+     * answered now, while the reader is here, rather than making them come back
+     * for one card. Applying that same sixteen hours to a card in a ten-minute
+     * step is not the same kindness — it is the app overriding the schedule the
+     * reader just chose. Answer a card Again, and it is due in ten minutes; the
+     * lookahead turns that into "due immediately, every time you open Review",
+     * which is the difference between a step and a glitch.
+     *
+     * So a card still in a step waits for its step, with Anki's small grace so
+     * that being twenty minutes late is not the same as being a day early. A
+     * graduated card — the one the lookahead was written for — is unaffected.
+     *
+     * [inLearning] is the card's FSRS state, not whether it has been answered:
+     * a card that has graduated is never pulled forward by a step it no longer
+     * has.
+     */
+    fun shouldAnswerNow(
+        dueAt: Long,
+        inLearning: Boolean,
+        nowMillis: Long,
+        lookaheadMillis: Long = LOOKAHEAD_MILLIS,
+        earlyGraceMillis: Long = EARLY_GRACE_MILLIS,
+    ): Boolean = when {
+        dueAt <= nowMillis -> true
+        inLearning -> dueAt <= nowMillis + earlyGraceMillis
+        else -> dueAt <= nowMillis + lookaheadMillis
+    }
 
     fun start(cardIds: List<String>, limit: Int = MAX_SESSION): ReviewSessionState {
         val queue = cardIds.distinct().take(limit.coerceAtLeast(0))

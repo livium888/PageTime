@@ -24,12 +24,16 @@ import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
+import com.pagetime.app.data.review.CardScheduler
+import com.pagetime.app.data.review.FsrsScheduling
+import com.pagetime.app.data.review.RescheduleRepository
 import com.pagetime.app.domain.BalanceManager
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** Simple manual DI container, owned by the Application. */
@@ -109,10 +113,45 @@ class AppContainer(context: Context) {
 
     val youtubeSearchApi = YouTubeSearchApi()
 
+    /**
+     * How every review in the app gets scheduled.
+     *
+     * One object, built from the reader's settings at the moment of each review.
+     * That last part matters as much as the first: the schedulers used to be
+     * built once when the process started, so a scheduling setting would have
+     * looked saved and done nothing until the app was restarted.
+     */
+    val schedulers: CardScheduler = object : CardScheduler {
+        override suspend fun review(
+            seedKey: String,
+            card: io.github.openspacedrepetition.Card,
+            rating: io.github.openspacedrepetition.Rating,
+            now: java.time.Instant,
+        ) = FsrsScheduling.review(
+            policy = settingsRepository.currentSchedulingPolicy(),
+            card = card,
+            rating = rating,
+            now = now,
+            seed = FsrsScheduling.seed(seedKey, rating.value),
+        )
+    }
+
     /** Incremental reading: chunks, priorities, and FSRS re-read schedules. */
     val pagemarkRepository = PagemarkRepository(
         dao = database.pagemarkDao(),
-        settingsRepository = settingsRepository
+        settingsRepository = settingsRepository,
+        schedulers = schedulers,
+    )
+
+    /**
+     * Moving cards that were already scheduled onto the reader's current
+     * schedule. Only ever runs when they press the button that says so.
+     */
+    val rescheduleRepository = RescheduleRepository(
+        learningCards = database.learningCardDao(),
+        lumenCards = database.lumenCardDao(),
+        pagemarks = database.pagemarkDao(),
+        settings = settingsRepository,
     )
 
     /** Persistent text highlights: marked spans in both book formats. */
@@ -244,6 +283,7 @@ class AppContainer(context: Context) {
         onCardTextChanged = { card ->
             scope.launch { runCatching { cardEmbeddingIndexer.index(listOf(card)) } }
         },
+        schedulers = schedulers,
     )
 
     val glossRepository = GlossRepository(

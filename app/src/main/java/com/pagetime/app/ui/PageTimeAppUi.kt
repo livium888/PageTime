@@ -51,6 +51,7 @@ import com.pagetime.app.ui.screens.pagemarks.PagemarkQueueScreen
 import com.pagetime.app.ui.screens.review.ReviewSessionScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
+import com.pagetime.app.ui.screens.settings.SchedulingScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
 import com.pagetime.app.ui.screens.settings.UsageAuditScreen
 import com.pagetime.app.ui.screens.settings.AiModelsScreen
@@ -269,8 +270,12 @@ fun PageTimeAppUi(
                     onPermissions = { navController.navigate("permissions") },
                     onUsageAudit = { navController.navigate("usage_audit") },
                     onAiUsage = { navController.navigate("ai_usage") },
-                    onAiModels = { navController.navigate("ai_models") }
+                    onAiModels = { navController.navigate("ai_models") },
+                    onScheduling = { navController.navigate("scheduling") }
                 )
+            }
+            composable("scheduling") {
+                SchedulingScreen(onBack = { navController.popBackStack() })
             }
             composable("blocked_apps") { BlockedAppsScreen(onBack = { navController.popBackStack() }) }
             composable("permissions") { PermissionsScreen(onBack = { navController.popBackStack() }) }

@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#0F766E</color>
+
+    <!--
+        What the window is painted with before the first Compose frame, and the
+        colour of any area the app itself does not cover. It has to match
+        Color.kt's Paper (light) / Night (dark), or starting the app in dark
+        mode flashes a bright rectangle and leaves a pale strip behind the
+        status bar. See values-night/themes.xml for the other half.
+    -->
+    <color name="window_background">#F6F5F1</color>
 </resources>

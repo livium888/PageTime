@@ -3,12 +3,15 @@ package com.pagetime.app.ui.screens.reader
 import android.app.Activity
 import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
+import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -136,10 +139,21 @@ fun PdfReaderScreen(
     DisposableEffect(Unit) {
         onDispose {
             activity?.window?.let { window ->
-                WindowCompat.setDecorFitsSystemWindows(window, true)
                 WindowInsetsControllerCompat(window, window.decorView)
                     .show(WindowInsetsCompat.Type.systemBars())
             }
+            // Leave the window the way the Activity set it up. This used to
+            // call setDecorFitsSystemWindows(true), which is the exact
+            // opposite of MainActivity's enableEdgeToEdge() — so closing a PDF
+            // turned edge-to-edge off for the whole app. Every screen after it
+            // stopped drawing under the system bars, and the strip behind the
+            // status bar stopped being painted by the app and started being
+            // painted by the WINDOW, which in the dark theme is light: a white
+            // bar with light status-bar icons on it. Re-applying edge-to-edge
+            // restores the bar colours, the icon appearance and the layout
+            // behaviour together, because that is the one call that set all
+            // three.
+            (activity as? ComponentActivity)?.enableEdgeToEdge()
         }
     }
 
@@ -151,14 +165,19 @@ fun PdfReaderScreen(
     var scale by rememberSaveable { mutableStateOf(1f) }
     var offsetX by rememberSaveable { mutableStateOf(0f) }
     var offsetY by rememberSaveable { mutableStateOf(0f) }
-    var isDark by rememberSaveable { mutableStateOf(false) }
+    // The reader's own page theme. It is a choice rather than a mirror of the
+    // app theme, but it STARTS from the system's light/dark setting — the same
+    // setting PageTimeTheme follows — because this used to begin at light and
+    // be remembered nowhere, so opening a PDF at night put a full white page in
+    // front of the reader, every single time.
+    val systemDark = isSystemInDarkTheme()
+    var isDark by rememberSaveable { mutableStateOf(systemDark) }
     var controlsVisible by remember { mutableStateOf(true) }
     var menuExpanded by remember { mutableStateOf(false) }
     var showGoToPage by remember { mutableStateOf(false) }
-    var showTextSheet by remember { mutableStateOf(false) }
-    var pageText by remember { mutableStateOf<String?>(null) }
+    var showPageTextSheet by remember { mutableStateOf(false) }
+    var pageText by remember { mutableStateOf("") }
     var isExtracting by remember { mutableStateOf(false) }
-    var selectedTextInSheet by remember { mutableStateOf("") }
 
     // --- Where the reader is, for when the phone turns ---
     // The width is what a rotation changes, and with it the height of every
@@ -172,8 +191,13 @@ fun PdfReaderScreen(
     val anchorOnEntry = remember(screenWidthDp) { vm.currentReadingAnchor() }
     var listWidthPx by remember { mutableIntStateOf(0) }
 
-    val backgroundColor = if (isDark) Color(0xFF1A1A1A) else Color(0xFFF5F5F5)
-    val controlsColor = if (isDark) Color.White.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.8f)
+    val chrome = PdfChrome.of(isDark)
+    val backgroundColor = chrome.background
+    // A scrim of the reader's own colour, not a fixed black or white. The white
+    // one was the visible bug: TopAppBar keeps the theme's content colours
+    // unless it is told otherwise, and in the dark scheme those are near-white,
+    // so the bar came out as near-white icons on a white bar.
+    val controlsColor = chrome.background.copy(alpha = 0.94f)
 
     // Auto-hide controls
     LaunchedEffect(controlsVisible) {
@@ -181,6 +205,14 @@ fun PdfReaderScreen(
             delay(3000)
             controlsVisible = false
         }
+    }
+
+    // The stored page theme, once it has been read. A null means the reader has
+    // never chosen one, which is the case that leaves the system's answer
+    // standing. Applying it here rather than inside the toggle is what makes
+    // the choice follow them out of the screen and back in.
+    LaunchedEffect(state.pdfDarkMode) {
+        state.pdfDarkMode?.let { isDark = it }
     }
 
     // --- Flashcard result feedback ---
@@ -340,7 +372,7 @@ fun PdfReaderScreen(
                 ) {
                     items(state.pageCount) { pageIndex ->
                         Column(Modifier.fillMaxWidth()) {
-                            PageStartMarker(pageIndex = pageIndex, isDark = isDark)
+                            PageStartMarker(pageIndex = pageIndex, color = chrome.muted)
                             PdfPageItem(
                                 pageIndex = pageIndex,
                                 isDark = isDark,
@@ -448,7 +480,11 @@ fun PdfReaderScreen(
                     }) {
                         Icon(Icons.Outlined.ZoomOut, contentDescription = "Zoom out")
                     }
-                    IconButton(onClick = { isDark = !isDark }) {
+                    IconButton(onClick = {
+                        val next = !isDark
+                        isDark = next
+                        vm.setPdfDarkMode(next)
+                    }) {
                         Icon(
                             if (isDark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
                             contentDescription = null
@@ -472,26 +508,37 @@ fun PdfReaderScreen(
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = {
-                                if (isExtracting) Text("Generating…")
-                                else Text("✨ Generate flashcard from this page")
-                            },
+                            text = { Text("✨ Flashcard from this page") },
                             onClick = {
                                 menuExpanded = false
                                 vm.generateFlashcardFromCurrentPage()
                             },
                             enabled = !isExtracting && !flashcardState.generating,
                         )
+                        // Show the page's text before spending a call on it.
+                        //
+                        // This entry used to read "Select text from this page"
+                        // and tell the reader to long-press and drag to pick a
+                        // passage. Nothing in this screen has ever been
+                        // selectable — there is no SelectionContainer anywhere
+                        // in the app — and the button sent the whole page
+                        // regardless. It is honest about what it is now: a look
+                        // at the text a card would be built from.
                         DropdownMenuItem(
-                            text = { Text("Select text from this page") },
+                            text = {
+                                if (isExtracting) Text("Reading the page…")
+                                else Text("Page text…")
+                            },
                             onClick = {
                                 menuExpanded = false
                                 isExtracting = true
                                 scope.launch {
-                                    val text = vm.extractPageText(state.currentPage)
-                                    pageText = text
+                                    pageText = vm.extractPageText(state.currentPage).orEmpty()
                                     isExtracting = false
-                                    showTextSheet = text != null
+                                    // Opened even when nothing was read, so the
+                                    // sheet can say so. Leaving it shut made a
+                                    // scanned page look like a dead menu item.
+                                    showPageTextSheet = true
                                 }
                             },
                             enabled = !isExtracting && !flashcardState.generating,
@@ -499,7 +546,14 @@ fun PdfReaderScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = controlsColor
+                    containerColor = controlsColor,
+                    // Set explicitly. Left to the defaults these are the theme's
+                    // onSurface/onSurfaceVariant, which do not follow the
+                    // container — they follow the app's light or dark scheme,
+                    // and this bar is neither.
+                    titleContentColor = chrome.text,
+                    navigationIconContentColor = chrome.text,
+                    actionIconContentColor = chrome.text,
                 ),
                 modifier = Modifier.align(Alignment.TopCenter)
             )
@@ -520,20 +574,17 @@ fun PdfReaderScreen(
         )
     }
 
-    // --- Text selection bottom sheet ---
-    if (showTextSheet && pageText != null) {
-        TextSelectionSheet(
-            pageText = pageText!!,
+    // --- The page's text, and the card it could become ---
+    if (showPageTextSheet) {
+        PageTextSheet(
+            pageText = pageText,
             pageIndex = state.currentPage,
-            onGenerateFlashcard = { selected ->
-                showTextSheet = false
-                vm.generateFlashcardFromSelection(selected)
+            chrome = chrome,
+            onGenerateFlashcard = { text ->
+                showPageTextSheet = false
+                vm.generateFlashcardFromText(text)
             },
-            onDismiss = {
-                showTextSheet = false
-                selectedTextInSheet = ""
-            },
-            isDark = isDark,
+            onDismiss = { showPageTextSheet = false },
         )
     }
 }
@@ -572,6 +623,45 @@ private val PdfDarkPageFilter: ColorFilter = ColorFilter.colorMatrix(
     )
 )
 
+/**
+ * The reader's own colours, in one place.
+ *
+ * A PDF page is finished artwork with its own colours, so the chrome around it
+ * cannot come from the app theme — it has to come from the reader's page theme,
+ * the one the dark toggle chooses. It has to come from ONE of them, too, which
+ * is what this is for: the bar, the sheet and the gaps between pages were each
+ * picking their own colours, and two of them could disagree about which theme
+ * they were in.
+ */
+private data class PdfChrome(
+    /** The space between pages, and behind everything. */
+    val background: Color,
+    /** A raised panel: the bottom sheet. */
+    val sheet: Color,
+    /** Text and icons on the chrome. */
+    val text: Color,
+    /** Secondary copy, and the page-start label. */
+    val muted: Color,
+) {
+    companion object {
+        fun of(dark: Boolean): PdfChrome = if (dark) {
+            PdfChrome(
+                background = Color(0xFF1A1A1A),
+                sheet = Color(0xFF232323),
+                text = Color(0xFFE8E8E8),
+                muted = Color(0xFF9A9A9A),
+            )
+        } else {
+            PdfChrome(
+                background = Color(0xFFF5F5F5),
+                sheet = Color(0xFFFFFFFF),
+                text = Color(0xFF1A1A1A),
+                muted = Color(0xFF6B6B6B),
+            )
+        }
+    }
+}
+
 /** A4, as the placeholder shape for a page whose bitmap has not arrived yet. */
 private const val A4_PAGE_RATIO = 0.7071f // 210 / 297, width over height
 
@@ -591,7 +681,7 @@ private const val A4_PAGE_RATIO = 0.7071f // 210 / 297, width over height
 private val PageMarkerHeight = 30.dp
 
 @Composable
-private fun PageStartMarker(pageIndex: Int, isDark: Boolean) {
+private fun PageStartMarker(pageIndex: Int, color: Color) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -603,7 +693,7 @@ private fun PageStartMarker(pageIndex: Int, isDark: Boolean) {
             text = "Page ${pageIndex + 1}",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
-            color = if (isDark) Color.White.copy(alpha = 0.5f) else Color.Black.copy(alpha = 0.36f),
+            color = color,
         )
     }
 }
@@ -759,25 +849,39 @@ private fun GoToPageDialog(
 }
 
 /**
- * Bottom sheet showing extracted page text where the user can select
- * a passage and generate an AI flashcard from it.
+ * The text of the page, and the one action that turns it into a card.
+ *
+ * WHAT THIS DOES NOT DO, AND USED TO CLAIM IT DID
+ *
+ * It was called "Select text from this page" and told the reader to
+ * "long-press and drag to select a passage". Nothing here has ever been
+ * selectable — there is no SelectionContainer anywhere in the app — and the
+ * button sent the whole page regardless, which is precisely what the menu's
+ * other entry already did. The screen offered two ways to do one thing and
+ * misdescribed one of them.
+ *
+ * The reason it is worth showing the text at all is the card: seeing what
+ * Gemini is about to be given tells the reader whether this page is worth a
+ * call, and a scanned page that yielded nothing says so plainly instead of
+ * looking like a menu item that does nothing. It is deliberately the card's
+ * INPUT that is on screen, and the button says so.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TextSelectionSheet(
+private fun PageTextSheet(
     pageText: String,
     pageIndex: Int,
+    chrome: PdfChrome,
     onGenerateFlashcard: (String) -> Unit,
     onDismiss: () -> Unit,
-    isDark: Boolean,
 ) {
-    var selectedText by remember { mutableStateOf("") }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val hasText = pageText.isNotBlank()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = if (isDark) Color(0xFF2A2A2A) else MaterialTheme.colorScheme.surface,
+        containerColor = chrome.sheet,
     ) {
         Column(
             modifier = Modifier
@@ -785,38 +889,39 @@ private fun TextSelectionSheet(
                 .fillMaxHeight(0.75f)
                 .padding(horizontal = 16.dp)
         ) {
-            // Header
             Text(
-                "Page ${pageIndex + 1} — Select text to create a flashcard",
+                "Page ${pageIndex + 1}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp),
+                color = chrome.text,
+                modifier = Modifier.padding(bottom = 6.dp),
             )
             Text(
-                "Long-press and drag to select a passage, then tap the button below.",
+                if (hasText) {
+                    "This is the text a flashcard for this page is built from. " +
+                        "Nothing is saved until you ask for it."
+                } else {
+                    "No text could be read from this page — it is likely a scan " +
+                        "or an image. There is nothing to build a card from."
+                },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = chrome.muted,
                 modifier = Modifier.padding(bottom = 12.dp),
             )
 
-            // Selectable text
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(
-                        if (isDark) Color(0xFF1A1A1A) else Color(0xFFF5F5F5),
-                        RoundedCornerShape(8.dp)
-                    )
+                    .background(chrome.background, RoundedCornerShape(8.dp))
                     .padding(12.dp)
             ) {
-                var localSelectedText by remember { mutableStateOf("") }
                 Text(
-                    text = pageText,
+                    text = pageText.ifBlank { "—" },
                     style = TextStyle(
                         fontSize = 14.sp,
                         lineHeight = 20.sp,
-                        color = if (isDark) Color(0xFFE0E0E0) else Color(0xFF1A1A1A),
+                        color = chrome.text,
                     ),
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -824,15 +929,10 @@ private fun TextSelectionSheet(
 
             Spacer(Modifier.height(12.dp))
 
-            // Generate button
             TextButton(
-                onClick = {
-                    // For now, send the full page text to Gemini — the AI will
-                    // pick the best idea from it. In a future iteration we can
-                    // add native text selection to extract a specific highlight.
-                    onGenerateFlashcard(pageText)
-                },
+                onClick = { onGenerateFlashcard(pageText) },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = hasText,
             ) {
                 Icon(
                     Icons.Outlined.AutoAwesome,
@@ -840,7 +940,7 @@ private fun TextSelectionSheet(
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("✨ Generate flashcard from this page")
+                Text("Create flashcard from this page")
             }
 
             Spacer(Modifier.height(24.dp))

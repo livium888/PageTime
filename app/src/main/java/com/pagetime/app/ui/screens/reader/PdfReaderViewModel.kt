@@ -77,6 +77,11 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     currentPage = savedPage.coerceIn(0, renderer.pageCount - 1),
                     loading = false,
                     restoredPage = savedPage.coerceIn(0, renderer.pageCount - 1),
+                    // Read in the same pass as the page, so the first frame is
+                    // already the theme the reader chose. Coming from a
+                    // separate flow made the page flash the other way round on
+                    // the way in.
+                    pdfDarkMode = settingsRepository.pdfDarkMode(),
                 )
                 startReading()
             } else {
@@ -331,13 +336,17 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Generate a flashcard from user-selected text → Learning Card.
+     * Generate a flashcard from a page's text → Learning Card.
      * Uses the same Gemini pipeline as above.
+     *
+     * Named for what it is: a page's text, not a "selection". Nothing in this
+     * reader can select text, and the name claimed otherwise for as long as the
+     * sheet did.
      */
-    fun generateFlashcardFromSelection(selectedText: String) {
+    fun generateFlashcardFromText(pageText: String) {
         val bookId = currentBookId ?: return
         val pageIndex = _state.value.currentPage
-        if (selectedText.isBlank()) return
+        if (pageText.isBlank()) return
         _flashcardState.value = FlashcardUiState(generating = true)
         viewModelScope.launch {
             try {
@@ -351,7 +360,7 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 val verdict = app.container.chapterPromptGenerator.promptsForText(
                     book = book,
                     chapterTitle = "Page ${pageIndex + 1}",
-                    text = selectedText,
+                    text = pageText,
                 )
                 val accepted = verdict.accepted
                 val offered = accepted.size + verdict.rejected.size
@@ -447,6 +456,18 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
         _flashcardState.value = FlashcardUiState()
     }
 
+    /**
+     * Remembers the PDF page theme.
+     *
+     * It has to outlive the screen. The toggle used to be `rememberSaveable`
+     * and nothing else, so it survived a rotation and was forgotten the moment
+     * the reader went back to the library — which meant re-enabling dark mode
+     * every single time a PDF was opened.
+     */
+    fun setPdfDarkMode(dark: Boolean) {
+        viewModelScope.launch { settingsRepository.setPdfDarkMode(dark) }
+    }
+
     override fun onCleared() {
         super.onCleared()
         stopReading()
@@ -461,6 +482,14 @@ data class PdfState(
     val error: String? = null,
     val restoredPage: Int? = null,
     val targetScrollPage: Int? = null,
+    /**
+     * The reader's stored page theme, or null when they have never chosen one.
+     *
+     * Null means the screen should follow the system rather than assume light.
+     * The two are different: false is "I want a white page", which is a choice
+     * worth honouring in a dark room.
+     */
+    val pdfDarkMode: Boolean? = null,
 )
 
 data class FlashcardUiState(

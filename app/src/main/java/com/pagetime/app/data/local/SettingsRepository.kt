@@ -1,6 +1,7 @@
 package com.pagetime.app.data.local
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -72,8 +73,16 @@ data class ReaderSettings(
     val lineHeight: Float = 1.5f,
     /** "serif", "sans", "literata", or "mono" */
     val fontFamily: String = "serif",
-    /** "paper", "light", "sepia", "dark", or "night" */
-    val theme: String = "light",
+    /**
+     * "paper", "light", "sepia", "dark", or "night".
+     *
+     * The stored value is the reader's own choice; when they have never made
+     * one, the repository resolves it from the system's light/dark setting
+     * rather than defaulting to a white page — see
+     * [SettingsRepository.readerSettings]. The default here is only what a
+     * value that never went through the repository looks like.
+     */
+    val theme: String = "paper",
     val marginDp: Float = 20f,
     /** "justify" or "left" — how both plain-text and EPUB pages align body copy. */
     val alignment: String = "justify",
@@ -125,7 +134,7 @@ internal fun ReaderSettings.normalized(): ReaderSettings = copy(
     fontSizeSp = fontSizeSp.coerceIn(12f, 32f),
     lineHeight = lineHeight.coerceIn(1.0f, 2.2f),
     fontFamily = fontFamily.takeIf { it in setOf("serif", "sans", "literata", "mono") } ?: "serif",
-    theme = theme.takeIf { it in setOf("paper", "light", "sepia", "dark", "night") } ?: "light",
+    theme = theme.takeIf { it in setOf("paper", "light", "sepia", "dark", "night") } ?: "paper",
     marginDp = marginDp.coerceIn(8f, 48f),
     warmth = warmth.coerceIn(0f, 1f),
     // Capped well short of 1: a veil dense enough to hide the text would look
@@ -209,6 +218,8 @@ class SettingsRepository(private val context: Context) {
         val REVIEW_REMINDER_LAST_SENT = longPreferencesKey("review_reminder_last_sent")
         val REVIEW_REMINDER_STREAK = intPreferencesKey("review_reminder_streak")
 
+
+        val PDF_DARK = booleanPreferencesKey("pdf_reader_dark")
 
         val READER_WARMTH = floatPreferencesKey("reader_warmth")
         val READER_NIGHT_DIM = floatPreferencesKey("reader_night_dim")
@@ -340,6 +351,19 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun getPdfPage(bookId: String): Int =
         context.dataStore.data.first()[pdfPageKey(bookId)] ?: 0
+
+    /**
+     * The page theme the PDF reader was last left in, or null if never chosen.
+     *
+     * Null is a real answer and not the same as false: it means "follow the
+     * system", which is what lets the reader open dark at night without
+     * overriding someone who deliberately chose a white page in the daytime.
+     */
+    suspend fun pdfDarkMode(): Boolean? = context.dataStore.data.first()[Keys.PDF_DARK]
+
+    suspend fun setPdfDarkMode(dark: Boolean) {
+        context.dataStore.edit { it[Keys.PDF_DARK] = dark }
+    }
 
     private fun locatorKey(bookId: String) =
         stringPreferencesKey("locator_$bookId")
@@ -653,12 +677,26 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.GENERATION_MODE] = mode.key }
     }
 
+    /**
+     * The page colour a reader who has never chosen one starts on.
+     *
+     * This used to be Light unconditionally — a pure white page, on a phone
+     * that may well be in dark mode, opened at night. The system's own answer
+     * is the right starting point; the appearance sheet is where anyone who
+     * disagrees changes it, and that choice is stored and wins from then on.
+     */
+    private fun defaultReaderTheme(): String = if (isSystemDark()) "dark" else "paper"
+
+    private fun isSystemDark(): Boolean =
+        (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
     val readerSettings: Flow<ReaderSettings> = context.dataStore.data.map { p ->
         ReaderSettings(
             fontSizeSp = p[Keys.FONT_SIZE] ?: 18f,
             lineHeight = p[Keys.LINE_HEIGHT] ?: 1.5f,
             fontFamily = p[Keys.FONT_FAMILY] ?: "serif",
-            theme = p[Keys.THEME] ?: "light",
+            theme = p[Keys.THEME] ?: defaultReaderTheme(),
             marginDp = p[Keys.MARGIN] ?: 20f,
             alignment = p[Keys.ALIGNMENT] ?: "justify",
             conceptHints = p[Keys.CONCEPT_HINTS] ?: "subtle",

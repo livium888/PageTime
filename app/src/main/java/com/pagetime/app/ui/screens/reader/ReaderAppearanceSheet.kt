@@ -37,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -473,7 +472,10 @@ private fun ThemeSwatch(selected: Boolean, palette: ReaderPalette, onClick: () -
             .background(palette.background)
             .border(
                 width = if (selected) 3.dp else 1.dp,
-                color = if (selected) MaterialTheme.colorScheme.primary else Color(0xFFCCCCCC),
+                // A fixed light grey here was all but invisible against the
+                // light surface, which is the one place this outline has to do
+                // any work. The theme has an outline colour for exactly this.
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 shape = CircleShape
             )
             .clickable(onClick = onClick)

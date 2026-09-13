@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        There was no night variant of this theme at all, so in dark mode the
+        window was still the platform's LIGHT one: a bright flash on launch, a
+        pale strip behind the system bars wherever the app did not reach, and
+        windowLightStatusBar asserting dark status-bar icons on top of it.
+
+        Note the parent is the dark Material theme rather than the light one,
+        and the status-bar flag is inverted to match.
+    -->
+    <style name="Theme.PageTime" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+</resources>

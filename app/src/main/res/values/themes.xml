@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        The light half of the app's window theme. Its dark counterpart is in
+        values-night/themes.xml, and the two have to stay in step: the app's
+        Compose theme is chosen with isSystemInDarkTheme(), which reads the same
+        system setting that picks between these files, so the window and the
+        content always agree about which one is in force.
+
+        windowBackground is what covers the screen until the first frame is
+        drawn, and what shows anywhere the app has not painted. Left to the
+        platform default it is a light colour in both themes.
+    -->
     <style name="Theme.PageTime" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
     </style>

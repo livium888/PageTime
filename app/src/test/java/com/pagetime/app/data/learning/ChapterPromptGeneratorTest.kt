@@ -209,7 +209,9 @@ class ChapterPromptGeneratorTest {
     fun `the shipped instructions are used when the reader has written none`() {
         val writer = Writer()
         runBlocking { generator(chunks(4), writer).generate(book(), 0, "One") }
-        assertEquals(listOf(null), writer.templates)
+        // The default is resolved before the request rather than left null, so
+        // what reached the model is the text the key was computed over.
+        assertEquals(listOf(ChapterPromptText.DEFAULT_TEMPLATE), writer.templates)
     }
 
     @Test
@@ -250,7 +252,11 @@ class ChapterPromptGeneratorTest {
         // Edited instructions: the same passages under a different prompt are a
         // different generation, and the reader gets the questions they asked
         // for rather than the ones they already rejected.
-        val writer = Writer()
+        val writer = Writer(
+            mutableListOf(
+                Result.success(listOf(promptFor(0, 0).copy(prompt = "What does widget 0 weigh?")))
+            )
+        )
         val edited = runBlocking {
             generator(
                 chunks(4),
@@ -262,6 +268,12 @@ class ChapterPromptGeneratorTest {
         }
         assertEquals(ChapterPromptGenerator.Outcome.MADE, edited.outcome)
         assertEquals(1, writer.sentPassages.size)
+        // The evidence that it was a fresh generation rather than the cache:
+        // the model was actually asked.
+        assertEquals(
+            listOf("Different rules: ask only about causes."),
+            writer.templates,
+        )
     }
 
     @Test

@@ -131,6 +131,7 @@ class ChapterPromptGeneratorTest {
         override suspend fun dueCards(now: Long, limit: Int) = emptyList<LearningCardEntity>()
         override fun observeDueCount(now: Long): Flow<Int> = flowOf(0)
         override suspend fun get(id: String) = rows.firstOrNull { it.id == id }
+        override suspend fun allForReschedule() = rows.toList()
         override fun observeKeptForBook(bookId: String): Flow<List<LearningCardEntity>> =
             flowOf(emptyList())
         override fun observeLive(): Flow<List<LearningCardEntity>> = flowOf(rows.toList())

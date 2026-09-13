@@ -237,6 +237,16 @@ fun PdfReaderScreen(
             val item = scrollState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
             Triple(index, scrollState.firstVisibleItemScrollOffset, item?.size ?: 0)
         }.collect { (index, offset, size) ->
+            // Nothing is measured until the list has laid out, and an offset
+            // against a height of zero would read as "the top of page one".
+            if (size <= 0) return@collect
+            // The page counter follows the page at the top of the viewport —
+            // the one whose marker is on screen. It used to follow whichever
+            // page had most recently been built, and a list builds the pages
+            // it is about to need rather than the ones being read, so a flick
+            // ran the number several pages ahead and it snapped back once
+            // those pages were thrown away again.
+            vm.markPage(index)
             vm.recordReadingAnchor(index, ReaderPositionPolicy.fractionOf(offset, size))
         }
     }
@@ -335,7 +345,6 @@ fun PdfReaderScreen(
                                 pageIndex = pageIndex,
                                 isDark = isDark,
                                 knownRatio = pageRatios[pageIndex],
-                                onPageVisible = { vm.markPage(it) },
                                 onPageSized = { index, ratio ->
                                     vm.recordPageRatio(index, ratio)
                                 },
@@ -613,7 +622,6 @@ private fun PdfPageItem(
     pageIndex: Int,
     isDark: Boolean,
     knownRatio: Float?,
-    onPageVisible: (Int) -> Unit = {},
     onPageSized: (Int, Float) -> Unit = { _, _ -> },
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -622,7 +630,6 @@ private fun PdfPageItem(
     }
 
     LaunchedEffect(pageIndex) {
-        onPageVisible(pageIndex)
         val bmp = withContext(Dispatchers.Default) {
             PdfRendererHolder.renderPage(pageIndex)
         }

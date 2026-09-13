@@ -114,6 +114,16 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Page tracking ---
 
+    /**
+     * Records the page the reader is on.
+     *
+     * Called with the page at the top of the viewport, and deliberately NOT
+     * when a page becomes composed. A lazy list builds the items it is about
+     * to need, several pages beyond the reader, so counting builds made the
+     * page counter race forward on a flick — 30, 33, back to 30 — and it
+     * aimed both "flashcard from this page" and the saved resume position at a
+     * page nobody was looking at.
+     */
     fun markPage(pageIndex: Int) {
         val current = _state.value
         if (pageIndex != current.currentPage) {

@@ -96,6 +96,16 @@ data class AiUsageStats(
     val lumenCalls: Int = 0,
     val glossCalls: Int = 0,
     val explainCalls: Int = 0,
+    /**
+     * Flashcard generation: the chapter pipeline and the PDF reader's page
+     * asks.
+     *
+     * Counted separately at last. These calls were always included in the
+     * totals, but the screen named every other operation and not this one, so
+     * the single largest consumer of the reader's quota by volume had no line
+     * of its own.
+     */
+    val chapterPromptCalls: Int = 0,
     val conceptsFound: Int = 0,
     val relationshipsFound: Int = 0,
     val inputCharacters: Long = 0,
@@ -148,6 +158,9 @@ data class AiUsageStats(
                 lumenCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_LUMEN },
                 glossCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_GLOSS },
                 explainCalls = analyzed.count { it.operation == AiUsageRepository.OPERATION_EXPLAIN },
+                chapterPromptCalls = analyzed.count {
+                    it.operation == AiUsageRepository.OPERATION_CHAPTER_PROMPTS
+                },
                 conceptsFound = analyzed
                     .filter { it.operation == AiUsageRepository.OPERATION_CONCEPTS }
                     .sumOf { it.outputItems },

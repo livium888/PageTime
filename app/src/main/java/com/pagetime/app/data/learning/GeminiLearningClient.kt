@@ -171,6 +171,7 @@ class GeminiLearningClient(
         chapterTitle: String,
         passages: List<String>,
         insist: Boolean,
+        template: String?,
     ): List<RawPrompt> = withContext(Dispatchers.IO) {
         val apiKey = currentApiKey()
         check(apiKey.isNotBlank()) { "Gemini API key is not configured" }
@@ -195,7 +196,13 @@ class GeminiLearningClient(
                 .put("prompts", JSONObject().put("type", "ARRAY").put("items", promptSchema)))
             .put("required", JSONArray(listOf("prompts")))
 
-        val instructions = ChapterPromptText.build(bookTitle, chapterTitle, passages, insist = insist)
+        val instructions = ChapterPromptText.build(
+            bookTitle = bookTitle,
+            chapterTitle = chapterTitle,
+            passages = passages,
+            insist = insist,
+            template = template,
+        )
 
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject()

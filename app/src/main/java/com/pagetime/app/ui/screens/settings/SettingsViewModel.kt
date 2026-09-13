@@ -10,6 +10,7 @@ import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.review.ReviewReminderWorker
 import com.pagetime.app.data.LumenModelStatus
+import com.pagetime.app.data.learning.ChapterPromptText
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.embed.EmbeddingModelStatus
@@ -317,12 +318,28 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _lumenPromptIsCustom = MutableStateFlow(false)
     val lumenPromptIsCustom: StateFlow<Boolean> = _lumenPromptIsCustom.asStateFlow()
 
+    /**
+     * The chapter flashcard instructions as the reader would edit them: theirs
+     * when they have written some, otherwise the shipped text, so the editor
+     * opens on something real to change rather than a blank field.
+     */
+    private val _chapterPrompt = MutableStateFlow(ChapterPromptText.DEFAULT_TEMPLATE)
+    val chapterPrompt: StateFlow<String> = _chapterPrompt.asStateFlow()
+
+    /** True when the stored instructions are the reader's, not the shipped ones. */
+    private val _chapterPromptIsCustom = MutableStateFlow(false)
+    val chapterPromptIsCustom: StateFlow<Boolean> = _chapterPromptIsCustom.asStateFlow()
+
     init {
         viewModelScope.launch {
             val stored = container.settingsRepository.lumenPromptTemplate()
             if (stored != null) {
                 _lumenPrompt.value = stored
                 _lumenPromptIsCustom.value = true
+            }
+            container.settingsRepository.chapterPromptTemplate()?.let { stored ->
+                _chapterPrompt.value = stored
+                _chapterPromptIsCustom.value = true
             }
             container.settingsRepository.lumenModelUrl()?.let { _lumenModelUrl.value = it }
             _lumenCloudRescue.value = container.settingsRepository.lumenCloudRescue()
@@ -348,6 +365,26 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             container.settingsRepository.setLumenPromptTemplate(null)
             _lumenPrompt.value = LumenAiPrompts.DEFAULT_CARD_TEMPLATE
             _lumenPromptIsCustom.value = false
+        }
+    }
+
+    /** Saves tailored instructions. Rejected templates never reach storage. */
+    fun setChapterPrompt(template: String) {
+        if (ChapterPromptText.templateProblem(template) != null) return
+        viewModelScope.launch {
+            val custom = template != ChapterPromptText.DEFAULT_TEMPLATE
+            container.settingsRepository.setChapterPromptTemplate(if (custom) template else null)
+            _chapterPrompt.value = template
+            _chapterPromptIsCustom.value = custom
+        }
+    }
+
+    /** Drops the reader's instructions so app updates to the built-in ones apply. */
+    fun resetChapterPrompt() {
+        viewModelScope.launch {
+            container.settingsRepository.setChapterPromptTemplate(null)
+            _chapterPrompt.value = ChapterPromptText.DEFAULT_TEMPLATE
+            _chapterPromptIsCustom.value = false
         }
     }
 

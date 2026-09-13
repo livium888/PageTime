@@ -198,6 +198,7 @@ class SettingsRepository(private val context: Context) {
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
+        val CHAPTER_PROMPT = stringPreferencesKey("chapter_prompt_template")
         val LUMEN_MODEL_URL = stringPreferencesKey("lumen_model_url")
         val LUMEN_CLOUD_RESCUE = booleanPreferencesKey("lumen_cloud_rescue")
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
@@ -457,6 +458,24 @@ class SettingsRepository(private val context: Context) {
      */
     suspend fun lumenPromptTemplate(): String? =
         context.dataStore.data.first()[Keys.LUMEN_PROMPT]?.takeIf { it.isNotBlank() }
+
+    /**
+     * The reader's own instructions for chapter and PDF flashcards, or null
+     * while the built-in ones are in use.
+     *
+     * Stored only when it differs from the default, for the same reason as the
+     * capture prompt: an app update that improves the shipped text should
+     * reach everyone who never tailored theirs.
+     */
+    suspend fun chapterPromptTemplate(): String? =
+        context.dataStore.data.first()[Keys.CHAPTER_PROMPT]?.takeIf { it.isNotBlank() }
+
+    suspend fun setChapterPromptTemplate(value: String?) {
+        context.dataStore.edit { prefs ->
+            if (value.isNullOrBlank()) prefs.remove(Keys.CHAPTER_PROMPT)
+            else prefs[Keys.CHAPTER_PROMPT] = value
+        }
+    }
 
     /**
      * Where the offline model is downloaded from, or null for the built-in one.

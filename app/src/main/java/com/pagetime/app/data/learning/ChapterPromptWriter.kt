@@ -48,5 +48,15 @@ interface ChapterPromptWriter {
          * person did.
          */
         insist: Boolean = false,
+        /**
+         * The instructions in force, or null for the shipped ones.
+         *
+         * A reader can edit them in Settings, so the text is an input to this
+         * call rather than a constant inside the client — the same shape as
+         * the Lumen capture prompt, and for the same reason: a tailored prompt
+         * that the client rendered over is how a tailored prompt silently does
+         * nothing.
+         */
+        template: String? = null,
     ): List<RawPrompt>
 }

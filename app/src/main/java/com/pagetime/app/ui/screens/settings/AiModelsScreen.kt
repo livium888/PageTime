@@ -63,6 +63,8 @@ fun AiModelsScreen(
     val offlineAiProblem by viewModel.offlineAiProblem.collectAsStateWithLifecycle()
     val lumenPrompt by viewModel.lumenPrompt.collectAsStateWithLifecycle()
     val lumenPromptIsCustom by viewModel.lumenPromptIsCustom.collectAsStateWithLifecycle()
+    val chapterPrompt by viewModel.chapterPrompt.collectAsStateWithLifecycle()
+    val chapterPromptIsCustom by viewModel.chapterPromptIsCustom.collectAsStateWithLifecycle()
     val geminiViewModel: GeminiSettingsViewModel = viewModel()
     val geminiModels by geminiViewModel.models.collectAsStateWithLifecycle()
     val selectedGeminiModel by geminiViewModel.selectedModel.collectAsStateWithLifecycle()
@@ -171,6 +173,12 @@ fun AiModelsScreen(
                 isCustom = lumenPromptIsCustom,
                 onSave = viewModel::setLumenPrompt,
                 onReset = viewModel::resetLumenPrompt
+            )
+            ChapterPromptCard(
+                prompt = chapterPrompt,
+                isCustom = chapterPromptIsCustom,
+                onSave = viewModel::setChapterPrompt,
+                onReset = viewModel::resetChapterPrompt
             )
 
             SectionHeader("Usage")

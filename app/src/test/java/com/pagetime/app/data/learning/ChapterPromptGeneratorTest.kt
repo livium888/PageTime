@@ -88,6 +88,8 @@ class ChapterPromptGeneratorTest {
         val sentPassages = mutableListOf<List<String>>()
         /** Whether the reader hand-picked the passages in each request. */
         val insisted = mutableListOf<Boolean>()
+        /** The instructions in force for each request, null when shipped. */
+        val templates = mutableListOf<String?>()
         override fun hasKey() = true
         override fun currentModel() = "gemini-2.5-flash"
         override suspend fun generateChapterPrompts(
@@ -95,9 +97,11 @@ class ChapterPromptGeneratorTest {
             chapterTitle: String,
             passages: List<String>,
             insist: Boolean,
+            template: String?,
         ): List<RawPrompt> {
             sentPassages += passages
             insisted += insist
+            templates += template
             return (script.removeFirstOrNull() ?: Result.success(emptyList())).getOrThrow()
         }
     }
@@ -158,7 +162,18 @@ class ChapterPromptGeneratorTest {
         rows: List<BookChunkEmbeddingEntity>,
         writer: Writer,
         passages: Passages = Passages(),
-    ) = ChapterPromptGenerator(Chunks(rows), Cards(), { model }, writer, null, passages)
+        /** Shared between calls when a test is about the generation cache. */
+        cards: Cards = Cards(),
+        promptTemplate: (suspend () -> String?)? = null,
+    ) = ChapterPromptGenerator(
+        chunkDao = Chunks(rows),
+        cardDao = cards,
+        embeddingModelId = { model },
+        gemini = writer,
+        usage = null,
+        passageDao = passages,
+        promptTemplate = promptTemplate ?: { null },
+    )
 
     /** In-memory record of what became of each passage. */
     private class Passages : ChapterPassageDao {
@@ -179,6 +194,74 @@ class ChapterPromptGeneratorTest {
             chapterIndex: Int,
         ): Flow<List<ChapterPassageEntity>> = flowOf(rows)
         override suspend fun deleteForBook(bookId: String) = rows.clear()
+    }
+
+    // The reader's own instructions
+    // ==============================
+    //
+    // Reported from the device: the cards are bad, and the reader would rather
+    // say what a good one is than wait for a release. The instructions are now
+    // an input, which means they have to actually reach the request — and,
+    // because a chapter is cached by a generation key, they have to be part of
+    // what that key identifies or an edit appears to do nothing.
+
+    @Test
+    fun `the shipped instructions are used when the reader has written none`() {
+        val writer = Writer()
+        runBlocking { generator(chunks(4), writer).generate(book(), 0, "One") }
+        assertEquals(listOf(null), writer.templates)
+    }
+
+    @Test
+    fun `the reader's instructions reach the model`() {
+        val writer = Writer()
+        runBlocking {
+            generator(
+                chunks(4),
+                writer,
+                promptTemplate = { "Write ONE cloze about {{passages}}" },
+            ).generate(book(), 0, "One")
+        }
+        assertEquals(listOf("Write ONE cloze about {{passages}}"), writer.templates)
+    }
+
+    @Test
+    fun `editing the instructions makes a chapter new again`() {
+        // The bug this guards: the key hashed only the model and the passages,
+        // so a reader who changed the prompt was served the old chapter back
+        // and reasonably concluded the setting did nothing.
+        val passages = Passages()
+        val cards = Cards()
+        runBlocking {
+            generator(
+                chunks(4),
+                Writer(mutableListOf(Result.success(listOf(promptFor(0, 0))))),
+                passages,
+                cards,
+            ).generate(book(), 0, "One")
+        }
+
+        // Same instructions: the chapter is not paid for twice.
+        val same = runBlocking {
+            generator(chunks(4), Writer(), passages, cards).generate(book(), 0, "One")
+        }
+        assertEquals(ChapterPromptGenerator.Outcome.ALREADY_MADE, same.outcome)
+
+        // Edited instructions: the same passages under a different prompt are a
+        // different generation, and the reader gets the questions they asked
+        // for rather than the ones they already rejected.
+        val writer = Writer()
+        val edited = runBlocking {
+            generator(
+                chunks(4),
+                writer,
+                passages,
+                cards,
+                promptTemplate = { "Different rules: ask only about causes." },
+            ).generate(book(), 0, "One")
+        }
+        assertEquals(ChapterPromptGenerator.Outcome.MADE, edited.outcome)
+        assertEquals(1, writer.sentPassages.size)
     }
 
     @Test

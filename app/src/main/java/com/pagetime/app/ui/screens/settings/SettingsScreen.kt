@@ -77,6 +77,7 @@ import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
+import com.pagetime.app.data.learning.ChapterPromptText
 import com.pagetime.app.data.learning.GeminiModel
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.PageTimeApp
@@ -602,6 +603,120 @@ internal fun CapturePromptCard(
                 Text(
                     "The retry that runs when a reply is unusable always uses the built-in " +
                         "prompt, so a tailored one that misfires still lands a card.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Lets the reader say what a good flashcard is, rather than wait for a release
+ * that guesses.
+ *
+ * WHAT THE INSTRUCTIONS COVER, AND WHAT THEY CANNOT
+ *
+ * Everything the model is told about the cards, and nothing about the shape of
+ * its reply. The app appends that part in the same words whatever is written
+ * here, because the fields it names are what the local checks use to reject a
+ * card that is not grounded in the passage — a settings field that could
+ * remove the check would be a field that can install an invented fact into a
+ * review schedule. The help text says so instead of leaving the reader to find
+ * out from an empty result.
+ *
+ * The how-many paragraph is nearly the same case: when it is not placed, the
+ * app appends the shipped one, because it carries the switch from a ceiling to
+ * a floor for a passage the reader hand-picked and losing that would make a
+ * chosen passage produce nothing.
+ */
+@Composable
+internal fun ChapterPromptCard(
+    prompt: String,
+    isCustom: Boolean,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit
+) {
+    var draft by remember(prompt) { mutableStateOf(prompt) }
+    var expanded by remember { mutableStateOf(false) }
+    val problem = ChapterPromptText.templateProblem(draft)
+    val placesCount = draft.contains(ChapterPromptText.HOW_MANY_TOKEN)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Flashcard prompt", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (isCustom) "Yours" else "The built-in prompt",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Hide" else "Edit")
+                }
+            }
+            if (expanded) {
+                Text(
+                    "What the model is asked for when it writes a chapter's or a PDF " +
+                        "page's cards. ${ChapterPromptText.PASSAGES_TOKEN} is replaced " +
+                        "with the chosen passages, numbered from zero; " +
+                        "${ChapterPromptText.BOOK_TOKEN} with the book's title and " +
+                        "${ChapterPromptText.CHAPTER_TOKEN} with the chapter's. " +
+                        "${ChapterPromptText.HOW_MANY_TOKEN} is replaced with how many " +
+                        "prompts to write per passage.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    minLines = 10,
+                    maxLines = 40,
+                    isError = problem != null,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    problem ?: if (placesCount) {
+                        "The reply's fields — passageIndex, prompt, answer, explanation, " +
+                            "sourceQuote, type — are fixed and added by the app. A quote " +
+                            "that is not in the passage still discards its card."
+                    } else {
+                        "You left out ${ChapterPromptText.HOW_MANY_TOKEN}, so the built-in " +
+                            "count paragraph is added after your instructions. The reply's " +
+                            "fields are fixed and added by the app."
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (problem != null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onSave(draft) },
+                        enabled = problem == null && draft != prompt
+                    ) {
+                        Text("Save")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onReset()
+                            draft = ChapterPromptText.DEFAULT_TEMPLATE
+                        },
+                        enabled = isCustom || draft != ChapterPromptText.DEFAULT_TEMPLATE
+                    ) {
+                        Text("Restore default")
+                    }
+                }
+                Text(
+                    "Used from the next generation on — a new chapter, or one you " +
+                        "regenerate. Cards you have kept are yours and survive.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

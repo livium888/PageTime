@@ -85,8 +85,46 @@ import com.pagetime.app.data.embed.ChapterTopics
  *
  * Pulled out here it is a pure function over its inputs, and the test can
  * simply assert that the passages are in it.
+ *
+ * THE INSTRUCTIONS ARE THE READER'S, THE CONTRACT IS NOT
+ *
+ * Report from the device: the cards are bad, and the reader wants to say what
+ * a good one is rather than wait for another release. So the rule block is a
+ * template a reader can edit in Settings, exactly as the Lumen capture prompt
+ * is, and [DEFAULT_TEMPLATE] is the shipped one.
+ *
+ * What a reader CANNOT change is the shape of the reply. The parser reads
+ * fixed fields and [ChapterPromptRules] checks them against the book, so
+ * [render] appends the output contract to whatever instructions are in force.
+ * That is deliberate: the fields are the difference between a card grounded in
+ * the passage and a plausible sentence the model made up, and a settings field
+ * that could remove the check would be a field that can quietly install
+ * falsehoods into a review schedule.
+ *
+ * The how-many paragraph is likewise not optional in effect: when the template
+ * does not place [HOW_MANY_TOKEN], the app appends it, so the floor that a
+ * hand-picked passage relies on cannot be edited away by accident.
  */
 internal object ChapterPromptText {
+
+    /** Placeholder replaced with the numbered passages. Required. */
+    const val PASSAGES_TOKEN = "{{passages}}"
+
+    /** Placeholder replaced with the book's title. */
+    const val BOOK_TOKEN = "{{book}}"
+
+    /** Placeholder replaced with the chapter's title. */
+    const val CHAPTER_TOKEN = "{{chapter}}"
+
+    /**
+     * Placeholder replaced with the how-many paragraph.
+     *
+     * Optional. Missing one is not an error — the app appends the shipped
+     * paragraph — because the paragraph carries the switch from a ceiling to a
+     * floor when the reader hand-picked the passages, and a template that
+     * silently dropped it would make a chosen passage produce nothing.
+     */
+    const val HOW_MANY_TOKEN = "{{howmany}}"
 
     /**
      * How many to write, and how hard to lean on omitting.
@@ -133,26 +171,46 @@ internal object ChapterPromptText {
         """.trimIndent()
     }
 
-    fun build(
-        bookTitle: String,
-        chapterTitle: String,
-        passages: List<String>,
-        perPassage: Int = ChapterTopics.PROMPTS_PER_PASSAGE,
-        /**
-         * The reader picked these passages by hand and wants a card from each.
-         *
-         * Changes the instruction from a ceiling into a floor. Omitting is the
-         * right default when the app chose the passages; it is the wrong answer
-         * when a person looked at this exact paragraph and said they wanted to
-         * remember it.
-         */
-        insist: Boolean = false,
-    ): String {
-        val numbered = passages.mapIndexed { index, text ->
-            "[$index]\n$text"
-        }.joinToString("\n\n")
+    /** The passages as the model cites them back: numbered from zero. */
+    private fun numbered(passages: List<String>): String =
+        passages.mapIndexed { index, text -> "[$index]\n$text" }.joinToString("\n\n")
 
-        return """
+    /**
+     * The reply's shape, in words, appended to every set of instructions.
+     *
+     * NOT EDITABLE, ON PURPOSE
+     *
+     * `passageIndex` is how a returned prompt is tied to the passage it came
+     * from, and therefore to the offset that decides where it surfaces in the
+     * book; `sourceQuote` is what [ChapterPromptRules] checks against the
+     * passage, and the check that cannot be argued with is the reason an
+     * invented sentence cannot become a scheduled card. A reader editing these
+     * away would not get different-shaped cards, they would get no cards — the
+     * parser would find nothing and the rules would discard it.
+     *
+     * So the app says this part, in the same words, whichever instructions are
+     * in force.
+     */
+    private fun contract(): String =
+        """
+            Each passage above is numbered in brackets. passageIndex is that
+            number.
+
+            type is either "qa" or "cloze". sourceQuote must be copied from
+            that passage CHARACTER FOR CHARACTER: the sentence the answer comes
+            from. Do not paraphrase, shorten or tidy it. A quote that is not
+            literally in the passage causes the whole prompt to be discarded.
+            For a cloze, sourceQuote is that same sentence with nothing deleted.
+        """.trimIndent()
+
+    /**
+     * The instructions shipped with the app, and the text a reader edits when
+     * they tailor flashcards in Settings.
+     *
+     * Everything a rule can act on lives here; only the reply's shape does not.
+     */
+    val DEFAULT_TEMPLATE: String =
+        """
             Write recall prompts from the numbered passages below, taken from a
             book the reader is part-way through. Follow these rules exactly;
             they are Wozniak's rules of formulating knowledge, and they are the
@@ -225,7 +283,7 @@ internal object ChapterPromptText {
 
             HOW MANY
 
-            ${howMany(perPassage, insist)}
+            $HOW_MANY_TOKEN
 
             Two prompts from one passage must be answerable independently. If
             knowing the answer to one gives away the other, they are one prompt
@@ -248,19 +306,84 @@ internal object ChapterPromptText {
             answer rules out. Never open with "The passage states" or "The
             author says" — explain the world, not the text.
 
-            sourceQuote must be copied from that passage CHARACTER FOR
-            CHARACTER: the sentence the answer comes from. Do not paraphrase,
-            shorten or tidy it. A quote that is not literally in the passage
-            causes the whole prompt to be discarded. For a cloze, sourceQuote is
-            that same sentence with nothing deleted.
-
-            passageIndex is the number in brackets above the passage you used.
-
-            BOOK: $bookTitle
-            CHAPTER: $chapterTitle
+            BOOK: $BOOK_TOKEN
+            CHAPTER: $CHAPTER_TOKEN
 
             PASSAGES:
-            $numbered
+            $PASSAGES_TOKEN
         """.trimIndent()
+
+    /**
+     * Fills a template's placeholders and appends the fixed output contract.
+     *
+     * The how-many paragraph is inserted by the caller when the template does
+     * not place [HOW_MANY_TOKEN], so the floor for a hand-picked passage
+     * survives an edit that removes the paragraph by accident.
+     */
+    fun render(
+        template: String,
+        bookTitle: String,
+        chapterTitle: String,
+        passages: List<String>,
+        perPassage: Int = ChapterTopics.PROMPTS_PER_PASSAGE,
+        insist: Boolean = false,
+    ): String {
+        val how = howMany(perPassage, insist)
+        val placed = template.contains(HOW_MANY_TOKEN)
+        val body = template
+            .replace(BOOK_TOKEN, bookTitle)
+            .replace(CHAPTER_TOKEN, chapterTitle)
+            .replace(HOW_MANY_TOKEN, how)
+            .replace(PASSAGES_TOKEN, numbered(passages))
+        val withCount = if (placed) body else body.trimEnd() + "\n\n" + how
+        return withCount.trimEnd() + "\n\n" + contract()
     }
+
+    /**
+     * The instructions for one chapter, edited or shipped.
+     *
+     * [template] defaults to the built-in text; the reader's own reaches here
+     * from storage through [ChapterPromptGenerator].
+     */
+    fun build(
+        bookTitle: String,
+        chapterTitle: String,
+        passages: List<String>,
+        perPassage: Int = ChapterTopics.PROMPTS_PER_PASSAGE,
+        /**
+         * The reader picked these passages by hand and wants a card from each.
+         *
+         * Changes the instruction from a ceiling into a floor. Omitting is the
+         * right default when the app chose the passages; it is the wrong answer
+         * when a person looked at this exact paragraph and said they wanted to
+         * remember it.
+         */
+        insist: Boolean = false,
+        /** The reader's own instructions, or null for the shipped ones. */
+        template: String? = null,
+    ): String = render(
+        template = template?.takeIf { it.isNotBlank() } ?: DEFAULT_TEMPLATE,
+        bookTitle = bookTitle,
+        chapterTitle = chapterTitle,
+        passages = passages,
+        perPassage = perPassage,
+        insist = insist,
+    )
+
+    /**
+     * Why [template] cannot be used, or null when it is fine.
+     *
+     * A template without [PASSAGES_TOKEN] would send the model instructions
+     * about passages it never sees — the reader would wait, pay, and get
+     * questions about nothing — so that one is refused rather than warned
+     * about. A missing [HOW_MANY_TOKEN] is not a problem: the app appends the
+     * shipped paragraph.
+     */
+    fun templateProblem(template: String): String? =
+        when {
+            template.isBlank() -> "The prompt is empty."
+            !template.contains(PASSAGES_TOKEN) ->
+                "The prompt must contain $PASSAGES_TOKEN, or the model never sees the passages."
+            else -> null
+        }
 }

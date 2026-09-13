@@ -93,6 +93,15 @@ class ChapterPromptGenerator(
      * tests want and what a book that cannot be re-parsed gets.
      */
     private val chapterText: suspend (BookEntity, Int) -> String = { _, _ -> "" },
+    /**
+     * The reader's own instructions for a chapter, or null while the shipped
+     * ones are in use. See [ChapterPromptText].
+     *
+     * A supplier rather than a string: the generator outlives a settings
+     * change, and reading it per generation is what makes an edit take effect
+     * without restarting the app.
+     */
+    private val promptTemplate: suspend () -> String? = { null },
 ) {
 
     /** Whether this chapter could produce prompts at all. */
@@ -155,7 +164,12 @@ class ChapterPromptGenerator(
         if (topics.isEmpty()) return Result(Outcome.NOTHING_IN_CHAPTER)
         val insist = onlyOrdinals.isNotEmpty()
 
-        val key = generationKey(model, topics)
+        // The instructions are part of what was generated: a reader who edits
+        // the prompt is asking for different questions, so a chapter made
+        // under the old text must not be served as though it answered the new
+        // one.
+        val template = resolveTemplate()
+        val key = generationKey(model, topics, template)
         // Already generated. Whatever the reader did with them — kept, skipped,
         // or not yet judged — this chapter is not paid for twice.
         if (!force && !insist && runCatching { cardDao.countForGeneration(book.id, key) }.getOrDefault(0) > 0) {
@@ -218,6 +232,7 @@ class ChapterPromptGenerator(
                         chapterTitle = chapterTitle ?: "Chapter ${chapterIndex + 1}",
                         passages = passages,
                         insist = insist,
+                        template = template,
                     )
                 }
                 if (usage != null) {
@@ -452,6 +467,74 @@ class ChapterPromptGenerator(
     }
 
     /**
+     * The instructions in force for the next request.
+     *
+     * The reader's when they have written one, otherwise the shipped text.
+     */
+    private suspend fun resolveTemplate(): String =
+        runCatching { promptTemplate() }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: ChapterPromptText.DEFAULT_TEMPLATE
+
+    /**
+     * Writes prompts for one stretch of text that is not in the search index.
+     *
+     * WHY THIS EXISTS
+     *
+     * The PDF reader has a page and no index. Its page is the unit of text —
+     * not chunked, not embedded, with no vector-chosen chapter to send. Before
+     * this it reached past the generator and called the model client directly,
+     * which cost it three things at once: no usage row (the one path the AI
+     * usage screen could not see), no widened passage, and no way for a
+     * tailored prompt to reach it.
+     *
+     * Everything after the request is the chapter path's: the reply is checked
+     * by [ChapterPromptRules] against the text it was asked about, and only
+     * what survives is returned. The caller saves what it gets.
+     *
+     * A single passage, so an index that is not zero is normalised rather than
+     * throwing the answer away — a model stating a 1-based count is common, and
+     * the quote is still checked against the page itself, which is the check
+     * that decides whether the question is grounded in anything.
+     */
+    suspend fun promptsForText(
+        book: BookEntity,
+        chapterTitle: String,
+        text: String,
+        insist: Boolean = true,
+    ): PromptVerdict {
+        if (text.isBlank()) return PromptVerdict(emptyList(), emptyList())
+        val template = resolveTemplate()
+        val passages = listOf(text)
+        val call: suspend () -> List<RawPrompt> = {
+            gemini.generateChapterPrompts(
+                bookTitle = book.title,
+                chapterTitle = chapterTitle,
+                passages = passages,
+                insist = insist,
+                template = template,
+            )
+        }
+        val raws = if (usage != null) {
+            // Logged like every other Gemini call. This path used to bypass the
+            // log entirely, so the reader's flashcard spend was invisible.
+            usage.track(
+                bookId = book.id,
+                operation = AiUsageRepository.OPERATION_CHAPTER_PROMPTS,
+                model = gemini.currentModel(),
+                inputCharacters = text.length,
+                outputItems = { it.size },
+                block = call,
+            )
+        } else {
+            call()
+        }
+        return PromptSifter().sift(
+            raws.map { if (it.passageIndex == 0) it else it.copy(passageIndex = 0) },
+            passages,
+        )
+    }
+
+    /**
      * The reader accepts a prompt: it becomes a card and is due now.
      *
      * Due immediately rather than tomorrow, deliberately. The first retrieval
@@ -605,17 +688,21 @@ class ChapterPromptGenerator(
          */
         const val PASSAGES_PER_REQUEST = 8
         /**
-         * Identity of one generation: the model that produced the vectors, plus
-         * the passages actually sent.
+         * Identity of one generation: the model that produced the vectors, the
+         * instructions in force, plus the passages actually sent.
          *
          * Hashing the passages rather than the chapter text means re-indexing
          * with a different embedding model — which would choose different
          * passages — correctly counts as a different generation, while merely
          * reopening the chapter does not.
          */
-        fun generationKey(model: String, topics: List<TopicPassage>): String {
+        fun generationKey(model: String, topics: List<TopicPassage>, template: String): String {
             val digest = MessageDigest.getInstance("SHA-256")
             digest.update(model.toByteArray())
+            // The instructions decide what is asked, so an edited prompt has to
+            // change the key. Leaving it out would make an edit appear to do
+            // nothing on every chapter that had already been generated.
+            digest.update(template.toByteArray())
             for (topic in topics) {
                 digest.update(topic.text.toByteArray())
             }

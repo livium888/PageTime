@@ -222,6 +222,10 @@ class AppContainer(context: Context) {
             chapterText = { book, chapter ->
                 learningContextExtractor.chapterText(book, chapter)
             },
+            // The reader's own instructions, when they have written any. Read
+            // per generation rather than captured here, so an edit in Settings
+            // takes effect on the next chapter instead of the next launch.
+            promptTemplate = { settingsRepository.chapterPromptTemplate() },
         )
 
     val lumenRepository = LumenRepository(

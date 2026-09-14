@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.KeyEvent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
@@ -30,13 +31,15 @@ class AppBlockerService : AccessibilityService() {
             // apps that were merely open in the background.
             val pkg = rootInActiveWindow?.packageName?.toString()
             controller?.onPolledForeground(pkg)
-            // The backstop for address rules. Window events are the fast path
-            // and they do get dropped or coalesced, and a blocked site that
-            // only blocks on a good day is worse than no rule at all.
-            checkSites()
+            // Site rules are intentionally NOT checked here. Reading the address
+            // bar on a timer would block while the reader is still editing a URL.
+            // Navigation commits are scheduled by onKeyEvent and Go-button clicks.
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
+    private val navigationCheck = Runnable { checkSites() }
+    private val navigationCheckFollowUp = Runnable { checkSites() }
+
     private var overlay: TimeUpOverlay? = null
 
     /**
@@ -179,23 +182,84 @@ class AppBlockerService : AccessibilityService() {
                 }
             }
         }
-        // Address rules come last, and are read from a signal the app block
-        // never needed: the browser's own bar. Deliberately after the decisions
-        // above, so a browser that is itself a blocked app is answered by the
-        // app rule — the broader one — before any page-level opinion is formed.
-        when (event.eventType) {
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_CLICKED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> checkSites()
+        // A click on the browser's Go/Search/Navigate control is the other
+        // navigation commit path. Ordinary address-bar clicks and typing do not
+        // qualify, so the reader can edit or replace a URL without being
+        // interrupted by the block screen.
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            navigationCommit(event)
+        ) {
+            scheduleNavigationCheck()
         }
+    }
+
+    /**
+     * Receives Enter from a focused browser address bar without consuming it.
+     *
+     * Accessibility services only receive filtered key events when the service
+     * declares flagRequestFilterKeyEvents. Returning false lets the browser
+     * handle Enter normally; the delayed check runs after it has committed the
+     * new address and updated its accessibility tree.
+     */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 &&
+            event.keyCode in setOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER) &&
+            addressBarHasInputFocus()
+        ) {
+            scheduleNavigationCheck()
+        }
+        return false
+    }
+
+    private fun scheduleNavigationCheck() {
+        mainHandler.removeCallbacks(navigationCheck)
+        mainHandler.removeCallbacks(navigationCheckFollowUp)
+        // The first pass catches fast Chromium navigations; the follow-up covers
+        // browsers that update the address bar only after the first page event.
+        mainHandler.postDelayed(navigationCheck, NAVIGATION_CHECK_DELAY_MS)
+        mainHandler.postDelayed(navigationCheckFollowUp, NAVIGATION_CHECK_FOLLOW_UP_MS)
+    }
+
+    private fun navigationCommit(event: AccessibilityEvent): Boolean {
+        val eventPackage = event.packageName?.toString() ?: return false
+        val activePackage = rootInActiveWindow?.packageName?.toString() ?: return false
+        if (eventPackage != activePackage || !isBrowserPackage(eventPackage)) return false
+
+        val source = runCatching { event.source }.getOrNull() ?: return false
+        return BrowserUrlBars.isNavigationCommitAction(
+            BrowserUrlBars.Node(
+                viewId = runCatching { source.viewIdResourceName }.getOrNull(),
+                text = source.text?.toString(),
+                contentDescription = source.contentDescription?.toString(),
+                className = source.className?.toString(),
+            )
+        )
+    }
+
+    private fun addressBarHasInputFocus(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val packageName = root.packageName?.toString() ?: return false
+        if (!isBrowserPackage(packageName)) return false
+        val focused = runCatching { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+            .getOrNull() ?: return false
+        return BrowserUrlBars.isAddressBar(
+            BrowserUrlBars.Node(
+                viewId = runCatching { focused.viewIdResourceName }.getOrNull(),
+                text = focused.text?.toString(),
+                contentDescription = focused.contentDescription?.toString(),
+                className = focused.className?.toString(),
+            ),
+            packageName,
+        )
     }
 
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(foregroundRefresh)
-        mainHandler.removeCallbacks(siteEnforcement)
+        mainHandler.removeCallbacks(navigationCheck)
+        mainHandler.removeCallbacks(navigationCheckFollowUp)
         dismissTimeUp()
         clearSiteBlock()
         controller?.service = null
@@ -204,6 +268,12 @@ class AppBlockerService : AccessibilityService() {
 
     companion object {
         private const val FOREGROUND_REFRESH_MS = 2_000L
+
+        /** Delay before checking the URL after Enter/Go. */
+        private const val NAVIGATION_CHECK_DELAY_MS = 250L
+
+        /** Follow-up for browsers whose accessibility tree updates slowly. */
+        private const val NAVIGATION_CHECK_FOLLOW_UP_MS = 900L
 
         /** How often the site loop re-checks that the browser is still in front. */
         private const val SITE_ENFORCE_INTERVAL_MS = 1_000L
@@ -356,10 +426,10 @@ class AppBlockerService : AccessibilityService() {
     /**
      * Looks at the address bar in front and blocks the page if a rule covers it.
      *
-     * Called from every event that could have changed the bar and from the
-     * two-second poll. Cheap to call and cheap to ignore: it does nothing at
-     * all unless the focused window is a browser, which is what keeps this from
-     * reading the screen of every app on the phone.
+     * Called only after an explicit navigation commit (Enter/Go), rather than
+     * on ordinary address-bar edits or a timer. Cheap to call and cheap to
+     * ignore: it does nothing at all unless the focused window is a browser,
+     * which is what keeps this from reading the screen of every app on the phone.
      */
     private fun checkSites() {
         // An app block owns the screen; there is no page to have an opinion

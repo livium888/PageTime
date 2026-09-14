@@ -60,6 +60,25 @@ object BrowserUrlBars {
 
     private val CHROMIUM_URL_BAR_IDS = listOf("url_bar")
 
+    private val NAVIGATION_ID_SEGMENTS = listOf(
+        "go",
+        "go_button",
+        "navigate",
+        "navigate_button",
+        "url_go",
+        "url_go_button",
+        "submit",
+    )
+
+    private val NAVIGATION_DESCRIPTIONS = listOf(
+        "Go",
+        "Navigate",
+        "Load page",
+        "Submit",
+    )
+
+    private val NAVIGATION_LABELS = listOf("Go", "Navigate", "Load")
+
     private val CHROMIUM_PACKAGES = listOf(
         "com.android.chrome",
         "com.chrome.beta",
@@ -188,6 +207,24 @@ object BrowserUrlBars {
         val description = node.contentDescription?.trim()
         return description != null &&
             ADDRESS_BAR_DESCRIPTIONS.any { it.equals(description, ignoreCase = true) }
+    }
+
+    /** Whether [node] is a browser control that commits the current address. */
+    fun isNavigationCommitAction(node: Node): Boolean {
+        val id = node.viewId?.substringAfterLast('/')?.lowercase().orEmpty()
+        val description = node.contentDescription?.trim().orEmpty()
+        val text = node.text?.trim().orEmpty()
+        return NAVIGATION_ID_SEGMENTS.any { id == it || id.endsWith("_$it") } ||
+            NAVIGATION_DESCRIPTIONS.any { it.equals(description, ignoreCase = true) } ||
+            NAVIGATION_LABELS.any { it.equals(text, ignoreCase = true) }
+    }
+
+    /** Whether [node] is the address bar for [packageName] and can receive Enter. */
+    fun isAddressBar(node: Node, packageName: String): Boolean {
+        val spec = specFor(packageName)
+        val id = node.viewId
+        if (id != null && spec?.ids?.contains(id) == true) return true
+        return looksLikeAddressBar(node)
     }
 
     /**

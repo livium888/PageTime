@@ -80,6 +80,41 @@ class BrowserUrlBarsTest {
         assertFalse(BrowserUrlBars.isKnownBrowser("com.example.newbrowser"))
     }
 
+    // --- Navigation commits ---
+
+    @Test
+    fun `a Go control is a navigation commit`() {
+        assertTrue(
+            BrowserUrlBars.isNavigationCommitAction(
+                node(viewId = "com.android.chrome:id/go_button")
+            )
+        )
+        assertTrue(
+            BrowserUrlBars.isNavigationCommitAction(
+                node(contentDescription = "Go")
+            )
+        )
+    }
+
+    @Test
+    fun `editing the address bar or a page search is not a navigation commit`() {
+        assertFalse(
+            BrowserUrlBars.isNavigationCommitAction(
+                node(viewId = "com.android.chrome:id/url_bar")
+            )
+        )
+        assertFalse(
+            BrowserUrlBars.isNavigationCommitAction(
+                node(text = "Search", className = "android.widget.Button")
+            )
+        )
+        assertFalse(
+            BrowserUrlBars.isNavigationCommitAction(
+                node(contentDescription = "Search the web")
+            )
+        )
+    }
+
     // --- Recognising a bar in a browser nobody has named ---
 
     @Test

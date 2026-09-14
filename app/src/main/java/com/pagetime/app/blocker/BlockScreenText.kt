@@ -56,6 +56,36 @@ object BlockScreenText {
     fun startButtonLabel(gate: GateState): String = "Start ${span(gate.sessionLengthSeconds)}"
 
     /**
+     * The block screen for a site rather than an app.
+     *
+     * A DIFFERENT REASON, SO A DIFFERENT SENTENCE AGAIN
+     *
+     * Both existing sentences are wrong here. "Time is up!" describes a debt
+     * that does not exist — the reader has not run out of anything — and the
+     * gate's distance ("1h 12m of 2h") describes work not yet done, which is
+     * equally untrue: no amount of reading opens this site, because the reader
+     * is the one who said not to open it. So the screen says the address, says
+     * that it is off limits, and offers the two things that are honest: go
+     * back, or read instead.
+     *
+     * The address is the title rather than a decoration. It is the one piece of
+     * information that makes the screen explicable at a glance — a reader who
+     * sees `bbc.co.uk` knows instantly which rule fired and can go and change
+     * it — and naming the section when the rule names one shows that a rule
+     * narrower than the whole site is being honoured as written.
+     */
+    fun siteTitle(rule: SiteRules.Rule): String = rule.id
+
+    fun siteSubtitle(rule: SiteRules.Rule): String = if (rule.pathPrefix == null) {
+        "You put this site off limits. Go back, or read for a while."
+    } else {
+        "You put this part of the site off limits. Go back, or read for a while."
+    }
+
+    /** The secondary action on a site block: leave the page. */
+    fun siteBackLabel(): String = "Go back"
+
+    /**
      * What the emergency button offers, or why it cannot.
      *
      * Names the app rather than saying "unlock", because naming it is the

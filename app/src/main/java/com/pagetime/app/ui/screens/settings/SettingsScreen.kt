@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
@@ -100,6 +101,7 @@ import com.pagetime.app.ui.formatMinutes
 @Composable
 fun SettingsScreen(
     onManageBlockedApps: () -> Unit,
+    onManageBlockedSites: () -> Unit,
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
     onAiUsage: () -> Unit,
@@ -403,6 +405,14 @@ fun SettingsScreen(
                 icon = Icons.Outlined.Block,
                 label = "Manage blocked apps",
                 onClick = onManageBlockedApps
+            )
+            // Its own row rather than a section inside blocked apps: the two
+            // lists answer different questions, and a site rule holds whether
+            // or not there is time on the clock.
+            AppSettingsRow(
+                icon = Icons.Outlined.Language,
+                label = "Blocked sites",
+                onClick = onManageBlockedSites
             )
             AppSettingsRow(
                 icon = Icons.Outlined.History,

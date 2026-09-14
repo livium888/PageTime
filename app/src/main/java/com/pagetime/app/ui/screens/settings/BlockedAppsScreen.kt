@@ -101,7 +101,9 @@ fun BlockedAppsScreen(
                             "Apps can be added any time, but only removed during a session."
                     } else {
                         "While your balance is empty, opening one of these apps sends you back to the reader."
-                    },
+                    } +
+                        " Sites blocked by address, in every browser, are on the " +
+                        "Blocked sites screen.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)
@@ -277,9 +279,13 @@ private fun BlockingStatsCard(stats: List<BlockedAppsViewModel.BlockStat>) {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("Blocking stats — last 24h", style = MaterialTheme.typography.titleMedium)
+            // "these apps" was accurate until blocked sites started reporting
+            // into the same ledger, and a count that silently includes a second
+            // kind of thing is the sort of number this screen exists to avoid.
+            // The per-row labels already say which is which.
             Text(
                 "$totalBlocked time${if (totalBlocked == 1L) "" else "s"} blocked · " +
-                    "${formatMinutes(totalSpent)} of browse time burned in these apps",
+                    "${formatMinutes(totalSpent)} of browse time burned",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

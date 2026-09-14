@@ -27,6 +27,18 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!--
+             And which apps can open a web link. Blocked sites are read out of a
+             browser's address bar, and the only way to recognise a browser the
+             app has never heard of is to ask what handles an https:// intent.
+             Without this, API 30+ package visibility would hide every browser
+             not in the built-in table, and a site rule would silently stop
+             working on whichever browser the reader happens to use.
+        -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
     <application

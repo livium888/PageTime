@@ -24,6 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         BookEntity::class,
         BlockedAppEntity::class,
+        BlockedSiteEntity::class,
         UsageEventEntity::class,
         LearningCardEntity::class,
         LearningReviewLogEntity::class,
@@ -40,12 +41,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PagemarkEntity::class,
         TextHighlightEntity::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun blockedAppDao(): BlockedAppDao
+    abstract fun blockedSiteDao(): BlockedSiteDao
     abstract fun usageEventDao(): UsageEventDao
     abstract fun learningCardDao(): LearningCardDao
     abstract fun learningReviewLogDao(): LearningReviewLogDao
@@ -369,6 +371,27 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_text_highlights_bookId " +
                         "ON text_highlights(bookId)"
                 )
+            }
+        }
+
+        /**
+         * Site rules: whole domains and sections of them, by address.
+         *
+         * Read on the main thread inside an accessibility event, so the host
+         * and the path are stored separately rather than as one string that
+         * would have to be re-parsed on every address bar read.
+         */
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS blocked_sites (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "host TEXT NOT NULL, " +
+                        "pathPrefix TEXT, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "enabled INTEGER NOT NULL DEFAULT 1)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_sites_enabled ON blocked_sites(enabled)")
             }
         }
 

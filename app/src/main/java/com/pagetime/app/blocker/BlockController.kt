@@ -151,6 +151,22 @@ class BlockController(
     var currentBlockedPackage: String? = null
 
     /**
+     * Set while a blocked SITE's screen covers the app this meter is charging.
+     *
+     * A third "nobody is looking" condition, beside the screen being off and
+     * the app having gone to the background — and it is the same argument in
+     * all three. The browser is metered while it is genuinely being used; a
+     * full-screen block over the page means the reader is staring at the app's
+     * own screen and not at the site, so the seconds are not theirs to be
+     * charged for.
+     *
+     * Written by the accessibility service, which is the only thing that knows
+     * a site screen is up, and read by the spend ticker on every tick.
+     */
+    @Volatile
+    var sitePaused: Boolean = false
+
+    /**
      * When the blocked app was last PROVEN to be in front, on the monotonic
      * clock — wall time can jump under the app and would make a sighting look
      * arbitrarily old or fresh.
@@ -469,6 +485,11 @@ class BlockController(
                 if (currentBlockedPackage != pkg) break
                 // Screen off → nobody is using the app; don't drain their time.
                 if (!powerManager.isInteractive) continue
+                // A blocked site's screen is covering the app. Same reasoning:
+                // the reader is looking at our block screen, not at the app, and
+                // charging them for these seconds would be the theft the check
+                // above exists to prevent.
+                if (sitePaused) continue
 
                 val remaining = balanceManager.spendAccessSecond()
                 if (!gate.enabled) balanceSeconds = remaining

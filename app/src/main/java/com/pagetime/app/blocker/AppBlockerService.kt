@@ -2,11 +2,14 @@ package com.pagetime.app.blocker
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.pagetime.app.MainActivity
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.review.ReviewSession
@@ -27,13 +30,99 @@ class AppBlockerService : AccessibilityService() {
             // apps that were merely open in the background.
             val pkg = rootInActiveWindow?.packageName?.toString()
             controller?.onPolledForeground(pkg)
+            // The backstop for address rules. Window events are the fast path
+            // and they do get dropped or coalesced, and a blocked site that
+            // only blocks on a good day is worse than no rule at all.
+            checkSites()
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
     private var overlay: TimeUpOverlay? = null
 
+    /**
+     * The block screen for a SITE, which is a separate window from [overlay].
+     *
+     * Two instances rather than one shared, because they are re-pointed at
+     * completely different content and only ever one of them is up. Sharing one
+     * would mean every site block having to rebuild the app block's screen (or
+     * worse, show the app block's last title) and the two reasons for blocking
+     * would be indistinguishable the moment anything went wrong.
+     */
+    private var siteOverlay: TimeUpOverlay? = null
+
+    /** The rule a block is currently resting on, or null when no site is blocked. */
+    private var siteBlock: SiteRules.Rule? = null
+
+    /** The browser whose address bar produced the current site block. */
+    private var siteBrowserPackage: String? = null
+
+    /**
+     * When the site check last ran, and when it last paid for a tree walk.
+     *
+     * A Chromium page emits content-changed events continuously while it loads
+     * and settles, and each one is an invitation to read the address bar. The
+     * bar cannot have changed if the text has not, so the reading is rate
+     * limited rather than trusted to the event stream.
+     */
+    private var lastSiteCheckAt = 0L
+    private var lastTreeWalkAt = 0L
+
+    /**
+     * Packages that resolve a web link but turned out to have no address bar.
+     *
+     * Most apps that can open a URL are browsers; some are not, and the ones
+     * that are not (a video app, a news app) are worth remembering so the tree
+     * walk is paid for once rather than on every poll. Known browsers are never
+     * remembered this way — a Chrome whose toolbar is hidden by a full-screen
+     * video still has one.
+     */
+    private val barlessPackages = mutableSetOf<String>()
+
+    /** Packages that can open a web link, and the ones that cannot. Both cached. */
+    private val browserPackages = mutableSetOf<String>()
+    private val nonBrowserPackages = mutableSetOf<String>()
+
+    /** Wall-clock monotonic time a site screen cannot be drawn until (0 = never). */
+    private var siteOverlayUnavailableUntil = 0L
+
+    /**
+     * Keeps the site screen up for as long as the browser is the app in front.
+     *
+     * The whole loop, because there is nothing else to assert. The address bar
+     * cannot change while the screen covers it — the cover takes every touch —
+     * so the only question left is whether the reader is still in the browser
+     * at all, and the answer to that is the focused window and nothing more.
+     * This is what takes the screen down when they press Home or switch apps.
+     */
+    private val siteEnforcement = object : Runnable {
+        override fun run() {
+            if (siteBlock == null) return
+            val browser = siteBrowserPackage
+            val front = focusedWindowPackage()
+            when {
+                browser == null -> {
+                    clearSiteBlock()
+                    return
+                }
+                front == browser -> Unit
+                // Our own overlay, or a window that cannot be inspected.
+                // Unknown is not evidence of leaving, so the block stands — the
+                // same reading the app's enforce loop gives it.
+                front == null || front == packageName -> Unit
+                else -> {
+                    clearSiteBlock()
+                    return
+                }
+            }
+            mainHandler.postDelayed(this, SITE_ENFORCE_INTERVAL_MS)
+        }
+    }
+
     private val controller: BlockController?
         get() = (application as? PageTimeApp)?.container?.blockController
+
+    private val siteBlocker: SiteBlocker?
+        get() = (application as? PageTimeApp)?.container?.siteBlocker
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -90,19 +179,78 @@ class AppBlockerService : AccessibilityService() {
                 }
             }
         }
+        // Address rules come last, and are read from a signal the app block
+        // never needed: the browser's own bar. Deliberately after the decisions
+        // above, so a browser that is itself a blocked app is answered by the
+        // app rule — the broader one — before any page-level opinion is formed.
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_CLICKED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> checkSites()
+        }
     }
 
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(foregroundRefresh)
+        mainHandler.removeCallbacks(siteEnforcement)
         dismissTimeUp()
+        clearSiteBlock()
         controller?.service = null
         super.onDestroy()
     }
 
     companion object {
         private const val FOREGROUND_REFRESH_MS = 2_000L
+
+        /** How often the site loop re-checks that the browser is still in front. */
+        private const val SITE_ENFORCE_INTERVAL_MS = 1_000L
+
+        /**
+         * The floor between two address bar reads.
+         *
+         * A loaded page fires content-changed events far faster than this. The
+         * bar's text is the only thing worth reacting to, and it cannot change
+         * more often than a person can press a key.
+         */
+        private const val SITE_CHECK_MIN_INTERVAL_MS = 400L
+
+        /**
+         * The floor between two full tree walks.
+         *
+         * The walk is the fallback for a browser that does not answer to a
+         * view id lookup — an unknown browser, or a known one whose toolbar is
+         * hidden behind full-screen content. Bounded and throttled because
+         * it is the one part of this that costs anything.
+         */
+        private const val TREE_WALK_MIN_INTERVAL_MS = 1_500L
+
+        /** Depth-bounded node budget for a tree walk; the toolbar is near the top. */
+        private const val MAX_WALKED_NODES = 400
+
+        /** How many address-bar-less apps to remember before giving up on memoising. */
+        private const val MAX_REMEMBERED_BARLESS = 64
+
+        /**
+         * How long to stop trying after no site screen could be drawn.
+         *
+         * An accessibility overlay needs no permission and effectively always
+         * attaches, so this is the "something is very wrong" path. Without a
+         * pause the service would re-decide every few hundred milliseconds for
+         * a screen it cannot draw, and would hold a block that is not real.
+         */
+        private const val SITE_OVERLAY_RETRY_MS = 60_000L
+
+        /**
+         * The gap between dropping the site screen and pressing Back.
+         *
+         * The screen is focusable and swallows Back on purpose, so the press
+         * has to be sent after it is gone or it lands on the screen itself and
+         * does nothing.
+         */
+        private const val SITE_BACK_DELAY_MS = 200L
     }
 
     /**
@@ -138,6 +286,11 @@ class AppBlockerService : AccessibilityService() {
     }
 
     private fun showTimeUpNow(): Boolean {
+        // The app block is the broader rule: it says the browser itself is off
+        // limits, which makes any opinion about the page inside it moot — and
+        // two block screens stacked on each other is one screen the reader
+        // cannot read.
+        clearSiteBlock()
         val current = overlay ?: TimeUpOverlay(
             context = this,
             onReadNow = { openReader() },
@@ -196,6 +349,209 @@ class AppBlockerService : AccessibilityService() {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // Blocked sites
+    // ---------------------------------------------------------------------
+
+    /**
+     * Looks at the address bar in front and blocks the page if a rule covers it.
+     *
+     * Called from every event that could have changed the bar and from the
+     * two-second poll. Cheap to call and cheap to ignore: it does nothing at
+     * all unless the focused window is a browser, which is what keeps this from
+     * reading the screen of every app on the phone.
+     */
+    private fun checkSites() {
+        // An app block owns the screen; there is no page to have an opinion
+        // about while the app itself is refused.
+        if (isTimeUpShowing()) return
+        if (siteBlock != null) return
+        val now = SystemClock.elapsedRealtime()
+        if (now < siteOverlayUnavailableUntil) return
+        if (now - lastSiteCheckAt < SITE_CHECK_MIN_INTERVAL_MS) return
+        lastSiteCheckAt = now
+
+        val root = rootInActiveWindow ?: return
+        val pkg = root.packageName?.toString() ?: return
+        if (!isBrowserPackage(pkg)) return
+
+        val bar = readUrlBar(root, pkg) ?: return
+        val rule = siteBlocker?.match(bar) ?: return
+        startSiteBlock(rule, pkg)
+    }
+
+    /**
+     * Whether [packageName] can open a web link.
+     *
+     * The table answers for every browser worth naming. This answers for the
+     * ones nobody has named yet, using the one property every browser has and
+     * almost nothing else does: it handles an `https://` intent. That is the
+     * same question the address bar itself answers for the reader, which is why
+     * it is the right one to ask — a package that cannot open a web link has no
+     * address bar to read.
+     *
+     * Resolved once per package. The answer cannot change while the app runs,
+     * and asking the PackageManager on every accessibility event would be the
+     * kind of cost that only shows up on the devices this has to work on.
+     */
+    private fun isBrowserPackage(packageName: String): Boolean {
+        if (BrowserUrlBars.isKnownBrowser(packageName)) return true
+        if (packageName in browserPackages) return true
+        if (packageName in nonBrowserPackages) return false
+        val resolves = runCatching {
+            val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+            packageManager.queryIntentActivities(probe, 0)
+                .any { it.activityInfo?.packageName == packageName }
+        }.getOrDefault(false)
+        if (resolves) browserPackages += packageName else nonBrowserPackages += packageName
+        return resolves
+    }
+
+    /**
+     * The text in [root]'s address bar, or null when there is not one.
+     *
+     * TABLE FIRST, TREE SECOND
+     *
+     * A known browser is asked for the one or two ids the table gives it, which
+     * is a single lookup each and answers immediately. Only if that comes back
+     * empty does this pay for a walk of the window — which is what makes an
+     * unknown browser work at all, and what makes a Chrome whose toolbar is
+     * hidden by a full-screen video stop costing anything after the first
+     * second and a half.
+     */
+    private fun readUrlBar(root: AccessibilityNodeInfo, packageName: String): String? {
+        val spec = BrowserUrlBars.specFor(packageName)
+        if (spec != null) {
+            val hits = spec.ids.mapNotNull { id -> nodeForId(root, id) }
+            BrowserUrlBars.pickUrl(hits, packageName)?.let { return it }
+        } else if (packageName in barlessPackages) {
+            // An app that can open a link but has no bar, seen before. Nothing
+            // about it will have changed.
+            return null
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastTreeWalkAt < TREE_WALK_MIN_INTERVAL_MS) return null
+        lastTreeWalkAt = now
+
+        val url = BrowserUrlBars.pickUrl(walkTree(root), packageName)
+        if (url == null &&
+            !BrowserUrlBars.isKnownBrowser(packageName) &&
+            barlessPackages.size < MAX_REMEMBERED_BARLESS
+        ) {
+            barlessPackages += packageName
+        }
+        return url
+    }
+
+    /** One node by view id, or null when the window has no such node. */
+    private fun nodeForId(root: AccessibilityNodeInfo, id: String): BrowserUrlBars.Node? =
+        runCatching { root.findAccessibilityNodeInfosByViewId(id) }
+            .getOrNull()
+            ?.firstOrNull()
+            ?.let { node ->
+                BrowserUrlBars.Node(
+                    viewId = id,
+                    text = node.text?.toString(),
+                    contentDescription = node.contentDescription?.toString(),
+                    className = node.className?.toString(),
+                )
+            }
+
+    /**
+     * A bounded breadth-first read of the window.
+     *
+     * Breadth-first and bounded for one reason: an address bar lives near the
+     * top of a browser's hierarchy, while the page inside it can be tens of
+     * thousands of nodes deep. Walking the whole tree to find a toolbar would
+     * be the one operation here that a long article could make slow.
+     */
+    private fun walkTree(root: AccessibilityNodeInfo): List<BrowserUrlBars.Node> {
+        val out = ArrayList<BrowserUrlBars.Node>(64)
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty() && out.size < MAX_WALKED_NODES) {
+            val node = queue.removeFirst()
+            out += BrowserUrlBars.Node(
+                viewId = runCatching { node.viewIdResourceName }.getOrNull(),
+                text = node.text?.toString(),
+                contentDescription = node.contentDescription?.toString(),
+                className = node.className?.toString(),
+            )
+            for (index in 0 until node.childCount) {
+                runCatching { node.getChild(index) }.getOrNull()?.let { queue.add(it) }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Puts the site screen up and starts the loop that keeps it honest.
+     *
+     * The browser's meter is paused for as long as this is up. The existing
+     * rule is that time is not charged when nobody is looking — the screen-off
+     * check — and a cover over the page is exactly that situation: the reader
+     * is not using the app, so charging them for it would be the same theft the
+     * screen-off rule exists to prevent.
+     */
+    private fun startSiteBlock(rule: SiteRules.Rule, browserPackage: String) {
+        siteBlock = rule
+        siteBrowserPackage = browserPackage
+        siteBlocker?.logBlocked(rule)
+        controller?.sitePaused = true
+
+        if (!showSiteBlock(rule)) {
+            // No overlay window could be added — a permission revoked under us,
+            // or an OEM that refuses accessibility overlays. Claiming a block
+            // that cannot be drawn would leave the browser unmetered with
+            // nothing on screen to explain it, so the block is given up and
+            // the attempt is paused rather than repeated every 400ms.
+            siteOverlayUnavailableUntil = SystemClock.elapsedRealtime() + SITE_OVERLAY_RETRY_MS
+            clearSiteBlock()
+            return
+        }
+
+        mainHandler.removeCallbacks(siteEnforcement)
+        mainHandler.postDelayed(siteEnforcement, SITE_ENFORCE_INTERVAL_MS)
+    }
+
+    private fun showSiteBlock(rule: SiteRules.Rule): Boolean {
+        val current = siteOverlay ?: TimeUpOverlay(
+            context = this,
+            onReadNow = { openReader() },
+            onSiteBack = { leaveSiteBlock() },
+        ).also { siteOverlay = it }
+        current.setSiteBlock(rule)
+        return current.show()
+    }
+
+    /**
+     * Takes the site screen down and steps back out of the page.
+     *
+     * Back rather than Home, and back rather than the reader: the reader is
+     * already on offer as the screen's main button, and the reason a reader
+     * meets this screen at all is usually a link they followed. Undoing that
+     * link is the smaller, more useful act — and it is the only one that leaves
+     * them where they were rather than somewhere new.
+     */
+    private fun leaveSiteBlock() {
+        clearSiteBlock()
+        mainHandler.postDelayed(
+            { performGlobalAction(GLOBAL_ACTION_BACK) },
+            SITE_BACK_DELAY_MS
+        )
+    }
+
+    /** Drops any site block, stops its loop, and unpauses the browser's meter. */
+    private fun clearSiteBlock() {
+        val wasBlocking = siteBlock != null
+        siteBlock = null
+        siteBrowserPackage = null
+        mainHandler.removeCallbacks(siteEnforcement)
+        siteOverlay?.dismiss()
+        if (wasBlocking) controller?.sitePaused = false
+    }
+
     /**
      * Opens the reader, aimed at the next due chunk when there is one.
      *
@@ -210,6 +566,7 @@ class AppBlockerService : AccessibilityService() {
      */
     private fun openReader() {
         controller?.releaseBlock()
+        clearSiteBlock()
         dismissTimeUp()
         val app = application as? PageTimeApp
         val intent = Intent(this, MainActivity::class.java).apply {

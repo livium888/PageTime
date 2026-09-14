@@ -5,6 +5,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
+import com.pagetime.app.blocker.SiteBlocker
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
@@ -79,12 +80,14 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_19_20,
                 AppDatabase.MIGRATION_20_21,
                 AppDatabase.MIGRATION_21_22,
-                AppDatabase.MIGRATION_22_23
+                AppDatabase.MIGRATION_22_23,
+                AppDatabase.MIGRATION_23_24
             )
             .build()
 
     private val bookDao = database.bookDao()
     private val blockedAppDao = database.blockedAppDao()
+    private val blockedSiteDao = database.blockedSiteDao()
     private val usageEventDao = database.usageEventDao()
     private val learningGenerationDao = database.learningGenerationDao()
     private val conceptDao = database.conceptDao()
@@ -182,6 +185,9 @@ class AppContainer(context: Context) {
     )
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)
+
+    /** Sites off limits by address, which hold regardless of earned time. */
+    val blockedSiteRepository = BlockedSiteRepository(blockedSiteDao)
 
     val usageRepository = UsageRepository(usageEventDao)
 
@@ -328,6 +334,18 @@ class AppContainer(context: Context) {
         selfPackage = appContext.packageName
     )
 
+    /**
+     * Address rules, read from the accessibility service.
+     *
+     * Separate from [blockController] on purpose: a blocked site is not a
+     * question about earned time, so nothing about it consults the balance.
+     */
+    val siteBlocker = SiteBlocker(
+        scope = scope,
+        repository = blockedSiteRepository,
+        usageRepository = usageRepository,
+    )
+
     /** UsageStats audit: charges blocked-app time even if our service was dead. */
     val usageStatsReader = UsageStatsReader(appContext)
     val usageReconciler = UsageReconciler(
@@ -343,6 +361,7 @@ class AppContainer(context: Context) {
 
     init {
         blockController.start()
+        siteBlocker.start()
         usageReconciler.start()
         // PDFs imported before a PDF was converted at import are still sitting
         // in the library as extracted text. Both files are on disk, so they can

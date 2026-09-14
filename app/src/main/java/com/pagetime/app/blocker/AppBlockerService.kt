@@ -265,6 +265,7 @@ class AppBlockerService : AccessibilityService() {
         } == true
         val addressBarFocused = addressBarHasInputFocus(browser)
         val isTextEditEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+        val keyboardVisible = inputMethodWindowVisible()
         val relevantWindowChange = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         val isBrowserCommitEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||

@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.pagetime.app.MainActivity
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.review.ReviewSession
@@ -37,8 +38,11 @@ class AppBlockerService : AccessibilityService() {
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
-    private val navigationCheck = Runnable { checkSites() }
-    private val navigationCheckFollowUp = Runnable { checkSites() }
+    private val navigationCheck = Runnable { checkSites(pendingNavigationPackage) }
+    private val navigationCheckFollowUp = Runnable { checkSites(pendingNavigationPackage) }
+
+    /** Browser package associated with the latest Enter/Go action. */
+    private var pendingNavigationPackage: String? = null
 
     private var overlay: TimeUpOverlay? = null
 
@@ -189,7 +193,7 @@ class AppBlockerService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
             navigationCommit(event)
         ) {
-            scheduleNavigationCheck()
+            scheduleNavigationCheck(currentBrowser()?.packageName)
         }
     }
 
@@ -204,15 +208,19 @@ class AppBlockerService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN &&
             event.repeatCount == 0 &&
-            event.keyCode in setOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER) &&
-            addressBarHasInputFocus()
+            event.keyCode in setOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
         ) {
-            scheduleNavigationCheck()
+            val browser = currentBrowser()
+            if (browser != null && addressBarHasInputFocus(browser)) {
+                scheduleNavigationCheck(browser.packageName)
+            }
         }
         return false
     }
 
-    private fun scheduleNavigationCheck() {
+    private fun scheduleNavigationCheck(browserPackage: String?) {
+        if (browserPackage.isNullOrBlank()) return
+        pendingNavigationPackage = browserPackage
         mainHandler.removeCallbacks(navigationCheck)
         mainHandler.removeCallbacks(navigationCheckFollowUp)
         // The first pass catches fast Chromium navigations; the follow-up covers
@@ -222,26 +230,32 @@ class AppBlockerService : AccessibilityService() {
     }
 
     private fun navigationCommit(event: AccessibilityEvent): Boolean {
+        val browser = currentBrowser() ?: return false
         val eventPackage = event.packageName?.toString() ?: return false
-        val activePackage = rootInActiveWindow?.packageName?.toString() ?: return false
-        if (eventPackage != activePackage || !isBrowserPackage(eventPackage)) return false
-
         val source = runCatching { event.source }.getOrNull() ?: return false
-        return BrowserUrlBars.isNavigationCommitAction(
-            BrowserUrlBars.Node(
-                viewId = runCatching { source.viewIdResourceName }.getOrNull(),
-                text = source.text?.toString(),
-                contentDescription = source.contentDescription?.toString(),
-                className = source.className?.toString(),
-            )
+        val node = BrowserUrlBars.Node(
+            viewId = runCatching { source.viewIdResourceName }.getOrNull(),
+            text = source.text?.toString(),
+            contentDescription = source.contentDescription?.toString(),
+            className = source.className?.toString(),
         )
+
+        if (eventPackage == browser.packageName) {
+            return BrowserUrlBars.isNavigationCommitAction(node)
+        }
+
+        // Soft-keyboard actions are reported by the IME package, not by Chrome
+        // or Firefox. Only accept them while the browser address bar is focused;
+        // this prevents a page's own Search button from becoming a navigation
+        // commit merely because it has the same visible label.
+        val inputMethodPackage = inputMethodPackage() ?: return false
+        return eventPackage == inputMethodPackage &&
+            addressBarHasInputFocus(browser) &&
+            BrowserUrlBars.isInputMethodNavigationCommitAction(node)
     }
 
-    private fun addressBarHasInputFocus(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val packageName = root.packageName?.toString() ?: return false
-        if (!isBrowserPackage(packageName)) return false
-        val focused = runCatching { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+    private fun addressBarHasInputFocus(browser: BrowserWindow): Boolean {
+        val focused = runCatching { browser.root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
             .getOrNull() ?: return false
         return BrowserUrlBars.isAddressBar(
             BrowserUrlBars.Node(
@@ -250,9 +264,40 @@ class AppBlockerService : AccessibilityService() {
                 contentDescription = focused.contentDescription?.toString(),
                 className = focused.className?.toString(),
             ),
-            packageName,
+            browser.packageName,
         )
     }
+
+    /** A browser root remains inspectable while its keyboard owns focus. */
+    private fun currentBrowser(): BrowserWindow? {
+        val direct = rootInActiveWindow
+        val directPackage = direct?.packageName?.toString()
+        if (direct != null && directPackage != null && isBrowserPackage(directPackage)) {
+            return BrowserWindow(directPackage, direct)
+        }
+
+        val candidates = runCatching {
+            windows.mapNotNull { window ->
+                val root = runCatching { window.root }.getOrNull() ?: return@mapNotNull null
+                val packageName = root.packageName?.toString() ?: return@mapNotNull null
+                if (!isBrowserPackage(packageName)) return@mapNotNull null
+                BrowserWindow(packageName, root)
+            }
+        }.getOrDefault(emptyList())
+        return candidates.firstOrNull()
+    }
+
+    private fun inputMethodPackage(): String? = runCatching {
+        windows.firstNotNullOfOrNull { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_INPUT_METHOD) return@firstNotNullOfOrNull null
+            window.root?.packageName?.toString()
+        }
+    }.getOrNull()
+
+    private data class BrowserWindow(
+        val packageName: String,
+        val root: AccessibilityNodeInfo,
+    )
 
     override fun onInterrupt() = Unit
 
@@ -431,7 +476,7 @@ class AppBlockerService : AccessibilityService() {
      * ignore: it does nothing at all unless the focused window is a browser,
      * which is what keeps this from reading the screen of every app on the phone.
      */
-    private fun checkSites() {
+    private fun checkSites(expectedBrowserPackage: String? = null) {
         // An app block owns the screen; there is no page to have an opinion
         // about while the app itself is refused.
         if (isTimeUpShowing()) return
@@ -441,10 +486,10 @@ class AppBlockerService : AccessibilityService() {
         if (now - lastSiteCheckAt < SITE_CHECK_MIN_INTERVAL_MS) return
         lastSiteCheckAt = now
 
-        val root = rootInActiveWindow ?: return
-        val pkg = root.packageName?.toString() ?: return
-        if (!isBrowserPackage(pkg)) return
-
+        val browser = currentBrowser() ?: return
+        if (expectedBrowserPackage != null && browser.packageName != expectedBrowserPackage) return
+        val root = browser.root
+        val pkg = browser.packageName
         val bar = readUrlBar(root, pkg) ?: return
         val rule = siteBlocker?.match(bar) ?: return
         startSiteBlock(rule, pkg)

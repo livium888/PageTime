@@ -115,6 +115,25 @@ class BrowserUrlBarsTest {
         )
     }
 
+    @Test
+    fun `keyboard navigation labels are recognized separately`() {
+        assertTrue(
+            BrowserUrlBars.isInputMethodNavigationCommitAction(
+                node(contentDescription = "Go")
+            )
+        )
+        assertTrue(
+            BrowserUrlBars.isInputMethodNavigationCommitAction(
+                node(contentDescription = "Search")
+            )
+        )
+        assertFalse(
+            BrowserUrlBars.isInputMethodNavigationCommitAction(
+                node(contentDescription = "Backspace")
+            )
+        )
+    }
+
     // --- Recognising a bar in a browser nobody has named ---
 
     @Test

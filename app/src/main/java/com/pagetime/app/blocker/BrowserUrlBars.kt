@@ -219,6 +219,14 @@ object BrowserUrlBars {
             NAVIGATION_LABELS.any { it.equals(text, ignoreCase = true) }
     }
 
+    /** Whether [node] is a soft-keyboard action that commits an address. */
+    fun isInputMethodNavigationCommitAction(node: Node): Boolean {
+        val description = node.contentDescription?.trim().orEmpty()
+        val text = node.text?.trim().orEmpty()
+        return listOf("Go", "Enter", "Search", "Navigate", "Load").any {
+            it.equals(description, ignoreCase = true) || it.equals(text, ignoreCase = true)
+        }
+    }
     /** Whether [node] is the address bar for [packageName] and can receive Enter. */
     fun isAddressBar(node: Node, packageName: String): Boolean {
         val spec = specFor(packageName)

@@ -1,6 +1,7 @@
 package com.pagetime.app.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -20,12 +21,16 @@ import androidx.room.PrimaryKey
  * not, and removing one is the delete. The column stays for symmetry with
  * [BlockedAppEntity] so both tables can answer `observeEnabled`.
  */
-@Entity(tableName = "blocked_sites")
+@Entity(
+    tableName = "blocked_sites",
+    indices = [Index(value = ["enabled"])]
+)
 data class BlockedSiteEntity(
     @PrimaryKey val id: String,
     val host: String,
     /** `/news` for a section of a site, null for the whole thing. */
     val pathPrefix: String? = null,
     val createdAt: Long,
+    @androidx.room.ColumnInfo(defaultValue = "1")
     val enabled: Boolean = true
 )

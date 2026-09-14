@@ -40,9 +40,29 @@ class AppBlockerService : AccessibilityService() {
     }
     private val navigationCheck = Runnable { checkSites(pendingNavigationPackage) }
     private val navigationCheckFollowUp = Runnable { checkSites(pendingNavigationPackage) }
+    private val navigationCommitProbe = object : Runnable {
+        override fun run() {
+            val browserPackage = pendingNavigationPackage ?: return
+            if (!inputMethodWindowVisible() && browserPackage in browsersWithUncommittedAddressEdit) {
+                scheduleNavigationCheck(browserPackage)
+            } else if (browserPackage in browsersWithUncommittedAddressEdit) {
+                mainHandler.postDelayed(this, NAVIGATION_COMMIT_PROBE_DELAY_MS)
+            }
+        }
+    }
 
     /** Browser package associated with the latest Enter/Go action. */
     private var pendingNavigationPackage: String? = null
+
+    /**
+     * Last URL observed in each browser's address bar. Accessibility does not
+     * expose a universal "navigation committed" callback, so the service uses
+     * the browser's own post-navigation content event as the commit signal.
+     */
+    private val lastBrowserUrls = mutableMapOf<String, String?>()
+
+    /** Browsers whose address bar has been edited but not yet committed. */
+    private val browsersWithUncommittedAddressEdit = mutableSetOf<String>()
 
     private var overlay: TimeUpOverlay? = null
 
@@ -186,6 +206,14 @@ class AppBlockerService : AccessibilityService() {
                 }
             }
         }
+
+        // Chrome does not consistently expose its Go button or the IME key to
+        // accessibility services. Observe the browser's URL state as a second,
+        // platform-compatible commit signal: text edits are remembered only;
+        // the first browser content/window event after editing has ended is a
+        // real navigation attempt and may trigger the rule check.
+        observeBrowserNavigation(event)
+
         // A click on the browser's Go/Search/Navigate control is the other
         // navigation commit path. Ordinary address-bar clicks and typing do not
         // qualify, so the reader can edit or replace a URL without being
@@ -195,6 +223,107 @@ class AppBlockerService : AccessibilityService() {
         ) {
             scheduleNavigationCheck(currentBrowser()?.packageName)
         }
+    }
+
+    /**
+     * Converts the browser's accessibility event stream into a navigation
+     * commit without treating ordinary URL editing as one.
+     *
+     * Chrome exposes address-bar typing as text events, but often does not
+     * expose the soft keyboard's Go action or a toolbar button. After a link,
+     * Enter, or Go causes navigation, Chromium emits a window/content event and
+     * the address bar is no longer the actively edited field. That transition
+     * is the reliable signal available to an accessibility service.
+     */
+    private fun observeBrowserNavigation(event: AccessibilityEvent) {
+        val eventPackage = event.packageName?.toString() ?: return
+        val browser = currentBrowser() ?: return
+        val browserPackage = browser.packageName
+        val inputMethodPackage = if (eventPackage == browserPackage) {
+            null
+        } else {
+            inputMethodPackage()
+        }
+        if (eventPackage != browserPackage &&
+            eventPackage != inputMethodPackage &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) return
+
+        val root = browser.root
+        val url = readUrlBar(root, browserPackage)
+        val source = runCatching { event.source }.getOrNull()
+        val sourceNode = source?.let {
+            BrowserUrlBars.Node(
+                viewId = runCatching { it.viewIdResourceName }.getOrNull(),
+                text = it.text?.toString(),
+                contentDescription = it.contentDescription?.toString(),
+                className = it.className?.toString(),
+            )
+        }
+        val sourceIsAddressBar = sourceNode?.let {
+            BrowserUrlBars.isAddressBar(it, browserPackage)
+        } == true
+        val addressBarFocused = addressBarHasInputFocus(browser)
+        val isTextEditEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+        val relevantWindowChange = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        val isBrowserCommitEvent = event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            relevantWindowChange
+
+        // A keyboard click is the strongest signal when the IME exposes one.
+        // It is deliberately checked before focus state: the browser can keep
+        // reporting its address field as focused for a few frames after Go.
+        if (eventPackage != browserPackage &&
+            BrowserUrlBars.isInputMethodNavigationCommitAction(sourceNode ?: return)
+        ) {
+            if (addressBarFocused) scheduleNavigationCheck(browserPackage)
+            lastBrowserUrls[browserPackage] = url
+            return
+        }
+
+        // The source may still point at the URL field during the first browser
+        // event after Go. That event is not editing merely because Chrome kept
+        // the same accessibility source; only a text-change event or a visible
+        // keyboard means the user is currently editing.
+        val addressBarEdit = sourceIsAddressBar || addressBarFocused
+        if (isTextEditEvent || (addressBarFocused && keyboardVisible)) {
+            if (addressBarEdit) {
+                browsersWithUncommittedAddressEdit += browserPackage
+            }
+            lastBrowserUrls[browserPackage] = url
+            return
+        }
+
+        // A click anywhere in the browser other than the address field can
+        // activate a link, reload, tab, or form navigation. Chrome often emits
+        // no semantic "Go" event for these, so use the click as a navigation
+        // intent and let the delayed URL read decide whether the destination is
+        // blocked. Clicking the address bar itself remains editing only.
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            eventPackage == browserPackage &&
+            !sourceIsAddressBar
+        ) {
+            scheduleNavigationCheck(browserPackage)
+        }
+
+        val previousUrl = lastBrowserUrls[browserPackage]
+        val urlChanged = previousUrl != null && url != null && url != previousUrl
+        val hasPendingAddressEdit = browserPackage in browsersWithUncommittedAddressEdit
+        // Once the keyboard has gone away, a changed address bar or the first
+        // browser content/state event after an edit is the navigation commit.
+        // This catches links as well as Go on keyboards that expose no
+        // accessibility click and browsers that expose no Go button.
+        if (isBrowserCommitEvent && !keyboardVisible && (urlChanged || hasPendingAddressEdit)) {
+            mainHandler.removeCallbacks(navigationCommitProbe)
+            scheduleNavigationCheck(browserPackage)
+            browsersWithUncommittedAddressEdit.remove(browserPackage)
+        } else if (isBrowserCommitEvent && keyboardVisible && hasPendingAddressEdit) {
+            // Keep the marker: Go may have started, but the IME is still visible
+            // and the address bar has not settled yet.
+            mainHandler.removeCallbacks(navigationCommitProbe)
+            mainHandler.postDelayed(navigationCommitProbe, NAVIGATION_COMMIT_PROBE_DELAY_MS)
+        }
+        lastBrowserUrls[browserPackage] = url
     }
 
     /**
@@ -294,6 +423,17 @@ class AppBlockerService : AccessibilityService() {
         }
     }.getOrNull()
 
+    private fun inputMethodWindowVisible(): Boolean = runCatching {
+        // An IME can remain in the interactive-window list briefly after its
+        // animation ends. Active/focused is the useful distinction: while the
+        // user is typing the keyboard owns one of those states; after Go it
+        // loses both and the pending navigation can be checked.
+        windows.any { window ->
+            window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD &&
+                (window.isActive || window.isFocused)
+        }
+    }.getOrDefault(false)
+
     private data class BrowserWindow(
         val packageName: String,
         val root: AccessibilityNodeInfo,
@@ -305,6 +445,10 @@ class AppBlockerService : AccessibilityService() {
         mainHandler.removeCallbacks(foregroundRefresh)
         mainHandler.removeCallbacks(navigationCheck)
         mainHandler.removeCallbacks(navigationCheckFollowUp)
+        mainHandler.removeCallbacks(navigationCommitProbe)
+        pendingNavigationPackage = null
+        lastBrowserUrls.clear()
+        browsersWithUncommittedAddressEdit.clear()
         dismissTimeUp()
         clearSiteBlock()
         controller?.service = null
@@ -316,6 +460,9 @@ class AppBlockerService : AccessibilityService() {
 
         /** Delay before checking the URL after Enter/Go. */
         private const val NAVIGATION_CHECK_DELAY_MS = 250L
+
+        /** Retry after the keyboard has had time to leave the window list. */
+        private const val NAVIGATION_COMMIT_PROBE_DELAY_MS = 350L
 
         /** Follow-up for browsers whose accessibility tree updates slowly. */
         private const val NAVIGATION_CHECK_FOLLOW_UP_MS = 900L

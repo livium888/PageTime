@@ -32,9 +32,15 @@ class AppBlockerService : AccessibilityService() {
             // apps that were merely open in the background.
             val pkg = rootInActiveWindow?.packageName?.toString()
             controller?.onPolledForeground(pkg)
-            // Site rules are intentionally NOT checked here. Reading the address
-            // bar on a timer would block while the reader is still editing a URL.
-            // Navigation commits are scheduled by onKeyEvent and Go-button clicks.
+            // A resumed browser is the one case an event is not guaranteed for:
+            // some OEM skins do not fire a window-state event for a task that
+            // was merely restored rather than freshly started. This poll is
+            // the documented mitigation for that gap, not a license to recheck
+            // on a timer — checkResumedSite only acts on the TRANSITION into a
+            // browser, so it does nothing at all on every tick spent inside
+            // one, and it still defers to the address bar being actively
+            // edited for the same reason it always has.
+            checkResumedSite(pkg)
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
@@ -63,6 +69,12 @@ class AppBlockerService : AccessibilityService() {
 
     /** Browsers whose address bar has been edited but not yet committed. */
     private val browsersWithUncommittedAddressEdit = mutableSetOf<String>()
+
+    /**
+     * The last trusted foreground package, so a RETURN to a browser can be
+     * told apart from continuing to sit inside one. See [checkResumedSite].
+     */
+    private var lastForegroundPackage: String? = null
 
     private var overlay: TimeUpOverlay? = null
 
@@ -165,6 +177,12 @@ class AppBlockerService : AccessibilityService() {
         if (ForegroundEventPolicy.isTrustedForegroundPackage(pkg, packageName)) {
             controller?.onForegroundPackage(pkg)
         }
+        // The service can (re)connect — after a reboot, or the system killing
+        // and restarting it under memory pressure — while a browser is already
+        // sitting on a page a rule covers. Nothing else will ever ask about
+        // that page if this does not: every other check below is keyed on an
+        // event, and there will not be one.
+        checkResumedSite(pkg)
         mainHandler.removeCallbacks(foregroundRefresh)
         mainHandler.post(foregroundRefresh)
     }
@@ -194,6 +212,7 @@ class AppBlockerService : AccessibilityService() {
                 // that cannot be inspected. Unknown changes nothing: the
                 // enforcement loop keeps a real block attached, and its own
                 // staleness check ends one that nothing confirms any more.
+                checkResumedSite(inFront)
             }
             // Something re-stacked the windows — possibly on top of our block screen.
             // Re-assert only when the focused window still names the blocked app;
@@ -223,6 +242,55 @@ class AppBlockerService : AccessibilityService() {
         ) {
             scheduleNavigationCheck(currentBrowser()?.packageName)
         }
+    }
+
+    /**
+     * Catches the blocked page a reader is handed back, rather than one they
+     * navigate to.
+     *
+     * NO NEW MECHANISM, THE DOCUMENTED ONE ASKED A DIFFERENT QUESTION
+     *
+     * `TYPE_WINDOW_STATE_CHANGED` is the platform's own signal for "the active
+     * window changed" — it is what [ForegroundEventPolicy] already uses to
+     * decide an app has come to the front, and it fires for a resumed task
+     * exactly as it does for a freshly launched one. This is the same
+     * foreground signal the file already trusts elsewhere, asked a question
+     * the navigation-commit path never gets to answer.
+     *
+     * THE GAP THIS CLOSES
+     *
+     * Every check above this one — [observeBrowserNavigation], the key event,
+     * the Go-button click — fires from something HAPPENING: typing, a tap, a
+     * page settling after Enter. A browser sent to the back with a blocked
+     * page open and then brought back to the front has nothing happen to it at
+     * all. Its address bar reads exactly what it read before, so the existing
+     * `urlChanged` check — correctly built to avoid re-blocking a page the
+     * reader is simply continuing to look at — sees no change and stays
+     * silent. Leave the browser on the blocked page, come back to it, and
+     * nothing ever asked the address bar again. That is the reported bug.
+     *
+     * WHY THIS IS KEYED ON THE TRANSITION, NOT ON BEING THERE
+     *
+     * [ForegroundEventPolicy.enteredForeground] is what keeps this from
+     * fighting the polled backstop below: it fires once, on the return, and
+     * does nothing for as long as the reader keeps sitting in the same
+     * browser — the case `urlChanged` already owns. And it steps aside for an
+     * address bar that is being actively edited, for the same reason every
+     * other check here does: a reader mid-edit has not asked to go anywhere
+     * yet.
+     */
+    private fun checkResumedSite(rawForegroundPackage: String?) {
+        val trusted = rawForegroundPackage?.takeIf {
+            ForegroundEventPolicy.isTrustedForegroundPackage(it, packageName)
+        } ?: return
+        val entered = ForegroundEventPolicy.enteredForeground(lastForegroundPackage, trusted)
+        lastForegroundPackage = trusted
+        if (!entered || !isBrowserPackage(trusted)) return
+
+        val browser = currentBrowser() ?: return
+        if (browser.packageName != trusted) return
+        if (inputMethodWindowVisible() && addressBarHasInputFocus(browser)) return
+        scheduleNavigationCheck(trusted)
     }
 
     /**
@@ -450,6 +518,7 @@ class AppBlockerService : AccessibilityService() {
         pendingNavigationPackage = null
         lastBrowserUrls.clear()
         browsersWithUncommittedAddressEdit.clear()
+        lastForegroundPackage = null
         dismissTimeUp()
         clearSiteBlock()
         controller?.service = null

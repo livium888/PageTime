@@ -167,6 +167,23 @@ class BlockController(
     var sitePaused: Boolean = false
 
     /**
+     * The rule id of the site currently being metered against the session,
+     * or null when nothing is. See [onSiteCoverage].
+     */
+    @Volatile
+    private var currentCoveredSiteId: String? = null
+
+    @Volatile
+    private var siteSpendJob: Job? = null
+
+    /** Seconds charged against the site currently open in [currentCoveredSiteId]. */
+    @Volatile
+    private var siteSessionSpentSeconds = 0L
+
+    @Volatile
+    private var siteSessionStartWallAt = 0L
+
+    /**
      * When the blocked app was last PROVEN to be in front, on the monotonic
      * clock — wall time can jump under the app and would make a sighting look
      * arbitrarily old or fresh.
@@ -250,6 +267,12 @@ class BlockController(
                 // the reader finished their two hours while the block screen
                 // was up, and it has to come down without them going anywhere.
                 if (wasDenied != accessDenied()) onAccessChanged()
+                // The site-coverage meter stops on this same tick rather than
+                // waiting for the service's next poll. Starting a beat late
+                // only costs a couple of unmetered seconds, which is the
+                // reader's favour; stopping a beat late would overcharge a
+                // page that a rule covers again as of this instant.
+                if (!next.coversSites) onSiteCoverage(null)
             }
         }
     }
@@ -611,6 +634,97 @@ class BlockController(
             sessionSpentSeconds = 0
             sessionStartWallAt = 0L
             pendingLedgerWrites.track(scope) { usageRepository.logSpent(pkg, seconds, start, end) }
+        }
+    }
+
+    /**
+     * Meters a session against the site a reader is currently reading
+     * instead of being blocked from — the metering half of "a session
+     * covers sites too". Called by the accessibility service whenever it
+     * knows which rule the browser's address bar currently sits under, or
+     * null when nothing does.
+     *
+     * A COVERED SITE IS SPENDING, NOT VISITING
+     *
+     * Before this, a session's minutes were only ever charged for time
+     * inside a blocked APP; browsing a site the session happened to be
+     * covering cost nothing at all, for as long as the reader stayed on it.
+     * That made the exception window unlimited in practice — thirty minutes
+     * bought could be poured entirely into the one site a rule exists for,
+     * because nothing was watching the clock. [siteId] identifies which
+     * rule for the ledger, the same string [SiteBlocker.logBlocked] already
+     * logs a refusal against, so a site's spent time and its blocked time
+     * land under one name in one table.
+     *
+     * WHY THIS IS A SECOND TICKER AND NOT A REUSE OF [startSpending]
+     *
+     * The two can never overlap — the foreground window is either a blocked
+     * app or the browser showing a covered site, never both — but they are
+     * not the same question. [startSpending]'s ticker is keyed to
+     * [currentBlockedPackage] and interleaves with [accessDenied],
+     * [graceActive] and the enforce loop; none of that applies here; a
+     * covered site is never enforced against; [SiteBlocker.match] already
+     * says it is open. Bolting a second identity onto a state machine built
+     * for the first would risk the two questions answering each other's.
+     *
+     * NO SCREEN-OFF CHECK NEEDED BEYOND [PowerManager.isInteractive]
+     *
+     * There is no site-block overlay to be "nobody is looking" behind, the
+     * way [sitePaused] exists for an app: a covered site by definition has
+     * no overlay up at all, or it would not be covered, it would be blocked.
+     * The only way nobody is looking is the screen being off.
+     */
+    fun onSiteCoverage(siteId: String?) {
+        if (siteId == currentCoveredSiteId) return
+        endSiteSpendSession()
+        currentCoveredSiteId = siteId
+        if (siteId != null) startSiteSpending(siteId)
+    }
+
+    private fun startSiteSpending(siteId: String) {
+        siteSessionSpentSeconds = 0
+        siteSessionStartWallAt = System.currentTimeMillis()
+        siteSpendJob = scope.launch {
+            while (isActive && currentCoveredSiteId == siteId) {
+                delay(1000)
+                if (currentCoveredSiteId != siteId) break
+                // Screen off → nobody is reading the page; don't drain the
+                // session for it. Same rule startSpending applies to apps.
+                if (!powerManager.isInteractive) continue
+
+                val remaining = balanceManager.spendAccessSecond()
+                siteSessionSpentSeconds++
+
+                if (remaining <= 0) {
+                    flushSiteSpentSession(siteId)
+                    currentCoveredSiteId = null
+                    // The session that was covering this site just ran out
+                    // from being spent on it. The next foreground poll's
+                    // checkSiteAccessClosed call re-blocks it; this only has
+                    // to stop charging for it.
+                    break
+                }
+            }
+        }
+    }
+
+    /** Ends the current site-spend session, flushing its summary to the ledger. */
+    private fun endSiteSpendSession() {
+        val job = siteSpendJob
+        siteSpendJob = null
+        job?.cancel()
+        val id = currentCoveredSiteId ?: return
+        flushSiteSpentSession(id)
+    }
+
+    private fun flushSiteSpentSession(siteId: String) {
+        if (siteSessionSpentSeconds > 0) {
+            val seconds = siteSessionSpentSeconds
+            val start = siteSessionStartWallAt
+            val end = System.currentTimeMillis()
+            siteSessionSpentSeconds = 0
+            siteSessionStartWallAt = 0L
+            pendingLedgerWrites.track(scope) { usageRepository.logSpent(siteId, seconds, start, end) }
         }
     }
 

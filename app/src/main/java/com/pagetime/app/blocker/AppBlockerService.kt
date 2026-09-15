@@ -51,6 +51,13 @@ class AppBlockerService : AccessibilityService() {
             // poll because a site check has no equivalent collector of its
             // own to react from.
             checkSiteAccessClosed(pkg)
+            // The gap those two miss between them: a site that a session
+            // covers was only ever a gate, never a meter, so a reader could
+            // pour the whole session into the one site it exists to make an
+            // exception for and it cost nothing. This is what actually
+            // spends the session on it, at the same cadence and for the same
+            // reason checkResumedSite above reads the address bar at all.
+            checkSiteCoverage(pkg)
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
@@ -345,6 +352,42 @@ class AppBlockerService : AccessibilityService() {
         if (!justClosed) return
         if (foregroundPackage == null || !isBrowserPackage(foregroundPackage)) return
         scheduleNavigationCheck(foregroundPackage)
+    }
+
+    /**
+     * Tells [BlockController] which site, if any, the reader is currently
+     * spending a session on.
+     *
+     * A NEW IDENTITY EACH TICK, NOT A NEW SECOND-BY-SECOND TIMER
+     *
+     * The actual decrement is [BlockController]'s own job, on its own 1s
+     * clock, started once and left running until this reports a change —
+     * exactly the shape [checkResumedSite] already relies on for a blocked
+     * app's ticker. This only has to confirm, at the poll's own 2s cadence,
+     * which rule (or none) currently covers the address bar; it does not
+     * need to run any faster than that for the same reason [checkResumedSite]
+     * does not: the ticker it feeds keeps its own time between calls.
+     *
+     * This is a genuinely new read every poll tick, but a bounded one. It
+     * only happens while a session is open AND the reader is in a browser.
+     * [readUrlBar]'s fast path (a known browser's view id) is a single
+     * lookup, and its slow path (an unknown browser's tree walk) is already
+     * throttled to [TREE_WALK_MIN_INTERVAL_MS] regardless of who calls it —
+     * this cannot make that walk run any more often than it already could.
+     */
+    private fun checkSiteCoverage(foregroundPackage: String?) {
+        val blocker = siteBlocker ?: return
+        if (!blocker.accessOpen || foregroundPackage == null || !isBrowserPackage(foregroundPackage)) {
+            controller?.onSiteCoverage(null)
+            return
+        }
+        val browser = currentBrowser()
+        if (browser == null || browser.packageName != foregroundPackage) {
+            controller?.onSiteCoverage(null)
+            return
+        }
+        val bar = readUrlBar(browser.root, browser.packageName)
+        controller?.onSiteCoverage(bar?.let { blocker.wouldMatch(it) }?.id)
     }
 
     /**

@@ -44,6 +44,18 @@ import kotlinx.coroutines.launch
  * is deliberately not [com.pagetime.app.domain.GateState.open], because a
  * site rule set up with no gate in play at all would otherwise only ever
  * hold for a reader who had also opted into the reading-time economy.
+ *
+ * COVERED IS NOT FREE
+ *
+ * The first version of this stopped at "covered means navigable" and left it
+ * there — a pure gate, exactly the shape [match] still is. That left the
+ * session's own minutes unspent by the one activity a reader would obviously
+ * use them on: a session bought with two hours of reading could then be
+ * poured entirely into the site it was meant to be a brief exception for,
+ * because nothing charged it anything. [wouldMatch] exists for
+ * [BlockController]'s benefit, so it can meter a covered site the same way
+ * it meters a blocked app — same seconds, same ticker shape, just identified
+ * by a rule instead of a package.
  */
 class SiteBlocker(
     private val scope: CoroutineScope,
@@ -101,6 +113,19 @@ class SiteBlocker(
         if (accessOpen) return null
         return SiteRules.match(rawUrl, rules)
     }
+
+    /**
+     * The rule that WOULD cover an address bar's text if a session were not
+     * currently paying for it — [match] with [accessOpen] left out of the
+     * question entirely.
+     *
+     * Exists for exactly one caller: metering. A session opening a site does
+     * not make the visit free, it makes it something the session is
+     * SPENDING on, the same seconds a blocked app would spend — and the
+     * meter needs to know which rule that is even while [match] correctly
+     * says there is nothing to block.
+     */
+    fun wouldMatch(rawUrl: String): SiteRules.Rule? = SiteRules.match(rawUrl, rules)
 
     /**
      * Records a block against the rule that caused it.

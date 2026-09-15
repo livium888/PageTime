@@ -47,15 +47,22 @@ import kotlinx.coroutines.delay
  *
  * WHY THIS IS A SEPARATE SCREEN FROM BLOCKED APPS
  *
- * They look alike and answer different questions. A blocked app is a wall
- * around a whole program whose height depends on how much the reader has read;
- * a blocked site is a line drawn through one address that does not move. Putting
- * them on one list would mean one screen with two sets of rules on it, and the
- * header would have to explain which rows the reading clock applies to.
+ * They look alike and now share more than they used to. A blocked app is a
+ * wall around a whole program that a session bought with reading opens for
+ * as long as it lasts; a blocked site is a line drawn through one address
+ * that a session opens the same way — but the line itself, unlike the wall's
+ * height, never moves with how much has been read. Putting them on one list
+ * would still mean one screen explaining two different kinds of rule (a
+ * whole program versus one address, however they both spend a session), so
+ * they stay apart.
  *
- * The one thing they do share is the fence on removal — see [sites] below — and
- * that is shared deliberately, because a rule that is cheap to undo is not a
- * rule in either place.
+ * What they share is the fence on removal — see [sites] below — and now
+ * also the session that opens both, at the gate's own
+ * [com.pagetime.app.domain.GateState.coversSites].
+ * Neither is shared by accident: a rule that is cheap to undo is not a rule
+ * in either place, and an exception window that only ever covered one of the
+ * two would leave the reader wondering why the same paid-for session let
+ * them into Instagram but not into instagram.com in a browser.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,9 +115,16 @@ fun BlockedSitesScreen(
             item {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "A site here is off limits in every browser, whether or not you " +
-                        "have time to spend. Block a whole site with bbc.co.uk, or one " +
-                        "section of it with bbc.co.uk/news.",
+                    if (gate.enabled) {
+                        "A site here is off limits in every browser — unless a session " +
+                            "bought with reading is open, the same as it opens a " +
+                            "blocked app. Block a whole site with bbc.co.uk, or one " +
+                            "section of it with bbc.co.uk/news."
+                    } else {
+                        "A site here is off limits in every browser, whether or not " +
+                            "you have time to spend. Block a whole site with " +
+                            "bbc.co.uk, or one section of it with bbc.co.uk/news."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

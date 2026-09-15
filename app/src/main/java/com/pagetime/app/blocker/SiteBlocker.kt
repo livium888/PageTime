@@ -2,6 +2,7 @@ package com.pagetime.app.blocker
 
 import com.pagetime.app.data.BlockedSiteRepository
 import com.pagetime.app.data.UsageRepository
+import com.pagetime.app.domain.BalanceManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -11,30 +12,44 @@ import kotlinx.coroutines.launch
  * WHY THIS IS NOT PART OF [BlockController]
  *
  * It answers a different question. The controller decides whether the APP in
- * front may be used — a question about time, whose answers are the balance and
- * the gate. This decides whether the PAGE in front may be looked at, which is
- * not a question about time at all and is never a matter of having earned
- * something. A site rule is a boundary the reader set for themselves, and it
- * holds whether or not they have minutes to spend, which is exactly why the
- * two cannot share a decision function without one of them becoming a lie.
+ * front may be used; this decides whether the PAGE in front may be looked at.
+ * A site rule is a boundary the reader set for themselves — which host, which
+ * section — and nothing here ever weakens or forgets that boundary. What
+ * this DOES share with the controller is the one thing an app already had:
+ * a session bought with reading covers it, for exactly as long as the
+ * session lasts and not a second longer.
  *
  * It is also deliberately not an enforcement loop. The screen that covers a
  * blocked site belongs to the accessibility service, which is the only thing
- * that can put a window on the display; what lives here is the rule set and the
- * record of what happened.
+ * that can put a window on the display; what lives here is the rule set, the
+ * session cover, and the record of what happened.
  *
- * NO CONSULTATION OF THE BALANCE, EVER
+ * A SESSION COVERS SITES THE SAME WAY IT COVERS APPS
  *
- * Worth stating because it is the surprising behaviour: under the browse
- * balance, with minutes to spend, a blocked site is STILL blocked. The rule
- * says "not this site", not "not this site until I have read enough", and a
- * site rule that could be paid off would be a toll on a boundary the reader
- * drew themselves.
+ * This used to say the opposite — "no consultation of the balance, ever" —
+ * on the argument that a site rule that could be paid off was a toll on a
+ * boundary the reader drew themselves. The reader disagreed: reading two
+ * hours to buy thirty minutes of app time and then finding a site still
+ * refused inside that window was not the boundary they meant to set, it was
+ * the read-a-minute-buy-a-minute loop wearing a different hat. So [accessOpen]
+ * mirrors [BalanceManager.gate]'s [com.pagetime.app.domain.GateState.coversSites]
+ * exactly the way [rules] mirrors the reader's edits — and [match] returns
+ * null outright while it is true, before the rule set is even consulted.
+ *
+ * What did NOT change: the rule itself. This is a paid-for exception window,
+ * not a way to remove a site from the list — that still costs what it always
+ * cost (see [BlockedSiteRepository] and [com.pagetime.app.domain.GateState.canRemoveBlockedApps]).
+ * And the legacy browse-balance economy — the gate switched off entirely —
+ * gets none of this: [coversSites][com.pagetime.app.domain.GateState.coversSites]
+ * is deliberately not [com.pagetime.app.domain.GateState.open], because a
+ * site rule set up with no gate in play at all would otherwise only ever
+ * hold for a reader who had also opted into the reading-time economy.
  */
 class SiteBlocker(
     private val scope: CoroutineScope,
     private val repository: BlockedSiteRepository,
     private val usageRepository: UsageRepository,
+    private val balanceManager: BalanceManager,
 ) {
 
     /**
@@ -44,6 +59,18 @@ class SiteBlocker(
      */
     @Volatile
     var rules: List<SiteRules.Rule> = emptyList()
+        private set
+
+    /**
+     * Whether a live session currently covers every site rule.
+     *
+     * Mirrored from the gate for the same reason [rules] is mirrored from the
+     * repository, and read by [match] before the rule set is. Starts `false`
+     * — the safe default while nothing has been heard from the gate yet is
+     * for rules to hold, not to wave the reader through.
+     */
+    @Volatile
+    var accessOpen: Boolean = false
         private set
 
     /** The last rule put in the ledger, and when, to absorb a burst of events. */
@@ -56,10 +83,24 @@ class SiteBlocker(
                 rules = sites.map { SiteRules.Rule(host = it.host, pathPrefix = it.pathPrefix) }
             }
         }
+        scope.launch {
+            balanceManager.gate.collect { gate -> accessOpen = gate.coversSites }
+        }
     }
 
-    /** The rule covering an address bar's text, or null. */
-    fun match(rawUrl: String): SiteRules.Rule? = SiteRules.match(rawUrl, rules)
+    /**
+     * The rule covering an address bar's text, or null.
+     *
+     * [accessOpen] is checked first and short-circuits the rule walk
+     * entirely: the caller has already paid for reading the address bar (see
+     * [com.pagetime.app.blocker.AppBlockerService.checkSites]), but there is
+     * no reason to compare it against every rule when a session has already
+     * answered the only question that matters.
+     */
+    fun match(rawUrl: String): SiteRules.Rule? {
+        if (accessOpen) return null
+        return SiteRules.match(rawUrl, rules)
+    }
 
     /**
      * Records a block against the rule that caused it.

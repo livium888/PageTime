@@ -93,12 +93,19 @@ class TimeUpOverlay(
      * Repoints the screen at a blocked site.
      *
      * A separate entry point rather than a flag on [setStatus], because almost
-     * nothing is shared. A site has no progress to report, no session to buy,
-     * and no app to name in an emergency button — every one of those would be
-     * an offer the reader cannot accept. What is left is the address, why it is
-     * on the screen, and two ways off it: back into the browser, or into the
-     * reader. Both are in the same places as on the app screen, so the screen
-     * the reader already knows does not have to be re-learned.
+     * nothing is shared, and what looks shareable is not quite the same
+     * thing. This screen can appear while a session IS affordable — the
+     * reader simply has not started one yet — but showing the buy button
+     * here would offer to open every blocked app for the sake of one page,
+     * which is not what this screen is for; starting a session belongs to
+     * the app screen, or to Settings, not to a screen that exists because of
+     * one address. And there is no app to name in an emergency button —
+     * that hatch is scoped to the one app it unlocks, and a site has none.
+     * What is left is the address, why it is on the screen, and two ways off
+     * it: back into the browser, or into the reader, which is also now the
+     * way to earn the session that opens this exact site. Both live in the
+     * same places as on the app screen, so the screen the reader already
+     * knows does not have to be re-learned.
      */
     fun setSiteBlock(rule: SiteRules.Rule) {
         view.findViewById<TextView>(R.id.tv_time_up).text = BlockScreenText.siteTitle(rule)

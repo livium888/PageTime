@@ -337,13 +337,17 @@ class AppContainer(context: Context) {
     /**
      * Address rules, read from the accessibility service.
      *
-     * Separate from [blockController] on purpose: a blocked site is not a
-     * question about earned time, so nothing about it consults the balance.
+     * Separate from [blockController] on purpose — it decides about the PAGE,
+     * not the app — but it shares [balanceManager]'s gate with it: a session
+     * bought with reading covers site rules for exactly as long as it covers
+     * blocked apps. See [SiteBlocker] for why that is not the same thing as
+     * consulting the old browse balance, which it still never does.
      */
     val siteBlocker = SiteBlocker(
         scope = scope,
         repository = blockedSiteRepository,
         usageRepository = usageRepository,
+        balanceManager = balanceManager,
     )
 
     /** UsageStats audit: charges blocked-app time even if our service was dead. */

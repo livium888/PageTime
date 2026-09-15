@@ -67,6 +67,33 @@ class AccessGateTest {
         assertFalse(g.open)
     }
 
+    // --- Sites open during a session, exactly as apps do ---
+
+    @Test
+    fun `a live session opens site rules too`() {
+        assertTrue(gate(sessionRemaining = 60).coversSites)
+    }
+
+    @Test
+    fun `sites close again the same instant the session runs out`() {
+        assertFalse(gate(sessionRemaining = 0).coversSites)
+    }
+
+    /**
+     * The one place [coversSites] must NOT track [open]. Switching the gate
+     * off falls an app back to the old browse-balance economy rather than
+     * setting it free — but a site rule set up with no gate in play at all has
+     * no session to run out, and treating [open]'s "the switch is off" case as
+     * cover here would mean a blocked site could only ever stay blocked for a
+     * reader who had also turned the reading-time gate on.
+     */
+    @Test
+    fun `with the gate off, sites stay exactly as blocked as the rule says`() {
+        val g = gate(switchedOn = false)
+        assertTrue(g.open)
+        assertFalse(g.coversSites)
+    }
+
     /**
      * A meter, not a wall clock. Nothing in this state depends on the time,
      * so app time cannot evaporate while the phone is face-down — the reader

@@ -60,13 +60,19 @@ object BlockScreenText {
      *
      * A DIFFERENT REASON, SO A DIFFERENT SENTENCE AGAIN
      *
-     * Both existing sentences are wrong here. "Time is up!" describes a debt
-     * that does not exist — the reader has not run out of anything — and the
-     * gate's distance ("1h 12m of 2h") describes work not yet done, which is
-     * equally untrue: no amount of reading opens this site, because the reader
-     * is the one who said not to open it. So the screen says the address, says
-     * that it is off limits, and offers the two things that are honest: go
-     * back, or read instead.
+     * Both existing sentences are wrong here, though for a narrower reason
+     * than they used to be. "Time is up!" still describes a debt that does
+     * not exist. The gate's distance ("1h 12m of 2h") is wrong for a
+     * different one: reading DOES eventually open this site now, the same
+     * session that opens a blocked app — but this screen only ever appears
+     * while that session is not the answer, either because none is running
+     * or because the reader has not read enough to start one, and repeating
+     * the app screen's distance here would explain the wrong rule (site
+     * versus app) for the number it shows. So the screen says the address,
+     * says that it is off limits, and offers the two things that are honest
+     * at this moment: go back, or read instead — which is no longer merely
+     * something to do while shut out, but the way to earn the session that
+     * opens this exact page.
      *
      * The address is the title rather than a decoration. It is the one piece of
      * information that makes the screen explicable at a glance — a reader who

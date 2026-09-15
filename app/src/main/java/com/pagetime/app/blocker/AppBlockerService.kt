@@ -41,6 +41,16 @@ class AppBlockerService : AccessibilityService() {
             // one, and it still defers to the address bar being actively
             // edited for the same reason it always has.
             checkResumedSite(pkg)
+            // The other direction of the same gap: a session that opened a
+            // site can run out while the reader never left the page it was
+            // covering, and nothing "happens" then either — no window
+            // changes, no navigation, just a purchase running down to zero
+            // mid-read. checkSiteAccessClosed is what BlockController's own
+            // gate-flow collector already is for apps (react to the access
+            // state closing, not only to a window changing), done here on the
+            // poll because a site check has no equivalent collector of its
+            // own to react from.
+            checkSiteAccessClosed(pkg)
             mainHandler.postDelayed(this, FOREGROUND_REFRESH_MS)
         }
     }
@@ -75,6 +85,17 @@ class AppBlockerService : AccessibilityService() {
      * told apart from continuing to sit inside one. See [checkResumedSite].
      */
     private var lastForegroundPackage: String? = null
+
+    /**
+     * Whether [SiteBlocker] last reported a session covering sites, so its
+     * running out can be told apart from access having been closed all
+     * along. See [checkSiteAccessClosed]. Starts `false`, so the very first
+     * poll after connecting only establishes the baseline rather than
+     * manufacturing a transition out of nothing; a session already open at
+     * that moment is separately handled by [checkResumedSite] not blocking,
+     * which is the correct behaviour regardless of what this starts as.
+     */
+    private var lastSiteAccessOpen = false
 
     private var overlay: TimeUpOverlay? = null
 
@@ -291,6 +312,39 @@ class AppBlockerService : AccessibilityService() {
         if (browser.packageName != trusted) return
         if (inputMethodWindowVisible() && addressBarHasInputFocus(browser)) return
         scheduleNavigationCheck(trusted)
+    }
+
+    /**
+     * Catches a session running out while the reader never left the page it
+     * was covering.
+     *
+     * A SESSION COVERING SITES IS THE SAME FREE PASS AN APP GETS
+     *
+     * [SiteBlocker.accessOpen] mirrors the gate the exact way
+     * [com.pagetime.app.domain.BalanceManager.gate] already does for apps,
+     * and [BlockController] reacts to THAT collector directly — every tick,
+     * whether or not the reader has moved at all, because the gate ticks on
+     * its own. A site check has no equivalent of its own to react from: [checkSites] only
+     * ever runs from a navigation-commit path or from [checkResumedSite]'s
+     * foreground-entry edge, neither of which fires while someone sits
+     * still. This poll is what stands in for that missing collector.
+     *
+     * WHY THIS IS NOT THE SAME SHAPE AS [checkResumedSite]
+     *
+     * That one is edge-triggered on the FOREGROUND PACKAGE changing. This is
+     * edge-triggered on ACCESS CLOSING while the foreground package does not
+     * need to change at all — the whole point is the reader stayed exactly
+     * where they were. Firing on every tick while access stays closed would
+     * be the timer-based re-check this file has avoided from the start; only
+     * the transition is worth a check.
+     */
+    private fun checkSiteAccessClosed(foregroundPackage: String?) {
+        val open = siteBlocker?.accessOpen ?: return
+        val justClosed = lastSiteAccessOpen && !open
+        lastSiteAccessOpen = open
+        if (!justClosed) return
+        if (foregroundPackage == null || !isBrowserPackage(foregroundPackage)) return
+        scheduleNavigationCheck(foregroundPackage)
     }
 
     /**
@@ -519,6 +573,7 @@ class AppBlockerService : AccessibilityService() {
         lastBrowserUrls.clear()
         browsersWithUncommittedAddressEdit.clear()
         lastForegroundPackage = null
+        lastSiteAccessOpen = false
         dismissTimeUp()
         clearSiteBlock()
         controller?.service = null

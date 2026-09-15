@@ -123,6 +123,26 @@ data class GateState(
         get() = !enabled || sessionActive
 
     /**
+     * Whether a session in hand also covers site rules, the way it covers a
+     * blocked app.
+     *
+     * Named separately from [sessionActive] even though it is the same value,
+     * because the two are read for different reasons and a rename at the
+     * gate's own call site would blur that. [open] is the wrong basis for
+     * this: it is also true whenever the gate is simply switched off, at
+     * which point a blocked app falls back to the old browse-balance economy
+     * rather than going free — and a site rule set up with the gate off
+     * entirely, with no session to speak of, must stay a rule, or blocking a
+     * site would only ever work for someone who had also opted into reading
+     * for app time. Session, not switch: only a purchased, still-ticking
+     * session opens a site the reader blocked, exactly as long as it is
+     * genuinely paying for it — the moment it runs out this closes with it,
+     * on the same tick [open] does for apps.
+     */
+    val coversSites: Boolean
+        get() = sessionActive
+
+    /**
      * Enough read to buy more app time.
      *
      * Buying again while time is still unspent is allowed — it is the

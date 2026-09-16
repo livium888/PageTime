@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
@@ -278,12 +279,44 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         tryStartTicker()
     }
 
+    /**
+     * Stops the ticker and flushes position and pending seconds — synchronously.
+     *
+     * WHY BLOCKING, HERE SPECIFICALLY
+     *
+     * This runs from ON_PAUSE, which is the moment the app is leaving the
+     * foreground and the one Android gives no guarantee about afterward: the
+     * process can be reclaimed for memory at any point once the app is no
+     * longer visible, sooner on stricter OEM battery managers, and there is
+     * no "finish this coroutine first" contract for a process death. A
+     * fire-and-forget `launch` here is a write that is merely SCHEDULED, not
+     * DONE — and scheduled-but-never-run is indistinguishable from never
+     * asked for. That was the reported bug: read for a while, leave, come
+     * back later, and the position is a few pages behind — the exact shape
+     * of losing whichever locator save was still in flight when the process
+     * went away, landing back on the last one that actually completed.
+     *
+     * blocking = true makes persistPositionNow and flush await the write
+     * with runBlocking instead of launching it into persistenceScope, so by
+     * the time this function returns to the lifecycle callback, the bytes
+     * are on disk. A short block on the main thread at exactly the moment
+     * the reader is already leaving the screen is the accepted trade — the
+     * same one SharedPreferences.commit() makes over .apply() for the same
+     * reason — and nothing else on screen is competing for that thread once
+     * ON_PAUSE has fired.
+     *
+     * The periodic mid-session checkpoint (every 5 ticks, inside the ticker
+     * below) stays non-blocking on purpose: it runs while the reader is
+     * actively reading, blocking there would risk a stutter for a risk this
+     * narrow — the process dying while genuinely foregrounded is not the
+     * failure mode anyone reported.
+     */
     fun stopReading() {
         resumed = false
         tickerJob?.cancel()
         tickerJob = null
-        persistPositionNow()
-        flush()
+        persistPositionNow(blocking = true)
+        flush(blocking = true)
     }
 
     private fun tryStartTicker() {
@@ -326,16 +359,27 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    private fun flush() {
+    /**
+     * @param blocking Waits for the write with [runBlocking] instead of merely
+     *   scheduling it. See [stopReading] for why that matters specifically at
+     *   teardown and not on the periodic mid-session checkpoint.
+     */
+    private fun flush(blocking: Boolean = false) {
         if (pendingSeconds <= 0) return
         val seconds = pendingSeconds
         pendingSeconds = 0
         val currentBook = _book.value ?: return
-        // persistenceScope, not viewModelScope: stopReading() runs during teardown
-        // and the pending seconds must still be written after the scope is cancelled.
-        persistenceScope.launch {
+        val write: suspend () -> Unit = {
             balanceManager.earnFromReading(seconds)
             repo.addReadingSeconds(currentBook.id, seconds)
+        }
+        if (blocking) {
+            runBlocking { write() }
+        } else {
+            // persistenceScope, not viewModelScope: stopReading() runs during
+            // teardown and the pending seconds must still be written after
+            // the scope is cancelled.
+            persistenceScope.launch { write() }
         }
     }
 
@@ -1254,13 +1298,23 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    /** Flushes the exact current text position before the screen is destroyed. */
-    fun persistTextPositionNow(fraction: Float) {
+    /**
+     * Flushes the exact current text position before the screen is destroyed.
+     *
+     * @param blocking See [stopReading] for why teardown needs the write
+     *   actually finished before this returns, not merely scheduled.
+     */
+    fun persistTextPositionNow(fraction: Float, blocking: Boolean = false) {
         if (!ReaderPositionPolicy.canPersist(txtRestoreComplete)) return
         val b = _book.value ?: return
         latestTxtFraction = ReaderPositionPolicy.clampFraction(fraction)
         txtSaveJob?.cancel()
-        persistenceScope.launch { repo.updateProgress(b.id, 0, latestTxtFraction) }
+        val write: suspend () -> Unit = { repo.updateProgress(b.id, 0, latestTxtFraction) }
+        if (blocking) {
+            runBlocking { write() }
+        } else {
+            persistenceScope.launch { write() }
+        }
     }
 
     /** Marks the Readium initial locator application complete without saving startup state. */
@@ -1348,16 +1402,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         repo.updateProgress(b.id, index, overall)
     }
 
-    /** Persists the most recent position immediately (exit, background, checkpoint). */
-    private fun persistPositionNow() {
+    /**
+     * Persists the most recent position immediately (exit, background, checkpoint).
+     *
+     * @param blocking See [stopReading] for why teardown needs the write
+     *   actually finished before this returns, not merely scheduled.
+     */
+    private fun persistPositionNow(blocking: Boolean = false) {
         val b = _book.value ?: return
         if (b.isReadiumBook) {
             if (!ReaderPositionPolicy.canPersist(locatorRestoreComplete)) return
             if (latestLocator == null) return
             locatorSaveJob?.cancel()
-            persistenceScope.launch { saveLocator() }
+            if (blocking) {
+                runBlocking { saveLocator() }
+            } else {
+                persistenceScope.launch { saveLocator() }
+            }
         } else {
-            persistTextPositionNow(latestTxtFraction)
+            persistTextPositionNow(latestTxtFraction, blocking = blocking)
         }
     }
 

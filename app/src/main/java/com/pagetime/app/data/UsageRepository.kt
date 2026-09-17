@@ -3,6 +3,8 @@ package com.pagetime.app.data
 import com.pagetime.app.data.local.PackageTotal
 import com.pagetime.app.data.local.UsageEventDao
 import com.pagetime.app.data.local.UsageEventEntity
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -176,6 +178,22 @@ class UsageRepository(
     /** Live + reconciled spend rows with windows overlapping [from], for the reconciler. */
     suspend fun spentWithWindows(from: Long): List<UsageEventEntity> =
         dao.spentWithWindows(TYPE_SPENT, from)
+
+    /**
+     * Local calendar days, as epoch-day numbers (matching
+     * `java.time.LocalDate.toEpochDay()`), that had at least one reading or
+     * flashcard credit — the "don't break the chain" streak's raw material.
+     *
+     * Calendar-day on purpose, unlike [earnedToday]'s rolling window: a
+     * streak counts days that happened, not hours accrued, so it needs a
+     * definition of "day" that matches what a reader would circle on a
+     * calendar. Bounded to [sinceDays] back so the query stays cheap as the
+     * ledger grows; two years is far past any streak worth displaying.
+     */
+    fun activeReadingDays(sinceDays: Int = 730): Flow<List<Long>> {
+        val zoneOffsetMillis = ZoneId.systemDefault().rules.getOffset(Instant.now()).totalSeconds * 1000L
+        return dao.activeDaysSince(TYPE_EARNED, now() - sinceDays * DAY_MS, zoneOffsetMillis)
+    }
 
     private val SPEND_TYPES = listOf(TYPE_SPENT, TYPE_RECONCILED)
 

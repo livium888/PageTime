@@ -41,6 +41,7 @@ import com.pagetime.app.ui.screens.bookshelf.BookshelfScreen
 import com.pagetime.app.ui.screens.shelf.AuthorShelfScreen
 import com.pagetime.app.ui.screens.shelf.ShelfScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
+import com.pagetime.app.ui.screens.reader.ReaderEntryGate
 import com.pagetime.app.ui.screens.reader.PdfReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
@@ -311,30 +312,48 @@ fun PageTimeAppUi(
             }
             composable("pdf-reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: return@composable
-                PdfReaderScreen(
-                    bookId = bookId,
+                // Wrapped the same as "reader/{bookId}" below and for the same
+                // reason: "before the user can read" does not stop meaning
+                // that because the book happens to be a PDF.
+                ReaderEntryGate(
                     onBack = { navController.popBackStack() },
-                )
+                    onOpenSource = { srcBookId -> navController.navigate("reader/$srcBookId") },
+                ) {
+                    PdfReaderScreen(
+                        bookId = bookId,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
-                ReaderScreen(
-                    bookId = bookId,
+                // Every path into the reader — library, bookshelf, search, a
+                // concept map, "continue reading", the block screen's own
+                // "Read now", a notification tap — already converges on this
+                // one destination, which is what lets the gate live here
+                // instead of at each of them.
+                ReaderEntryGate(
                     onBack = { navController.popBackStack() },
-                    onOpenHighlights = { highlightBookId ->
-                        navController.navigate("highlights/$highlightBookId")
-                    },
-                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
-                    onOpenLumenCards = { navController.navigate("lumen") },
-                    onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
-                        val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
-                        val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
-                        val encodedLocator = URLEncoder.encode(locatorJson.orEmpty(), "UTF-8")
-                        navController.navigate(
-                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=$encodedLocator&offset=${textOffset ?: -1}"
-                        )
-                    }
-                )
+                    onOpenSource = { srcBookId -> navController.navigate("reader/$srcBookId") },
+                ) {
+                    ReaderScreen(
+                        bookId = bookId,
+                        onBack = { navController.popBackStack() },
+                        onOpenHighlights = { highlightBookId ->
+                            navController.navigate("highlights/$highlightBookId")
+                        },
+                        onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
+                        onOpenLumenCards = { navController.navigate("lumen") },
+                        onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
+                            val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
+                            val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
+                            val encodedLocator = URLEncoder.encode(locatorJson.orEmpty(), "UTF-8")
+                            navController.navigate(
+                                "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=$encodedLocator&offset=${textOffset ?: -1}"
+                            )
+                        }
+                    )
+                }
             }
             composable("explain-back/{bookId}/{chapterIndex}/{chapterTitle}/{bookTitle}?locator={locator}&offset={offset}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: ""

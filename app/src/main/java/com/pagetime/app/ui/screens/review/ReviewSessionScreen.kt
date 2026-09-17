@@ -50,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.review.CardTextSize
+import com.pagetime.app.data.review.ReadingGate
 import com.pagetime.app.data.review.ReviewSessionState
 
 /**
@@ -91,6 +92,21 @@ fun ReviewSessionScreen(
     onOpenSource: (bookId: String) -> Unit = {},
     /** A due chunk is handed to the reader rather than answered here. */
     onReadChunk: (bookId: String) -> Unit = {},
+    /**
+     * Whether this sitting is the mandatory gate in front of a book, rather
+     * than the reader's own choice to open Review.
+     *
+     * Changes two things, both purely presentational: [Done]'s copy and
+     * button read as the end of a requirement instead of the end of a
+     * sitting, and [state]'s [ReviewUiState.awaitingBatchChoice] pauses
+     * become visible as [BatchChoicePrompt] instead of being silently
+     * impossible (a non-gate [vm] never sets the flag, so this parameter
+     * changes nothing for the standalone screen beyond which copy [Done]
+     * would show if a reader somehow reached it with zero cards due).
+     */
+    gateMode: Boolean = false,
+    /** Leaves the gate for the book instead of continuing the sitting. Unused, and unreachable, outside [gateMode]. */
+    onStartReading: () -> Unit = {},
     vm: ReviewSessionViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -140,6 +156,7 @@ fun ReviewSessionScreen(
                             canUndo = state.canUndo,
                             onUndo = vm::undo,
                             onSkip = vm::skip,
+                            showSkip = !gateMode,
                         )
                     }
                 },
@@ -160,7 +177,22 @@ fun ReviewSessionScreen(
             when {
                 state.loading -> Centered("Finding what is due…")
 
-                card == null -> Done(state.session, onBack)
+                // Checked ahead of `card == null` and `card.isChunk` on
+                // purpose: the next card is already sitting in `card` (see
+                // ReviewSessionViewModel.grade), waiting for this to clear
+                // rather than for anything about the card itself to change.
+                state.awaitingBatchChoice -> BatchChoicePrompt(
+                    remaining = state.session.queue.size,
+                    onContinue = vm::continueBatch,
+                    onStartReading = onStartReading,
+                )
+
+                card == null -> Done(
+                    session = state.session,
+                    onBack = onBack,
+                    gateMode = gateMode,
+                    onStartReading = onStartReading,
+                )
 
                 card.isChunk -> ChunkReviewContent(
                     card = card,
@@ -443,8 +475,21 @@ private fun CardTextSizeMenu(current: CardTextSize, onPick: (CardTextSize) -> Un
  * menu whose entries appear and disappear teaches the reader that the menu is
  * unreliable, and the one time they need it they will not look.
  */
+/**
+ * @param showSkip False in gate mode. "Skip for now" removes a card from the
+ *   queue without grading it, and the gate's batch count only advances on a
+ *   real [ReviewSessionViewModel.grade] call — so with this left visible, a
+ *   reader could skip their way through the whole mandatory batch without
+ *   answering a single one, which is not a smaller version of the
+ *   requirement, it is no requirement at all.
+ */
 @Composable
-private fun SittingMenu(canUndo: Boolean, onUndo: () -> Unit, onSkip: () -> Unit) {
+private fun SittingMenu(
+    canUndo: Boolean,
+    onUndo: () -> Unit,
+    onSkip: () -> Unit,
+    showSkip: Boolean = true,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
@@ -459,13 +504,15 @@ private fun SittingMenu(canUndo: Boolean, onUndo: () -> Unit, onSkip: () -> Unit
                     open = false
                 },
             )
-            DropdownMenuItem(
-                text = { Text("Skip for now") },
-                onClick = {
-                    onSkip()
-                    open = false
-                },
-            )
+            if (showSkip) {
+                DropdownMenuItem(
+                    text = { Text("Skip for now") },
+                    onClick = {
+                        onSkip()
+                        open = false
+                    },
+                )
+            }
         }
     }
 }
@@ -553,7 +600,12 @@ private fun Centered(text: String) {
 }
 
 @Composable
-private fun Done(session: ReviewSessionState, onBack: () -> Unit) {
+private fun Done(
+    session: ReviewSessionState,
+    onBack: () -> Unit,
+    gateMode: Boolean = false,
+    onStartReading: () -> Unit = {},
+) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             Modifier.padding(32.dp),
@@ -561,15 +613,32 @@ private fun Done(session: ReviewSessionState, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (session.started == 0) {
-                Text("Nothing is due.", style = MaterialTheme.typography.titleMedium)
+                // The gate mounts this same screen whenever anything at all is
+                // due, but "nothing is due" is reachable inside it too — the
+                // reader cleared the backlog on an earlier book this session,
+                // or simply had none. Either way there was never a gate to
+                // pass, so the copy says that rather than describing a
+                // feature (chunks, slip box training) that has nothing to do
+                // with why this screen is open right now.
                 Text(
-                    "Questions appear here once you keep one while reading, put a " +
-                        "slip box card into training, or finish a reading chunk.",
+                    if (gateMode) "Nothing due" else "Nothing is due.",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    if (gateMode) {
+                        "Go ahead and read."
+                    } else {
+                        "Questions appear here once you keep one while reading, put a " +
+                            "slip box card into training, or finish a reading chunk."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Text("Done.", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (gateMode) "All caught up" else "Done.",
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 Text(
                     "${session.started} card${if (session.started == 1) "" else "s"}" +
                         if (session.lapses > 0) {
@@ -582,7 +651,61 @@ private fun Done(session: ReviewSessionState, onBack: () -> Unit) {
                 )
             }
             Spacer(Modifier.height(4.dp))
-            Button(onClick = onBack) { Text("Back") }
+            if (gateMode) {
+                Button(onClick = onStartReading) { Text("Start reading") }
+            } else {
+                Button(onClick = onBack) { Text("Back") }
+            }
+        }
+    }
+}
+
+/**
+ * The choice offered after every [ReadingGate.BATCH_SIZE] answers: keep
+ * going, or take what was earned and read.
+ *
+ * WHY THIS EXISTS RATHER THAN JUST SHOWING THE NEXT CARD
+ *
+ * A gate that never lets up until the whole backlog is clear turns "I want
+ * to read this evening" into "I have to clear fifty cards first" for a
+ * reader who has been away a while — which is the same trap a review
+ * sitting's own cap exists to avoid. Asking after every batch keeps this
+ * the reader's decision on every one of them, not a decision the app made
+ * once at the door.
+ *
+ * WHY THE COUNT, NOT JUST "MORE ARE DUE"
+ *
+ * A number the reader can weigh against their own patience is a choice; a
+ * vague "more" is a nudge with the actual cost hidden until they commit to
+ * finding out.
+ */
+@Composable
+private fun BatchChoicePrompt(
+    remaining: Int,
+    onContinue: () -> Unit,
+    onStartReading: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Nice work.", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "$remaining more card${if (remaining == 1) "" else "s"} " +
+                    "${if (remaining == 1) "is" else "are"} due.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            Button(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth(0.7f),
+            ) {
+                Text("${ReadingGate.BATCH_SIZE} more")
+            }
+            TextButton(onClick = onStartReading) { Text("Start reading") }
         }
     }
 }

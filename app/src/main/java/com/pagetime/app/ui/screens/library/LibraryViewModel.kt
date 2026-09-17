@@ -12,6 +12,7 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.domain.ReadingStreak
 import java.time.LocalDate
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,6 +41,21 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val totalReadingSeconds = container.settingsRepository.settings
         .map { it.totalReadingSeconds }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
+    /**
+     * The book to put in front of the reader: the one most recently opened,
+     * even if finished — there is nowhere better to point "continue" at, and
+     * re-opening a finished book to check something or start a re-read is a
+     * legitimate reason to land there too. Falls back to the newest import
+     * when nothing has been opened yet (mirrors
+     * [com.pagetime.app.data.LibraryRepository.getMostRecentBook], reactively).
+     */
+    val upNextBook = combine(
+        books,
+        container.settingsRepository.observeLastReadBookId
+    ) { books, lastId ->
+        books.firstOrNull { it.id == lastId } ?: books.firstOrNull()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val activeReadingDays = container.usageRepository.activeReadingDays()
         .map { days -> days.toSet() }

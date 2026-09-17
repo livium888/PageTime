@@ -308,6 +308,10 @@ class SettingsRepository(private val context: Context) {
         return id?.takeIf { it.isNotBlank() }
     }
 
+    /** Reactive form of [lastReadBookId], for UI that should update the moment a new book is opened. */
+    val observeLastReadBookId: Flow<String?> =
+        context.dataStore.data.map { it[Keys.LAST_READ_BOOK]?.takeIf { id -> id.isNotBlank() } }
+
     suspend fun setLastReadBookId(id: String) {
         context.dataStore.edit { it[Keys.LAST_READ_BOOK] = id }
     }

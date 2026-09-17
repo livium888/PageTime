@@ -22,7 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.MoreVert
@@ -102,6 +105,9 @@ fun LibraryScreen(
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
+    val readingStreak by viewModel.readingStreak.collectAsStateWithLifecycle()
+    val didReadToday by viewModel.didReadToday.collectAsStateWithLifecycle()
+    val showNeverMissTwiceNudge by viewModel.showNeverMissTwiceNudge.collectAsStateWithLifecycle()
     val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
     val reformatProgress by viewModel.reformatProgress.collectAsStateWithLifecycle()
@@ -261,6 +267,59 @@ fun LibraryScreen(
                         "${formatMinutes(totalReadingSeconds)} read · ${formatMinutes(balanceSeconds)} earned",
                         style = MaterialTheme.typography.titleMedium
                     )
+                }
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.s)
+                    ) {
+                        Icon(
+                            if (readingStreak > 0) Icons.Filled.LocalFireDepartment else Icons.Outlined.LocalFireDepartment,
+                            contentDescription = null,
+                            tint = if (readingStreak > 0) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            if (readingStreak == 1) "1 day streak" else "$readingStreak day streak",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            Icons.Outlined.CheckCircle,
+                            contentDescription = null,
+                            tint = if (didReadToday) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            if (didReadToday) "Done today" else "Not yet today",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (showNeverMissTwiceNudge) {
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ) {
+                            Text(
+                                "You missed yesterday — never miss twice. A few minutes today keeps the chain alive.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(Spacing.m)
+                            )
+                        }
+                    }
                 }
                 // One action at full weight, the rest beside it at half.
                 // Five identical full-width buttons made the library feel

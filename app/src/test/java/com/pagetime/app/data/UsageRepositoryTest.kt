@@ -206,6 +206,21 @@ class UsageRepositoryTest {
         assertEquals(UsageRepository.TYPE_EARNED, remaining.single().type)
     }
 
+    @Test
+    fun `activeDaysSince buckets timestamps into distinct calendar days, ignoring other types`() = runTest {
+        val baseDay = 19_345L
+        val baseMillis = baseDay * DAY_MS
+        dao.insert(UsageEventEntity(timestamp = baseMillis + 1_000, type = UsageRepository.TYPE_EARNED, packageName = null, seconds = 60))
+        dao.insert(UsageEventEntity(timestamp = baseMillis + 2_000, type = UsageRepository.TYPE_EARNED, packageName = null, seconds = 60))
+        dao.insert(UsageEventEntity(timestamp = baseMillis + DAY_MS + 500, type = UsageRepository.TYPE_EARNED, packageName = null, seconds = 30))
+        dao.insert(UsageEventEntity(timestamp = baseMillis + 500, type = UsageRepository.TYPE_SPENT, packageName = "com.instagram", seconds = 30))
+
+        dao.activeDaysSince(UsageRepository.TYPE_EARNED, since = 0L, zoneOffsetMillis = 0L).test {
+            assertEquals(setOf(baseDay, baseDay + 1), awaitItem().toSet())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     /** In-memory DAO mirroring the Room queries on a single sorted list. */
     private class FakeUsageEventDao : UsageEventDao {
         private val flow = MutableStateFlow<List<UsageEventEntity>>(emptyList())
@@ -265,5 +280,12 @@ class UsageRepositoryTest {
         override suspend fun pruneOlderThan(cutoff: Long) {
             flow.value = flow.value.filter { it.timestamp >= cutoff }
         }
+
+        override fun activeDaysSince(type: String, since: Long, zoneOffsetMillis: Long): Flow<List<Long>> =
+            flow.map { list ->
+                list.filter { it.type == type && it.timestamp >= since }
+                    .map { (it.timestamp + zoneOffsetMillis) / 86400000 }
+                    .distinct()
+            }
     }
 }

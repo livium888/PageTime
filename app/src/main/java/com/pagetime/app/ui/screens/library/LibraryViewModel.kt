@@ -9,6 +9,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.BookEntity
+import com.pagetime.app.domain.ReadingStreak
+import java.time.LocalDate
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +40,24 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val totalReadingSeconds = container.settingsRepository.settings
         .map { it.totalReadingSeconds }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
+    private val activeReadingDays = container.usageRepository.activeReadingDays()
+        .map { days -> days.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** "Don't break the chain": consecutive local calendar days with reading or flashcard credit. */
+    val readingStreak = activeReadingDays
+        .map { days -> ReadingStreak.currentStreak(days, LocalDate.now().toEpochDay()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val didReadToday = activeReadingDays
+        .map { days -> ReadingStreak.didToday(days, LocalDate.now().toEpochDay()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** One-time "never miss twice" nudge: yesterday was missed, today hasn't happened yet. */
+    val showNeverMissTwiceNudge = activeReadingDays
+        .map { days -> ReadingStreak.needsNeverMissTwiceNudge(days, LocalDate.now().toEpochDay()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private val _reformatting = MutableStateFlow<Set<String>>(emptySet())
     val reformatting = _reformatting.asStateFlow()

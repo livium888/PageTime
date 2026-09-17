@@ -64,4 +64,16 @@ interface UsageEventDao {
 
     @Query("DELETE FROM usage_events WHERE timestamp < :cutoff")
     suspend fun pruneOlderThan(cutoff: Long)
+
+    /**
+     * Distinct local calendar-day numbers (days since the Unix epoch, in the
+     * zone implied by [zoneOffsetMillis]) that have at least one row of
+     * [type] since [since]. The raw material for the reading streak: a day
+     * counts if it happened at all, not how much happened in it.
+     */
+    @Query(
+        "SELECT DISTINCT (timestamp + :zoneOffsetMillis) / 86400000 FROM usage_events " +
+            "WHERE type = :type AND timestamp >= :since"
+    )
+    fun activeDaysSince(type: String, since: Long, zoneOffsetMillis: Long): Flow<List<Long>>
 }

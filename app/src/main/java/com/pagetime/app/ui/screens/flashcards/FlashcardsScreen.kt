@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagetime.app.anki.AnkiReviewDialog
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 
@@ -62,6 +63,7 @@ fun FlashcardsScreen(
     vm: FlashcardsViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    var showAnkiReviewer by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -71,6 +73,11 @@ fun FlashcardsScreen(
                     if (state.due > 0) {
                         TextButton(onClick = onOpenReview) { Text("Review ${state.due}") }
                     }
+                    // A second, separate queue: Anki's own scheduling, not
+                    // PageTime's FSRS, so it stays its own button rather than
+                    // one merged "Review" count that would misrepresent
+                    // which system is actually due.
+                    TextButton(onClick = { showAnkiReviewer = true }) { Text("Anki") }
                 },
             )
         },
@@ -141,6 +148,10 @@ fun FlashcardsScreen(
                 }
             }
         }
+    }
+
+    if (showAnkiReviewer) {
+        AnkiReviewDialog(onDismiss = { showAnkiReviewer = false })
     }
 }
 

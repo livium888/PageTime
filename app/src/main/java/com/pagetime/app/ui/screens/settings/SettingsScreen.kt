@@ -94,7 +94,6 @@ import com.pagetime.app.data.LlmTokenBudget
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.ui.SectionHeader
 import com.pagetime.app.blocker.BlockScreenText
-import com.pagetime.app.debug.AnkiTestReviewDialog
 import com.pagetime.app.domain.GateState
 import com.pagetime.app.ui.formatMinutes
 
@@ -123,10 +122,6 @@ fun SettingsScreen(
     // without adb. Read once when Settings opens.
     var crashLogText by remember { mutableStateOf<String?>(null) }
     val settingsContext = LocalContext.current
-
-    // TEMPORARY: see AnkiTestReviewScreen.kt / AnkiReviewer.kt. Delete this
-    // and its row below once the JS-card question is answered.
-    var showAnkiReviewer by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         crashLogText =
@@ -492,20 +487,7 @@ fun SettingsScreen(
             SectionHeader("Support")
             AppVersionCard()
             CrashDiagnosticsCard(crashLogText = crashLogText)
-
-            // TEMPORARY: see AnkiTestReviewScreen.kt / AnkiReviewer.kt.
-            SectionHeader("Debug (temporary)")
-            AppSettingsRow(
-                icon = Icons.Outlined.History,
-                label = "Anki test reviewer",
-                subtitle = "Review a few real due Anki cards inside PageTime, see what renders",
-                onClick = { showAnkiReviewer = true }
-            )
         }
-    }
-
-    if (showAnkiReviewer) {
-        AnkiTestReviewDialog(onDismiss = { showAnkiReviewer = false })
     }
 }
 

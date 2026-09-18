@@ -1,4 +1,4 @@
-package com.pagetime.app.debug
+package com.pagetime.app.anki
 
 import android.content.pm.PackageManager
 import android.webkit.WebView
@@ -34,12 +34,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import com.pagetime.app.anki.AnkiReviewer
+import com.pagetime.app.PageTimeApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** TEMPORARY EXPERIMENTAL — see AnkiReviewer.kt for why this exists. */
 private sealed class ReviewState {
     object Loading : ReviewState()
     object PermissionNeeded : ReviewState()
@@ -49,9 +48,23 @@ private sealed class ReviewState {
     data class ShowingAnswer(val card: AnkiReviewer.Card, val startedAt: Long) : ReviewState()
 }
 
+/**
+ * Reviews the reader's real Anki deck from inside PageTime, crediting the
+ * same reading-time reward as a PageTime flashcard for every card answered
+ * Hard, Good or Easy — Again earns nothing, matching how PageTime's own
+ * flashcards already work. See [AnkiReviewer] for why this exists and how
+ * it talks to AnkiDroid.
+ *
+ * Deliberately separate from the flashcard gate that can block opening a
+ * book ([com.pagetime.app.ui.screens.reader.ReaderEntryGate]): an Anki card
+ * failing to render or behave correctly should never stand between the
+ * reader and their book, so this is purely an extra way to earn time, never
+ * a requirement.
+ */
 @Composable
-fun AnkiTestReviewDialog(onDismiss: () -> Unit) {
+fun AnkiReviewDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val balanceManager = (context.applicationContext as PageTimeApp).container.balanceManager
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<ReviewState>(ReviewState.Loading) }
 
@@ -91,7 +104,7 @@ fun AnkiTestReviewDialog(onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Anki test reviewer (experimental)", style = MaterialTheme.typography.titleMedium)
+                    Text("Anki", style = MaterialTheme.typography.titleMedium)
                     TextButton(onClick = onDismiss) { Text("Close") }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -126,15 +139,7 @@ fun AnkiTestReviewDialog(onDismiss: () -> Unit) {
                         }
                     }
                     is ReviewState.NoneDue -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("No cards due right now in AnkiDroid's currently-selected deck.")
-                            Text(
-                                "This only checks the deck AnkiDroid currently has selected, not " +
-                                    "every deck — switch decks inside AnkiDroid and retry to test another.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Button(onClick = { scope.launch { loadNext() } }) { Text("Check again") }
-                        }
+                        Text("No Anki cards due right now.")
                     }
                     is ReviewState.ShowingQuestion -> {
                         current.card.cardName?.let {
@@ -165,6 +170,10 @@ fun AnkiTestReviewDialog(onDismiss: () -> Unit) {
                                             withContext(Dispatchers.IO) {
                                                 AnkiReviewer.answer(context, current.card, ease, elapsed)
                                             }
+                                            // Again earns nothing, matching PageTime's own flashcards.
+                                            if (ease != 1) {
+                                                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+                                            }
                                             loadNext()
                                         }
                                     }
@@ -180,10 +189,10 @@ fun AnkiTestReviewDialog(onDismiss: () -> Unit) {
 
 /**
  * Loads AnkiDroid's own rendered HTML for a card — the reader's real note
- * type, template and CSS, exactly as AnkiDroid's backend produced it.
- * JavaScript is enabled so cards that use it actually attempt to run,
- * since seeing what breaks without AnkiDroid's own JS bridge present is
- * the entire point of this experiment — no bridge is stubbed in here.
+ * type, template and CSS. JavaScript is enabled so cards that use it behave
+ * as closely as possible to AnkiDroid's own reviewer, though no JS bridge is
+ * stubbed in: a card built around AnkiDroid-specific JS APIs may still
+ * behave differently here.
  */
 @Composable
 private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier) {

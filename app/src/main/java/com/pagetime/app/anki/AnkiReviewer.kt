@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import org.json.JSONArray
 
 /**
  * Talks to AnkiDroid's public FlashCardsContract ContentProvider directly,
@@ -32,6 +33,9 @@ import android.net.Uri
  * the result was correctly-structured but completely unstyled cards.
  * [nextCard] fetches the note's model id, that model's CSS, and prepends it
  * as a `<style>` block itself.
+ *
+ * Cards that reference an image or sound file are skipped entirely, never
+ * shown or graded — see [NextCardResult.OnlyUnsupportedMediaDue] for why.
  */
 object AnkiReviewer {
 
@@ -65,6 +69,13 @@ object AnkiReviewer {
     // Deck columns.
     private const val COL_DECK_ID = "deck_id"
 
+    // ReviewInfo's own list of image/sound filenames a card's question and
+    // answer reference — see [DueEntry.hasMedia].
+    private const val COL_MEDIA_FILES = "media_files"
+
+    /** How many due cards per deck to look through for one without media before giving up on that deck. */
+    private const val SCAN_LIMIT = 50
+
     data class Card(
         val noteId: Long,
         val ord: Int,
@@ -74,21 +85,50 @@ object AnkiReviewer {
         val answer: String,
     )
 
+    sealed class NextCardResult {
+        data class Found(val card: Card) : NextCardResult()
+        object NoneDue : NextCardResult()
+
+        /**
+         * Every card due right now references an image or sound file.
+         * AnkiDroid's ContentProvider has no read path for media — [AnkiMedia]
+         * (the "media" URI) only supports insert(), confirmed against
+         * AnkiDroid's own CardContentProvider source, and no other exported
+         * provider exists that could serve one back by filename — so a card
+         * like this can never render correctly here. Rather than show a
+         * broken WebView (an Image Occlusion mask floating over a missing
+         * photo, say), this is surfaced as its own state and never graded:
+         * grading a card whose content the reader couldn't actually see would
+         * both corrupt AnkiDroid's own scheduling for it and pay a reward for
+         * an answer never shown.
+         */
+        object OnlyUnsupportedMediaDue : NextCardResult()
+    }
+
+    private data class DueEntry(val noteId: Long, val ord: Int, val hasMedia: Boolean)
+
     /**
-     * The next due card from any of the reader's Anki decks, or null if
-     * nothing is due anywhere. [ReviewInfo.CONTENT_URI] only answers "what's
-     * due in this one deck", defaulting to whichever deck AnkiDroid last had
-     * selected — not good enough for a feature the reader shouldn't have to
-     * remember to point at the right deck first, so this checks every deck
-     * AnkiDroid has and returns the first one with something due.
+     * The next due card from any of the reader's Anki decks that doesn't
+     * depend on media, or a result explaining why there isn't one.
+     * [ReviewInfo.CONTENT_URI] only answers "what's due in this one deck",
+     * defaulting to whichever deck AnkiDroid last had selected — not good
+     * enough for a feature the reader shouldn't have to remember to point at
+     * the right deck first, so this checks every deck AnkiDroid has.
      */
-    fun nextCard(context: Context): Card? {
+    fun nextCard(context: Context): NextCardResult {
         val resolver = context.contentResolver
+        var sawMediaCard = false
         for (deckId in allDeckIds(resolver)) {
-            val due = dueCardIn(resolver, deckId) ?: continue
-            return buildCard(resolver, due.first, due.second)
+            for (entry in dueEntriesIn(resolver, deckId, SCAN_LIMIT)) {
+                if (entry.hasMedia) {
+                    sawMediaCard = true
+                    continue
+                }
+                val card = buildCard(resolver, entry.noteId, entry.ord) ?: continue
+                return NextCardResult.Found(card)
+            }
         }
-        return null
+        return if (sawMediaCard) NextCardResult.OnlyUnsupportedMediaDue else NextCardResult.NoneDue
     }
 
     private fun allDeckIds(resolver: ContentResolver): List<Long> =
@@ -97,22 +137,26 @@ object AnkiReviewer {
             buildList { while (cursor.moveToNext()) add(cursor.getLong(idCol)) }
         } ?: emptyList()
 
-    /** The (noteId, ord) of the next due card in [deckId], or null if none is due there. */
-    private fun dueCardIn(resolver: ContentResolver, deckId: Long): Pair<Long, Int>? =
+    /** Up to [limit] due cards in [deckId], each flagged for whether it needs media we can't fetch. */
+    private fun dueEntriesIn(resolver: ContentResolver, deckId: Long, limit: Int): List<DueEntry> =
         resolver.query(
             SCHEDULE_URI,
             null,
             "limit=?, deckID=?",
-            arrayOf("1", deckId.toString()),
+            arrayOf(limit.toString(), deckId.toString()),
             null
         )?.use { cursor ->
-            if (!cursor.moveToFirst()) null
-            else {
-                val noteId = cursor.getLong(cursor.getColumnIndexOrThrow(COL_NOTE_ID))
-                val ord = cursor.getInt(cursor.getColumnIndexOrThrow(COL_ORD))
-                noteId to ord
+            val noteIdIdx = cursor.getColumnIndexOrThrow(COL_NOTE_ID)
+            val ordIdx = cursor.getColumnIndexOrThrow(COL_ORD)
+            val mediaIdx = cursor.getColumnIndex(COL_MEDIA_FILES)
+            buildList {
+                while (cursor.moveToNext()) {
+                    val hasMedia = mediaIdx >= 0 &&
+                        runCatching { JSONArray(cursor.getString(mediaIdx)).length() > 0 }.getOrDefault(false)
+                    add(DueEntry(cursor.getLong(noteIdIdx), cursor.getInt(ordIdx), hasMedia))
+                }
             }
-        }
+        } ?: emptyList()
 
     private fun buildCard(resolver: ContentResolver, noteId: Long, ord: Int): Card? {
         val noteUri = Uri.withAppendedPath(NOTES_URI, noteId.toString())

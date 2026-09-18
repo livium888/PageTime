@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +45,9 @@ private sealed class ReviewState {
     object PermissionNeeded : ReviewState()
     data class Error(val message: String) : ReviewState()
     object NoneDue : ReviewState()
+
+    /** Every due card needs an image or sound file — see [AnkiReviewer.NextCardResult.OnlyUnsupportedMediaDue]. */
+    object OnlyMediaDue : ReviewState()
     data class ShowingQuestion(val card: AnkiReviewer.Card, val startedAt: Long) : ReviewState()
     data class ShowingAnswer(val card: AnkiReviewer.Card, val startedAt: Long) : ReviewState()
 }
@@ -71,11 +75,11 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
     suspend fun loadNext() {
         state = ReviewState.Loading
         state = try {
-            val card = withContext(Dispatchers.IO) { AnkiReviewer.nextCard(context) }
-            if (card == null) {
-                ReviewState.NoneDue
-            } else {
-                ReviewState.ShowingQuestion(card, System.currentTimeMillis())
+            when (val result = withContext(Dispatchers.IO) { AnkiReviewer.nextCard(context) }) {
+                is AnkiReviewer.NextCardResult.Found ->
+                    ReviewState.ShowingQuestion(result.card, System.currentTimeMillis())
+                AnkiReviewer.NextCardResult.NoneDue -> ReviewState.NoneDue
+                AnkiReviewer.NextCardResult.OnlyUnsupportedMediaDue -> ReviewState.OnlyMediaDue
             }
         } catch (e: SecurityException) {
             ReviewState.PermissionNeeded
@@ -141,6 +145,14 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                     is ReviewState.NoneDue -> {
                         Text("No Anki cards due right now.")
                     }
+                    is ReviewState.OnlyMediaDue -> {
+                        Text(
+                            "The Anki cards due right now use images or sound. AnkiDroid " +
+                                "doesn't let other apps read those back, so they can't display " +
+                                "here — open AnkiDroid to review them. Anything without media " +
+                                "will still show up here."
+                        )
+                    }
                     is ReviewState.ShowingQuestion -> {
                         current.card.cardName?.let {
                             Text(it, style = MaterialTheme.typography.labelMedium)
@@ -164,6 +176,7 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                             listOf(1 to "Again", 2 to "Hard", 3 to "Good", 4 to "Easy").forEach { (ease, label) ->
                                 Button(
                                     modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp),
                                     onClick = {
                                         val elapsed = System.currentTimeMillis() - current.startedAt
                                         scope.launch {
@@ -177,7 +190,14 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                                             loadNext()
                                         }
                                     }
-                                ) { Text(label) }
+                                ) {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
                             }
                         }
                     }

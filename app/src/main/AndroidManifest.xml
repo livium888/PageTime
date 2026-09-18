@@ -39,7 +39,14 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <!-- TEMPORARY EXPERIMENTAL: see AnkiReviewer.kt. Needed to resolve
+             AnkiDroid's ContentProvider under API 30+ package visibility. -->
+        <package android:name="com.ichi2.anki" />
     </queries>
+
+    <!-- TEMPORARY EXPERIMENTAL: see AnkiReviewer.kt. AnkiDroid's own custom
+         permission, required to query its FlashCardsContract ContentProvider. -->
+    <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
 
     <application
         android:name=".PageTimeApp"

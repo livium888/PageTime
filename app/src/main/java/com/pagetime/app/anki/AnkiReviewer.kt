@@ -19,11 +19,19 @@ import android.net.Uri
  * even one holding MANAGE_EXTERNAL_STORAGE — a folder handle that reaches
  * into AnkiDroid's own Android/data storage, reading AnkiDroid's review log
  * directly is off the table. This is the other path: AnkiDroid's own
- * ContentProvider hands over the next due card's fully-rendered question and
- * answer HTML (the reader's own note type, template and CSS already baked
- * in by AnkiDroid's backend) and accepts an ease rating back. The open
- * question this exists to answer is whether cards that lean on AnkiDroid's
- * JS bridge still work reasonably without that bridge present.
+ * ContentProvider hands over the next due card's rendered question and
+ * answer HTML (the reader's own note type and template already applied) and
+ * accepts an ease rating back.
+ *
+ * The CSS is NOT included in that HTML — a first attempt assumed it was,
+ * from AnkiDroid's own internal `card.css() + card.q()` pattern, and the
+ * result was correctly-structured but completely unstyled cards. The
+ * ContentProvider keeps styling separate: [nextCard] fetches the note's
+ * model id from the note row, that model's CSS from a second query, and
+ * prepends it as a `<style>` block itself before returning the card.
+ *
+ * The open question this exists to answer is whether cards that lean on
+ * AnkiDroid's JS bridge still work reasonably without that bridge present.
  */
 object AnkiReviewer {
 
@@ -34,12 +42,19 @@ object AnkiReviewer {
     private val AUTHORITY_URI = Uri.parse("content://$AUTHORITY")
     private val SCHEDULE_URI = Uri.withAppendedPath(AUTHORITY_URI, "schedule")
     private val NOTES_URI = Uri.withAppendedPath(AUTHORITY_URI, "notes")
+    private val MODELS_URI = Uri.withAppendedPath(AUTHORITY_URI, "models")
 
     // ReviewInfo ("schedule") columns.
     private const val COL_NOTE_ID = "note_id"
     private const val COL_ORD = "ord"
     private const val COL_EASE = "answer_ease"
     private const val COL_TIME_TAKEN = "time_taken"
+
+    // Note columns.
+    private const val COL_MID = "mid"
+
+    // Model columns.
+    private const val COL_CSS = "css"
 
     // Card columns.
     private const val COL_CARD_NAME = "card_name"
@@ -50,7 +65,7 @@ object AnkiReviewer {
         val noteId: Long,
         val ord: Int,
         val cardName: String?,
-        /** Fully rendered HTML, including the note's own CSS — this is what AnkiDroid itself would show. */
+        /** Rendered HTML with the note's own CSS prepended — see [nextCard]. */
         val question: String,
         val answer: String,
     )
@@ -73,18 +88,33 @@ object AnkiReviewer {
         val (noteId, ord) = due
 
         val noteUri = Uri.withAppendedPath(NOTES_URI, noteId.toString())
+        val css = resolver.query(noteUri, null, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            cursor.getLong(cursor.getColumnIndexOrThrow(COL_MID))
+        }?.let { modelId ->
+            val modelUri = Uri.withAppendedPath(MODELS_URI, modelId.toString())
+            resolver.query(modelUri, null, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) null
+                else {
+                    val cssIdx = cursor.getColumnIndex(COL_CSS)
+                    if (cssIdx >= 0) cursor.getString(cssIdx) else null
+                }
+            }
+        } ?: ""
+
         val cardsUri = Uri.withAppendedPath(noteUri, "cards")
         val cardUri = Uri.withAppendedPath(cardsUri, ord.toString())
 
         return resolver.query(cardUri, null, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return null
             val cardNameIdx = cursor.getColumnIndex(COL_CARD_NAME)
+            val style = "<style>$css</style>"
             Card(
                 noteId = noteId,
                 ord = ord,
                 cardName = if (cardNameIdx >= 0) cursor.getString(cardNameIdx) else null,
-                question = cursor.getString(cursor.getColumnIndexOrThrow(COL_QUESTION)),
-                answer = cursor.getString(cursor.getColumnIndexOrThrow(COL_ANSWER)),
+                question = style + cursor.getString(cursor.getColumnIndexOrThrow(COL_QUESTION)),
+                answer = style + cursor.getString(cursor.getColumnIndexOrThrow(COL_ANSWER)),
             )
         }
     }

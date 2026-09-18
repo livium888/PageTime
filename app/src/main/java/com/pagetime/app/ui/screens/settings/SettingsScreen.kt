@@ -24,6 +24,8 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
+import android.net.Uri
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -94,6 +96,7 @@ import com.pagetime.app.data.LlmTokenBudget
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.ui.SectionHeader
 import com.pagetime.app.blocker.BlockScreenText
+import com.pagetime.app.debug.AnkiAccessProbe
 import com.pagetime.app.domain.GateState
 import com.pagetime.app.ui.formatMinutes
 
@@ -122,6 +125,20 @@ fun SettingsScreen(
     // without adb. Read once when Settings opens.
     var crashLogText by remember { mutableStateOf<String?>(null) }
     val settingsContext = LocalContext.current
+
+    // TEMPORARY: see AnkiAccessProbe.kt. Delete this block and its row below
+    // once the folder-access question is answered.
+    var ankiProbeResult by remember { mutableStateOf<String?>(null) }
+    val ankiFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri: Uri? ->
+        if (treeUri == null) {
+            ankiProbeResult = "No folder was picked."
+        } else {
+            ankiProbeResult = AnkiAccessProbe.walk(settingsContext, treeUri)
+        }
+    }
+
     LaunchedEffect(Unit) {
         crashLogText =
             PageTimeApp.crashDirOf(settingsContext)
@@ -486,7 +503,27 @@ fun SettingsScreen(
             SectionHeader("Support")
             AppVersionCard()
             CrashDiagnosticsCard(crashLogText = crashLogText)
+
+            // TEMPORARY: see AnkiAccessProbe.kt.
+            SectionHeader("Debug (temporary)")
+            AppSettingsRow(
+                icon = Icons.Outlined.History,
+                label = "Test AnkiDroid folder access",
+                subtitle = "Pick a folder in the system picker, try to walk into AnkiDroid's data",
+                onClick = { ankiFolderPicker.launch(null) }
+            )
         }
+    }
+
+    ankiProbeResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { ankiProbeResult = null },
+            title = { Text("Anki folder access result") },
+            text = { Text(result) },
+            confirmButton = {
+                TextButton(onClick = { ankiProbeResult = null }) { Text("OK") }
+            }
+        )
     }
 }
 

@@ -241,7 +241,17 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
  * failed resource loads (both likely, given there's no base URL for a
  * relative script/fetch to resolve against, and no AnkiDroid JS API object)
  * so a broken custom template can be diagnosed instead of guessed at.
+ *
+ * Confirmed on-device: a null base URL gives the page an opaque origin, and
+ * an opaque origin can't touch sessionStorage/localStorage at all — any
+ * script that reads either on load throws an uncaught SecurityError and
+ * stops right there, taking every later DOM update (revealing the question,
+ * filling in the answer) down with it. [BASE_URL] is a fake but real origin
+ * (an RFC 2606 .invalid host, so it can never resolve to an actual site) so
+ * storage access works like it would in AnkiDroid's own reviewer.
  */
+private const val BASE_URL = "https://pagetime-anki-card.invalid/"
+
 @Composable
 private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMessage: (String) -> Unit = {}) {
     AndroidView(
@@ -269,7 +279,7 @@ private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMes
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            webView.loadDataWithBaseURL(BASE_URL, html, "text/html", "utf-8", null)
         }
     )
 }

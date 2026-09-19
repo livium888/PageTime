@@ -35,7 +35,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -75,6 +77,7 @@ private sealed class ReviewState {
 fun AnkiReviewDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val balanceManager = (context.applicationContext as PageTimeApp).container.balanceManager
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<ReviewState>(ReviewState.Loading) }
     // Diagnostic only, for tracking down why a custom card's script doesn't
@@ -175,6 +178,9 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                             onJsMessage = { jsMessages.add(it) },
                         )
                         JsDiagnostics(jsMessages)
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(current.card.question)) }) {
+                            Text("Copy question HTML", style = MaterialTheme.typography.labelSmall)
+                        }
                         Spacer(Modifier.height(12.dp))
                         Button(
                             onClick = {
@@ -196,6 +202,9 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                             onJsMessage = { jsMessages.add(it) },
                         )
                         JsDiagnostics(jsMessages)
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(current.card.answer)) }) {
+                            Text("Copy answer HTML", style = MaterialTheme.typography.labelSmall)
+                        }
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(1 to "Again", 2 to "Hard", 3 to "Good", 4 to "Easy").forEach { (ease, label) ->

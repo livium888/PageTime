@@ -598,13 +598,22 @@ class LumenRepository(
         )
     }
 
-    /** Links this card to another; the relation is bidirectional. */
-    suspend fun link(cardId: String, otherId: String) {
-        if (cardId == otherId) return
-        val a = dao.get(cardId) ?: return
-        val b = dao.get(otherId) ?: return
+    /**
+     * Links this card to another; the relation is bidirectional.
+     *
+     * Returns whether this call actually created a new connection, as
+     * opposed to re-confirming one that already existed — the caller uses
+     * this to decide whether the action is worth a reward. A link that was
+     * already there earns nothing a second time, the same way re-answering
+     * an already-graded flashcard would not pay twice.
+     */
+    suspend fun link(cardId: String, otherId: String): Boolean {
+        if (cardId == otherId) return false
+        val a = dao.get(cardId) ?: return false
+        val b = dao.get(otherId) ?: return false
         val aLinks = LumenCapture.linksFromJson(a.linksJson)
         val bLinks = LumenCapture.linksFromJson(b.linksJson)
+        val isNew = otherId !in aLinks || cardId !in bLinks
         val now = System.currentTimeMillis()
         if (otherId !in aLinks) {
             dao.upsert(
@@ -622,6 +631,7 @@ class LumenRepository(
                 )
             )
         }
+        return isNew
     }
 
     /** Removes the link between two cards (from both sides). */

@@ -9,6 +9,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.domain.BalanceManager
+import com.pagetime.app.domain.ReadingMomentum
 import io.github.openspacedrepetition.Card
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +56,13 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var readingStartTime = 0L
     private var currentBookId: String? = null
 
+    /** Surfaced once when a reading-momentum bonus lands; see [ReadingMomentum]. */
+    private val _momentumNotice = MutableStateFlow<String?>(null)
+    val momentumNotice = _momentumNotice.asStateFlow()
+
+    private var creditedSecondsSinceMomentumBonus = 0L
+    private var nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
+
     // --- AI flashcard state ---
     private val _flashcardState = MutableStateFlow(FlashcardUiState())
     val flashcardState = _flashcardState.asStateFlow()
@@ -100,8 +108,23 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 delay(1000)
                 pendingSeconds++
                 balanceManager.earnFromReading(1L)
+                creditedSecondsSinceMomentumBonus++
+                if (ReadingMomentum.shouldFire(creditedSecondsSinceMomentumBonus, nextMomentumThreshold)) {
+                    creditedSecondsSinceMomentumBonus = 0
+                    nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
+                    launch { awardMomentumBonus() }
+                }
             }
         }
+    }
+
+    /** Pays and announces a reading-momentum bonus; a no-op if the reward is off. */
+    private suspend fun awardMomentumBonus() {
+        val seconds = balanceManager.earnReadingMomentumBonus()
+        if (seconds <= 0) return
+        _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
+        delay(4_000)
+        _momentumNotice.value = null
     }
 
     private fun stopReading() {

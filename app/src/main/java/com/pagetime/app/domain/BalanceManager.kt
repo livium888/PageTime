@@ -289,6 +289,40 @@ class BalanceManager(
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
 
+    /** Browse seconds paid out per surprise reading-momentum bonus. */
+    val readingMomentumBonusSeconds: Flow<Long> =
+        repository.settings.map { it.readingMomentumBonusSeconds }
+
+    suspend fun readingMomentumBonus(): Long = repository.readingMomentumBonusSeconds()
+
+    suspend fun setReadingMomentumBonus(seconds: Long) =
+        repository.setReadingMomentumBonusSeconds(seconds)
+
+    /**
+     * Pays the reading-momentum bonus [ReadingMomentum] decided is due, and
+     * reports how much it paid (0 if the reward is turned off) so the caller
+     * can show it.
+     *
+     * No correctness gate, unlike the flashcard/explain-back/slip-box
+     * rewards: every second behind this was already guard-approved credited
+     * reading time (the same accrual [earnFromReading] pays for), so there is
+     * nothing left to grade — only when to pay it, which is not this
+     * function's decision either.
+     */
+    suspend fun earnReadingMomentumBonus(): Long {
+        val seconds = repository.readingMomentumBonusSeconds()
+        if (seconds <= 0) return 0
+        mutex.withLock {
+            if (repository.gateEnabled()) {
+                repository.addReadingCredit(seconds)
+            } else {
+                repository.addBrowseBalanceSeconds(seconds)
+            }
+        }
+        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
+        return seconds
+    }
+
     suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {
         repository.setBrowseBalanceSeconds(seconds.coerceAtLeast(0L))
     }

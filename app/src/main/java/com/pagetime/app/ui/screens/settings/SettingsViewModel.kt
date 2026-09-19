@@ -85,6 +85,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val lumenLinkRewardSeconds = container.balanceManager.lumenLinkRewardSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 45L)
 
+    val readingMomentumBonusSeconds = container.balanceManager.readingMomentumBonusSeconds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 60L)
+
     init {
         // A wind-down that finished while the app was closed leaves a stored
         // switch reading "on" for a gate that is off. Settling it here is the
@@ -310,6 +313,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLumenLinkReward(value: Long) {
         viewModelScope.launch { container.balanceManager.setLumenLinkReward(value) }
+    }
+
+    fun setReadingMomentumBonus(value: Long) {
+        viewModelScope.launch { container.balanceManager.setReadingMomentumBonus(value) }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

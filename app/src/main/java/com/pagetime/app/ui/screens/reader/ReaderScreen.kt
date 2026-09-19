@@ -270,6 +270,7 @@ fun ReaderScreen(
     val enhancing by vm.enhancing.collectAsStateWithLifecycle()
     val enhancementProgress by vm.enhancementProgress.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
+    val momentumNotice by vm.momentumNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
@@ -790,6 +791,10 @@ fun ReaderScreen(
 
         if (resumeNotice != null) {
             ResumeNotice(text = resumeNotice!!)
+        }
+
+        if (momentumNotice != null) {
+            ResumeNotice(text = momentumNotice!!)
         }
 
         // Until now the only sign a capture was running was the spinner on the

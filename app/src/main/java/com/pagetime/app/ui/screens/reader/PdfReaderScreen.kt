@@ -122,6 +122,7 @@ fun PdfReaderScreen(
     // Measured page shapes, so a page reclaimed by the lazy list comes back at
     // its true height instead of settling into it.
     val pageRatios by vm.pageRatios.collectAsStateWithLifecycle()
+    val momentumNotice by vm.momentumNotice.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -383,6 +384,31 @@ fun PdfReaderScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        // --- Reading momentum bonus notice ---
+        momentumNotice?.let { text ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 72.dp),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            MaterialTheme.colorScheme.inverseSurface,
+                            RoundedCornerShape(20.dp),
+                        )
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        text,
+                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
         }

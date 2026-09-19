@@ -45,6 +45,14 @@ data class Settings(
      * ideas is real synthesis, but less work than writing a fresh explanation.
      */
     val lumenLinkRewardSeconds: Long = 45,
+    /**
+     * Browse seconds paid out as a surprise bonus for sustained reading in one
+     * sitting — see [com.pagetime.app.domain.ReadingMomentum] for when. Unlike
+     * the other rewards, nothing is graded; every second behind it was already
+     * guard-approved reading time, so the only question is timing, not
+     * correctness.
+     */
+    val readingMomentumBonusSeconds: Long = 60,
     val totalReadingSeconds: Long = 0,
     /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
     val quickDisableUntil: Long = 0,
@@ -221,6 +229,7 @@ class SettingsRepository(private val context: Context) {
         val FLASHCARD_REWARD = longPreferencesKey("flashcard_reward_seconds")
         val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
         val LUMEN_LINK_REWARD = longPreferencesKey("lumen_link_reward_seconds")
+        val READING_MOMENTUM_BONUS = longPreferencesKey("reading_momentum_bonus_seconds")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
@@ -549,6 +558,7 @@ class SettingsRepository(private val context: Context) {
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
             explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
             lumenLinkRewardSeconds = p[Keys.LUMEN_LINK_REWARD] ?: 45L,
+            readingMomentumBonusSeconds = p[Keys.READING_MOMENTUM_BONUS] ?: 60L,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
@@ -1121,6 +1131,13 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLumenLinkRewardSeconds(value: Long) {
         context.dataStore.edit { it[Keys.LUMEN_LINK_REWARD] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun readingMomentumBonusSeconds(): Long =
+        context.dataStore.data.first()[Keys.READING_MOMENTUM_BONUS] ?: 60L
+
+    suspend fun setReadingMomentumBonusSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.READING_MOMENTUM_BONUS] = value.coerceIn(0L, 3_600L) }
     }
 
     suspend fun setAiAnalysisLevel(level: AiAnalysisLevel) {

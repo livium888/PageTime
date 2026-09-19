@@ -72,35 +72,36 @@ fun FlashcardsScreen(
             TopAppBar(
                 title = { Text("Flashcards") },
                 actions = {
-                    if (state.due > 0) {
-                        TextButton(onClick = onOpenReview) { Text("Review ${state.due}") }
-                    }
-                    // A third, separate queue: explain-back has no due date of
-                    // its own, and previously had no cross-book presence at
-                    // all — a concept only ever surfaced inside whichever
-                    // book happened to be open. This is the one place that
-                    // now spans the whole library, so with many books the
-                    // reader has one thing to tap instead of hoping they
-                    // happen to reopen the right book and chapter.
-                    state.nextDueConcept?.let { due ->
-                        if (state.dueConceptCount > 0) {
-                            TextButton(
-                                onClick = {
-                                    onExplainConcept(due.bookId, due.chapterIndex, due.chapterTitle, due.bookTitle)
-                                }
-                            ) { Text("Explain ${state.dueConceptCount}") }
-                        }
-                    }
-                    // A fourth, separate queue: Anki's own scheduling, not
-                    // PageTime's FSRS, so it stays its own button rather than
-                    // one merged "Review" count that would misrepresent
-                    // which system is actually due.
+                    // Anki keeps its own plain button rather than a live
+                    // count: unlike cards and concepts, a due count here
+                    // would mean querying AnkiDroid's ContentProvider across
+                    // every deck just to render a badge, on every visit to
+                    // this tab — real cross-app IPC cost, and exactly the
+                    // kind of extra schedule query the grading fix earlier
+                    // had to eliminate to stop corrupting AnkiDroid's own
+                    // live scheduler state. It stays a separate, non-reactive
+                    // door in for the same reason it stays a separate
+                    // scheduling system: it is Anki's queue, not PageTime's.
                     TextButton(onClick = { showAnkiReviewer = true }) { Text("Anki") }
                 },
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            // Cards and concepts are PageTime's own two systems, both cheap,
+            // reactive counts — unlike Anki, merging them into one headline
+            // number doesn't misrepresent anything, it just answers "how
+            // much is there today" before asking which one to start with.
+            TodaysPractice(
+                cardsDue = state.due,
+                conceptsDue = state.dueConceptCount,
+                onReview = onOpenReview,
+                onExplainConcept = {
+                    state.nextDueConcept?.let { due ->
+                        onExplainConcept(due.bookId, due.chapterIndex, due.chapterTitle, due.bookTitle)
+                    }
+                },
+            )
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -170,6 +171,62 @@ fun FlashcardsScreen(
 
     if (showAnkiReviewer) {
         AnkiReviewDialog(onDismiss = { showAnkiReviewer = false })
+    }
+}
+
+/**
+ * One answer to "how much is there to do today", combining PageTime's own
+ * two systems instead of leaving the reader to add up two separate buttons.
+ *
+ * Cards and concepts stay separate actions underneath, deliberately: a
+ * flashcard answer and a written explanation are different enough tasks that
+ * forcing them into one literal swipe-through session would misrepresent
+ * both, the same reason Anki keeps its own button rather than joining this
+ * count. What was actually missing wasn't one combined queue — it was one
+ * combined number, so the reader sees the whole day's practice at a glance
+ * before picking which part to start with.
+ */
+@Composable
+private fun TodaysPractice(
+    cardsDue: Int,
+    conceptsDue: Int,
+    onReview: () -> Unit,
+    onExplainConcept: () -> Unit,
+) {
+    val total = cardsDue + conceptsDue
+    if (total <= 0) return
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Today's practice: $total ready",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                buildString {
+                    if (cardsDue > 0) append("$cardsDue card${if (cardsDue == 1) "" else "s"}")
+                    if (cardsDue > 0 && conceptsDue > 0) append(" · ")
+                    if (conceptsDue > 0) {
+                        append("$conceptsDue concept${if (conceptsDue == 1) "" else "s"} to explain")
+                    }
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (cardsDue > 0) {
+                    Button(onClick = onReview) { Text("Cards ($cardsDue)") }
+                }
+                if (conceptsDue > 0) {
+                    Button(onClick = onExplainConcept) { Text("Concepts ($conceptsDue)") }
+                }
+            }
+        }
     }
 }
 

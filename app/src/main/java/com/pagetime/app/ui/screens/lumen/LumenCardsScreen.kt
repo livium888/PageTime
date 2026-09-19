@@ -341,7 +341,7 @@ fun LumenCardsScreen(
     onOpenSource: (String) -> Unit = {},
     onOpenReview: () -> Unit = {}
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val app = context.applicationContext as PageTimeApp
     val vm: LumenViewModel = viewModel(
         factory = LumenViewModel.Factory(
@@ -437,7 +437,6 @@ fun LumenCardsScreen(
 
     // Lossless backup of the whole box: pick a location via the system file
     // picker, then write the JSON the ViewModel built on the IO dispatcher.
-    val context = LocalContext.current
     var exportReadyJson by remember { mutableStateOf<String?>(null) }
     val exportLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->

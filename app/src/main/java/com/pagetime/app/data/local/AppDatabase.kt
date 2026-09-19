@@ -41,7 +41,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PagemarkEntity::class,
         TextHighlightEntity::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -392,6 +392,17 @@ abstract class AppDatabase : RoomDatabase() {
                         "enabled INTEGER NOT NULL DEFAULT 1)"
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_sites_enabled ON blocked_sites(enabled)")
+            }
+        }
+
+        /**
+         * A book's genre — Fiction, Poetry, Science, and so on — set once by
+         * [com.pagetime.app.data.BookGenreClassifier] and never re-asked.
+         * Null on every existing row until classified in the background.
+         */
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN genre TEXT")
             }
         }
 

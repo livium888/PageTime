@@ -109,6 +109,7 @@ fun LibraryScreen(
     val readingStreak by viewModel.readingStreak.collectAsStateWithLifecycle()
     val didReadToday by viewModel.didReadToday.collectAsStateWithLifecycle()
     val showNeverMissTwiceNudge by viewModel.showNeverMissTwiceNudge.collectAsStateWithLifecycle()
+    val genreSummary by viewModel.genreSummary.collectAsStateWithLifecycle()
     val upNextBook by viewModel.upNextBook.collectAsStateWithLifecycle()
     val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
@@ -290,6 +291,19 @@ fun LibraryScreen(
                         "${formatMinutes(totalReadingSeconds)} read · ${formatMinutes(balanceSeconds)} earned",
                         style = MaterialTheme.typography.titleMedium
                     )
+                }
+                // Purely descriptive — a fun fact about the shelf, never a
+                // claim about what the reader should do with it. Absent
+                // entirely until at least one book has been classified, so a
+                // reader with no AI configured never sees a half-finished stat.
+                genreSummary?.let { summary ->
+                    item {
+                        Text(
+                            summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 item {
                     Row(

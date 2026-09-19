@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.BookGenreSummary
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.domain.ReadingStreak
 import java.time.LocalDate
@@ -74,6 +75,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val showNeverMissTwiceNudge = activeReadingDays
         .map { days -> ReadingStreak.needsNeverMissTwiceNudge(days, LocalDate.now().toEpochDay()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** "2 Fiction, 1 Poetry" — null until at least one book has a genre. */
+    val genreSummary = books
+        .map { BookGenreSummary.label(BookGenreSummary.summarize(it)) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    init {
+        // Fire-and-forget: a no-op with no AI configured, and throttled to a
+        // few books per visit otherwise — see BookGenreClassifier's own doc.
+        viewModelScope.launch { runCatching { container.bookGenreClassifier.classifyMissing() } }
+    }
 
     private val _reformatting = MutableStateFlow<Set<String>>(emptySet())
     val reformatting = _reformatting.asStateFlow()

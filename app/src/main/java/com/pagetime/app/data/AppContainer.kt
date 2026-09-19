@@ -81,7 +81,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_20_21,
                 AppDatabase.MIGRATION_21_22,
                 AppDatabase.MIGRATION_22_23,
-                AppDatabase.MIGRATION_23_24
+                AppDatabase.MIGRATION_23_24,
+                AppDatabase.MIGRATION_24_25
             )
             .build()
 
@@ -205,6 +206,14 @@ class AppContainer(context: Context) {
             urlProvider = { settingsRepository.lumenModelUrl() ?: LumenModelStore.MODEL_URL },
         )
     val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
+
+    /** Tags each book Fiction/Poetry/Science/etc., once, in the background — see the class doc. */
+    val bookGenreClassifier = BookGenreClassifier(
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        geminiClient = geminiLearningClient,
+        localLlmProvider = localLlmProvider,
+    )
 
     /**
      * The retrieval model: separate weights, separate directory, separate

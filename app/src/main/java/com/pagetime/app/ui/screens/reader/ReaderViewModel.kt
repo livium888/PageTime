@@ -23,6 +23,7 @@ import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.PagemarkSession
 import com.pagetime.app.data.Sentences
+import com.pagetime.app.domain.ReadingMomentum
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -166,6 +167,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private val _resumeNotice = MutableStateFlow<String?>(null)
     val resumeNotice = _resumeNotice.asStateFlow()
+
+    /** Surfaced once when a reading-momentum bonus lands; see [ReadingMomentum]. */
+    private val _momentumNotice = MutableStateFlow<String?>(null)
+    val momentumNotice = _momentumNotice.asStateFlow()
+
+    /** Credited seconds toward the next bonus, and how many it takes — reset on each payout. */
+    private var creditedSecondsSinceMomentumBonus = 0L
+    private var nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
 
     private val _mapMoment = MutableStateFlow<com.pagetime.app.data.local.MapMoment?>(null)
     val mapMoment = _mapMoment.asStateFlow()
@@ -350,6 +359,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
+                    creditedSecondsSinceMomentumBonus++
+                    if (ReadingMomentum.shouldFire(creditedSecondsSinceMomentumBonus, nextMomentumThreshold)) {
+                        creditedSecondsSinceMomentumBonus = 0
+                        nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
+                        viewModelScope.launch { awardMomentumBonus() }
+                    }
                 }
                 _sessionSeconds.value++
                 _guardState.value = guard.state
@@ -1344,6 +1359,15 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             delay(4_000)
             _resumeNotice.value = null
         }
+    }
+
+    /** Pays and announces a reading-momentum bonus; a no-op if the reward is off. */
+    private suspend fun awardMomentumBonus() {
+        val seconds = balanceManager.earnReadingMomentumBonus()
+        if (seconds <= 0) return
+        _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
+        delay(4_000)
+        _momentumNotice.value = null
     }
 
     /**

@@ -119,6 +119,7 @@ fun SettingsScreen(
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
     val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
     val lumenLinkRewardSeconds by viewModel.lumenLinkRewardSeconds.collectAsStateWithLifecycle()
+    val readingMomentumBonusSeconds by viewModel.readingMomentumBonusSeconds.collectAsStateWithLifecycle()
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -390,6 +391,33 @@ fun SettingsScreen(
                     unit = "seconds",
                     describe = { "${it.roundToLong()} sec" },
                     onCommit = { viewModel.setLumenLinkReward(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Unlike the rewards above, nothing here is graded — every
+                // second behind it was already credited reading time. The
+                // timing is deliberately unpredictable (a few minutes, never
+                // shown counting down), so this number is only how big the
+                // surprise is, not how often it lands.
+                TypedSettingField(
+                    title = "Reading momentum bonus",
+                    help = "Every few minutes of sustained reading, at an unpredictable moment, " +
+                        (if (gate.enabled) {
+                            "banks $readingMomentumBonusSeconds seconds of reading credit"
+                        } else {
+                            "earns $readingMomentumBonusSeconds seconds of browsing"
+                        }) +
+                        " as a surprise. Set to 0 to turn it off.",
+                    current = "$readingMomentumBonusSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 60",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_READING_MOMENTUM_BONUS_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setReadingMomentumBonus(it.roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -1771,6 +1799,7 @@ private const val LENGTH_FENCE_NOTE =
 private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
 private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
 private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
+private const val MAX_READING_MOMENTUM_BONUS_SECONDS = 180.0
 
 /** The reading-rate slider's old range, kept as the field's bounds. */
 private const val MIN_READING_RATE = 0.5

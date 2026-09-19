@@ -82,6 +82,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val explainBackRewardSeconds = container.balanceManager.explainBackRewardSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
 
+    val lumenLinkRewardSeconds = container.balanceManager.lumenLinkRewardSeconds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 45L)
+
     init {
         // A wind-down that finished while the app was closed leaves a stored
         // switch reading "on" for a gate that is off. Settling it here is the
@@ -303,6 +306,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setExplainBackReward(value: Long) {
         viewModelScope.launch { container.balanceManager.setExplainBackReward(value) }
+    }
+
+    fun setLumenLinkReward(value: Long) {
+        viewModelScope.launch { container.balanceManager.setLumenLinkReward(value) }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

@@ -74,6 +74,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -155,7 +156,8 @@ private data class LumenHelpPrompt(
 class LumenViewModel(
     private val repository: LumenRepository,
     private val settingsRepository: com.pagetime.app.data.local.SettingsRepository,
-    private val learningCardDao: com.pagetime.app.data.local.LearningCardDao
+    private val learningCardDao: com.pagetime.app.data.local.LearningCardDao,
+    private val balanceManager: com.pagetime.app.domain.BalanceManager
 ) : ViewModel() {
 
     /** Which slip box is open (1-based). */
@@ -192,6 +194,23 @@ class LumenViewModel(
     /** Structure maps (hub notes) across every box — the main index's heads. */
     val hubs = repository.observeHubs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Cards never connected to anything else — see [com.pagetime.app.data.LumenStrayNotes]. */
+    val strayQueue = repository.observeAll()
+        .map { com.pagetime.app.data.LumenStrayNotes.queue(it) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            com.pagetime.app.data.LumenStrayNotes.queue(emptyList())
+        )
+
+    /** What the last successful link banked, so the screen can say so once — see [link]. */
+    private val _linkEarnedSeconds = MutableStateFlow<Long?>(null)
+    val linkEarnedSeconds: StateFlow<Long?> = _linkEarnedSeconds.asStateFlow()
+
+    fun consumeLinkEarned() {
+        _linkEarnedSeconds.value = null
+    }
 
     /** Newcomer help: explains actions before they run until turned off in Settings. */
     val helpEnabled = settingsRepository.settings
@@ -254,7 +273,13 @@ class LumenViewModel(
     }
 
     fun link(cardId: String, otherId: String) {
-        viewModelScope.launch { repository.link(cardId, otherId) }
+        viewModelScope.launch {
+            val isNewLink = repository.link(cardId, otherId)
+            runCatching {
+                balanceManager.earnFromLumenLink(isNewLink)
+                if (isNewLink) _linkEarnedSeconds.value = balanceManager.lumenLinkReward()
+            }
+        }
     }
 
     fun connectionCandidates(card: LumenCardEntity, onLoaded: (List<com.pagetime.app.data.LumenCandidate>) -> Unit) {
@@ -295,11 +320,12 @@ class LumenViewModel(
     class Factory(
         private val repository: LumenRepository,
         private val settingsRepository: com.pagetime.app.data.local.SettingsRepository,
-        private val learningCardDao: com.pagetime.app.data.local.LearningCardDao
+        private val learningCardDao: com.pagetime.app.data.local.LearningCardDao,
+        private val balanceManager: com.pagetime.app.domain.BalanceManager
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            LumenViewModel(repository, settingsRepository, learningCardDao) as T
+            LumenViewModel(repository, settingsRepository, learningCardDao, balanceManager) as T
     }
 }
 
@@ -315,12 +341,14 @@ fun LumenCardsScreen(
     onOpenSource: (String) -> Unit = {},
     onOpenReview: () -> Unit = {}
 ) {
-    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as PageTimeApp
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val app = context.applicationContext as PageTimeApp
     val vm: LumenViewModel = viewModel(
         factory = LumenViewModel.Factory(
             app.container.lumenRepository,
             app.container.settingsRepository,
-            app.container.database.learningCardDao()
+            app.container.database.learningCardDao(),
+            app.container.balanceManager
         )
     )
     val cards by vm.cards.collectAsStateWithLifecycle()
@@ -329,6 +357,19 @@ fun LumenCardsScreen(
     val dueCount by vm.dueCount.collectAsStateWithLifecycle()
     val hubs by vm.hubs.collectAsStateWithLifecycle()
     val helpEnabled by vm.helpEnabled.collectAsStateWithLifecycle()
+    val strayQueue by vm.strayQueue.collectAsStateWithLifecycle()
+    val linkEarnedSeconds by vm.linkEarnedSeconds.collectAsStateWithLifecycle()
+
+    // No confirmation existed anywhere for a completed link before this — the
+    // dialog just closed. A Toast, matching the one other feedback moment
+    // already in this screen (JSON export), says what just happened and what
+    // it paid.
+    LaunchedEffect(linkEarnedSeconds) {
+        linkEarnedSeconds?.let { seconds ->
+            Toast.makeText(context, "Linked — +${seconds}s of app time", Toast.LENGTH_SHORT).show()
+            vm.consumeLinkEarned()
+        }
+    }
 
     // True Luhmann shelf order (21 → 21a → 21a1 → 21b → 22 → 210), not Room's
     // lexicographic indexNumber sort (which scatters branches and puts 10
@@ -477,7 +518,18 @@ fun LumenCardsScreen(
                 selected = selectedBox,
                 dueCount = dueCount,
                 onSelect = { vm.selectBox(it) },
-                onReview = onOpenReview
+                onReview = onOpenReview,
+                strayCount = strayQueue.count,
+                onLinkStray = {
+                    strayQueue.oldest?.let { stray ->
+                        // Switch to "every box" first: the stray note and its
+                        // best candidates may not live in whichever box is
+                        // currently open, and box 0 is what vm.cards already
+                        // treats as observeAll().
+                        vm.selectBox(0)
+                        runWithHelp(LumenOnboarding.Action.LINK) { linking = stray }
+                    }
+                }
             )
             if (!searching) {
                 Row(
@@ -876,7 +928,9 @@ private fun BoxTabs(
     selected: Int,
     dueCount: Int,
     onSelect: (Int) -> Unit,
-    onReview: () -> Unit
+    onReview: () -> Unit,
+    strayCount: Int,
+    onLinkStray: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -901,6 +955,17 @@ private fun BoxTabs(
                 selected = false,
                 onClick = onReview,
                 label = { Text("$dueCount due") }
+            )
+        }
+        if (strayCount > 0) {
+            // A capture that has never been connected to anything else — the
+            // one thing a slip box is not supposed to accumulate. Jumps
+            // straight to linking the oldest one instead of leaving the
+            // reader to notice and go find it themselves.
+            FilterChip(
+                selected = false,
+                onClick = onLinkStray,
+                label = { Text("$strayCount stray") }
             )
         }
     }

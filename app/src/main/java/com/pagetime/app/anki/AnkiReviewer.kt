@@ -69,11 +69,16 @@ object AnkiReviewer {
     // Diagnostic only, for tracking down why grading a specific card
     // silently fails inside AnkiDroid's own code (it catches its own
     // scheduling exception and still reports success — see AnkiReviewScreen's
-    // diagnostics panel). type: 0=new, 1=learning, 2=review, 3=relearning.
-    // original_deck_id is non-zero when the card currently sits in a
-    // filtered/custom-study deck, which Anki's scheduler grades differently.
+    // diagnostics panel). type: 0=new, 1=learning, 2=review, 3=relearning —
+    // confirmed on-device this card is type=2 (an ordinary review card) with
+    // originalDeckId=0 (not a filtered deck), ruling that theory out. queue
+    // is the separate, LIVE scheduling state (as opposed to type's persistent
+    // classification): negative means suspended or buried, which would
+    // explain col.sched.answerCard() throwing for a card the scheduler
+    // doesn't expect to be graded right now.
     private const val COL_TYPE = "type"
     private const val COL_ORIGINAL_DECK_ID = "original_deck_id"
+    private const val COL_QUEUE = "queue"
 
     // Deck columns.
     private const val COL_DECK_ID = "deck_id"
@@ -92,9 +97,10 @@ object AnkiReviewer {
         /** Rendered HTML with the note's own CSS prepended — see [nextCard]. */
         val question: String,
         val answer: String,
-        /** Diagnostic only — see [COL_TYPE]/[COL_ORIGINAL_DECK_ID]. */
+        /** Diagnostic only — see [COL_TYPE]/[COL_ORIGINAL_DECK_ID]/[COL_QUEUE]. */
         val debugType: Int?,
         val debugOriginalDeckId: Long?,
+        val debugQueue: Int?,
     )
 
     sealed class NextCardResult {
@@ -209,12 +215,15 @@ object AnkiReviewer {
         // showed both as missing (getColumnIndex returning -1), not "0" or
         // some other real value — this was never a filtered-deck answer, it
         // was an empty answer.
-        val cardProjection = arrayOf(COL_CARD_NAME, COL_QUESTION, COL_ANSWER, COL_TYPE, COL_ORIGINAL_DECK_ID)
+        val cardProjection = arrayOf(
+            COL_CARD_NAME, COL_QUESTION, COL_ANSWER, COL_TYPE, COL_ORIGINAL_DECK_ID, COL_QUEUE,
+        )
         return resolver.query(cardUri, cardProjection, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return null
             val cardNameIdx = cursor.getColumnIndex(COL_CARD_NAME)
             val typeIdx = cursor.getColumnIndex(COL_TYPE)
             val origDeckIdx = cursor.getColumnIndex(COL_ORIGINAL_DECK_ID)
+            val queueIdx = cursor.getColumnIndex(COL_QUEUE)
             val style = "<style>$css</style>"
             // Anki's own reviewer always renders a card's fields inside an
             // element carrying class="card" — the templates' own CSS relies
@@ -232,6 +241,7 @@ object AnkiReviewer {
                 answer = wrapped(cursor.getString(cursor.getColumnIndexOrThrow(COL_ANSWER))),
                 debugType = if (typeIdx >= 0) cursor.getInt(typeIdx) else null,
                 debugOriginalDeckId = if (origDeckIdx >= 0) cursor.getLong(origDeckIdx) else null,
+                debugQueue = if (queueIdx >= 0) cursor.getInt(queueIdx) else null,
             )
         }
     }

@@ -263,6 +263,19 @@ fun PageTimeAppUi(
                 FlashcardsScreen(
                     onOpenReview = { navController.navigate("review") },
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
+                    onExplainConcept = { bookId, chapterIndex, chapterTitle, bookTitle ->
+                        val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
+                        val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
+                        // No locator: this concept's own chapter may not be
+                        // the book's current reading position (it might not
+                        // even be the book currently open), so there is no
+                        // "current position" to bound the text to — the same
+                        // reasoning the chapter-completion prompt uses. Null
+                        // lets extractLearningContext take the whole chapter.
+                        navController.navigate(
+                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=&offset=-1"
+                        )
+                    },
                 )
             }
             composable("search") { DiscoverScreen() }

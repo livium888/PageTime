@@ -60,6 +60,8 @@ import com.pagetime.app.data.local.LearningCardEntity
 fun FlashcardsScreen(
     onOpenReview: () -> Unit = {},
     onOpenBook: (String) -> Unit = {},
+    /** Jumps straight into the most overdue concept, in whichever book it lives in — see [DueConceptEntry]. */
+    onExplainConcept: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String) -> Unit = { _, _, _, _ -> },
     vm: FlashcardsViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -73,7 +75,23 @@ fun FlashcardsScreen(
                     if (state.due > 0) {
                         TextButton(onClick = onOpenReview) { Text("Review ${state.due}") }
                     }
-                    // A second, separate queue: Anki's own scheduling, not
+                    // A third, separate queue: explain-back has no due date of
+                    // its own, and previously had no cross-book presence at
+                    // all — a concept only ever surfaced inside whichever
+                    // book happened to be open. This is the one place that
+                    // now spans the whole library, so with many books the
+                    // reader has one thing to tap instead of hoping they
+                    // happen to reopen the right book and chapter.
+                    state.nextDueConcept?.let { due ->
+                        if (state.dueConceptCount > 0) {
+                            TextButton(
+                                onClick = {
+                                    onExplainConcept(due.bookId, due.chapterIndex, due.chapterTitle, due.bookTitle)
+                                }
+                            ) { Text("Explain ${state.dueConceptCount}") }
+                        }
+                    }
+                    // A fourth, separate queue: Anki's own scheduling, not
                     // PageTime's FSRS, so it stays its own button rather than
                     // one merged "Review" count that would misrepresent
                     // which system is actually due.

@@ -17,6 +17,10 @@ interface ConceptDao {
     @Query("SELECT * FROM concepts WHERE bookId = :bookId AND normalizedLabel = :normalizedLabel LIMIT 1")
     suspend fun getByNormalizedLabel(bookId: String, normalizedLabel: String): ConceptEntity?
 
+    /** Every concept in every book — the source list for the cross-book explain-back queue. */
+    @Query("SELECT * FROM concepts")
+    fun observeAll(): Flow<List<ConceptEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(concept: ConceptEntity)
 

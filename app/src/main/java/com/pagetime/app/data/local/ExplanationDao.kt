@@ -17,6 +17,10 @@ interface ExplanationDao {
     @Query("SELECT * FROM explanations WHERE bookId = :bookId ORDER BY createdAt DESC")
     suspend fun getAllForBook(bookId: String): List<ExplanationEntity>
 
+    /** Every explanation in every book — the source list for the cross-book explain-back queue. */
+    @Query("SELECT * FROM explanations")
+    fun observeAll(): Flow<List<ExplanationEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(explanation: ExplanationEntity)
 

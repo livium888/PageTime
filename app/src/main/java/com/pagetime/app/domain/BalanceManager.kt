@@ -261,6 +261,34 @@ class BalanceManager(
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
 
+    /** Browse seconds earned per new link made in the slip box. */
+    val lumenLinkRewardSeconds: Flow<Long> =
+        repository.settings.map { it.lumenLinkRewardSeconds }
+
+    suspend fun lumenLinkReward(): Long = repository.lumenLinkRewardSeconds()
+
+    suspend fun setLumenLinkReward(seconds: Long) = repository.setLumenLinkRewardSeconds(seconds)
+
+    /**
+     * Award the slip-box bonus for one new link. [isNewLink] is false when
+     * the two cards were already linked — re-confirming an existing
+     * connection earns nothing, so re-opening the same pair can't be farmed
+     * for repeat rewards.
+     */
+    suspend fun earnFromLumenLink(isNewLink: Boolean) {
+        if (!isNewLink) return
+        val seconds = repository.lumenLinkRewardSeconds()
+        if (seconds <= 0) return
+        mutex.withLock {
+            if (repository.gateEnabled()) {
+                repository.addReadingCredit(seconds)
+            } else {
+                repository.addBrowseBalanceSeconds(seconds)
+            }
+        }
+        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
+    }
+
     suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {
         repository.setBrowseBalanceSeconds(seconds.coerceAtLeast(0L))
     }

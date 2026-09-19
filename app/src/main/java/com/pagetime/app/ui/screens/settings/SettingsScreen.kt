@@ -118,6 +118,7 @@ fun SettingsScreen(
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
     val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
+    val lumenLinkRewardSeconds by viewModel.lumenLinkRewardSeconds.collectAsStateWithLifecycle()
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -364,6 +365,31 @@ fun SettingsScreen(
                     unit = "seconds",
                     describe = { "${it.roundToLong()} sec" },
                     onCommit = { viewModel.setExplainBackReward(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // A new link between two already-captured ideas — real
+                // synthesis, but less work than writing a fresh explanation,
+                // so its own reward sits between the other two.
+                TypedSettingField(
+                    title = "Slip box link reward",
+                    help = "Linking two cards for the first time " +
+                        (if (gate.enabled) {
+                            "banks $lumenLinkRewardSeconds seconds of reading credit"
+                        } else {
+                            "earns $lumenLinkRewardSeconds seconds of browsing"
+                        }) +
+                        ". Re-linking cards that are already connected earns nothing.",
+                    current = "$lumenLinkRewardSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 45",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_LUMEN_LINK_REWARD_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setLumenLinkReward(it.roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -1744,6 +1770,7 @@ private const val LENGTH_FENCE_NOTE =
 /** The reward slider's old range, kept as the field's bounds. */
 private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
 private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
+private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
 
 /** The reading-rate slider's old range, kept as the field's bounds. */
 private const val MIN_READING_RATE = 0.5

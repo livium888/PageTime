@@ -81,10 +81,33 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         .map { BookGenreSummary.label(BookGenreSummary.summarize(it)) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /**
+     * Today's one dismissible book suggestion, or null when there isn't one —
+     * dismissed for today, from a previous day and not yet refreshed, or
+     * pointing at a book that's since been deleted. [LibrarianSuggester]
+     * itself decides *which* book and *why*; this only decides whether it's
+     * still valid to show right now.
+     */
+    val librarianSuggestion = combine(
+        container.settingsRepository.librarianSuggestion,
+        books,
+    ) { suggestion, currentBooks ->
+        if (suggestion == null || suggestion.dismissed) return@combine null
+        if (suggestion.shownEpochDay != LocalDate.now().toEpochDay()) return@combine null
+        suggestion.takeIf { s -> currentBooks.any { it.id == s.bookId } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun dismissLibrarianSuggestion() {
+        viewModelScope.launch { runCatching { container.settingsRepository.dismissLibrarianSuggestion() } }
+    }
+
     init {
         // Fire-and-forget: a no-op with no AI configured, and throttled to a
         // few books per visit otherwise — see BookGenreClassifier's own doc.
         viewModelScope.launch { runCatching { container.bookGenreClassifier.classifyMissing() } }
+        viewModelScope.launch {
+            runCatching { container.librarianSuggester.refreshIfNeeded(LocalDate.now().toEpochDay()) }
+        }
     }
 
     private val _reformatting = MutableStateFlow<Set<String>>(emptySet())

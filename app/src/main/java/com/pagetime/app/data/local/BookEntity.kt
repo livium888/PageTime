@@ -25,7 +25,15 @@ data class BookEntity(
     val addedAt: Long,
     val currentChapterIndex: Int = 0,
     val scrollProgress: Float = 0f,
-    val totalReadingSeconds: Long = 0
+    val totalReadingSeconds: Long = 0,
+    /**
+     * A [com.pagetime.app.data.BookGenre] name, or null when never classified
+     * (no AI configured, or not yet this book's turn — see
+     * [com.pagetime.app.data.BookGenreClassifier]). Stores the enum's [Enum.name]
+     * rather than its display label, so relabelling a category never needs a
+     * migration.
+     */
+    val genre: String? = null
 )
 
 /**

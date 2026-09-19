@@ -33,4 +33,11 @@ interface BookDao {
 
     @Query("UPDATE books SET totalReadingSeconds = totalReadingSeconds + :seconds WHERE id = :id")
     suspend fun addReadingSeconds(id: String, seconds: Long)
+
+    /** Books never classified by [com.pagetime.app.data.BookGenreClassifier] yet. */
+    @Query("SELECT * FROM books WHERE genre IS NULL ORDER BY addedAt ASC LIMIT :limit")
+    suspend fun getUnclassified(limit: Int): List<BookEntity>
+
+    @Query("UPDATE books SET genre = :genre WHERE id = :id")
+    suspend fun updateGenre(id: String, genre: String)
 }

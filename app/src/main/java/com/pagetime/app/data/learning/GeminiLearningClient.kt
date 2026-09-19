@@ -669,6 +669,36 @@ class GeminiLearningClient(
             .trim()
     }
 
+    /**
+     * The generic version of the call above: one rendered prompt in, raw text
+     * back, no Lumen-specific JSON contract. For short, low-stakes asks (like
+     * classifying a book's genre from its title) that don't deserve their own
+     * named method, low temperature since the point is a consistent, boring
+     * answer rather than a creative one.
+     */
+    suspend fun generateText(prompt: String, maxOutputTokens: Int = 200): String = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject()
+                .put("temperature", 0.1)
+                .put("maxOutputTokens", maxOutputTokens))
+            .toString()
+
+        val request = Request.Builder()
+            .url("$endpointBase/models/${currentModel()}:generateContent")
+            .header("x-goog-api-key", currentApiKey())
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val raw = executeWithRetry(request)
+        JSONObject(raw).getJSONArray("candidates")
+            .getJSONObject(0).getJSONObject("content")
+            .getJSONArray("parts").getJSONObject(0)
+            .getString("text")
+            .trim()
+    }
+
     companion object {
         private val RETRYABLE_CODES = setOf(408, 429, 500, 502, 503, 504)
         private const val MAX_MODEL_PAGES = 20

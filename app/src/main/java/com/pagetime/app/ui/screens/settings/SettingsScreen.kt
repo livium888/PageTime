@@ -117,6 +117,7 @@ fun SettingsScreen(
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
+    val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -339,6 +340,30 @@ fun SettingsScreen(
                     unit = "seconds",
                     describe = { "${it.roundToLong()} sec" },
                     onCommit = { viewModel.setFlashcardReward(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Writing and being marked on a real explanation is minutes of
+                // work, not a tap — its own reward, not the flashcard one.
+                TypedSettingField(
+                    title = "Explain-back reward",
+                    help = "An explanation marked at least \"partly right\" " +
+                        (if (gate.enabled) {
+                            "banks $explainBackRewardSeconds seconds of reading credit"
+                        } else {
+                            "earns $explainBackRewardSeconds seconds of browsing"
+                        }) +
+                        ". A wrong explanation always earns nothing.",
+                    current = "$explainBackRewardSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 90",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_EXPLAIN_BACK_REWARD_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setExplainBackReward(it.roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -1718,6 +1743,7 @@ private const val LENGTH_FENCE_NOTE =
 
 /** The reward slider's old range, kept as the field's bounds. */
 private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
+private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
 
 /** The reading-rate slider's old range, kept as the field's bounds. */
 private const val MIN_READING_RATE = 0.5

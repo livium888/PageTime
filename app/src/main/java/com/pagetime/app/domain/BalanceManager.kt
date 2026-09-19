@@ -229,6 +229,38 @@ class BalanceManager(
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
 
+    /**
+     * Browse seconds earned per explain-back attempt marked at least PARTLY.
+     * Configurable separately from the flashcard reward: writing a real
+     * explanation and being graded on it is minutes of work, not one tap.
+     */
+    val explainBackRewardSeconds: Flow<Long> =
+        repository.settings.map { it.explainBackRewardSeconds }
+
+    suspend fun explainBackReward(): Long = repository.explainBackRewardSeconds()
+
+    suspend fun setExplainBackReward(seconds: Long) = repository.setExplainBackRewardSeconds(seconds)
+
+    /**
+     * Award the explain-back bonus for one qualifying evaluation. OFF earns
+     * nothing — the same "wrong answer earns nothing" rule flashcards use for
+     * AGAIN — so a caller passes whether the verdict cleared that bar, not the
+     * verdict itself: this stays ignorant of how explanations are graded.
+     */
+    suspend fun earnFromExplainBack(worthRewarding: Boolean) {
+        if (!worthRewarding) return
+        val seconds = repository.explainBackRewardSeconds()
+        if (seconds <= 0) return
+        mutex.withLock {
+            if (repository.gateEnabled()) {
+                repository.addReadingCredit(seconds)
+            } else {
+                repository.addBrowseBalanceSeconds(seconds)
+            }
+        }
+        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
+    }
+
     suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {
         repository.setBrowseBalanceSeconds(seconds.coerceAtLeast(0L))
     }

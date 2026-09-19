@@ -289,6 +289,7 @@ fun ReaderScreen(
         PagemarkSession.spanLabel(it.startFraction, it.endFraction)
     }
     val highlights by vm.highlights.collectAsStateWithLifecycle()
+    val explainBackRewardSeconds by vm.explainBackRewardSeconds.collectAsStateWithLifecycle()
     val pendingHighlightStart by vm.pendingTxtHighlightStart.collectAsStateWithLifecycle()
     val sentenceGrab by vm.sentenceGrab.collectAsStateWithLifecycle()
 
@@ -297,6 +298,13 @@ fun ReaderScreen(
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
     var showChapterReviewPrompt by remember { mutableStateOf(false) }
+    // The chapter the prompt is offering to explain — captured at the moment
+    // the reader crosses into the next one, since by the time they tap
+    // "Explain what you learned" currentChapterIndex has already moved on.
+    var reviewPromptChapterIndex by remember { mutableStateOf<Int?>(null) }
+    // Highest chapter already offered this sitting, so paging back and forth
+    // across the same boundary doesn't nag on every crossing.
+    var lastPromptedChapterIndex by remember { mutableStateOf(-1) }
     var showStats by remember { mutableStateOf(false) }
     var showSleepTimer by remember { mutableStateOf(false) }
     var showCloseChunk by remember { mutableStateOf(false) }
@@ -450,10 +458,23 @@ fun ReaderScreen(
                     publication?.let { pub ->
                         currentChapterHref = locator.href.toString()
                         val idx = pub.readingOrder.indexOfFirstWithHref(locator.href)
+                        val previousIdx = currentChapterIndex
                         currentChapterIndex = idx
                         val size = pub.readingOrder.size
                         if (idx != null && size > 0) {
                             chapterLabel = "${idx + 1} of $size"
+                        }
+                        // Moving into a later chapter than any seen this
+                        // sitting means the previous one is done — offer to
+                        // explain it while it's still fresh. previousIdx == null
+                        // on the very first locator (nothing read yet to
+                        // explain), so that case is excluded by construction.
+                        if (idx != null && previousIdx != null && idx > previousIdx &&
+                            previousIdx > lastPromptedChapterIndex
+                        ) {
+                            lastPromptedChapterIndex = previousIdx
+                            reviewPromptChapterIndex = previousIdx
+                            showChapterReviewPrompt = true
                         }
                     }
                 },
@@ -819,24 +840,27 @@ fun ReaderScreen(
     }
 
     if (showChapterReviewPrompt) {
+        val promptChapterIndex = reviewPromptChapterIndex
         ChapterReviewPrompt(
-            chapterLabel = chapterLabel ?: "the current chapter",
+            chapterLabel = promptChapterIndex?.let { "Chapter ${it + 1}" } ?: "the chapter you just finished",
+            rewardSeconds = explainBackRewardSeconds,
             onExplain = {
                 showChapterReviewPrompt = false
-                // Explain the chapter currently visible in the navigator. Never
-                // silently fall back to chapter zero: on a fresh EPUB the locator
-                // may not have arrived yet, so ask the reader to retry instead of
-                // opening the wrong chapter.
-                val chIdx = currentChapterIndex ?: book?.currentChapterIndex
-                if (chIdx != null) {
-                    val chTitle = chapterLabel ?: "Chapter ${chIdx + 1}"
+                // The chapter just finished, not the one the reader has since
+                // moved into — reviewPromptChapterIndex was captured at the
+                // exact moment of that crossing for this reason. No locator is
+                // passed: it belongs to the new chapter now, and a null one
+                // makes extractLearningContext take the whole finished chapter
+                // (from the checkpoint, if any) instead of a mismatched window.
+                if (promptChapterIndex != null) {
+                    val chTitle = "Chapter ${promptChapterIndex + 1}"
                     val bTitle = book?.title ?: "Book"
                     onExplainBack(
                         bookId,
-                        chIdx,
+                        promptChapterIndex,
                         chTitle,
                         bTitle,
-                        currentLocator?.toJSON()?.toString(),
+                        null,
                         null
                     )
                 }

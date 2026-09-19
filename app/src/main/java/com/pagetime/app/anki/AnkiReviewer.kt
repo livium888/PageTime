@@ -181,12 +181,20 @@ object AnkiReviewer {
             if (!cursor.moveToFirst()) return null
             val cardNameIdx = cursor.getColumnIndex(COL_CARD_NAME)
             val style = "<style>$css</style>"
+            // Anki's own reviewer always renders a card's fields inside an
+            // element carrying class="card" — the templates' own CSS relies
+            // on that wrapper existing (this note type's .card rule is where
+            // its dark background and light text colors actually live).
+            // Confirmed on-device: without it, those colors still apply via
+            // inherited CSS variables, but with no matching dark background
+            // underneath them, leaving pale text on WebView's plain white.
+            fun wrapped(html: String) = "$style<div class=\"card\">$html</div>"
             Card(
                 noteId = noteId,
                 ord = ord,
                 cardName = if (cardNameIdx >= 0) cursor.getString(cardNameIdx) else null,
-                question = style + cursor.getString(cursor.getColumnIndexOrThrow(COL_QUESTION)),
-                answer = style + cursor.getString(cursor.getColumnIndexOrThrow(COL_ANSWER)),
+                question = wrapped(cursor.getString(cursor.getColumnIndexOrThrow(COL_QUESTION))),
+                answer = wrapped(cursor.getString(cursor.getColumnIndexOrThrow(COL_ANSWER))),
             )
         }
     }

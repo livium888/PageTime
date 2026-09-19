@@ -1,7 +1,12 @@
 package com.pagetime.app.anki
 
 import android.content.pm.PackageManager
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,9 +77,15 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
     val balanceManager = (context.applicationContext as PageTimeApp).container.balanceManager
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<ReviewState>(ReviewState.Loading) }
+    // Diagnostic only, for tracking down why a custom card's script doesn't
+    // render — this WebView has no AnkiDroid JS bridge and no base URL, so a
+    // template's script erroring or a relative resource 404ing are both real
+    // possibilities. Cleared on every new card.
+    val jsMessages = remember { mutableStateListOf<String>() }
 
     suspend fun loadNext() {
         state = ReviewState.Loading
+        jsMessages.clear()
         state = try {
             when (val result = withContext(Dispatchers.IO) { AnkiReviewer.nextCard(context) }) {
                 is AnkiReviewer.NextCardResult.Found ->
@@ -157,10 +169,18 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                         current.card.cardName?.let {
                             Text(it, style = MaterialTheme.typography.labelMedium)
                         }
-                        AnkiCardWebView(html = current.card.question, modifier = Modifier.weight(1f))
+                        AnkiCardWebView(
+                            html = current.card.question,
+                            modifier = Modifier.weight(1f),
+                            onJsMessage = { jsMessages.add(it) },
+                        )
+                        JsDiagnostics(jsMessages)
                         Spacer(Modifier.height(12.dp))
                         Button(
-                            onClick = { state = ReviewState.ShowingAnswer(current.card, current.startedAt) },
+                            onClick = {
+                                jsMessages.clear()
+                                state = ReviewState.ShowingAnswer(current.card, current.startedAt)
+                            },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Show answer")
@@ -170,7 +190,12 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                         current.card.cardName?.let {
                             Text(it, style = MaterialTheme.typography.labelMedium)
                         }
-                        AnkiCardWebView(html = current.card.answer, modifier = Modifier.weight(1f))
+                        AnkiCardWebView(
+                            html = current.card.answer,
+                            modifier = Modifier.weight(1f),
+                            onJsMessage = { jsMessages.add(it) },
+                        )
+                        JsDiagnostics(jsMessages)
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(1 to "Again", 2 to "Hard", 3 to "Good", 4 to "Easy").forEach { (ease, label) ->
@@ -212,20 +237,55 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
  * type, template and CSS. JavaScript is enabled so cards that use it behave
  * as closely as possible to AnkiDroid's own reviewer, though no JS bridge is
  * stubbed in: a card built around AnkiDroid-specific JS APIs may still
- * behave differently here.
+ * behave differently here. [onJsMessage] surfaces script console output and
+ * failed resource loads (both likely, given there's no base URL for a
+ * relative script/fetch to resolve against, and no AnkiDroid JS API object)
+ * so a broken custom template can be diagnosed instead of guessed at.
  */
 @Composable
-private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier) {
+private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMessage: (String) -> Unit = {}) {
     AndroidView(
         modifier = modifier.fillMaxWidth(),
         factory = { ctx ->
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                        onJsMessage("console.${message.messageLevel()}: ${message.message()} (line ${message.lineNumber()})")
+                        return true
+                    }
+                }
+                webViewClient = object : WebViewClient() {
+                    override fun onReceivedError(
+                        view: WebView,
+                        request: WebResourceRequest,
+                        error: WebResourceError,
+                    ) {
+                        if (request.isForMainFrame) return
+                        onJsMessage("failed to load ${request.url}: ${error.description}")
+                    }
+                }
             }
         },
         update = { webView ->
             webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
         }
     )
+}
+
+/** Diagnostic panel for [AnkiCardWebView]'s captured console/resource errors — see its doc for why this exists. */
+@Composable
+private fun JsDiagnostics(messages: List<String>) {
+    if (messages.isEmpty()) return
+    Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "Script diagnostics (${messages.size}):",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        messages.takeLast(6).forEach {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        }
+    }
 }

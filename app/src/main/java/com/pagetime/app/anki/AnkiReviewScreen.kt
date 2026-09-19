@@ -169,7 +169,6 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                         current.card.cardName?.let {
                             Text(it, style = MaterialTheme.typography.labelMedium)
                         }
-                        CardDebugInfo(current.card)
                         AnkiCardWebView(
                             html = current.card.question,
                             modifier = Modifier.weight(1f),
@@ -194,7 +193,6 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                         current.card.cardName?.let {
                             Text(it, style = MaterialTheme.typography.labelMedium)
                         }
-                        CardDebugInfo(current.card)
                         AnkiCardWebView(
                             html = current.card.answer,
                             modifier = Modifier.weight(1f),
@@ -307,25 +305,4 @@ private fun JsDiagnostics(messages: List<String>) {
             Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         }
     }
-}
-
-/**
- * Diagnostic only, for tracking down why grading a specific card can
- * silently fail: AnkiDroid's own answerCard() catches its scheduling
- * exception internally and still reports the update as successful, so this
- * is the only ground truth available without device logs. type (0=new,
- * 1=learning, 2=review, 3=relearning) and originalDeckId (non-zero means a
- * filtered/custom-study deck) already confirmed on-device this is an
- * ordinary review card in its normal home deck — that theory's closed.
- * queue is the separate, LIVE scheduling state: negative means suspended or
- * buried, which the scheduler would very plausibly refuse to grade.
- */
-@Composable
-private fun CardDebugInfo(card: AnkiReviewer.Card) {
-    Text(
-        "debug: type=${card.debugType ?: "?"} originalDeckId=${card.debugOriginalDeckId ?: "?"} " +
-            "queue=${card.debugQueue ?: "?"}",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }

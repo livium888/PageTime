@@ -66,29 +66,12 @@ object AnkiReviewer {
     private const val COL_QUESTION = "question"
     private const val COL_ANSWER = "answer"
 
-    // Diagnostic only, for tracking down why grading a specific card
-    // silently fails inside AnkiDroid's own code (it catches its own
-    // scheduling exception and still reports success — see AnkiReviewScreen's
-    // diagnostics panel). type: 0=new, 1=learning, 2=review, 3=relearning —
-    // confirmed on-device this card is type=2 (an ordinary review card) with
-    // originalDeckId=0 (not a filtered deck), ruling that theory out. queue
-    // is the separate, LIVE scheduling state (as opposed to type's persistent
-    // classification): negative means suspended or buried, which would
-    // explain col.sched.answerCard() throwing for a card the scheduler
-    // doesn't expect to be graded right now.
-    private const val COL_TYPE = "type"
-    private const val COL_ORIGINAL_DECK_ID = "original_deck_id"
-    private const val COL_QUEUE = "queue"
-
     // Deck columns.
     private const val COL_DECK_ID = "deck_id"
 
     // ReviewInfo's own list of image/sound filenames a card's question and
     // answer reference — see [DueEntry.hasMedia].
     private const val COL_MEDIA_FILES = "media_files"
-
-    /** How many due cards per deck to look through for one without media before giving up on that deck. */
-    private const val SCAN_LIMIT = 50
 
     data class Card(
         val noteId: Long,
@@ -97,10 +80,6 @@ object AnkiReviewer {
         /** Rendered HTML with the note's own CSS prepended — see [nextCard]. */
         val question: String,
         val answer: String,
-        /** Diagnostic only — see [COL_TYPE]/[COL_ORIGINAL_DECK_ID]/[COL_QUEUE]. */
-        val debugType: Int?,
-        val debugOriginalDeckId: Long?,
-        val debugQueue: Int?,
     )
 
     sealed class NextCardResult {
@@ -137,26 +116,28 @@ object AnkiReviewer {
         val resolver = context.contentResolver
         var sawMediaCard = false
         for (deckId in allDeckIds(resolver)) {
-            // Ask for exactly one first — the same shape AnkiDroid's own
-            // reviewer effectively uses, and the one confirmed end-to-end
-            // (grading it genuinely advances the queue). Only widen to a
-            // bigger batch, to look past a media card, when that one entry
-            // actually needs it; grading a card fetched as part of a larger
-            // batch stopped advancing the queue on-device, for reasons not
-            // fully understood, so the wider query stays scoped to search
-            // only, never to the card actually handed back for grading.
-            var entries = dueEntriesIn(resolver, deckId, 1)
-            if (entries.size == 1 && entries[0].hasMedia) {
-                entries = dueEntriesIn(resolver, deckId, SCAN_LIMIT)
+            // Exactly one schedule fetch per deck, always at limit=1 — the
+            // same shape AnkiDroid's own reviewer uses for a real
+            // grade/advance round-trip. Traced (in AnkiDroid's own
+            // CardContentProvider) that this query calls
+            // col.decks.select(deckId) then col.backend.getQueuedCards(...)
+            // every time it runs, mutating AnkiDroid's own live scheduler
+            // queue for that deck — and col.sched.answerCard() (called later,
+            // from answer()) operates against that same live state. A
+            // previous version widened this to a 50-card batch to scan past
+            // a media-only card within the same deck; that second fetch left
+            // the deck's queue in a state answerCard() no longer recognized
+            // the graded card against, so it threw internally, AnkiDroid's
+            // own try/catch swallowed it, and the ContentProvider still
+            // reported success — the grade silently never took. A deck whose
+            // one due card needs media is now just skipped for this pass.
+            val entry = dueEntryIn(resolver, deckId) ?: continue
+            if (entry.hasMedia) {
+                sawMediaCard = true
+                continue
             }
-            for (entry in entries) {
-                if (entry.hasMedia) {
-                    sawMediaCard = true
-                    continue
-                }
-                val card = buildCard(resolver, entry.noteId, entry.ord) ?: continue
-                return NextCardResult.Found(card)
-            }
+            val card = buildCard(resolver, entry.noteId, entry.ord) ?: continue
+            return NextCardResult.Found(card)
         }
         return if (sawMediaCard) NextCardResult.OnlyUnsupportedMediaDue else NextCardResult.NoneDue
     }
@@ -167,26 +148,25 @@ object AnkiReviewer {
             buildList { while (cursor.moveToNext()) add(cursor.getLong(idCol)) }
         } ?: emptyList()
 
-    /** Up to [limit] due cards in [deckId], each flagged for whether it needs media we can't fetch. */
-    private fun dueEntriesIn(resolver: ContentResolver, deckId: Long, limit: Int): List<DueEntry> =
+    /** The one due card AnkiDroid's live scheduler queue currently has for [deckId], if any. */
+    private fun dueEntryIn(resolver: ContentResolver, deckId: Long): DueEntry? =
         resolver.query(
             SCHEDULE_URI,
             null,
             "limit=?, deckID=?",
-            arrayOf(limit.toString(), deckId.toString()),
+            arrayOf("1", deckId.toString()),
             null
         )?.use { cursor ->
-            val noteIdIdx = cursor.getColumnIndexOrThrow(COL_NOTE_ID)
-            val ordIdx = cursor.getColumnIndexOrThrow(COL_ORD)
+            if (!cursor.moveToFirst()) return null
             val mediaIdx = cursor.getColumnIndex(COL_MEDIA_FILES)
-            buildList {
-                while (cursor.moveToNext()) {
-                    val hasMedia = mediaIdx >= 0 &&
-                        runCatching { JSONArray(cursor.getString(mediaIdx)).length() > 0 }.getOrDefault(false)
-                    add(DueEntry(cursor.getLong(noteIdIdx), cursor.getInt(ordIdx), hasMedia))
-                }
-            }
-        } ?: emptyList()
+            val hasMedia = mediaIdx >= 0 &&
+                runCatching { JSONArray(cursor.getString(mediaIdx)).length() > 0 }.getOrDefault(false)
+            DueEntry(
+                noteId = cursor.getLong(cursor.getColumnIndexOrThrow(COL_NOTE_ID)),
+                ord = cursor.getInt(cursor.getColumnIndexOrThrow(COL_ORD)),
+                hasMedia = hasMedia,
+            )
+        }
 
     private fun buildCard(resolver: ContentResolver, noteId: Long, ord: Int): Card? {
         val noteUri = Uri.withAppendedPath(NOTES_URI, noteId.toString())
@@ -207,23 +187,10 @@ object AnkiReviewer {
         val cardsUri = Uri.withAppendedPath(noteUri, "cards")
         val cardUri = Uri.withAppendedPath(cardsUri, ord.toString())
 
-        // Card's own DEFAULT_PROJECTION (used whenever projection is null)
-        // is only _ID/NOTE_ID/CARD_ORD/CARD_NAME/DECK_ID/QUESTION/ANSWER/FLAGS
-        // — TYPE and ORIGINAL_DECK_ID exist on the resource and are fully
-        // supported by the provider, but never come back unless explicitly
-        // asked for. Confirmed on-device: querying with null projection
-        // showed both as missing (getColumnIndex returning -1), not "0" or
-        // some other real value — this was never a filtered-deck answer, it
-        // was an empty answer.
-        val cardProjection = arrayOf(
-            COL_CARD_NAME, COL_QUESTION, COL_ANSWER, COL_TYPE, COL_ORIGINAL_DECK_ID, COL_QUEUE,
-        )
+        val cardProjection = arrayOf(COL_CARD_NAME, COL_QUESTION, COL_ANSWER)
         return resolver.query(cardUri, cardProjection, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return null
             val cardNameIdx = cursor.getColumnIndex(COL_CARD_NAME)
-            val typeIdx = cursor.getColumnIndex(COL_TYPE)
-            val origDeckIdx = cursor.getColumnIndex(COL_ORIGINAL_DECK_ID)
-            val queueIdx = cursor.getColumnIndex(COL_QUEUE)
             val style = "<style>$css</style>"
             // Anki's own reviewer always renders a card's fields inside an
             // element carrying class="card" — the templates' own CSS relies
@@ -239,9 +206,6 @@ object AnkiReviewer {
                 cardName = if (cardNameIdx >= 0) cursor.getString(cardNameIdx) else null,
                 question = wrapped(cursor.getString(cursor.getColumnIndexOrThrow(COL_QUESTION))),
                 answer = wrapped(cursor.getString(cursor.getColumnIndexOrThrow(COL_ANSWER))),
-                debugType = if (typeIdx >= 0) cursor.getInt(typeIdx) else null,
-                debugOriginalDeckId = if (origDeckIdx >= 0) cursor.getLong(origDeckIdx) else null,
-                debugQueue = if (queueIdx >= 0) cursor.getInt(queueIdx) else null,
             )
         }
     }

@@ -110,6 +110,7 @@ fun LibraryScreen(
     val didReadToday by viewModel.didReadToday.collectAsStateWithLifecycle()
     val showNeverMissTwiceNudge by viewModel.showNeverMissTwiceNudge.collectAsStateWithLifecycle()
     val genreSummary by viewModel.genreSummary.collectAsStateWithLifecycle()
+    val librarianSuggestion by viewModel.librarianSuggestion.collectAsStateWithLifecycle()
     val upNextBook by viewModel.upNextBook.collectAsStateWithLifecycle()
     val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
@@ -385,6 +386,20 @@ fun LibraryScreen(
                         }
                     }
                 }
+                if (librarianSuggestion != null) {
+                    item {
+                        books.firstOrNull { it.id == librarianSuggestion?.bookId }?.let { book ->
+                            LibrarianCard(
+                                message = librarianSuggestion!!.message,
+                                onOpen = {
+                                    if (book.format == "pdf") openPdfBook = book
+                                    else onOpenBook(book.id)
+                                },
+                                onDismiss = viewModel::dismissLibrarianSuggestion
+                            )
+                        }
+                    }
+                }
                 // Occasional actions, not daily ones — demoted to equal, smaller
                 // weight below the fold rather than competing with "read".
                 item {
@@ -583,6 +598,35 @@ private fun ContinueThinkingCard(book: BookEntity, moment: MapMoment, onClick: (
                 )
             }
             Text("Explore the map in about 2 minutes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+/**
+ * The Library screen's one daily, dismissible suggestion — a fact about one
+ * book in the reader's own library, never a mandate. See
+ * [com.pagetime.app.data.LibrarianFacts] for what [message] is actually
+ * allowed to say.
+ */
+@Composable
+private fun LibrarianCard(message: String, onOpen: () -> Unit, onDismiss: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.MenuBook, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("From the shelf", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(message, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onOpen) { Text("Open it") }
+                TextButton(onClick = onDismiss) { Text("Not now") }
+            }
         }
     }
 }

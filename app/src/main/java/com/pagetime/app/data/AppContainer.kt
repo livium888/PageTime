@@ -215,6 +215,14 @@ class AppContainer(context: Context) {
         localLlmProvider = localLlmProvider,
     )
 
+    /** The Library screen's one daily, dismissible book suggestion — see the class doc. */
+    val librarianSuggester = LibrarianSuggester(
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        geminiClient = geminiLearningClient,
+        localLlmProvider = localLlmProvider,
+    )
+
     /**
      * The retrieval model: separate weights, separate directory, separate
      * lifecycle from the language model. A reader can have either, both, or

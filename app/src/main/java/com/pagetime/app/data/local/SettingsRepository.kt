@@ -175,6 +175,20 @@ data class MapMoment(
     val createdAt: Long
 )
 
+/**
+ * The Library screen's one daily, dismissible book suggestion — see
+ * [com.pagetime.app.data.LibrarianSuggester]. [shownEpochDay] is what makes
+ * it daily rather than permanent: a new day with a different
+ * [shownEpochDay] means [com.pagetime.app.data.LibrarianPicks.needsRefresh]
+ * is true again, and [dismissed] resets the moment a fresh one is saved.
+ */
+data class LibrarianSuggestion(
+    val bookId: String,
+    val message: String,
+    val shownEpochDay: Long,
+    val dismissed: Boolean
+)
+
 class SettingsRepository(private val context: Context) {
 
     private val securePreferences by lazy {
@@ -280,6 +294,11 @@ class SettingsRepository(private val context: Context) {
         val MAP_MOMENT_FEATURED_CONCEPT = stringPreferencesKey("map_moment_featured_concept")
         val MAP_MOMENT_FEATURED_RELATIONSHIP = stringPreferencesKey("map_moment_featured_relationship")
         val MAP_MOMENT_CREATED_AT = longPreferencesKey("map_moment_created_at")
+
+        val LIBRARIAN_BOOK_ID = stringPreferencesKey("librarian_book_id")
+        val LIBRARIAN_MESSAGE = stringPreferencesKey("librarian_message")
+        val LIBRARIAN_SHOWN_EPOCH_DAY = longPreferencesKey("librarian_shown_epoch_day")
+        val LIBRARIAN_DISMISSED = booleanPreferencesKey("librarian_dismissed")
     }
 
     private companion object {
@@ -354,6 +373,42 @@ class SettingsRepository(private val context: Context) {
             moment.featuredConcept?.let { value -> it[Keys.MAP_MOMENT_FEATURED_CONCEPT] = value }
             moment.featuredRelationship?.let { value -> it[Keys.MAP_MOMENT_FEATURED_RELATIONSHIP] = value }
             it[Keys.MAP_MOMENT_CREATED_AT] = moment.createdAt
+        }
+    }
+
+    val librarianSuggestion: Flow<LibrarianSuggestion?> = context.dataStore.data.map { p ->
+        val bookId = p[Keys.LIBRARIAN_BOOK_ID] ?: return@map null
+        LibrarianSuggestion(
+            bookId = bookId,
+            message = p[Keys.LIBRARIAN_MESSAGE] ?: return@map null,
+            shownEpochDay = p[Keys.LIBRARIAN_SHOWN_EPOCH_DAY] ?: 0L,
+            dismissed = p[Keys.LIBRARIAN_DISMISSED] ?: false
+        )
+    }
+
+    suspend fun currentLibrarianSuggestion(): LibrarianSuggestion? = librarianSuggestion.first()
+
+    /** Replaces the day's suggestion outright — always undismissed, since it's new. */
+    suspend fun saveLibrarianSuggestion(bookId: String, message: String, epochDay: Long) {
+        context.dataStore.edit {
+            it[Keys.LIBRARIAN_BOOK_ID] = bookId
+            it[Keys.LIBRARIAN_MESSAGE] = message
+            it[Keys.LIBRARIAN_SHOWN_EPOCH_DAY] = epochDay
+            it[Keys.LIBRARIAN_DISMISSED] = false
+        }
+    }
+
+    suspend fun dismissLibrarianSuggestion() {
+        context.dataStore.edit { it[Keys.LIBRARIAN_DISMISSED] = true }
+    }
+
+    /** Nothing was worth suggesting today (empty library, or nothing near-done or unopened). */
+    suspend fun clearLibrarianSuggestion() {
+        context.dataStore.edit {
+            it.remove(Keys.LIBRARIAN_BOOK_ID)
+            it.remove(Keys.LIBRARIAN_MESSAGE)
+            it.remove(Keys.LIBRARIAN_SHOWN_EPOCH_DAY)
+            it.remove(Keys.LIBRARIAN_DISMISSED)
         }
     }
 

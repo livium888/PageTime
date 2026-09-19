@@ -3,10 +3,7 @@ package com.pagetime.app.anki
 import android.content.pm.PackageManager
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -81,9 +78,9 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<ReviewState>(ReviewState.Loading) }
     // Diagnostic only, for tracking down why a custom card's script doesn't
-    // render — this WebView has no AnkiDroid JS bridge and no base URL, so a
-    // template's script erroring or a relative resource 404ing are both real
-    // possibilities. Cleared on every new card.
+    // run — captures the WebView's own console output, since this WebView
+    // has no AnkiDroid JS bridge and a script relying on one may throw.
+    // Cleared on every new card.
     val jsMessages = remember { mutableStateListOf<String>() }
 
     suspend fun loadNext() {
@@ -246,10 +243,15 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
  * type, template and CSS. JavaScript is enabled so cards that use it behave
  * as closely as possible to AnkiDroid's own reviewer, though no JS bridge is
  * stubbed in: a card built around AnkiDroid-specific JS APIs may still
- * behave differently here. [onJsMessage] surfaces script console output and
- * failed resource loads (both likely, given there's no base URL for a
- * relative script/fetch to resolve against, and no AnkiDroid JS API object)
- * so a broken custom template can be diagnosed instead of guessed at.
+ * behave differently here. [onJsMessage] surfaces script console output
+ * (uncaught errors especially) so a broken custom template can be diagnosed
+ * instead of guessed at. Deliberately NOT surfacing failed sub-resource
+ * loads any more: a card's own bundled web fonts (@font-face referencing a
+ * local .woff2) always 404 here, since AnkiDroid has no read path for any
+ * media at all (confirmed while fixing #82's Image Occlusion case), and
+ * that's permanent, harmless noise — the browser just falls back to a
+ * system font — not something worth alarming the reader with on every
+ * nicely-designed card.
  *
  * Confirmed on-device: a null base URL gives the page an opaque origin, and
  * an opaque origin can't touch sessionStorage/localStorage at all — any
@@ -275,16 +277,6 @@ private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMes
                         return true
                     }
                 }
-                webViewClient = object : WebViewClient() {
-                    override fun onReceivedError(
-                        view: WebView,
-                        request: WebResourceRequest,
-                        error: WebResourceError,
-                    ) {
-                        if (request.isForMainFrame) return
-                        onJsMessage("failed to load ${request.url}: ${error.description}")
-                    }
-                }
             }
         },
         update = { webView ->
@@ -293,7 +285,7 @@ private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMes
     )
 }
 
-/** Diagnostic panel for [AnkiCardWebView]'s captured console/resource errors — see its doc for why this exists. */
+/** Diagnostic panel for [AnkiCardWebView]'s captured console output — see its doc for why this exists. */
 @Composable
 private fun JsDiagnostics(messages: List<String>) {
     if (messages.isEmpty()) return

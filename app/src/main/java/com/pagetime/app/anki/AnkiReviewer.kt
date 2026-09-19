@@ -201,7 +201,16 @@ object AnkiReviewer {
         val cardsUri = Uri.withAppendedPath(noteUri, "cards")
         val cardUri = Uri.withAppendedPath(cardsUri, ord.toString())
 
-        return resolver.query(cardUri, null, null, null, null)?.use { cursor ->
+        // Card's own DEFAULT_PROJECTION (used whenever projection is null)
+        // is only _ID/NOTE_ID/CARD_ORD/CARD_NAME/DECK_ID/QUESTION/ANSWER/FLAGS
+        // — TYPE and ORIGINAL_DECK_ID exist on the resource and are fully
+        // supported by the provider, but never come back unless explicitly
+        // asked for. Confirmed on-device: querying with null projection
+        // showed both as missing (getColumnIndex returning -1), not "0" or
+        // some other real value — this was never a filtered-deck answer, it
+        // was an empty answer.
+        val cardProjection = arrayOf(COL_CARD_NAME, COL_QUESTION, COL_ANSWER, COL_TYPE, COL_ORIGINAL_DECK_ID)
+        return resolver.query(cardUri, cardProjection, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return null
             val cardNameIdx = cursor.getColumnIndex(COL_CARD_NAME)
             val typeIdx = cursor.getColumnIndex(COL_TYPE)

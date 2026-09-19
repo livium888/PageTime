@@ -119,7 +119,19 @@ object AnkiReviewer {
         val resolver = context.contentResolver
         var sawMediaCard = false
         for (deckId in allDeckIds(resolver)) {
-            for (entry in dueEntriesIn(resolver, deckId, SCAN_LIMIT)) {
+            // Ask for exactly one first — the same shape AnkiDroid's own
+            // reviewer effectively uses, and the one confirmed end-to-end
+            // (grading it genuinely advances the queue). Only widen to a
+            // bigger batch, to look past a media card, when that one entry
+            // actually needs it; grading a card fetched as part of a larger
+            // batch stopped advancing the queue on-device, for reasons not
+            // fully understood, so the wider query stays scoped to search
+            // only, never to the card actually handed back for grading.
+            var entries = dueEntriesIn(resolver, deckId, 1)
+            if (entries.size == 1 && entries[0].hasMedia) {
+                entries = dueEntriesIn(resolver, deckId, SCAN_LIMIT)
+            }
+            for (entry in entries) {
                 if (entry.hasMedia) {
                     sawMediaCard = true
                     continue
@@ -199,7 +211,13 @@ object AnkiReviewer {
         }
     }
 
-    /** Reports how the reader answered [card]. [ease] is 1 (Again) through 4 (Easy). */
+    /**
+     * Reports how the reader answered [card]. [ease] is 1 (Again) through 4
+     * (Easy). AnkiDroid's own update() silently skips (returns 0, throws
+     * nothing) if it can't match the card by noteId+ord rather than raising
+     * an error, so a caller that ignores the return value has no way to
+     * tell a real grade from a no-op — check it and fail loudly instead.
+     */
     fun answer(context: Context, card: Card, ease: Int, timeTakenMs: Long) {
         val values = ContentValues().apply {
             put(COL_NOTE_ID, card.noteId)
@@ -207,6 +225,7 @@ object AnkiReviewer {
             put(COL_EASE, ease)
             put(COL_TIME_TAKEN, timeTakenMs)
         }
-        context.contentResolver.update(SCHEDULE_URI, values, null, null)
+        val rows = context.contentResolver.update(SCHEDULE_URI, values, null, null)
+        check(rows > 0) { "AnkiDroid didn't record this answer (note ${card.noteId}, ord ${card.ord})" }
     }
 }

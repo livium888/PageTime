@@ -211,8 +211,14 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                                     onClick = {
                                         val elapsed = System.currentTimeMillis() - current.startedAt
                                         scope.launch {
-                                            withContext(Dispatchers.IO) {
-                                                AnkiReviewer.answer(context, current.card, ease, elapsed)
+                                            val answered = runCatching {
+                                                withContext(Dispatchers.IO) {
+                                                    AnkiReviewer.answer(context, current.card, ease, elapsed)
+                                                }
+                                            }
+                                            answered.onFailure {
+                                                state = ReviewState.Error(it.message ?: it.javaClass.simpleName)
+                                                return@launch
                                             }
                                             // Again earns nothing, matching PageTime's own flashcards.
                                             if (ease != 1) {

@@ -33,6 +33,12 @@ data class Settings(
     val ratio: Double = 1.0,
     /** Browse seconds earned per correct flashcard review (HARD/GOOD/EASY). */
     val flashcardRewardSeconds: Long = 30,
+    /**
+     * Browse seconds earned per explain-back attempt scored at least PARTLY.
+     * Higher than the flashcard reward by default: writing and being marked on
+     * a real explanation is minutes of work, not a single tap.
+     */
+    val explainBackRewardSeconds: Long = 90,
     val totalReadingSeconds: Long = 0,
     /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
     val quickDisableUntil: Long = 0,
@@ -193,6 +199,7 @@ class SettingsRepository(private val context: Context) {
         val BALANCE = longPreferencesKey("browse_balance_seconds")
         val RATIO = doublePreferencesKey("ratio")
         val FLASHCARD_REWARD = longPreferencesKey("flashcard_reward_seconds")
+        val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
@@ -478,6 +485,7 @@ class SettingsRepository(private val context: Context) {
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
             ratio = p[Keys.RATIO] ?: 1.0,
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
+            explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
@@ -1036,6 +1044,13 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setFlashcardRewardSeconds(value: Long) {
         context.dataStore.edit { it[Keys.FLASHCARD_REWARD] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun explainBackRewardSeconds(): Long =
+        context.dataStore.data.first()[Keys.EXPLAIN_BACK_REWARD] ?: 90L
+
+    suspend fun setExplainBackRewardSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.EXPLAIN_BACK_REWARD] = value.coerceIn(0L, 3_600L) }
     }
 
     suspend fun setAiAnalysisLevel(level: AiAnalysisLevel) {

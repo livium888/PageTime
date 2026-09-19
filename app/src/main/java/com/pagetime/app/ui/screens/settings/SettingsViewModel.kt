@@ -79,6 +79,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val flashcardRewardSeconds = container.balanceManager.flashcardRewardSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 30L)
 
+    val explainBackRewardSeconds = container.balanceManager.explainBackRewardSeconds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
+
     init {
         // A wind-down that finished while the app was closed leaves a stored
         // switch reading "on" for a gate that is off. Settling it here is the
@@ -296,6 +299,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setFlashcardReward(value: Long) {
         viewModelScope.launch { container.balanceManager.setFlashcardReward(value) }
+    }
+
+    fun setExplainBackReward(value: Long) {
+        viewModelScope.launch { container.balanceManager.setExplainBackReward(value) }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

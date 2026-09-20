@@ -100,7 +100,7 @@ class UsageReconciler(
 
         val fgMillis = parser.screenOnForegroundMillis(
             events = reader.events(lastReconcile, now),
-            blockedPackages = blocked,
+            trackedPackages = blocked,
             from = lastReconcile,
             to = now
         )

@@ -118,6 +118,8 @@ fun SettingsScreen(
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
     val flashcardDailyCapSeconds by viewModel.flashcardDailyCapSeconds.collectAsStateWithLifecycle()
+    val externalReadingEnabled by viewModel.externalReadingEnabled.collectAsStateWithLifecycle()
+    val externalReadingDailyCapSeconds by viewModel.externalReadingDailyCapSeconds.collectAsStateWithLifecycle()
     val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
     val lumenLinkRewardSeconds by viewModel.lumenLinkRewardSeconds.collectAsStateWithLifecycle()
     val readingMomentumBonusSeconds by viewModel.readingMomentumBonusSeconds.collectAsStateWithLifecycle()
@@ -367,6 +369,36 @@ fun SettingsScreen(
                     describe = { "${it.roundToLong()} sec/day" },
                     onCommit = { viewModel.setFlashcardDailyCap(it.roundToLong()) },
                 )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Every other reward on this screen pays for something PageTime
+                // itself verified. This one pays on trust — foreground time in
+                // Kindle looks the same whether a page is turning or the phone
+                // is just sitting there — so it stays off unless asked for, and
+                // the daily cap bounds what trusting it wrong can cost.
+                ExternalReadingToggle(
+                    enabled = externalReadingEnabled,
+                    onChange = { viewModel.setExternalReadingEnabled(it) },
+                )
+
+                if (externalReadingEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    TypedSettingField(
+                        title = "Daily Kindle credit cap",
+                        help = "The most Kindle reading time can bank per day, already at half rate. " +
+                            "Set to 0 to stop it from earning anything without turning the toggle off.",
+                        current = "$externalReadingDailyCapSeconds seconds/day",
+                        inputLabel = "Seconds per day",
+                        inputHint = "e.g. 3600",
+                        allowDecimal = false,
+                        minAllowed = 0.0,
+                        maxAllowed = MAX_EXTERNAL_READING_DAILY_CAP_SECONDS,
+                        unit = "seconds",
+                        describe = { "${it.roundToLong()} sec/day" },
+                        onCommit = { viewModel.setExternalReadingDailyCap(it.roundToLong()) },
+                    )
+                }
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -1324,6 +1356,42 @@ private fun CloudRescueToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
 }
 
 /**
+ * Credits time spent in Kindle as reading, on trust.
+ *
+ * PageTime's own reader can tell a page turning from a phone merely left on
+ * — it watches real scroll position. Kindle's screen offers no such signal;
+ * all this can ever see is "Kindle was in front with the screen on". Off by
+ * default for that reason, and the description says so plainly rather than
+ * dressing the toggle up as something it isn't.
+ */
+@Composable
+private fun ExternalReadingToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Credit Kindle reading time", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (enabled) {
+                    "Time Kindle spends in front with the screen on counts toward reading credit, " +
+                        "at half rate, capped per day below. This is trust-based — PageTime cannot " +
+                        "tell a page turning from a phone left open, unlike its own reader."
+                } else {
+                    "Off — only reading inside PageTime counts, since it's the only reading this " +
+                        "app can actually verify."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = enabled, onCheckedChange = onChange)
+    }
+}
+
+/**
  * Which weights to download.
  *
  * The built-in model can paraphrase a passage but not reliably state the idea
@@ -1822,6 +1890,7 @@ private const val LENGTH_FENCE_NOTE =
 /** The reward slider's old range, kept as the field's bounds. */
 private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
 private const val MAX_FLASHCARD_DAILY_CAP_SECONDS = 3_600.0
+private const val MAX_EXTERNAL_READING_DAILY_CAP_SECONDS = 4.0 * 3_600.0
 private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
 private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
 private const val MAX_READING_MOMENTUM_BONUS_SECONDS = 180.0

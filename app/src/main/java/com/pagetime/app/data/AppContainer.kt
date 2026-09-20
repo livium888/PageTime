@@ -84,12 +84,14 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_22_23,
                 AppDatabase.MIGRATION_23_24,
                 AppDatabase.MIGRATION_24_25,
-                AppDatabase.MIGRATION_25_26
+                AppDatabase.MIGRATION_25_26,
+                AppDatabase.MIGRATION_26_27
             )
             .build()
 
     private val bookDao = database.bookDao()
     private val blockedAppDao = database.blockedAppDao()
+    private val externalReadingAppDao = database.externalReadingAppDao()
     private val blockedSiteDao = database.blockedSiteDao()
     private val usageEventDao = database.usageEventDao()
     private val learningGenerationDao = database.learningGenerationDao()
@@ -188,6 +190,9 @@ class AppContainer(context: Context) {
     )
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)
+
+    /** Apps the reader has chosen to trust for [ExternalReadingTracker] — empty by default. */
+    val externalReadingAppRepository = ExternalReadingAppRepository(externalReadingAppDao)
 
     /** Sites off limits by address, which hold regardless of earned time. */
     val blockedSiteRepository = BlockedSiteRepository(blockedSiteDao)
@@ -389,13 +394,14 @@ class AppContainer(context: Context) {
     )
 
     /**
-     * Credits Kindle foreground time as reading, opt-in only — see
-     * [ExternalReadingTracker] for why it stays off unless the reader turns
-     * it on.
+     * Credits foreground time in reader-chosen apps as reading, opt-in only —
+     * see [ExternalReadingTracker] for why it stays off unless the reader
+     * turns it on and picks which apps to trust.
      */
     val externalReadingTracker = ExternalReadingTracker(
         scope = scope,
         settingsRepository = settingsRepository,
+        externalReadingAppRepository = externalReadingAppRepository,
         balanceManager = balanceManager,
         reader = usageStatsReader,
         parser = ForegroundParser()

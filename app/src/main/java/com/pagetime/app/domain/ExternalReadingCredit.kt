@@ -1,8 +1,8 @@
 package com.pagetime.app.domain
 
 /**
- * How foreground time in a trusted external reading app (Kindle) converts to
- * PageTime's own reading credit.
+ * How foreground time in a reader-chosen trusted external reading app (e.g.
+ * Kindle) converts to PageTime's own reading credit.
  *
  * WHY THIS IS DISCOUNTED AT ALL
  *
@@ -10,8 +10,8 @@ package com.pagetime.app.domain
  * from a phone merely left on — it watches actual scroll position against a
  * plausible pace. Nothing about a foreign app's screen offers that; all
  * [com.pagetime.app.data.usage.ExternalReadingTracker] can ever report is
- * "Kindle held the foreground with the screen interactive", which a phone
- * propped up and left alone would also produce. [CONVERSION_RATE] does not
+ * "a trusted app held the foreground with the screen interactive", which a
+ * phone propped up and left alone would also produce. [CONVERSION_RATE] does not
  * close that gap — nothing can, without Kindle's own cooperation — it bounds
  * what it costs: half rate means a false report is worth half of what a false
  * report would otherwise be worth, for the same reason

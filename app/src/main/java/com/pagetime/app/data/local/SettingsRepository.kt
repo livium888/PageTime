@@ -42,7 +42,8 @@ data class Settings(
      */
     val flashcardDailyCapSeconds: Long = 300,
     /**
-     * Whether time spent in a trusted external reading app (Kindle) is
+     * Whether time spent in a reader-chosen trusted app (e.g. Kindle, picked
+     * on [com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen]) is
      * credited as reading — off by default, since unlike every other reward
      * here it grants credit on trust rather than on something PageTime can
      * itself verify. See [com.pagetime.app.data.usage.ExternalReadingTracker]
@@ -53,8 +54,9 @@ data class Settings(
      * The most external-reading credit (already discounted by
      * [com.pagetime.app.domain.ExternalReadingCredit]) that can be banked per
      * day — see [com.pagetime.app.domain.BalanceManager.earnFromExternalReading].
-     * Bounds what a phone merely left open on Kindle can cost, the same way
-     * [flashcardDailyCapSeconds] bounds a flashcard's better hourly rate.
+     * Bounds what a phone merely left open on a trusted app can cost, the
+     * same way [flashcardDailyCapSeconds] bounds a flashcard's better hourly
+     * rate.
      */
     val externalReadingDailyCapSeconds: Long = 3_600,
     /**

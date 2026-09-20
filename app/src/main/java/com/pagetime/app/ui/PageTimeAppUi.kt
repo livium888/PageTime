@@ -51,6 +51,7 @@ import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.pagemarks.PagemarkQueueScreen
 import com.pagetime.app.ui.screens.review.ReviewSessionScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
+import com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen
 import com.pagetime.app.ui.screens.settings.BlockedSitesScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SchedulingScreen
@@ -282,6 +283,7 @@ fun PageTimeAppUi(
             composable("settings") {
                 SettingsScreen(
                     onManageBlockedApps = { navController.navigate("blocked_apps") },
+                    onManageExternalReadingApps = { navController.navigate("external_reading_apps") },
                     onManageBlockedSites = { navController.navigate("blocked_sites") },
                     onPermissions = { navController.navigate("permissions") },
                     onUsageAudit = { navController.navigate("usage_audit") },
@@ -294,6 +296,9 @@ fun PageTimeAppUi(
                 SchedulingScreen(onBack = { navController.popBackStack() })
             }
             composable("blocked_apps") { BlockedAppsScreen(onBack = { navController.popBackStack() }) }
+            composable("external_reading_apps") {
+                ExternalReadingAppsScreen(onBack = { navController.popBackStack() })
+            }
             composable("blocked_sites") { BlockedSitesScreen(onBack = { navController.popBackStack() }) }
             composable("permissions") { PermissionsScreen(onBack = { navController.popBackStack() }) }
             composable("usage_audit") {

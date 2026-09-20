@@ -246,6 +246,23 @@ class AccessGateTest {
     }
 
     /**
+     * Adding to an allowlist and switching an active allowlist back to a
+     * blocklist are the other two ways site rules can be loosened — both
+     * fenced by exactly the same rule as unblocking an app.
+     */
+    @Test
+    fun `adding an allowed site and leaving an allowlist are the same earned thing`() {
+        listOf(
+            gate(credit = 0),
+            gate(sessionRemaining = 60),
+            gate(switchedOn = false),
+        ).forEach {
+            assertEquals(it.canLoosenTheRules, it.canAddAllowedSite)
+            assertEquals(it.canLoosenTheRules, it.canSwitchToBlocklist)
+        }
+    }
+
+    /**
      * The terms of a session are the reader's, in either direction, at any
      * time. They were fenced once — lowering the price counted as an escape
      * and waited for app time in hand — but outside a session that left only

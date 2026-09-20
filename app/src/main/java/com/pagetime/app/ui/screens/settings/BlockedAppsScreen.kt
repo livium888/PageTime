@@ -102,8 +102,8 @@ fun BlockedAppsScreen(
                     } else {
                         "While your balance is empty, opening one of these apps sends you back to the reader."
                     } +
-                        " Sites blocked by address, in every browser, are on the " +
-                        "Blocked sites screen.",
+                        " Sites, by address in every browser, are on the " +
+                        "Website rules screen.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)

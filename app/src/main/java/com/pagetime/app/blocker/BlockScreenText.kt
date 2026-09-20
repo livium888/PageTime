@@ -82,10 +82,17 @@ object BlockScreenText {
      */
     fun siteTitle(rule: SiteRules.Rule): String = rule.id
 
-    fun siteSubtitle(rule: SiteRules.Rule): String = if (rule.pathPrefix == null) {
-        "You put this site off limits. Go back, or read for a while."
-    } else {
-        "You put this part of the site off limits. Go back, or read for a while."
+    fun siteSubtitle(rule: SiteRules.Rule, mode: SiteMode): String = when (mode) {
+        SiteMode.BLOCKLIST -> if (rule.pathPrefix == null) {
+            "You put this site off limits. Go back, or read for a while."
+        } else {
+            "You put this part of the site off limits. Go back, or read for a while."
+        }
+        // No rule to name here — nothing was typed to explain this block, only
+        // the absence of a rule that would have let it through. Saying so is
+        // the honest version of "you put this off limits": the reader chose
+        // the allowlist itself, just not this address.
+        SiteMode.ALLOWLIST -> "This isn't on your allowed list. Go back, or read for a while."
     }
 
     /** The secondary action on a site block: leave the page. */

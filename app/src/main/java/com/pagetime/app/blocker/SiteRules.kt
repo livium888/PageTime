@@ -162,6 +162,29 @@ object SiteRules {
         return firstMatch(rules, url)
     }
 
+    /**
+     * The rule responsible for [url] being off limits under [mode], or null
+     * if it is reachable — [SiteBlocker]'s one entry point for either
+     * direction, so the inversion between them lives in exactly one place.
+     *
+     * BLOCKLIST asks the question it always has: does a block rule cover
+     * this. ALLOWLIST asks the opposite one: does NO allow rule cover this —
+     * and when none does, there is no reader-authored rule to blame, so the
+     * "blocking rule" reported back is a synthetic whole-site [Rule] for
+     * [url]'s own host. That is not a shortcut; it is the honest answer to
+     * "why is this blocked": not because of something typed, but because
+     * nothing was.
+     */
+    fun blockingRule(
+        mode: SiteMode,
+        url: Url,
+        blockRules: List<Rule>,
+        allowRules: List<Rule>,
+    ): Rule? = when (mode) {
+        SiteMode.BLOCKLIST -> firstMatch(blockRules, url)
+        SiteMode.ALLOWLIST -> if (firstMatch(allowRules, url) != null) null else Rule(url.host, null)
+    }
+
     /** Whether [host] is [ruleHost] or a subdomain of it. */
     private fun hostCovers(ruleHost: String, host: String): Boolean =
         host == ruleHost || host.endsWith(".$ruleHost")

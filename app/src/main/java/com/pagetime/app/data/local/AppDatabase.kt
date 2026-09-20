@@ -40,15 +40,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ShelfBookEntity::class,
         PagemarkEntity::class,
         TextHighlightEntity::class,
-        ExternalReadingAppEntity::class
+        ExternalReadingAppEntity::class,
+        AllowedSiteEntity::class
     ],
-    version = 27,
+    version = 28,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun blockedAppDao(): BlockedAppDao
     abstract fun externalReadingAppDao(): ExternalReadingAppDao
+    abstract fun allowedSiteDao(): AllowedSiteDao
     abstract fun blockedSiteDao(): BlockedSiteDao
     abstract fun usageEventDao(): UsageEventDao
     abstract fun learningCardDao(): LearningCardDao
@@ -433,6 +435,26 @@ abstract class AppDatabase : RoomDatabase() {
                         "packageName TEXT NOT NULL, appName TEXT NOT NULL, " +
                         "enabled INTEGER NOT NULL, PRIMARY KEY(packageName))"
                 )
+            }
+        }
+
+        /**
+         * Sites the reader lets through under
+         * [com.pagetime.app.blocker.SiteMode.ALLOWLIST] — same shape as
+         * blocked_sites (see [MIGRATION_23_24]), stored separately so
+         * switching between block and allow mode never loses either list.
+         */
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS allowed_sites (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "host TEXT NOT NULL, " +
+                        "pathPrefix TEXT, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "enabled INTEGER NOT NULL DEFAULT 1)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_allowed_sites_enabled ON allowed_sites(enabled)")
             }
         }
 

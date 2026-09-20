@@ -951,7 +951,7 @@ class AppBlockerService : AccessibilityService() {
             onReadNow = { openReader() },
             onSiteBack = { leaveSiteBlock() },
         ).also { siteOverlay = it }
-        current.setSiteBlock(rule)
+        current.setSiteBlock(rule, siteBlocker?.mode ?: SiteMode.BLOCKLIST)
         return current.show()
     }
 

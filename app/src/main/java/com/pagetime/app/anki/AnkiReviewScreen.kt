@@ -1,9 +1,17 @@
 package com.pagetime.app.anki
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Message
 import android.webkit.ConsoleMessage
+import android.webkit.JsPromptResult
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -266,6 +274,16 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
  * filling in the answer) down with it. [BASE_URL] is a fake but real origin
  * (an RFC 2606 .invalid host, so it can never resolve to an actual site) so
  * storage access works like it would in AnkiDroid's own reviewer.
+ *
+ * A bare WebView also has nowhere to send `window.open()` (seen on a custom
+ * "Ask Claude" card template that hands a generated prompt off to an
+ * external site) or `window.prompt()` (that same card's clipboard-write
+ * fallback) — both are silently dropped with no dialog and no new window to
+ * open into, so a button built around either looks like it does nothing.
+ * The WebChromeClient below delegates a new-window request to the system
+ * browser via a throwaway transport WebView, and answers a JS prompt by
+ * copying its text to the real clipboard instead of hosting a blocking
+ * dialog this screen has no UI for anyway.
  */
 private const val BASE_URL = "https://pagetime-anki-card.invalid/"
 
@@ -277,9 +295,55 @@ private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMes
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                // Required for onCreateWindow below to fire at all — without
+                // it, window.open() is a well-known Android WebView no-op
+                // rather than an error, which is what made this so easy to
+                // miss until a card actually used it.
+                settings.setSupportMultipleWindows(true)
                 webChromeClient = object : WebChromeClient() {
                     override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                         onJsMessage("console.${message.messageLevel()}: ${message.message()} (line ${message.lineNumber()})")
+                        return true
+                    }
+
+                    override fun onCreateWindow(
+                        view: WebView,
+                        isDialog: Boolean,
+                        isUserGesture: Boolean,
+                        resultMsg: Message,
+                    ): Boolean {
+                        val transportWebView = WebView(ctx)
+                        transportWebView.webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView,
+                                request: WebResourceRequest,
+                            ): Boolean {
+                                runCatching {
+                                    ctx.startActivity(
+                                        Intent(Intent.ACTION_VIEW, request.url)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                                return true
+                            }
+                        }
+                        (resultMsg.obj as WebView.WebViewTransport).webView = transportWebView
+                        resultMsg.sendToTarget()
+                        return true
+                    }
+
+                    override fun onJsPrompt(
+                        view: WebView,
+                        url: String,
+                        message: String,
+                        defaultValue: String?,
+                        result: JsPromptResult,
+                    ): Boolean {
+                        val text = defaultValue?.takeIf { it.isNotBlank() } ?: message
+                        ctx.getSystemService(ClipboardManager::class.java)
+                            ?.setPrimaryClip(ClipData.newPlainText("Anki prompt", text))
+                        Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        result.confirm(text)
                         return true
                     }
                 }

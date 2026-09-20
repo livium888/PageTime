@@ -94,8 +94,10 @@ fun PageTimeAppUi(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    val showBottomBar =
-        currentRoute in setOf("library", "lumen", "flashcards", "search", "settings")
+    // Always visible now, on every screen including the reader — a fixed
+    // anchor for jumping between tabs while testing, rather than having to
+    // back out of whatever screen is currently open first.
+    val showBottomBar = true
     val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }

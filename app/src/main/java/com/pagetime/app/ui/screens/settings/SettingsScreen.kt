@@ -101,6 +101,7 @@ import com.pagetime.app.ui.formatMinutes
 @Composable
 fun SettingsScreen(
     onManageBlockedApps: () -> Unit,
+    onManageExternalReadingApps: () -> Unit,
     onManageBlockedSites: () -> Unit,
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
@@ -374,8 +375,9 @@ fun SettingsScreen(
 
                 // Every other reward on this screen pays for something PageTime
                 // itself verified. This one pays on trust — foreground time in
-                // Kindle looks the same whether a page is turning or the phone
-                // is just sitting there — so it stays off unless asked for, and
+                // a chosen app looks the same whether a page is turning or the
+                // phone is just sitting there — so it stays off unless asked
+                // for, nothing is trusted until named on its own screen, and
                 // the daily cap bounds what trusting it wrong can cost.
                 ExternalReadingToggle(
                     enabled = externalReadingEnabled,
@@ -384,10 +386,16 @@ fun SettingsScreen(
 
                 if (externalReadingEnabled) {
                     Spacer(Modifier.height(8.dp))
+                    AppSettingsRow(
+                        icon = Icons.Outlined.Block,
+                        label = "Choose which apps (Kindle, etc.)",
+                        onClick = onManageExternalReadingApps
+                    )
+                    Spacer(Modifier.height(8.dp))
                     TypedSettingField(
-                        title = "Daily Kindle credit cap",
-                        help = "The most Kindle reading time can bank per day, already at half rate. " +
-                            "Set to 0 to stop it from earning anything without turning the toggle off.",
+                        title = "Daily credit cap",
+                        help = "The most these apps combined can bank per day, already at half rate. " +
+                            "Set to 0 to stop them from earning anything without turning the toggle off.",
                         current = "$externalReadingDailyCapSeconds seconds/day",
                         inputLabel = "Seconds per day",
                         inputHint = "e.g. 3600",
@@ -1356,13 +1364,16 @@ private fun CloudRescueToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
 }
 
 /**
- * Credits time spent in Kindle as reading, on trust.
+ * Credits time spent in a chosen app (Kindle, etc.) as reading, on trust.
  *
  * PageTime's own reader can tell a page turning from a phone merely left on
- * — it watches real scroll position. Kindle's screen offers no such signal;
- * all this can ever see is "Kindle was in front with the screen on". Off by
- * default for that reason, and the description says so plainly rather than
- * dressing the toggle up as something it isn't.
+ * — it watches real scroll position. A foreign app's screen offers no such
+ * signal; all this can ever see is "the app was in front with the screen
+ * on". Off by default for that reason, and the description says so plainly
+ * rather than dressing the toggle up as something it isn't. Which apps
+ * qualify is a separate, explicit choice — see
+ * [ExternalReadingAppsScreen][com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen] —
+ * so turning this on alone trusts nothing yet.
  */
 @Composable
 private fun ExternalReadingToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
@@ -1371,13 +1382,14 @@ private fun ExternalReadingToggle(enabled: Boolean, onChange: (Boolean) -> Unit)
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Credit Kindle reading time", style = MaterialTheme.typography.titleSmall)
+            Text("Credit reading time in other apps", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
             Text(
                 if (enabled) {
-                    "Time Kindle spends in front with the screen on counts toward reading credit, " +
-                        "at half rate, capped per day below. This is trust-based — PageTime cannot " +
-                        "tell a page turning from a phone left open, unlike its own reader."
+                    "Time spent in an app you choose below, with the screen on, counts toward " +
+                        "reading credit, at half rate, capped per day. This is trust-based — " +
+                        "PageTime cannot tell a page turning from a phone left open, unlike its " +
+                        "own reader."
                 } else {
                     "Off — only reading inside PageTime counts, since it's the only reading this " +
                         "app can actually verify."

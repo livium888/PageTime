@@ -265,8 +265,10 @@ class BalanceManager(
     }
 
     /**
-     * Whether time in a trusted external reading app (Kindle) is credited as
-     * reading. Off by default — see [com.pagetime.app.data.usage.ExternalReadingTracker].
+     * Whether time in a reader-chosen trusted external reading app (e.g.
+     * Kindle) is credited as reading. Off by default — see
+     * [com.pagetime.app.data.usage.ExternalReadingTracker] and
+     * [com.pagetime.app.data.ExternalReadingAppRepository] for which apps.
      */
     val externalReadingEnabled: Flow<Boolean> =
         repository.settings.map { it.externalReadingEnabled }

@@ -39,14 +39,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookChunkEmbeddingEntity::class,
         ShelfBookEntity::class,
         PagemarkEntity::class,
-        TextHighlightEntity::class
+        TextHighlightEntity::class,
+        ExternalReadingAppEntity::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun blockedAppDao(): BlockedAppDao
+    abstract fun externalReadingAppDao(): ExternalReadingAppDao
     abstract fun blockedSiteDao(): BlockedSiteDao
     abstract fun usageEventDao(): UsageEventDao
     abstract fun learningCardDao(): LearningCardDao
@@ -415,6 +417,22 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_25_26 = object : Migration(25, 26) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN wordCount INTEGER")
+            }
+        }
+
+        /**
+         * Which apps the reader trusts for [com.pagetime.app.data.usage.ExternalReadingTracker] —
+         * same shape as blocked_apps, since both are just "a chosen set of
+         * packages with a human label", one restricting and one granting.
+         * Starts empty: nothing is trusted until the reader picks it.
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS external_reading_apps (" +
+                        "packageName TEXT NOT NULL, appName TEXT NOT NULL, " +
+                        "enabled INTEGER NOT NULL, PRIMARY KEY(packageName))"
+                )
             }
         }
 

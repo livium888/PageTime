@@ -82,7 +82,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_21_22,
                 AppDatabase.MIGRATION_22_23,
                 AppDatabase.MIGRATION_23_24,
-                AppDatabase.MIGRATION_24_25
+                AppDatabase.MIGRATION_24_25,
+                AppDatabase.MIGRATION_25_26
             )
             .build()
 
@@ -213,6 +214,12 @@ class AppContainer(context: Context) {
         settingsRepository = settingsRepository,
         geminiClient = geminiLearningClient,
         localLlmProvider = localLlmProvider,
+    )
+
+    /** A book's total word count, computed once on first read — see the class doc. */
+    val bookWordCounter = BookWordCounter(
+        bookDao = bookDao,
+        contextExtractor = learningContextExtractor,
     )
 
     /** The Library screen's one daily, dismissible book suggestion — see the class doc. */

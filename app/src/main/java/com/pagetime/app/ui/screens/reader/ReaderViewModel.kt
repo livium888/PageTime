@@ -72,6 +72,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val balanceManager = container.balanceManager
     private val settingsRepository = container.settingsRepository
     private val readium = container.readiumEngine
+    private val bookWordCounter = container.bookWordCounter
 
     // App-lifetime scope for persistence writes. viewModelScope is cancelled the
     // moment this screen is left — launching the "save position" write there meant
@@ -79,6 +80,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val persistenceScope = container.scope
 
     private val guard = ReadingGuard()
+
+    /**
+     * The book's total word count, fetched (and computed/cached if this is
+     * the first time) once the book loads. Null until then, or if counting
+     * genuinely fails — [guard] falls back to its cruder pace check either
+     * way, so this is never load-bearing for the reader to work.
+     */
+    private var bookWordCount: Int? = null
 
     private val _book = MutableStateFlow<BookEntity?>(null)
     val book = _book.asStateFlow()
@@ -218,7 +227,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         viewModelScope.launch {
             val loaded = if (bookId == "last") repo.getMostRecentBook() else repo.getBook(bookId)
             _book.value = loaded
-            loaded?.let { persistenceScope.launch { settingsRepository.setLastReadBookId(it.id) } }
+            loaded?.let { book ->
+                persistenceScope.launch { settingsRepository.setLastReadBookId(book.id) }
+                // Off the main thread, and never blocking the ticker: on a
+                // book's very first sitting this hasn't resolved yet by the
+                // time the guard starts, which just means that one sitting
+                // uses the guard's cruder fallback pace check — every
+                // sitting after the first has it instantly from the cache.
+                viewModelScope.launch(Dispatchers.IO) {
+                    bookWordCount = runCatching { bookWordCounter.wordCount(book) }.getOrNull()
+                }
+            }
             if (loaded == null) {
                 _error.value = "Book not found in library"
                 return@launch
@@ -344,7 +363,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         if (guardStarted) {
             guard.resume(now)
         } else {
-            guard.start(now, book.scrollProgress)
+            guard.start(now, book.scrollProgress, bookWordCount)
             guardStarted = true
         }
         _guardState.value = guard.state

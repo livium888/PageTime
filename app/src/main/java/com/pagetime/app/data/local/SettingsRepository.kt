@@ -42,6 +42,22 @@ data class Settings(
      */
     val flashcardDailyCapSeconds: Long = 300,
     /**
+     * Whether time spent in a trusted external reading app (Kindle) is
+     * credited as reading — off by default, since unlike every other reward
+     * here it grants credit on trust rather than on something PageTime can
+     * itself verify. See [com.pagetime.app.data.usage.ExternalReadingTracker]
+     * and [com.pagetime.app.domain.ExternalReadingCredit].
+     */
+    val externalReadingEnabled: Boolean = false,
+    /**
+     * The most external-reading credit (already discounted by
+     * [com.pagetime.app.domain.ExternalReadingCredit]) that can be banked per
+     * day — see [com.pagetime.app.domain.BalanceManager.earnFromExternalReading].
+     * Bounds what a phone merely left open on Kindle can cost, the same way
+     * [flashcardDailyCapSeconds] bounds a flashcard's better hourly rate.
+     */
+    val externalReadingDailyCapSeconds: Long = 3_600,
+    /**
      * Browse seconds earned per explain-back attempt scored at least PARTLY.
      * Higher than the flashcard reward by default: writing and being marked on
      * a real explanation is minutes of work, not a single tap.
@@ -238,6 +254,11 @@ class SettingsRepository(private val context: Context) {
         val FLASHCARD_DAILY_CAP = longPreferencesKey("flashcard_daily_cap_seconds")
         val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
         val FLASHCARD_EARNED_EPOCH_DAY = longPreferencesKey("flashcard_earned_epoch_day")
+        val EXTERNAL_READING_ENABLED = booleanPreferencesKey("external_reading_enabled")
+        val EXTERNAL_READING_DAILY_CAP = longPreferencesKey("external_reading_daily_cap_seconds")
+        val EXTERNAL_READING_EARNED_TODAY = longPreferencesKey("external_reading_earned_today_seconds")
+        val EXTERNAL_READING_EARNED_EPOCH_DAY = longPreferencesKey("external_reading_earned_epoch_day")
+        val LAST_EXTERNAL_READING_CHECK_AT = longPreferencesKey("last_external_reading_check_at")
         val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
         val LUMEN_LINK_REWARD = longPreferencesKey("lumen_link_reward_seconds")
         val READING_MOMENTUM_BONUS = longPreferencesKey("reading_momentum_bonus_seconds")
@@ -568,6 +589,8 @@ class SettingsRepository(private val context: Context) {
             ratio = p[Keys.RATIO] ?: 1.0,
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
             flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
+            externalReadingEnabled = p[Keys.EXTERNAL_READING_ENABLED] ?: false,
+            externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L,
             explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
             lumenLinkRewardSeconds = p[Keys.LUMEN_LINK_REWARD] ?: 45L,
             readingMomentumBonusSeconds = p[Keys.READING_MOMENTUM_BONUS] ?: 60L,
@@ -1151,6 +1174,43 @@ class SettingsRepository(private val context: Context) {
             it[Keys.FLASHCARD_EARNED_EPOCH_DAY] = epochDay
             it[Keys.FLASHCARD_EARNED_TODAY] = seconds
         }
+    }
+
+    suspend fun externalReadingEnabled(): Boolean =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_ENABLED] ?: false
+
+    suspend fun setExternalReadingEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.EXTERNAL_READING_ENABLED] = value }
+    }
+
+    suspend fun externalReadingDailyCapSeconds(): Long =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L
+
+    suspend fun setExternalReadingDailyCapSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.EXTERNAL_READING_DAILY_CAP] = value.coerceIn(0L, 4L * 3_600L) }
+    }
+
+    /** What's been credited from external reading (Kindle) so far today — 0 if nothing logged yet. */
+    suspend fun externalReadingEarnedToday(): Long =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_EARNED_TODAY] ?: 0L
+
+    /** The epoch day [externalReadingEarnedToday] was last logged against. */
+    suspend fun externalReadingEarnedEpochDay(): Long =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_EARNED_EPOCH_DAY] ?: 0L
+
+    suspend fun setExternalReadingEarnedToday(epochDay: Long, seconds: Long) {
+        context.dataStore.edit {
+            it[Keys.EXTERNAL_READING_EARNED_EPOCH_DAY] = epochDay
+            it[Keys.EXTERNAL_READING_EARNED_TODAY] = seconds
+        }
+    }
+
+    /** Wall-clock time of the last external-reading sweep, or null before the first one. */
+    suspend fun lastExternalReadingCheckAt(): Long? =
+        context.dataStore.data.first()[Keys.LAST_EXTERNAL_READING_CHECK_AT]
+
+    suspend fun setLastExternalReadingCheckAt(value: Long) {
+        context.dataStore.edit { it[Keys.LAST_EXTERNAL_READING_CHECK_AT] = value }
     }
 
     suspend fun explainBackRewardSeconds(): Long =

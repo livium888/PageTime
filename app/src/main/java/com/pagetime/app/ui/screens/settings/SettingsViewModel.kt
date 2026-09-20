@@ -82,6 +82,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val flashcardDailyCapSeconds = container.balanceManager.flashcardDailyCapSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 300L)
 
+    val externalReadingEnabled = container.balanceManager.externalReadingEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val externalReadingDailyCapSeconds = container.balanceManager.externalReadingDailyCapSeconds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 3_600L)
+
     val explainBackRewardSeconds = container.balanceManager.explainBackRewardSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
 
@@ -312,6 +318,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setFlashcardDailyCap(value: Long) {
         viewModelScope.launch { container.balanceManager.setFlashcardDailyCap(value) }
+    }
+
+    fun setExternalReadingEnabled(value: Boolean) {
+        viewModelScope.launch { container.balanceManager.setExternalReadingEnabled(value) }
+    }
+
+    fun setExternalReadingDailyCap(value: Long) {
+        viewModelScope.launch { container.balanceManager.setExternalReadingDailyCap(value) }
     }
 
     fun setExplainBackReward(value: Long) {

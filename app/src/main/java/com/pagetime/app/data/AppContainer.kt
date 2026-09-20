@@ -22,6 +22,7 @@ import com.pagetime.app.data.embed.BookSearcher
 import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
+import com.pagetime.app.data.usage.ExternalReadingTracker
 import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
@@ -387,10 +388,24 @@ class AppContainer(context: Context) {
         parser = ForegroundParser()
     )
 
+    /**
+     * Credits Kindle foreground time as reading, opt-in only — see
+     * [ExternalReadingTracker] for why it stays off unless the reader turns
+     * it on.
+     */
+    val externalReadingTracker = ExternalReadingTracker(
+        scope = scope,
+        settingsRepository = settingsRepository,
+        balanceManager = balanceManager,
+        reader = usageStatsReader,
+        parser = ForegroundParser()
+    )
+
     init {
         blockController.start()
         siteBlocker.start()
         usageReconciler.start()
+        externalReadingTracker.start()
         // PDFs imported before a PDF was converted at import are still sitting
         // in the library as extracted text. Both files are on disk, so they can
         // be rebuilt in the background — and until one is, it keeps reading the

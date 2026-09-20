@@ -222,7 +222,7 @@ class BalanceManager(
      * own cards and Anki both route through here). AGAIN earns nothing, so
      * guessing your way to browse time is impossible by design.
      *
-     * Capped per day via [FlashcardDailyCap]: a flashcard is a few seconds of
+     * Capped per day via [DailyEarningCap]: a flashcard is a few seconds of
      * work no matter how many are due, which makes it a far better hourly
      * rate than reading unless something limits it — the cap is what keeps
      * flashcards a quick top-up rather than a way to fund a whole day's
@@ -238,18 +238,78 @@ class BalanceManager(
         if (requested <= 0) return 0
         val today = java.time.LocalDate.now().toEpochDay()
         val paid = mutex.withLock {
-            val earnedSoFar = FlashcardDailyCap.earnedSoFar(
+            val earnedSoFar = DailyEarningCap.earnedSoFar(
                 storedEpochDay = repository.flashcardEarnedEpochDay(),
                 today = today,
                 storedSeconds = repository.flashcardEarnedToday(),
             )
-            val payable = FlashcardDailyCap.payable(
+            val payable = DailyEarningCap.payable(
                 requestedSeconds = requested,
                 earnedSoFarToday = earnedSoFar,
                 capSeconds = repository.flashcardDailyCapSeconds(),
             )
             if (payable > 0) {
                 repository.setFlashcardEarnedToday(today, earnedSoFar + payable)
+                if (repository.gateEnabled()) {
+                    repository.addReadingCredit(payable)
+                } else {
+                    repository.addBrowseBalanceSeconds(payable)
+                }
+            }
+            payable
+        }
+        if (paid > 0) {
+            ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = paid)
+        }
+        return paid
+    }
+
+    /**
+     * Whether time in a trusted external reading app (Kindle) is credited as
+     * reading. Off by default — see [com.pagetime.app.data.usage.ExternalReadingTracker].
+     */
+    val externalReadingEnabled: Flow<Boolean> =
+        repository.settings.map { it.externalReadingEnabled }
+
+    suspend fun setExternalReadingEnabled(value: Boolean) = repository.setExternalReadingEnabled(value)
+
+    /** The most external-reading credit that can be banked per day. */
+    val externalReadingDailyCapSeconds: Flow<Long> =
+        repository.settings.map { it.externalReadingDailyCapSeconds }
+
+    suspend fun setExternalReadingDailyCap(seconds: Long) = repository.setExternalReadingDailyCapSeconds(seconds)
+
+    /**
+     * Award credit for [foregroundSeconds] a trusted external reading app held
+     * the foreground with the screen on, as measured by
+     * [com.pagetime.app.data.usage.ExternalReadingTracker].
+     *
+     * Discounted by [ExternalReadingCredit] before it ever reaches here, then
+     * capped per day via [DailyEarningCap] — the same two-part bound
+     * [earnFromFlashcard] uses for a reward this app also can't fully verify.
+     * Neither step can tell a page actually being read from a phone merely
+     * left open; together they make sure that gap has a small, predictable
+     * price rather than an unlimited one.
+     *
+     * Returns how many seconds were actually paid.
+     */
+    suspend fun earnFromExternalReading(foregroundSeconds: Long): Long {
+        val requested = ExternalReadingCredit.creditedSeconds(foregroundSeconds)
+        if (requested <= 0) return 0
+        val today = java.time.LocalDate.now().toEpochDay()
+        val paid = mutex.withLock {
+            val earnedSoFar = DailyEarningCap.earnedSoFar(
+                storedEpochDay = repository.externalReadingEarnedEpochDay(),
+                today = today,
+                storedSeconds = repository.externalReadingEarnedToday(),
+            )
+            val payable = DailyEarningCap.payable(
+                requestedSeconds = requested,
+                earnedSoFarToday = earnedSoFar,
+                capSeconds = repository.externalReadingDailyCapSeconds(),
+            )
+            if (payable > 0) {
+                repository.setExternalReadingEarnedToday(today, earnedSoFar + payable)
                 if (repository.gateEnabled()) {
                     repository.addReadingCredit(payable)
                 } else {

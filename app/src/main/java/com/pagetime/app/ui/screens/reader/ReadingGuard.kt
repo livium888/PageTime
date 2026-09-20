@@ -24,9 +24,15 @@ package com.pagetime.app.ui.screens.reader
  *    is navigation (TOC jump, seek bar), not reading. The watermark advances so
  *    the skipped region can't be re-farmed later, but no budget is minted.
  *
- * 4. PACE LIMIT — even genuine forward motion faster than
- *    [maxPlausibleProgressPerMinute] (auto-scroll bots, machine-gun tapping
- *    through pages) pauses crediting for [tooFastCooldownMs].
+ * 4. PACE LIMIT — even genuine forward motion faster than plausible (auto-scroll
+ *    bots, machine-gun tapping through pages) pauses crediting for
+ *    [tooFastCooldownMs]. Measured in words per minute against
+ *    [maxPlausibleWordsPerMinute] once a book's word count is known (see
+ *    [start]) — falling back to the cruder [maxPlausibleProgressPerMinute]
+ *    (book-fraction per minute) only until then. See [ReadingPace] for why
+ *    a fraction of the book is not a safe unit on its own: it conflates a
+ *    genuinely fast reader with a normal one reading a book that packs more
+ *    words per page (a smaller font, or simply a shorter document).
  *
  * Budget economics: one percent of forward book progress mints
  * [secondsOfCreditPerProgress] / 100 seconds of budget, capped at
@@ -48,6 +54,13 @@ class ReadingGuard(
     private val idleTimeoutMs: Long = 90_000L,
     private val gateGraceMs: Long = 15_000L,
     private val maxPlausibleProgressPerMinute: Float = 0.12f,
+    /**
+     * Generous ceiling once a book's word count is known — see [ReadingPace].
+     * Well above even a fast skilled reader (skilled adults top out around
+     * 300-400 wpm per Rayner et al.'s meta-analysis of reading-rate studies)
+     * so it only ever catches something no human sustains, not a fast reader.
+     */
+    private val maxPlausibleWordsPerMinute: Float = 1000f,
     private val tooFastCooldownMs: Long = 60_000L,
     /** Instant progress deltas above this are treated as navigation jumps. */
     private val skipJumpThreshold: Float = 0.05f,
@@ -73,6 +86,8 @@ class ReadingGuard(
     // --- session state ---
     private var startedAt = 0L
     private var lastMovementAt = 0L
+    /** The book's total word count, once known — see [start] and [ReadingPace]. */
+    private var totalWords: Int? = null
 
     // --- watermark machinery ---
     private var watermark = 0f
@@ -95,9 +110,13 @@ class ReadingGuard(
      * the book and reopening it made the whole book farmable again — the
      * watermark's entire job, undone by a back button.
      *
+     * [totalWords] switches the pace defense to [ReadingPace]'s words-per-minute
+     * check instead of the cruder book-fraction one — pass null (the default)
+     * when it isn't known yet, which keeps the old behavior exactly.
+     *
      * Call this once per book. Coming back from the home screen is [resume].
      */
-    fun start(now: Long, alreadyRead: Float = 0f) {
+    fun start(now: Long, alreadyRead: Float = 0f, totalWords: Int? = null) {
         startedAt = now
         lastMovementAt = now
         lastProgressAt = now
@@ -106,6 +125,7 @@ class ReadingGuard(
         budgetSeconds = startingBudgetSeconds
         tooFastUntil = 0L
         gateHiddenUntil = 0L
+        this.totalWords = totalWords?.takeIf { it > 0 }
         windowStartAt = now
         windowStartWatermark = watermark
         recompute(now)
@@ -198,7 +218,14 @@ class ReadingGuard(
         if (elapsedInWindow >= 60_000L) {
             val minutes = elapsedInWindow / 60_000f
             val forwardDelta = watermark - windowStartWatermark
-            if (minutes > 0f && forwardDelta / minutes > maxPlausibleProgressPerMinute) {
+            if (ReadingPace.isTooFast(
+                    forwardProgressDelta = forwardDelta,
+                    minutesElapsed = minutes,
+                    totalWords = totalWords,
+                    maxFractionPerMinute = maxPlausibleProgressPerMinute,
+                    maxWordsPerMinute = maxPlausibleWordsPerMinute,
+                )
+            ) {
                 tooFastUntil = now + tooFastCooldownMs
             }
             windowStartAt = now

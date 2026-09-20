@@ -41,7 +41,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PagemarkEntity::class,
         TextHighlightEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -403,6 +403,18 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_24_25 = object : Migration(24, 25) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE books ADD COLUMN genre TEXT")
+            }
+        }
+
+        /**
+         * A book's total word count, computed once by
+         * [com.pagetime.app.data.BookWordCounter] the first time a reading
+         * sitting needs it — see [com.pagetime.app.ui.screens.reader.ReadingPace].
+         * Null on every existing row until then.
+         */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN wordCount INTEGER")
             }
         }
 

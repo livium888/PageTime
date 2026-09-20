@@ -333,6 +333,53 @@ class ReadingGuardTest {
     }
 
     /**
+     * The reported symptom: a short document read at a fast-but-human pace
+     * tripped the pace limiter, because the old check measured "book
+     * fraction per minute" against a fixed ceiling that implicitly assumed a
+     * typical-length novel. A 6,000-word document read at 900 wpm covers 15%
+     * of itself per minute — over the 12%/minute fraction ceiling — even
+     * though 900 wpm is well under any human's sustained reading speed once
+     * measured properly. Supplying the word count at [ReadingGuard.start]
+     * must stop this from tripping.
+     */
+    @Test
+    fun `a fast reader on a short document is not throttled once word count is known`() {
+        val informed = ReadingGuard()
+        informed.start(0L, totalWords = 6_000)
+
+        var credited = 0L
+        var p = 0f
+        val wordsPerSecond = 900f / 60f
+        for (i in 1..180) { // three minutes
+            val t = i * S
+            p = (p + wordsPerSecond / 6_000f).coerceAtMost(1f)
+            informed.onProgress(p, t)
+            if (informed.onTick(t)) credited++
+        }
+        assertFalse("a real 900 wpm pace must not trip the pace limiter", informed.state.tooFast)
+        assertTrue("a fast honest reader should earn nearly every second, was $credited", credited > 170)
+    }
+
+    /**
+     * The same short document and the same honest pace, without a word
+     * count — pinning that this really is the old behavior the test above
+     * fixes, not a change to the fraction-only fallback.
+     */
+    @Test
+    fun `the same pace without a known word count still trips the old fraction ceiling`() {
+        var credited = 0L
+        var p = 0f
+        val wordsPerSecond = 900f / 60f
+        for (i in 1..180) {
+            val t = i * S
+            p = (p + wordsPerSecond / 6_000f).coerceAtMost(1f)
+            guard.onProgress(p, t)
+            if (guard.onTick(t)) credited++
+        }
+        assertTrue("expected the fraction-only fallback to still throttle this", guard.state.tooFast)
+    }
+
+    /**
      * A cooldown that could be cleared by pressing home would not be a
      * cooldown.
      */

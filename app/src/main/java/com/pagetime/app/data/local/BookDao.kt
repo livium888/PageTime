@@ -40,4 +40,8 @@ interface BookDao {
 
     @Query("UPDATE books SET genre = :genre WHERE id = :id")
     suspend fun updateGenre(id: String, genre: String)
+
+    /** See [com.pagetime.app.data.BookWordCounter] — computed once, cached forever after. */
+    @Query("UPDATE books SET wordCount = :wordCount WHERE id = :id")
+    suspend fun updateWordCount(id: String, wordCount: Int)
 }

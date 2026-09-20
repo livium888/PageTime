@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -77,3 +77,24 @@ jobs:
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
+
+      # The workflow artifact above needs an authenticated API call to fetch
+      # (the "Download" button on the run page works from a logged-in
+      # browser, but the raw artifact URL does not, and either way it's a
+      # zip that has to be unzipped for the one file inside it). A GitHub
+      # Release asset has a plain, stable URL that downloads directly on
+      # click — so this republishes the same APK there under a fixed
+      # filename, at a fixed tag, updated on every push to main. The
+      # filename has to stay identical across builds for the URL itself to
+      # stay the same; the version and commit are in the release notes
+      # instead, and still in the file itself (Settings screen).
+      - name: Publish the one-click download release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk pagetime-latest.apk
+          gh release delete latest-apk --yes --cleanup-tag || true
+          gh release create latest-apk pagetime-latest.apk \
+            --title "Latest build (${{ steps.build-name.outputs.name }})" \
+            --notes "Always the newest successful build from main — currently ${{ steps.build-name.outputs.name }}, commit ${{ github.sha }}. Not a versioned release: the file at this link changes on every push." \
+            --latest

@@ -117,6 +117,7 @@ fun SettingsScreen(
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
+    val flashcardDailyCapSeconds by viewModel.flashcardDailyCapSeconds.collectAsStateWithLifecycle()
     val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
     val lumenLinkRewardSeconds by viewModel.lumenLinkRewardSeconds.collectAsStateWithLifecycle()
     val readingMomentumBonusSeconds by viewModel.readingMomentumBonusSeconds.collectAsStateWithLifecycle()
@@ -342,6 +343,29 @@ fun SettingsScreen(
                     unit = "seconds",
                     describe = { "${it.roundToLong()} sec" },
                     onCommit = { viewModel.setFlashcardReward(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // A flashcard is a few seconds of work no matter how many are
+                // due, which makes it a far better hourly rate than reading
+                // unless something limits it — this cap (shared with Anki,
+                // since both pay through the same call) is what keeps
+                // flashcards a quick top-up rather than a way to fund a whole
+                // day's browsing without ever opening a book.
+                TypedSettingField(
+                    title = "Daily flashcard cap",
+                    help = "The most flashcards and Anki together can earn per day, combined — " +
+                        "reading itself has no cap. Set to 0 to stop flashcards from earning anything.",
+                    current = "$flashcardDailyCapSeconds seconds/day",
+                    inputLabel = "Seconds per day",
+                    inputHint = "e.g. 300",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_FLASHCARD_DAILY_CAP_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec/day" },
+                    onCommit = { viewModel.setFlashcardDailyCap(it.roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -1797,6 +1821,7 @@ private const val LENGTH_FENCE_NOTE =
 
 /** The reward slider's old range, kept as the field's bounds. */
 private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
+private const val MAX_FLASHCARD_DAILY_CAP_SECONDS = 3_600.0
 private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
 private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
 private const val MAX_READING_MOMENTUM_BONUS_SECONDS = 180.0

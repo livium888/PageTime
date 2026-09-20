@@ -1366,7 +1366,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val seconds = balanceManager.earnReadingMomentumBonus()
         if (seconds <= 0) return
         _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
-        delay(4_000)
+        delay(6_000)
         _momentumNotice.value = null
     }
 

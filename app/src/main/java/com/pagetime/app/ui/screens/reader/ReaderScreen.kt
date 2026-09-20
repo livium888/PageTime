@@ -763,26 +763,32 @@ fun ReaderScreen(
                             onFinish = { showCloseChunk = true }
                         )
                     }
-                    ReaderBottomBar(
-                            palette = palette,
-                            sessionSeconds = sessionSeconds,
-                            creditedSeconds = creditedSeconds,
-                            progress = progress,
-                            guardState = guardState,
-                            chapterLabel = chapterLabel,
-                            pageLabel = textPageLabel,
-                            chapterCount = publication?.readingOrder?.size,
-                            mode = progressMode,
-                            onModeToggle = {
-                                progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
-                                    ProgressIndicatorMode.TIME_LEFT
-                                } else {
-                                    ProgressIndicatorMode.PERCENT
-                                }
-                            }
-                        )
                 }
             }
+            // Deliberately outside the chrome's own show/hide: this is the one
+            // piece of reading chrome that reports something ongoing (session
+            // time, counted time, whether the anti-cheat guard is currently
+            // crediting) rather than something to act on — hiding it after a
+            // few idle seconds like the tap-to-toggle bars makes it useless
+            // for watching that state change in real time.
+            ReaderBottomBar(
+                palette = palette,
+                sessionSeconds = sessionSeconds,
+                creditedSeconds = creditedSeconds,
+                progress = progress,
+                guardState = guardState,
+                chapterLabel = chapterLabel,
+                pageLabel = textPageLabel,
+                chapterCount = publication?.readingOrder?.size,
+                mode = progressMode,
+                onModeToggle = {
+                    progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
+                        ProgressIndicatorMode.TIME_LEFT
+                    } else {
+                        ProgressIndicatorMode.PERCENT
+                    }
+                }
+            )
         }
 
         if (guardState.showIdleGate) {

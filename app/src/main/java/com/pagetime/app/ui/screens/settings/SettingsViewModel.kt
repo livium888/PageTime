@@ -79,6 +79,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val flashcardRewardSeconds = container.balanceManager.flashcardRewardSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 30L)
 
+    val flashcardDailyCapSeconds = container.balanceManager.flashcardDailyCapSeconds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 300L)
+
     val explainBackRewardSeconds = container.balanceManager.explainBackRewardSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
 
@@ -305,6 +308,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setFlashcardReward(value: Long) {
         viewModelScope.launch { container.balanceManager.setFlashcardReward(value) }
+    }
+
+    fun setFlashcardDailyCap(value: Long) {
+        viewModelScope.launch { container.balanceManager.setFlashcardDailyCap(value) }
     }
 
     fun setExplainBackReward(value: Long) {

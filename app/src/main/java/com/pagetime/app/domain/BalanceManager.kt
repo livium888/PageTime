@@ -171,6 +171,16 @@ class BalanceManager(
     suspend fun flashcardReward(): Long = repository.flashcardRewardSeconds()
 
     /**
+     * How many of those seconds flashcards (PageTime's own cards and Anki
+     * both) can pay in total per day — see [earnFromFlashcard]. Reading
+     * itself has no such cap.
+     */
+    val flashcardDailyCapSeconds: Flow<Long> =
+        repository.settings.map { it.flashcardDailyCapSeconds }
+
+    suspend fun setFlashcardDailyCap(seconds: Long) = repository.setFlashcardDailyCapSeconds(seconds)
+
+    /**
      * Sets the price of a session. Returns whether the change was accepted.
      *
      * The fence lives here and not in the screen because a rule enforced only
@@ -208,25 +218,50 @@ class BalanceManager(
     suspend fun setFlashcardReward(seconds: Long) = repository.setFlashcardRewardSeconds(seconds)
 
     /**
-     * Award the flashcard bonus for one correctly recalled review. AGAIN earns
-     * nothing, so guessing your way to browse time is impossible by design.
+     * Award the flashcard bonus for one correctly recalled review (PageTime's
+     * own cards and Anki both route through here). AGAIN earns nothing, so
+     * guessing your way to browse time is impossible by design.
      *
-     * Under the access gate the reward banks reading credit toward the next
-     * session — the same currency reading earns — rather than growing a browse
-     * balance the gate makes unspendable.
+     * Capped per day via [FlashcardDailyCap]: a flashcard is a few seconds of
+     * work no matter how many are due, which makes it a far better hourly
+     * rate than reading unless something limits it — the cap is what keeps
+     * flashcards a quick top-up rather than a way to fund a whole day's
+     * browsing without ever opening a book. Reading itself carries no cap.
+     *
+     * Returns how many seconds were actually paid — 0 for AGAIN, for a
+     * disabled reward, or once the day's cap is reached — so a caller can
+     * show what really happened instead of just the configured reward.
      */
-    suspend fun earnFromFlashcard(ratingCorrect: Boolean) {
-        if (!ratingCorrect) return
-        val seconds = repository.flashcardRewardSeconds()
-        if (seconds <= 0) return
-        mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
+    suspend fun earnFromFlashcard(ratingCorrect: Boolean): Long {
+        if (!ratingCorrect) return 0
+        val requested = repository.flashcardRewardSeconds()
+        if (requested <= 0) return 0
+        val today = java.time.LocalDate.now().toEpochDay()
+        val paid = mutex.withLock {
+            val earnedSoFar = FlashcardDailyCap.earnedSoFar(
+                storedEpochDay = repository.flashcardEarnedEpochDay(),
+                today = today,
+                storedSeconds = repository.flashcardEarnedToday(),
+            )
+            val payable = FlashcardDailyCap.payable(
+                requestedSeconds = requested,
+                earnedSoFarToday = earnedSoFar,
+                capSeconds = repository.flashcardDailyCapSeconds(),
+            )
+            if (payable > 0) {
+                repository.setFlashcardEarnedToday(today, earnedSoFar + payable)
+                if (repository.gateEnabled()) {
+                    repository.addReadingCredit(payable)
+                } else {
+                    repository.addBrowseBalanceSeconds(payable)
+                }
             }
+            payable
         }
-        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
+        if (paid > 0) {
+            ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = paid)
+        }
+        return paid
     }
 
     /**

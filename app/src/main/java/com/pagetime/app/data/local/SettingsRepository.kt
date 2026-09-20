@@ -34,6 +34,14 @@ data class Settings(
     /** Browse seconds earned per correct flashcard review (HARD/GOOD/EASY). */
     val flashcardRewardSeconds: Long = 30,
     /**
+     * How many of those seconds flashcards (PageTime's own cards AND Anki,
+     * both route through the same reward call) can pay in total per day —
+     * see [com.pagetime.app.domain.BalanceManager.earnFromFlashcard]. Meant
+     * to keep flashcards a quick top-up rather than a way to fund a whole
+     * day's browsing without ever opening a book; reading itself has no cap.
+     */
+    val flashcardDailyCapSeconds: Long = 300,
+    /**
      * Browse seconds earned per explain-back attempt scored at least PARTLY.
      * Higher than the flashcard reward by default: writing and being marked on
      * a real explanation is minutes of work, not a single tap.
@@ -227,6 +235,9 @@ class SettingsRepository(private val context: Context) {
         val BALANCE = longPreferencesKey("browse_balance_seconds")
         val RATIO = doublePreferencesKey("ratio")
         val FLASHCARD_REWARD = longPreferencesKey("flashcard_reward_seconds")
+        val FLASHCARD_DAILY_CAP = longPreferencesKey("flashcard_daily_cap_seconds")
+        val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
+        val FLASHCARD_EARNED_EPOCH_DAY = longPreferencesKey("flashcard_earned_epoch_day")
         val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
         val LUMEN_LINK_REWARD = longPreferencesKey("lumen_link_reward_seconds")
         val READING_MOMENTUM_BONUS = longPreferencesKey("reading_momentum_bonus_seconds")
@@ -556,6 +567,7 @@ class SettingsRepository(private val context: Context) {
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
             ratio = p[Keys.RATIO] ?: 1.0,
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
+            flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
             explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
             lumenLinkRewardSeconds = p[Keys.LUMEN_LINK_REWARD] ?: 45L,
             readingMomentumBonusSeconds = p[Keys.READING_MOMENTUM_BONUS] ?: 60L,
@@ -1117,6 +1129,28 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setFlashcardRewardSeconds(value: Long) {
         context.dataStore.edit { it[Keys.FLASHCARD_REWARD] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun flashcardDailyCapSeconds(): Long =
+        context.dataStore.data.first()[Keys.FLASHCARD_DAILY_CAP] ?: 300L
+
+    suspend fun setFlashcardDailyCapSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.FLASHCARD_DAILY_CAP] = value.coerceIn(0L, 3_600L) }
+    }
+
+    /** What's been earned from flashcards/Anki so far today — 0 if nothing has been logged yet. */
+    suspend fun flashcardEarnedToday(): Long =
+        context.dataStore.data.first()[Keys.FLASHCARD_EARNED_TODAY] ?: 0L
+
+    /** The epoch day [flashcardEarnedToday] was last logged against — yesterday's tally if this is stale. */
+    suspend fun flashcardEarnedEpochDay(): Long =
+        context.dataStore.data.first()[Keys.FLASHCARD_EARNED_EPOCH_DAY] ?: 0L
+
+    suspend fun setFlashcardEarnedToday(epochDay: Long, seconds: Long) {
+        context.dataStore.edit {
+            it[Keys.FLASHCARD_EARNED_EPOCH_DAY] = epochDay
+            it[Keys.FLASHCARD_EARNED_TODAY] = seconds
+        }
     }
 
     suspend fun explainBackRewardSeconds(): Long =

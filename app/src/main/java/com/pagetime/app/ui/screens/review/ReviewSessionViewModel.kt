@@ -397,10 +397,15 @@ class ReviewSessionViewModel(
             // Correct recall banks the configured bonus. AGAIN proves nothing
             // and earns nothing — guessing can never mint app time.
             var earnedThisCard = 0L
+            var dailyCapReached = false
             if (rating != LumenRating.AGAIN) {
-                runCatching {
-                    balanceManager.earnFromFlashcard(ratingCorrect = true)
-                    earnedThisCard = balanceManager.flashcardReward()
+                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+                    .onSuccess { earnedThisCard = it }
+                // Zero could also mean the reward itself is turned off — only
+                // call it out as the cap specifically when there was a real
+                // reward to pay and the cap is what stopped it.
+                if (earnedThisCard == 0L) {
+                    dailyCapReached = runCatching { balanceManager.flashcardReward() }.getOrDefault(0L) > 0L
                 }
             }
             val advanced = ReviewSession.grade(_state.value.session, failed = rating == LumenRating.AGAIN)
@@ -421,7 +426,11 @@ class ReviewSessionViewModel(
                 revealed = false,
                 lastInterval = nextDue?.let { formatNextReview(it) },
                 canUndo = undoStep != null,
-                earnedFeedback = if (earnedThisCard > 0) "+${earnedThisCard}s" else null,
+                earnedFeedback = when {
+                    earnedThisCard > 0 -> "+${earnedThisCard}s"
+                    dailyCapReached -> "Daily flashcard bonus reached — read to earn more"
+                    else -> null
+                },
                 totalEarnedThisSitting = prev.totalEarnedThisSitting + earnedThisCard,
                 awaitingBatchChoice = pause,
             )

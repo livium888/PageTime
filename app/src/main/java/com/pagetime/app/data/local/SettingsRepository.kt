@@ -19,6 +19,7 @@ import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.SchedulingPolicy
 import com.pagetime.app.data.review.Steps
 import com.pagetime.app.blocker.BlockEnforcementPolicy
+import com.pagetime.app.blocker.SiteMode
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,12 @@ data class Settings(
      * day's browsing without ever opening a book; reading itself has no cap.
      */
     val flashcardDailyCapSeconds: Long = 300,
+    /**
+     * Which direction site rules work in — see [SiteMode]. Defaults to the
+     * original blocklist behaviour, so nothing changes for a reader who
+     * never visits the toggle.
+     */
+    val siteMode: SiteMode = SiteMode.BLOCKLIST,
     /**
      * Whether time spent in a reader-chosen trusted app (e.g. Kindle, picked
      * on [com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen]) is
@@ -256,6 +263,7 @@ class SettingsRepository(private val context: Context) {
         val FLASHCARD_DAILY_CAP = longPreferencesKey("flashcard_daily_cap_seconds")
         val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
         val FLASHCARD_EARNED_EPOCH_DAY = longPreferencesKey("flashcard_earned_epoch_day")
+        val SITE_MODE = stringPreferencesKey("site_mode")
         val EXTERNAL_READING_ENABLED = booleanPreferencesKey("external_reading_enabled")
         val EXTERNAL_READING_DAILY_CAP = longPreferencesKey("external_reading_daily_cap_seconds")
         val EXTERNAL_READING_EARNED_TODAY = longPreferencesKey("external_reading_earned_today_seconds")
@@ -591,6 +599,7 @@ class SettingsRepository(private val context: Context) {
             ratio = p[Keys.RATIO] ?: 1.0,
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
             flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
+            siteMode = SiteMode.fromKey(p[Keys.SITE_MODE]),
             externalReadingEnabled = p[Keys.EXTERNAL_READING_ENABLED] ?: false,
             externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L,
             explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
@@ -1161,6 +1170,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setFlashcardDailyCapSeconds(value: Long) {
         context.dataStore.edit { it[Keys.FLASHCARD_DAILY_CAP] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun setSiteMode(mode: SiteMode) {
+        context.dataStore.edit { it[Keys.SITE_MODE] = mode.key }
     }
 
     /** What's been earned from flashcards/Anki so far today — 0 if nothing has been logged yet. */

@@ -210,4 +210,50 @@ class SiteRulesTest {
         assertNull(SiteRules.match("how to cook rice", listOf(bbc)))
         assertNull(SiteRules.match("bbc.co.uk", emptyList()))
     }
+
+    // --- blockingRule: the one place BLOCKLIST and ALLOWLIST diverge ---
+
+    @Test
+    fun `blocklist mode blocks only what a block rule names`() {
+        assertEquals(
+            bbc,
+            SiteRules.blockingRule(SiteMode.BLOCKLIST, url("bbc.co.uk"), listOf(bbc), emptyList()),
+        )
+        assertNull(
+            SiteRules.blockingRule(SiteMode.BLOCKLIST, url("example.com"), listOf(bbc), emptyList()),
+        )
+    }
+
+    @Test
+    fun `allowlist mode blocks everything an allow rule does not name`() {
+        assertNull(
+            SiteRules.blockingRule(SiteMode.ALLOWLIST, url("bbc.co.uk"), emptyList(), listOf(bbc)),
+        )
+        assertNull(
+            SiteRules.blockingRule(SiteMode.ALLOWLIST, url("news.bbc.co.uk"), emptyList(), listOf(bbc)),
+        )
+        assertEquals(
+            SiteRules.Rule("example.com", null),
+            SiteRules.blockingRule(SiteMode.ALLOWLIST, url("example.com"), emptyList(), listOf(bbc)),
+        )
+    }
+
+    @Test
+    fun `allowlist mode with nothing allowed yet blocks everything`() {
+        assertEquals(
+            SiteRules.Rule("bbc.co.uk", null),
+            SiteRules.blockingRule(SiteMode.ALLOWLIST, url("bbc.co.uk"), emptyList(), emptyList()),
+        )
+    }
+
+    @Test
+    fun `allowlist mode still respects a section-scoped allow rule`() {
+        assertNull(
+            SiteRules.blockingRule(SiteMode.ALLOWLIST, url("bbc.co.uk/news"), emptyList(), listOf(bbcNews)),
+        )
+        assertEquals(
+            SiteRules.Rule("bbc.co.uk", null),
+            SiteRules.blockingRule(SiteMode.ALLOWLIST, url("bbc.co.uk/sport"), emptyList(), listOf(bbcNews)),
+        )
+    }
 }

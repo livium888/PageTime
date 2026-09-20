@@ -1,13 +1,26 @@
 package com.pagetime.app.blocker
 
+import com.pagetime.app.data.AllowedSiteRepository
 import com.pagetime.app.data.BlockedSiteRepository
 import com.pagetime.app.data.UsageRepository
+import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.domain.BalanceManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
  * The reader's site rules, in memory, and the ledger rows a site block leaves.
+ *
+ * BLOCKLIST AND ALLOWLIST ARE ONE MECHANISM, NOT TWO
+ *
+ * [SiteMode] decides which of [rules] (block) or [allowRules] (allow) [wouldMatch]
+ * consults, and what "covered" means for the one it does not — see
+ * [SiteRules.blockingRule] for the actual inversion, kept there and pure
+ * so it can be tested without any of what lives in this class. Both lists
+ * are mirrored unconditionally regardless of the active mode, so switching
+ * modes is instant and never drops either one.
  *
  * WHY THIS IS NOT PART OF [BlockController]
  *
@@ -60,17 +73,31 @@ import kotlinx.coroutines.launch
 class SiteBlocker(
     private val scope: CoroutineScope,
     private val repository: BlockedSiteRepository,
+    private val allowedRepository: AllowedSiteRepository,
+    private val settingsRepository: SettingsRepository,
     private val usageRepository: UsageRepository,
     private val balanceManager: BalanceManager,
 ) {
 
     /**
-     * The active rules, mirrored for the same reason the controller mirrors the
+     * The block rules, mirrored for the same reason the controller mirrors the
      * blocked-app set: the decision is made on the main thread inside an
-     * accessibility event, and cannot wait for Room.
+     * accessibility event, and cannot wait for Room. Consulted only in
+     * [SiteMode.BLOCKLIST]; still kept current in [SiteMode.ALLOWLIST] so
+     * switching back to it is instant.
      */
     @Volatile
     var rules: List<SiteRules.Rule> = emptyList()
+        private set
+
+    /** The allow rules, mirrored the same way — consulted only in [SiteMode.ALLOWLIST]. */
+    @Volatile
+    var allowRules: List<SiteRules.Rule> = emptyList()
+        private set
+
+    /** Which direction [rules] and [allowRules] are being read in right now. */
+    @Volatile
+    var mode: SiteMode = SiteMode.BLOCKLIST
         private set
 
     /**
@@ -96,26 +123,35 @@ class SiteBlocker(
             }
         }
         scope.launch {
+            allowedRepository.observeEnabled().collect { sites ->
+                allowRules = sites.map { SiteRules.Rule(host = it.host, pathPrefix = it.pathPrefix) }
+            }
+        }
+        scope.launch {
+            settingsRepository.settings.map { it.siteMode }.distinctUntilChanged()
+                .collect { mode = it }
+        }
+        scope.launch {
             balanceManager.gate.collect { gate -> accessOpen = gate.coversSites }
         }
     }
 
     /**
-     * The rule covering an address bar's text, or null.
+     * The rule responsible for blocking an address bar's text, or null.
      *
      * [accessOpen] is checked first and short-circuits the rule walk
      * entirely: the caller has already paid for reading the address bar (see
      * [com.pagetime.app.blocker.AppBlockerService.checkSites]), but there is
-     * no reason to compare it against every rule when a session has already
-     * answered the only question that matters.
+     * no reason to compare it against either rule set when a session has
+     * already answered the only question that matters.
      */
     fun match(rawUrl: String): SiteRules.Rule? {
         if (accessOpen) return null
-        return SiteRules.match(rawUrl, rules)
+        return wouldMatch(rawUrl)
     }
 
     /**
-     * The rule that WOULD cover an address bar's text if a session were not
+     * The rule that WOULD block an address bar's text if a session were not
      * currently paying for it — [match] with [accessOpen] left out of the
      * question entirely.
      *
@@ -125,7 +161,10 @@ class SiteBlocker(
      * meter needs to know which rule that is even while [match] correctly
      * says there is nothing to block.
      */
-    fun wouldMatch(rawUrl: String): SiteRules.Rule? = SiteRules.match(rawUrl, rules)
+    fun wouldMatch(rawUrl: String): SiteRules.Rule? {
+        val url = SiteRules.parseUrl(rawUrl) ?: return null
+        return SiteRules.blockingRule(mode, url, blockRules = rules, allowRules = allowRules)
+    }
 
     /**
      * Records a block against the rule that caused it.

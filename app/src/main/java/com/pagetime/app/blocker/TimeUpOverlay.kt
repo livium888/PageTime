@@ -107,10 +107,10 @@ class TimeUpOverlay(
      * same places as on the app screen, so the screen the reader already
      * knows does not have to be re-learned.
      */
-    fun setSiteBlock(rule: SiteRules.Rule) {
+    fun setSiteBlock(rule: SiteRules.Rule, mode: SiteMode) {
         view.findViewById<TextView>(R.id.tv_time_up).text = BlockScreenText.siteTitle(rule)
         view.findViewById<TextView>(R.id.tv_overlay_subtitle).text =
-            BlockScreenText.siteSubtitle(rule)
+            BlockScreenText.siteSubtitle(rule, mode)
         view.findViewById<View>(R.id.progress_gate).visibility = View.GONE
         view.findViewById<View>(R.id.btn_start_session).visibility = View.GONE
         view.findViewById<View>(R.id.btn_emergency).visibility = View.GONE

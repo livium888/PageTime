@@ -85,7 +85,8 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_23_24,
                 AppDatabase.MIGRATION_24_25,
                 AppDatabase.MIGRATION_25_26,
-                AppDatabase.MIGRATION_26_27
+                AppDatabase.MIGRATION_26_27,
+                AppDatabase.MIGRATION_27_28
             )
             .build()
 
@@ -93,6 +94,7 @@ class AppContainer(context: Context) {
     private val blockedAppDao = database.blockedAppDao()
     private val externalReadingAppDao = database.externalReadingAppDao()
     private val blockedSiteDao = database.blockedSiteDao()
+    private val allowedSiteDao = database.allowedSiteDao()
     private val usageEventDao = database.usageEventDao()
     private val learningGenerationDao = database.learningGenerationDao()
     private val conceptDao = database.conceptDao()
@@ -196,6 +198,9 @@ class AppContainer(context: Context) {
 
     /** Sites off limits by address, which hold regardless of earned time. */
     val blockedSiteRepository = BlockedSiteRepository(blockedSiteDao)
+
+    /** Sites let through by address under [com.pagetime.app.blocker.SiteMode.ALLOWLIST]. */
+    val allowedSiteRepository = AllowedSiteRepository(allowedSiteDao)
 
     val usageRepository = UsageRepository(usageEventDao)
 
@@ -376,6 +381,8 @@ class AppContainer(context: Context) {
     val siteBlocker = SiteBlocker(
         scope = scope,
         repository = blockedSiteRepository,
+        allowedRepository = allowedSiteRepository,
+        settingsRepository = settingsRepository,
         usageRepository = usageRepository,
         balanceManager = balanceManager,
     )

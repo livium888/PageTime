@@ -102,7 +102,7 @@ import com.pagetime.app.ui.formatMinutes
 fun SettingsScreen(
     onManageBlockedApps: () -> Unit,
     onManageExternalReadingApps: () -> Unit,
-    onManageBlockedSites: () -> Unit,
+    onManageSiteRules: () -> Unit,
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
     onAiUsage: () -> Unit,
@@ -555,8 +555,8 @@ fun SettingsScreen(
             // or not there is time on the clock.
             AppSettingsRow(
                 icon = Icons.Outlined.Language,
-                label = "Blocked sites",
-                onClick = onManageBlockedSites
+                label = "Website rules",
+                onClick = onManageSiteRules
             )
             AppSettingsRow(
                 icon = Icons.Outlined.History,

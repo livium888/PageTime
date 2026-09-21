@@ -52,7 +52,16 @@ class ExternalReadingTracker(
 ) {
 
     companion object {
-        private const val SWEEP_INTERVAL_MS = 10 * 60_000L
+        /**
+         * [UsageReconciler] can afford ten minutes between sweeps because it is
+         * a backstop behind a ticker that already updates every second. This
+         * tracker has no ticker — it is the only thing that ever moves the
+         * number a reader watches — so it runs on the same cadence as the
+         * floor below, rather than the far coarser one a pure backstop can
+         * get away with. A reader who reads for six minutes and checks should
+         * see something move, not a still-blank screen for the next four.
+         */
+        private const val SWEEP_INTERVAL_MS = 60_000L
 
         /** Don't bother with gaps shorter than this; also avoids a hot loop. */
         private const val MIN_GAP_MS = 60_000L

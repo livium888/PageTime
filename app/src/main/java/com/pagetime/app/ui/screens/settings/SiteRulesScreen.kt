@@ -68,15 +68,26 @@ import kotlinx.coroutines.delay
  * blocklist and tries allowlist mode for a week gets it back exactly as
  * they left it if they switch back — see [SiteRulesViewModel].
  *
- * THE FENCE MIRRORS BY DIRECTION, NOT BY LIST
+ * THE FENCE IS NARROWER THAN IT LOOKS, AND DELIBERATELY SO
  *
- * [com.pagetime.app.domain.GateState.canLoosenTheRules] guards whichever
- * action WIDENS what is reachable: removing a block rule, adding an allow
- * rule, or switching an active allowlist back to a blocklist. The opposite
- * of each — adding a block rule, removing an allow rule, switching to a
- * stricter allowlist — is always free, the same "strict direction costs
- * nothing, the easy direction costs what entry costs" rule
- * [BlockedAppsScreen] already follows.
+ * A blocklist starts empty and unrestricted — adding to it is always free
+ * for that reason, and only removing a rule (which reopens something)
+ * costs, via [com.pagetime.app.domain.GateState.canLoosenTheRules]. An
+ * allowlist does NOT start from the same safe place: empty means every
+ * site is off limits, full stop. Fencing "add" the same way "remove" is
+ * fenced on a blocklist would mean a reader who has just switched to
+ * allowlist mode — with nothing on it yet, by construction — cannot add
+ * a single site without an already-earned session, which they have no way
+ * to get to a browser to spend anyway. That trap shipped once and a real
+ * reader hit it immediately.
+ *
+ * So on an allowlist, adding is free (same as a blocklist), removing is
+ * free (it only ever narrows), and the one thing that still costs a
+ * session is switching an active allowlist back to a blocklist — because
+ * THAT action alone reopens everything at once, the same scale of change
+ * unblocking an app is. A hard lock still blocks adding to the allowlist
+ * specifically, though, since that is a live escape from an active
+ * commitment in a way plain list maintenance is not.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,7 +115,10 @@ fun SiteRulesScreen(
 
     // The direction that widens what is reachable, whichever list is active.
     val canRemoveBlocked = gate.canRemoveBlockedApps && !hardLockActive
-    val canAddAllowed = gate.canAddAllowedSite && !hardLockActive
+    // Adding to the allowlist is deliberately NOT gated by the session
+    // economy — see the file doc for why — but a hard lock still blocks it,
+    // since that is a live escape from a commitment already made.
+    val canAddAllowed = !hardLockActive
     val canSwitchToBlocklist = gate.canSwitchToBlocklist && !hardLockActive
 
     Scaffold(
@@ -164,7 +178,6 @@ fun SiteRulesScreen(
                 SiteMode.ALLOWLIST -> allowedListItems(
                     sites = allowedSites,
                     canAdd = canAddAllowed,
-                    hardLockActive = hardLockActive,
                     onRemove = viewModel::removeAllowed,
                 )
             }
@@ -291,7 +304,6 @@ private fun LazyListScope.blockedListItems(
 private fun LazyListScope.allowedListItems(
     sites: List<AllowedSiteEntity>,
     canAdd: Boolean,
-    hardLockActive: Boolean,
     onRemove: (AllowedSiteEntity) -> Unit,
 ) {
     if (sites.isEmpty()) {
@@ -318,12 +330,7 @@ private fun LazyListScope.allowedListItems(
     if (!canAdd) {
         item {
             Text(
-                if (hardLockActive) {
-                    "A hard lock is running, so nothing can be added to this list until it ends."
-                } else {
-                    "Sites can be removed any time, but only added during a session. " +
-                        "Adding one is how you get into it."
-                },
+                "A hard lock is running, so nothing can be added to this list until it ends.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -246,18 +246,21 @@ class AccessGateTest {
     }
 
     /**
-     * Adding to an allowlist and switching an active allowlist back to a
-     * blocklist are the other two ways site rules can be loosened — both
-     * fenced by exactly the same rule as unblocking an app.
+     * Switching an active allowlist back to a blocklist is the one other way
+     * site rules can be loosened — fenced by exactly the same rule as
+     * unblocking an app. Adding to the allowlist itself is deliberately NOT
+     * fenced this way: unlike a blocklist, which starts empty and
+     * unrestricted, an allowlist starts empty and total locked, so gating
+     * its only way out behind an already-earned session would trap a reader
+     * who just turned the feature on with nothing to show for it yet.
      */
     @Test
-    fun `adding an allowed site and leaving an allowlist are the same earned thing`() {
+    fun `leaving an allowlist for a blocklist is the earned thing, same as unblocking an app`() {
         listOf(
             gate(credit = 0),
             gate(sessionRemaining = 60),
             gate(switchedOn = false),
         ).forEach {
-            assertEquals(it.canLoosenTheRules, it.canAddAllowedSite)
             assertEquals(it.canLoosenTheRules, it.canSwitchToBlocklist)
         }
     }

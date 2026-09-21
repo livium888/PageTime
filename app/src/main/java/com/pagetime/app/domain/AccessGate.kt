@@ -205,15 +205,6 @@ data class GateState(
         get() = canLoosenTheRules
 
     /**
-     * Adding a site to an allowlist is loosening too — it is the direction
-     * that widens what a reader can reach, the mirror image of removing a
-     * blocked app or a blocked site. Removing an allowed site is the strict
-     * direction there and stays free, the same as adding a blocked one.
-     */
-    val canAddAllowedSite: Boolean
-        get() = canLoosenTheRules
-
-    /**
      * Switching from an allowlist back to a blocklist is the big loosening
      * move for site rules — a blocklist is permissive by default, so leaving
      * an allowlist reopens everything the allowlist did not explicitly name.

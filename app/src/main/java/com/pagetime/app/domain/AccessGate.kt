@@ -205,6 +205,17 @@ data class GateState(
         get() = canLoosenTheRules
 
     /**
+     * Adding to an allowlist is the other way of loosening it — outside its
+     * one-time setup window (see [com.pagetime.app.blocker.SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS],
+     * which the screen checks alongside this), it costs exactly what
+     * unblocking an app costs. Without that cost, adding would be free
+     * forever, which is a standing bypass: add whatever site you want,
+     * right when you want it, and the allowlist stops meaning anything.
+     */
+    val canAddAllowedSite: Boolean
+        get() = canLoosenTheRules
+
+    /**
      * Switching from an allowlist back to a blocklist is the big loosening
      * move for site rules — a blocklist is permissive by default, so leaving
      * an allowlist reopens everything the allowlist did not explicitly name.

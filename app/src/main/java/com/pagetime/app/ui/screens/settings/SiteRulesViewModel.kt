@@ -48,6 +48,11 @@ class SiteRulesViewModel(app: Application) : AndroidViewModel(app) {
         .map { it.hardLockUntil }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    /** When the current allowlist's one-time free-setup window closes, 0 if none is running. */
+    val allowlistSetupGraceUntil = settingsRepo.settings
+        .map { it.allowlistSetupGraceUntil }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
     private val _draft = MutableStateFlow("")
     val draft = _draft.asStateFlow()
 
@@ -107,6 +112,10 @@ class SiteRulesViewModel(app: Application) : AndroidViewModel(app) {
      * Switches which list is active. The screen fences switching FROM an
      * allowlist BACK TO a blocklist — see [GateState.canSwitchToBlocklist] —
      * this just performs the switch once permitted.
+     *
+     * [com.pagetime.app.data.local.SettingsRepository.setSiteMode] opens
+     * the allowlist's one-time free-setup window on a genuine transition
+     * into the mode; nothing here has to know that happened.
      */
     fun setMode(target: SiteMode) {
         viewModelScope.launch { settingsRepo.setSiteMode(target) }

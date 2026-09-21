@@ -104,9 +104,9 @@ class SiteRulesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Switches which list is active. The screen fences this the same way it
-     * fences a loosening add or remove — see [GateState.canSwitchToBlocklist]
-     * — this just performs the switch once permitted.
+     * Switches which list is active. The screen fences switching FROM an
+     * allowlist BACK TO a blocklist — see [GateState.canSwitchToBlocklist] —
+     * this just performs the switch once permitted.
      */
     fun setMode(target: SiteMode) {
         viewModelScope.launch { settingsRepo.setSiteMode(target) }

@@ -49,6 +49,14 @@ data class Settings(
      */
     val siteMode: SiteMode = SiteMode.BLOCKLIST,
     /**
+     * When the current allowlist's one-time free-setup window closes (0 =
+     * none active) — see [SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS]. Set by
+     * [SettingsRepository.setSiteMode] on the transition into allowlist
+     * mode, nowhere else, so re-reading it never mistakes "still in
+     * blocklist mode" for a window that should be running.
+     */
+    val allowlistSetupGraceUntil: Long = 0,
+    /**
      * Whether time spent in a reader-chosen trusted app (e.g. Kindle, picked
      * on [com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen]) is
      * credited as reading — off by default, since unlike every other reward
@@ -264,6 +272,7 @@ class SettingsRepository(private val context: Context) {
         val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
         val FLASHCARD_EARNED_EPOCH_DAY = longPreferencesKey("flashcard_earned_epoch_day")
         val SITE_MODE = stringPreferencesKey("site_mode")
+        val ALLOWLIST_SETUP_GRACE_UNTIL = longPreferencesKey("allowlist_setup_grace_until")
         val EXTERNAL_READING_ENABLED = booleanPreferencesKey("external_reading_enabled")
         val EXTERNAL_READING_DAILY_CAP = longPreferencesKey("external_reading_daily_cap_seconds")
         val EXTERNAL_READING_EARNED_TODAY = longPreferencesKey("external_reading_earned_today_seconds")
@@ -600,6 +609,7 @@ class SettingsRepository(private val context: Context) {
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
             flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
             siteMode = SiteMode.fromKey(p[Keys.SITE_MODE]),
+            allowlistSetupGraceUntil = p[Keys.ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
             externalReadingEnabled = p[Keys.EXTERNAL_READING_ENABLED] ?: false,
             externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L,
             explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
@@ -1172,8 +1182,23 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.FLASHCARD_DAILY_CAP] = value.coerceIn(0L, 3_600L) }
     }
 
+    /**
+     * Switches which site-rule list is active, and — only on a genuine
+     * transition INTO [SiteMode.ALLOWLIST] — opens its one-time free-setup
+     * window. Read-modify-write in one [edit] so a reader who is already in
+     * allowlist mode and merely re-confirms it (tapping an already-selected
+     * option) can never mint a fresh window for free; the comparison has to
+     * see the value this same transaction is about to write.
+     */
     suspend fun setSiteMode(mode: SiteMode) {
-        context.dataStore.edit { it[Keys.SITE_MODE] = mode.key }
+        context.dataStore.edit { prefs ->
+            val current = SiteMode.fromKey(prefs[Keys.SITE_MODE])
+            if (SiteMode.entersAllowlist(current, mode)) {
+                prefs[Keys.ALLOWLIST_SETUP_GRACE_UNTIL] =
+                    System.currentTimeMillis() + SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS
+            }
+            prefs[Keys.SITE_MODE] = mode.key
+        }
     }
 
     /** What's been earned from flashcards/Anki so far today — 0 if nothing has been logged yet. */

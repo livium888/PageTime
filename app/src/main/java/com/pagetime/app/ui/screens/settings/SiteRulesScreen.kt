@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagetime.app.blocker.BlockScreenText
 import com.pagetime.app.blocker.SiteMode
 import com.pagetime.app.data.local.AllowedSiteEntity
 import com.pagetime.app.data.local.BlockedSiteEntity
@@ -68,26 +69,32 @@ import kotlinx.coroutines.delay
  * blocklist and tries allowlist mode for a week gets it back exactly as
  * they left it if they switch back — see [SiteRulesViewModel].
  *
- * THE FENCE IS NARROWER THAN IT LOOKS, AND DELIBERATELY SO
+ * THE FENCE ON ADDING TO AN ALLOWLIST HAS TWO PHASES
  *
- * A blocklist starts empty and unrestricted — adding to it is always free
- * for that reason, and only removing a rule (which reopens something)
- * costs, via [com.pagetime.app.domain.GateState.canLoosenTheRules]. An
- * allowlist does NOT start from the same safe place: empty means every
- * site is off limits, full stop. Fencing "add" the same way "remove" is
- * fenced on a blocklist would mean a reader who has just switched to
- * allowlist mode — with nothing on it yet, by construction — cannot add
- * a single site without an already-earned session, which they have no way
- * to get to a browser to spend anyway. That trap shipped once and a real
- * reader hit it immediately.
+ * A blocklist starts empty and unrestricted — adding to it is always free,
+ * and only removing a rule (which reopens something) costs, via
+ * [com.pagetime.app.domain.GateState.canLoosenTheRules]. An allowlist does
+ * NOT start from the same safe place: empty means every site is off
+ * limits, full stop. Fencing "add" from the first second the same way
+ * "remove" is fenced on a blocklist traps a reader the instant they
+ * switch modes, with nothing on the list yet and no browser access left
+ * to earn a session with (that shipped once; a real reader hit it
+ * immediately). Never fencing it at all is just as real a hole the other
+ * way: add whatever site you want, right when you want it, for free,
+ * forever, and the allowlist stops meaning anything.
  *
- * So on an allowlist, adding is free (same as a blocklist), removing is
- * free (it only ever narrows), and the one thing that still costs a
- * session is switching an active allowlist back to a blocklist — because
- * THAT action alone reopens everything at once, the same scale of change
- * unblocking an app is. A hard lock still blocks adding to the allowlist
- * specifically, though, since that is a live escape from an active
- * commitment in a way plain list maintenance is not.
+ * [SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS] is the answer to both: a
+ * one-time window, opened the moment a reader switches into allowlist mode,
+ * where adding is free — long enough to build a real starter list without
+ * having read a word. Once it closes, adding a site costs exactly what
+ * unblocking an app costs
+ * ([com.pagetime.app.domain.GateState.canAddAllowedSite]), same as
+ * removing a block rule always has. Removing an allow rule stays free
+ * forever either way — it only ever narrows. Switching an active allowlist
+ * back to a blocklist costs a session too, since that's the one action
+ * that reopens everything at once. A hard lock blocks adding to the
+ * allowlist regardless of the window, since that's a live escape from an
+ * active commitment, unlike plain list maintenance.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +107,7 @@ fun SiteRulesScreen(
     val allowedSites by viewModel.allowedSites.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val hardLockUntil by viewModel.hardLockUntil.collectAsStateWithLifecycle()
+    val allowlistSetupGraceUntil by viewModel.allowlistSetupGraceUntil.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val refused by viewModel.refused.collectAsStateWithLifecycle()
@@ -112,13 +120,14 @@ fun SiteRulesScreen(
         }
     }
     val hardLockActive = hardLockUntil > now
+    val setupGraceRemainingMillis = allowlistSetupGraceUntil - now
+    val withinSetupGrace = setupGraceRemainingMillis > 0
 
     // The direction that widens what is reachable, whichever list is active.
     val canRemoveBlocked = gate.canRemoveBlockedApps && !hardLockActive
-    // Adding to the allowlist is deliberately NOT gated by the session
-    // economy — see the file doc for why — but a hard lock still blocks it,
-    // since that is a live escape from a commitment already made.
-    val canAddAllowed = !hardLockActive
+    // Free during the one-time setup window; the earned-session rule takes
+    // back over once it closes. A hard lock blocks adding either way.
+    val canAddAllowed = !hardLockActive && (withinSetupGrace || gate.canAddAllowedSite)
     val canSwitchToBlocklist = gate.canSwitchToBlocklist && !hardLockActive
 
     Scaffold(
@@ -178,6 +187,9 @@ fun SiteRulesScreen(
                 SiteMode.ALLOWLIST -> allowedListItems(
                     sites = allowedSites,
                     canAdd = canAddAllowed,
+                    hardLockActive = hardLockActive,
+                    withinSetupGrace = withinSetupGrace,
+                    setupGraceRemainingMillis = setupGraceRemainingMillis,
                     onRemove = viewModel::removeAllowed,
                 )
             }
@@ -304,6 +316,9 @@ private fun LazyListScope.blockedListItems(
 private fun LazyListScope.allowedListItems(
     sites: List<AllowedSiteEntity>,
     canAdd: Boolean,
+    hardLockActive: Boolean,
+    withinSetupGrace: Boolean,
+    setupGraceRemainingMillis: Long,
     onRemove: (AllowedSiteEntity) -> Unit,
 ) {
     if (sites.isEmpty()) {
@@ -327,10 +342,24 @@ private fun LazyListScope.allowedListItems(
             )
         }
     }
-    if (!canAdd) {
+    // Told plainly, both while it's running and the moment it's gone — a
+    // window that closes silently just relocates the surprise from "why is
+    // everything stuck" to "why did adding suddenly stop working".
+    val notice = when {
+        withinSetupGrace ->
+            "Free setup window: ${BlockScreenText.span(setupGraceRemainingMillis / 1000)} " +
+                "left to add sites without a session."
+        hardLockActive ->
+            "A hard lock is running, so nothing can be added to this list until it ends."
+        !canAdd ->
+            "The free setup window has ended. Adding a new site now costs what " +
+                "removing a blocked site costs — read to bank a session."
+        else -> null
+    }
+    if (notice != null) {
         item {
             Text(
-                "A hard lock is running, so nothing can be added to this list until it ends.",
+                notice,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

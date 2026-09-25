@@ -384,11 +384,6 @@ class BalanceManager(
         return seconds
     }
 
-    suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {
-        repository.setBrowseBalanceSeconds(seconds.coerceAtLeast(0L))
-    }
-
-
     private val mutex = Mutex()
 
     private companion object {

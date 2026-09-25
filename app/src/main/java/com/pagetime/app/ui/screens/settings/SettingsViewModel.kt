@@ -47,8 +47,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val totalReadingSeconds = container.balanceManager.totalReadingSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1.0)
-
     /**
      * The access gate, live.
      *

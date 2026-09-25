@@ -41,9 +41,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val container = (app as PageTimeApp).container
 
-    val balanceSeconds = container.balanceManager.sessionSecondsRemainingFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
-
     val totalReadingSeconds = container.balanceManager.totalReadingSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
@@ -305,32 +302,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { container.balanceManager.startSession() }
     }
 
-    fun setFlashcardReward(value: Long) {
-        viewModelScope.launch { container.balanceManager.setFlashcardReward(value) }
-    }
-
-    fun setFlashcardDailyCap(value: Long) {
-        viewModelScope.launch { container.balanceManager.setFlashcardDailyCap(value) }
-    }
-
     fun setExternalReadingEnabled(value: Boolean) {
         viewModelScope.launch { container.balanceManager.setExternalReadingEnabled(value) }
-    }
-
-    fun setExternalReadingDailyCap(value: Long) {
-        viewModelScope.launch { container.balanceManager.setExternalReadingDailyCap(value) }
-    }
-
-    fun setExplainBackReward(value: Long) {
-        viewModelScope.launch { container.balanceManager.setExplainBackReward(value) }
-    }
-
-    fun setLumenLinkReward(value: Long) {
-        viewModelScope.launch { container.balanceManager.setLumenLinkReward(value) }
-    }
-
-    fun setReadingMomentumBonus(value: Long) {
-        viewModelScope.launch { container.balanceManager.setReadingMomentumBonus(value) }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

@@ -162,8 +162,6 @@ class BalanceManager(
     val flashcardDailyCapSeconds: Flow<Long> =
         repository.settings.map { it.flashcardDailyCapSeconds }
 
-    suspend fun setFlashcardDailyCap(seconds: Long) = repository.setFlashcardDailyCapSeconds(seconds)
-
     /**
      * Sets the price of a session. Returns whether the change was accepted.
      *
@@ -198,8 +196,6 @@ class BalanceManager(
         repository.setSessionLengthSeconds(seconds)
         true
     }
-
-    suspend fun setFlashcardReward(seconds: Long) = repository.setFlashcardRewardSeconds(seconds)
 
     /**
      * Award the flashcard bonus for one correctly recalled review (PageTime's
@@ -259,8 +255,6 @@ class BalanceManager(
     val externalReadingDailyCapSeconds: Flow<Long> =
         repository.settings.map { it.externalReadingDailyCapSeconds }
 
-    suspend fun setExternalReadingDailyCap(seconds: Long) = repository.setExternalReadingDailyCapSeconds(seconds)
-
     /**
      * Award credit for [foregroundSeconds] a trusted external reading app held
      * the foreground with the screen on, as measured by
@@ -312,8 +306,6 @@ class BalanceManager(
 
     suspend fun explainBackReward(): Long = repository.explainBackRewardSeconds()
 
-    suspend fun setExplainBackReward(seconds: Long) = repository.setExplainBackRewardSeconds(seconds)
-
     /**
      * Award the explain-back bonus for one qualifying evaluation. OFF earns
      * nothing — the same "wrong answer earns nothing" rule flashcards use for
@@ -336,8 +328,6 @@ class BalanceManager(
 
     suspend fun lumenLinkReward(): Long = repository.lumenLinkRewardSeconds()
 
-    suspend fun setLumenLinkReward(seconds: Long) = repository.setLumenLinkRewardSeconds(seconds)
-
     /**
      * Award the slip-box bonus for one new link. [isNewLink] is false when
      * the two cards were already linked — re-confirming an existing
@@ -359,9 +349,6 @@ class BalanceManager(
         repository.settings.map { it.readingMomentumBonusSeconds }
 
     suspend fun readingMomentumBonus(): Long = repository.readingMomentumBonusSeconds()
-
-    suspend fun setReadingMomentumBonus(seconds: Long) =
-        repository.setReadingMomentumBonusSeconds(seconds)
 
     /**
      * Pays the reading-momentum bonus [ReadingMomentum] decided is due, and

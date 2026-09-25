@@ -20,6 +20,7 @@ import com.pagetime.app.data.review.SchedulingPolicy
 import com.pagetime.app.data.review.Steps
 import com.pagetime.app.blocker.BlockEnforcementPolicy
 import com.pagetime.app.blocker.SiteMode
+import com.pagetime.app.data.usage.ForegroundState
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
@@ -278,6 +279,13 @@ class SettingsRepository(private val context: Context) {
         val EXTERNAL_READING_EARNED_TODAY = longPreferencesKey("external_reading_earned_today_seconds")
         val EXTERNAL_READING_EARNED_EPOCH_DAY = longPreferencesKey("external_reading_earned_epoch_day")
         val LAST_EXTERNAL_READING_CHECK_AT = longPreferencesKey("last_external_reading_check_at")
+
+        /**
+         * Foreground state at that checkpoint — see [ForegroundState]. Without
+         * it, every sweep window containing no usage events measures zero,
+         * which is most of them during a long sitting.
+         */
+        val EXTERNAL_READING_FG_STATE = stringPreferencesKey("external_reading_fg_state")
         val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
         val LUMEN_LINK_REWARD = longPreferencesKey("lumen_link_reward_seconds")
         val READING_MOMENTUM_BONUS = longPreferencesKey("reading_momentum_bonus_seconds")
@@ -346,6 +354,13 @@ class SettingsRepository(private val context: Context) {
 
         /** Wall-clock time of the last UsageStats reconciliation sweep (0 = never). */
         val LAST_USAGE_RECONCILE = longPreferencesKey("last_usage_reconcile_at")
+
+        /**
+         * Foreground state at that checkpoint — see [ForegroundState]. Kept
+         * separate from the external-reading one because the two sweeps run on
+         * different cadences and so close their windows at different instants.
+         */
+        val USAGE_RECONCILE_FG_STATE = stringPreferencesKey("usage_reconcile_fg_state")
 
         val MAP_MOMENT_BOOK = stringPreferencesKey("map_moment_book")
         val MAP_MOMENT_CHAPTER = intPreferencesKey("map_moment_chapter")
@@ -1249,8 +1264,25 @@ class SettingsRepository(private val context: Context) {
     suspend fun lastExternalReadingCheckAt(): Long? =
         context.dataStore.data.first()[Keys.LAST_EXTERNAL_READING_CHECK_AT]
 
-    suspend fun setLastExternalReadingCheckAt(value: Long) {
-        context.dataStore.edit { it[Keys.LAST_EXTERNAL_READING_CHECK_AT] = value }
+    /** What was on screen when that sweep closed its window — see [ForegroundState]. */
+    suspend fun externalReadingForegroundState(): ForegroundState =
+        ForegroundState.decode(context.dataStore.data.first()[Keys.EXTERNAL_READING_FG_STATE])
+
+    /**
+     * Advances the checkpoint and the carried-over foreground state together.
+     *
+     * One write, deliberately: a checkpoint that moved without its state would
+     * silently drop whatever sitting was in progress, which is the failure this
+     * state exists to prevent.
+     */
+    suspend fun setLastExternalReadingCheckAt(
+        value: Long,
+        state: ForegroundState = ForegroundState(),
+    ) {
+        context.dataStore.edit {
+            it[Keys.LAST_EXTERNAL_READING_CHECK_AT] = value
+            it[Keys.EXTERNAL_READING_FG_STATE] = state.encode()
+        }
     }
 
     suspend fun explainBackRewardSeconds(): Long =
@@ -1286,8 +1318,19 @@ class SettingsRepository(private val context: Context) {
         p[Keys.LAST_USAGE_RECONCILE]
     }
 
-    suspend fun setLastUsageReconcileAt(value: Long) {
-        context.dataStore.edit { it[Keys.LAST_USAGE_RECONCILE] = value }
+    /** What was on screen when that sweep closed its window — see [ForegroundState]. */
+    suspend fun usageReconcileForegroundState(): ForegroundState =
+        ForegroundState.decode(context.dataStore.data.first()[Keys.USAGE_RECONCILE_FG_STATE])
+
+    /** Advances the checkpoint and its carried-over foreground state together. */
+    suspend fun setLastUsageReconcileAt(
+        value: Long,
+        state: ForegroundState = ForegroundState(),
+    ) {
+        context.dataStore.edit {
+            it[Keys.LAST_USAGE_RECONCILE] = value
+            it[Keys.USAGE_RECONCILE_FG_STATE] = state.encode()
+        }
     }
 
     suspend fun setReaderSettings(value: ReaderSettings) {

@@ -65,6 +65,20 @@ class ExternalReadingTracker(
 
         /** Don't bother with gaps shorter than this; also avoids a hot loop. */
         private const val MIN_GAP_MS = 60_000L
+
+        /**
+         * Past this gap the carried-over [ForegroundState] is discarded rather
+         * than trusted.
+         *
+         * The state says what was on screen when the last sweep closed. Over a
+         * normal gap that is exactly right. Over a gap this long — the process
+         * was dead for most of a day, or the device's event history has rolled
+         * — "Kindle was open" is a claim about the distant past, and honouring
+         * it would pay out for hours nobody can vouch for. Dropping it costs at
+         * most one sitting's opening stretch and is the conservative direction:
+         * credit nothing we cannot still see events for.
+         */
+        private const val MAX_CARRY_OVER_MS = 6L * 60 * 60_000L
     }
 
     private val sweepMutex = Mutex()
@@ -102,23 +116,28 @@ class ExternalReadingTracker(
 
         val trusted = externalReadingAppRepository.observeEnabled().first()
             .map { it.packageName }.toSet()
-        if (trusted.isEmpty()) {
-            // Nothing chosen yet: advance the checkpoint anyway, so picking an
-            // app later starts crediting from that moment rather than
-            // sweeping up whatever ran in the meantime.
-            settingsRepository.setLastExternalReadingCheckAt(now)
-            return@withLock
-        }
 
-        val fgMillis = parser.screenOnForegroundMillis(
+        // Scan even with nothing trusted, so the carried-over state keeps
+        // tracking what is on screen. Trusting an app should start paying from
+        // that moment on rather than waiting for the reader to close and
+        // reopen whatever they are already reading.
+        val scan = parser.scan(
             events = reader.events(last, now),
             trackedPackages = trusted,
             from = last,
             to = now,
+            startState = if (now - last > MAX_CARRY_OVER_MS) {
+                ForegroundState()
+            } else {
+                settingsRepository.externalReadingForegroundState()
+            },
         )
-        settingsRepository.setLastExternalReadingCheckAt(now)
+        settingsRepository.setLastExternalReadingCheckAt(now, scan.endState)
 
-        val totalSeconds = fgMillis.values.sum() / 1000
+        // Rounded, not truncated. Windows are contiguous, so truncating each
+        // one would shave up to a second off every sweep and quietly lose about
+        // a minute an hour; rounding leaves the error unbiased.
+        val totalSeconds = (scan.millisByPackage.values.sum() + 500) / 1000
         if (totalSeconds > 0) {
             balanceManager.earnFromExternalReading(totalSeconds)
         }

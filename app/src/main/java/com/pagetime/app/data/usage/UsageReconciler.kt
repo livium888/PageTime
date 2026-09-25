@@ -47,6 +47,14 @@ class UsageReconciler(
         private const val SWEEP_INTERVAL_MS = 10 * 60_000L
         /** Don't bother with gaps shorter than this; also avoids a hot loop. */
         private const val MIN_GAP_MS = 60_000L
+
+        /**
+         * Past this gap the carried-over [ForegroundState] is discarded rather
+         * than trusted — see the matching bound in [ExternalReadingTracker].
+         * Charging on a day-old claim about what was on screen would be as
+         * wrong here as crediting on one is there.
+         */
+        private const val MAX_CARRY_OVER_MS = 6L * 60 * 60_000L
     }
 
     private val reconcileMutex = Mutex()
@@ -93,20 +101,29 @@ class UsageReconciler(
 
         val blocked = blockedAppRepository.observeEnabled().first()
             .map { it.packageName }.toSet()
-        if (blocked.isEmpty()) {
-            settingsRepository.setLastUsageReconcileAt(now)
-            return@withLock
-        }
 
-        val fgMillis = parser.screenOnForegroundMillis(
+        // Scanned even with nothing blocked, so the carried-over state keeps
+        // following what is on screen and blocking an app already in the
+        // foreground starts charging immediately.
+        val scan = parser.scan(
             events = reader.events(lastReconcile, now),
             trackedPackages = blocked,
             from = lastReconcile,
-            to = now
+            to = now,
+            startState = if (now - lastReconcile > MAX_CARRY_OVER_MS) {
+                ForegroundState()
+            } else {
+                settingsRepository.usageReconcileForegroundState()
+            },
         )
+        if (blocked.isEmpty()) {
+            settingsRepository.setLastUsageReconcileAt(now, scan.endState)
+            return@withLock
+        }
+
         val alreadyCharged = alreadyChargedSeconds(lastReconcile, now)
 
-        for ((pkg, fgMs) in fgMillis) {
+        for ((pkg, fgMs) in scan.millisByPackage) {
             // Round up to whole seconds so a reconciliation never under-charges.
             val fgSeconds = (fgMs + 999) / 1000
             val missed = fgSeconds - (alreadyCharged[pkg] ?: 0L)
@@ -123,7 +140,7 @@ class UsageReconciler(
             }
         }
 
-        settingsRepository.setLastUsageReconcileAt(now)
+        settingsRepository.setLastUsageReconcileAt(now, scan.endState)
     }
 
     /**

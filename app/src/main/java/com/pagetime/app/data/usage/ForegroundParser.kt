@@ -12,6 +12,76 @@ data class UsageEventSample(
 )
 
 /**
+ * What was already true when a scan window opened: which packages were holding
+ * the foreground, and whether the screen was interactive.
+ *
+ * This is the whole reason [ForegroundParser.scan] is correct across
+ * consecutive windows. Android emits a foreground event ONCE, when an app is
+ * opened — so a reader who opens Kindle and reads for an hour produces exactly
+ * one event, in the first window, and none at all in the fifty-nine that
+ * follow. A scan that rebuilt its state from each window's events alone would
+ * see those windows as empty and measure nothing, which is precisely the shape
+ * of "I read for ten minutes and it logged one".
+ *
+ * Carrying the closing state of one window into the next is what makes a long
+ * sitting measurable at all. It is persisted rather than held in memory
+ * because the process this runs in is routinely killed mid-sitting — which is
+ * the same reason [UsageReconciler] exists.
+ */
+data class ForegroundState(
+    /**
+     * Packages foreground at the window's start. Deliberately NOT filtered to
+     * the tracked set: which apps are tracked can change between sweeps, and an
+     * app trusted while it is already open must still be measurable without
+     * waiting for the reader to close and reopen it.
+     */
+    val openPackages: Set<String> = emptySet(),
+    /**
+     * Whether the screen was interactive. Defaults to true for the same reason
+     * [ForegroundParser.scan] does: a window is presumed awake until an event
+     * says otherwise, and we never retroactively decide an earlier minute was
+     * asleep.
+     */
+    val interactive: Boolean = true,
+) {
+    /**
+     * Flat string form for DataStore: "<1|0>|pkg,pkg". Android package names
+     * cannot contain '|' or ',', so no escaping is needed.
+     */
+    fun encode(): String =
+        (if (interactive) "1" else "0") + "|" + openPackages.joinToString(",")
+
+    companion object {
+        /**
+         * Anything unparseable reads as the default state — screen awake,
+         * nothing open. That is the conservative direction for both callers:
+         * nothing to credit for a trusted app, and nothing to charge for a
+         * blocked one, until the next real event says otherwise.
+         */
+        fun decode(raw: String?): ForegroundState {
+            if (raw.isNullOrEmpty()) return ForegroundState()
+            val separator = raw.indexOf('|')
+            if (separator < 0) return ForegroundState()
+            return ForegroundState(
+                openPackages = raw.substring(separator + 1)
+                    .split(',')
+                    .filter { it.isNotBlank() }
+                    .toSet(),
+                interactive = raw[0] == '1',
+            )
+        }
+    }
+}
+
+/**
+ * One window's measurement: what was accrued, and what to carry forward.
+ */
+data class ForegroundScan(
+    val millisByPackage: Map<String, Long>,
+    val endState: ForegroundState,
+)
+
+/**
  * Turns a chronological stream of usage events into per-package foreground
  * seconds, counting only time when the screen was actually interactive.
  *
@@ -43,37 +113,41 @@ class ForegroundParser {
     }
 
     /**
-     * Returns, for each package in [trackedPackages], the number of milliseconds
-     * it was foreground with the screen interactive, clipped to [from]..[to].
-     * Events are assumed to be in [from]..[to] (queryEvents semantics); the
-     * clipping is defensive.
+     * Measures [from]..[to], resuming from [startState] — what the previous
+     * window closed with.
+     *
+     * Returns both the per-package interactive-foreground milliseconds
+     * (restricted to [trackedPackages]) and the state to carry into the next
+     * window. Callers MUST persist [ForegroundScan.endState] and pass it back,
+     * or every window without a foreground event in it measures zero; see
+     * [ForegroundState] for why that is the common case rather than an edge one.
      *
      * Package-agnostic on purpose: [UsageReconciler] tracks blocked apps to
-     * charge them, and [ExternalReadingTracker] tracks a trusted reader app
-     * to credit it — both are just "how long was this foreground", asked of
-     * a different set.
+     * charge them, and [ExternalReadingTracker] tracks trusted reader apps to
+     * credit them — both are just "how long was this foreground", asked of a
+     * different set.
      */
-    fun screenOnForegroundMillis(
+    fun scan(
         events: List<UsageEventSample>,
         trackedPackages: Set<String>,
         from: Long,
-        to: Long
-    ): Map<String, Long> {
-        if (trackedPackages.isEmpty()) return emptyMap()
+        to: Long,
+        startState: ForegroundState = ForegroundState(),
+    ): ForegroundScan {
         val sorted = events.sortedBy { it.time }
 
-        // Default to screen-on at the window start. In-window screen/keyguard
-        // events then toggle the state from their own timestamp onward; events
-        // before the window (when the caller queries a margin) already adjust
-        // state in the pre-window branch below. We never guess "off" from an
-        // in-window event retroactively — a screen that turned off at minute 2
-        // was on at minute 1.
-        var interactive = true
+        // In-window screen/keyguard events toggle this from their own timestamp
+        // onward. We never guess "off" from an in-window event retroactively —
+        // a screen that turned off at minute 2 was on at minute 1.
+        var interactive = startState.interactive
 
         // pkg -> wall time up to which this package's foreground has already
         // been charged. The interval stays open across screen-off gaps (re-opened
         // when the screen comes back) but no time accrues while the screen is off.
+        // Seeded from the carried-in state so a sitting that began in an earlier
+        // window keeps accruing through this one.
         val lastChargedUpTo = mutableMapOf<String, Long>()
+        for (pkg in startState.openPackages) lastChargedUpTo[pkg] = from
         val totals = mutableMapOf<String, Long>()
 
         fun chargeTo(now: Long) {
@@ -126,6 +200,12 @@ class ForegroundParser {
         }
         chargeTo(to)
 
-        return totals.filterKeys { it in trackedPackages }
+        return ForegroundScan(
+            millisByPackage = totals.filterKeys { it in trackedPackages },
+            endState = ForegroundState(
+                openPackages = lastChargedUpTo.keys.toSet(),
+                interactive = interactive,
+            ),
+        )
     }
 }

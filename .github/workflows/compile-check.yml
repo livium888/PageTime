@@ -45,3 +45,53 @@ jobs:
 
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
+
+      # Everything below produces something installable from a work branch.
+      #
+      # It is a RELEASE build, signed with the same key as main, because a
+      # debug-signed APK will not install over the copy already on the phone —
+      # Android refuses a signature change, and uninstalling first would take
+      # the reader's library and banked credit with it. Verifying a change on
+      # the device it ships to should not cost someone their data.
+      #
+      # Deliberately NOT the release workflow: that one republishes the
+      # `latest-apk` release, which is main's download link and should not
+      # start pointing at a branch. This uploads a per-run artifact instead,
+      # which is scoped to the one build it came from.
+      - name: Check release signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "Missing KEYSTORE_BASE64; refusing to build an APK that may not update the installed app."; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "Missing KEYSTORE_PASSWORD."; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Missing KEY_ALIAS."; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Missing KEY_PASSWORD."; exit 1; }
+
+      - name: Build signed release APK
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      # Named for the version and commit, so the downloaded file itself says
+      # which build is on the phone — Settings shows the same string.
+      - name: Name this build
+        id: build-name
+        run: |
+          VERSION=$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          [ -n "$VERSION" ] || VERSION=unknown
+          echo "name=pagetime-${VERSION}-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build-name.outputs.name }}
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14

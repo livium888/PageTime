@@ -33,7 +33,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val books = container.libraryRepository.observeBooks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val balanceSeconds = container.balanceManager.browseBalanceSeconds
+    val balanceSeconds = container.balanceManager.sessionSecondsRemainingFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     val lastMapMoment = container.settingsRepository.lastMapMoment

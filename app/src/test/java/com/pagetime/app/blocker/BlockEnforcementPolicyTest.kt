@@ -27,35 +27,33 @@ class BlockEnforcementPolicyTest {
 
     // --- Which rule decides access ---
 
-    @Test
-    fun `on the balance, any remaining second buys entry`() {
-        assertFalse(BlockEnforcementPolicy.accessDenied(false, gateOpen = false, balanceSeconds = 1))
-        assertTrue(BlockEnforcementPolicy.accessDenied(false, gateOpen = true, balanceSeconds = 0))
-    }
-
     /**
-     * The point of the whole change. Under the gate the balance is not
-     * consulted at all — a reader carrying an hour of credit from the old
-     * currency who has read nothing today is still shut out.
+     * Off means off. There is no second currency to fall back on any more, so
+     * a disabled gate denies nothing at all rather than quietly handing the
+     * decision to a balance the reader could not see.
      */
     @Test
-    fun `under the gate the old balance buys nothing`() {
+    fun `with the gate off nothing is denied`() {
+        assertFalse(BlockEnforcementPolicy.accessDenied(gateEnabled = false, gateOpen = false))
+        assertFalse(BlockEnforcementPolicy.accessDenied(gateEnabled = false, gateOpen = true))
+    }
+
+    @Test
+    fun `under the gate a shut gate denies`() {
         assertTrue(
             BlockEnforcementPolicy.accessDenied(
                 gateEnabled = true,
                 gateOpen = false,
-                balanceSeconds = 3600,
             )
         )
     }
 
     @Test
-    fun `under the gate an empty balance is irrelevant once the reading is done`() {
+    fun `under the gate an open one allows`() {
         assertFalse(
             BlockEnforcementPolicy.accessDenied(
                 gateEnabled = true,
                 gateOpen = true,
-                balanceSeconds = 0,
             )
         )
     }
@@ -103,29 +101,6 @@ class BlockEnforcementPolicyTest {
     fun `no stored lock means the new one stands`() {
         val now = 1_000L
         assertEquals(now + 500, BlockEnforcementPolicy.hardLockAfterSetting(0, now + 500, now))
-    }
-
-    // --- Overrides ---
-
-    @Test
-    fun `a hard lock beats a quick-disable in either era`() {
-        assertFalse(BlockEnforcementPolicy.graceApplies(false, 100, quickDisableUntil = 900, hardLockUntil = 500))
-        assertFalse(BlockEnforcementPolicy.graceApplies(true, 100, quickDisableUntil = 900, hardLockUntil = 500))
-    }
-
-    @Test
-    fun `quick-disable still works on the balance`() {
-        assertTrue(BlockEnforcementPolicy.graceApplies(false, 100, quickDisableUntil = 900, hardLockUntil = 0))
-        assertFalse(BlockEnforcementPolicy.graceApplies(false, 1000, quickDisableUntil = 900, hardLockUntil = 0))
-    }
-
-    /**
-     * A two-hour boundary with a five-minute bypass button beside it is a
-     * button, not a boundary.
-     */
-    @Test
-    fun `quick-disable cannot open the gate`() {
-        assertFalse(BlockEnforcementPolicy.graceApplies(true, 100, quickDisableUntil = Long.MAX_VALUE, hardLockUntil = 0))
     }
 
     // --- The retry loop ---

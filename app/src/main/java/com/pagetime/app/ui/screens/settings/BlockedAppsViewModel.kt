@@ -90,7 +90,6 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun hardLock(minutes: Long) {
         viewModelScope.launch {
-            settingsRepo.clearQuickDisableUntil()
             settingsRepo.setHardLockUntil(
                 System.currentTimeMillis() + minutes.coerceAtLeast(1L) * 60_000L
             )

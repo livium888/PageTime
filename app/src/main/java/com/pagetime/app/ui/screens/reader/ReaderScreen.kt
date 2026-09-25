@@ -2851,7 +2851,7 @@ private fun ReadingStatsSheet(
             estimatedTimeLeft(progress, creditedSeconds)?.let {
                 StatRow("Estimated time left", it)
             }
-            StatRow("Balance", formatMinutes(balanceSeconds))
+            StatRow("App time left", formatMinutes(balanceSeconds))
         }
     }
 }

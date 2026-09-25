@@ -17,7 +17,7 @@ class UsageAuditViewModel(app: Application) : AndroidViewModel(app) {
     private val context = app.applicationContext
     private val protectionRefresh = MutableStateFlow(0L)
 
-    val balanceSeconds: StateFlow<Long> = container.balanceManager.browseBalanceSeconds
+    val balanceSeconds: StateFlow<Long> = container.balanceManager.sessionSecondsRemainingFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     val earnedToday: StateFlow<Long> = container.usageRepository.earnedToday()

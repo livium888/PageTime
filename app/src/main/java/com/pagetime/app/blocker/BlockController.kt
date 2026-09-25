@@ -102,12 +102,20 @@ class BlockController(
     @Volatile
     private var blockedPackagesLoaded = false
 
+    /**
+     * False until the gate has been read from settings at least once.
+     *
+     * [GateState.Unknown] reports itself disabled, and a disabled gate now
+     * means nothing is blocked at all — so acting before the real state
+     * arrives would wave through the very apps this exists to stop, for as
+     * long as the first read takes.
+     */
     @Volatile
-    var balanceSeconds: Long = 0
-        private set
+    private var gateLoaded = false
 
     /**
-     * The access gate, mirrored in memory for the same reason as the balance:
+     * The access gate, mirrored in memory so a decision never has to wait on a
+     * flow:
      * the AccessibilityService decides on the main thread and cannot wait for
      * a database.
      *
@@ -137,13 +145,9 @@ class BlockController(
     @Volatile
     private var emergencyUses: List<Long> = emptyList()
 
-    /** Wall-clock time the temporary "block paused" grace ends (0 = none). */
-    @Volatile
-    private var quickDisableUntil = 0L
-
-    /** Wall-clock time the non-cancellable hard lock ends (0 = none). A hard lock
-     *  dominates any grace: while it is active, not even a quick-disable lets the
-     *  user through. */
+    /** Wall-clock time the non-cancellable hard lock ends (0 = none). While one
+     *  is running it withholds the emergency unlock, which is the last way out
+     *  the block screen still offers. */
     @Volatile
     private var hardLockUntil = 0L
 
@@ -240,13 +244,6 @@ class BlockController(
         }
         scope.launch {
             settingsRepository.settings.collect { s ->
-                // Mirror persisted balance into memory. During an active spend session
-                // our own write-through echoes back here with the same value — harmless.
-                val previous = balanceSeconds
-                balanceSeconds = s.browseBalanceSeconds
-                if (previous != balanceSeconds) onAccessChanged()
-
-                quickDisableUntil = s.quickDisableUntil
                 hardLockUntil = s.hardLockUntil
 
                 val wasDenied = accessDenied()
@@ -263,6 +260,7 @@ class BlockController(
             balanceManager.gate.collect { next ->
                 val wasDenied = accessDenied()
                 gate = next
+                gateLoaded = true
                 // Crossing the line mid-session is the moment that matters:
                 // the reader finished their two hours while the block screen
                 // was up, and it has to come down without them going anywhere.
@@ -278,7 +276,7 @@ class BlockController(
     }
 
     /**
-     * Whether the current rule — gate or balance — says no.
+     * Whether the gate says no.
      *
      * An emergency unlock is checked first and is scoped to one package, so it
      * can only ever answer for the app it was spent on. Every other app stays
@@ -290,7 +288,6 @@ class BlockController(
         return BlockEnforcementPolicy.accessDenied(
             gateEnabled = gate.enabled,
             gateOpen = gate.open,
-            balanceSeconds = balanceSeconds,
         )
     }
 
@@ -361,11 +358,12 @@ class BlockController(
         if (packageName != null) lastForegroundPackage = packageName
         // Nothing is known about which apps are blocked yet — don't clear an active
         // block on an empty set. The collector above re-runs this once Room answers.
-        if (!blockedPackagesLoaded) return
+        if (!blockedPackagesLoaded || !gateLoaded) return
 
-        val isBlocked = packageName != null &&
-            packageName in blockedPackages &&
-            !graceActive()
+        // With the gate off nothing is blocked and nothing is metered. There is
+        // no second currency to fall back on any more, so an app the reader
+        // blocked is simply theirs again until they switch the gate back on.
+        val isBlocked = gate.enabled && packageName != null && packageName in blockedPackages
         if (!isBlocked) {
             if (currentBlockedPackage != null) endSpendSession()
             currentBlockedPackage = null
@@ -459,22 +457,6 @@ class BlockController(
         service?.dismissTimeUp()
     }
 
-    /**
-     * A user-approved temporary override of the block. True only while the soft
-     * quick-disable grace is running AND no hard lock is in force — a hard lock
-     * deliberately makes the block unavoidable, so it wins over any grace that
-     * was set before it. Read on each decision, so no timer needs to be armed.
-     *
-     * Under the gate it is never true: see [BlockEnforcementPolicy.graceApplies]
-     * for why a boundary with a bypass button beside it is just a button.
-     */
-    private fun graceActive(): Boolean = BlockEnforcementPolicy.graceApplies(
-        gateEnabled = gate.enabled,
-        nowMillis = System.currentTimeMillis(),
-        quickDisableUntil = quickDisableUntil,
-        hardLockUntil = hardLockUntil,
-    )
-
     private fun onAccessChanged() {
         val pkg = currentBlockedPackage ?: return
         if (accessDenied()) {
@@ -515,7 +497,6 @@ class BlockController(
                 if (sitePaused) continue
 
                 val remaining = balanceManager.spendAccessSecond()
-                if (!gate.enabled) balanceSeconds = remaining
                 sessionSpentSeconds++
 
                 if (remaining <= 0) {
@@ -661,8 +642,8 @@ class BlockController(
      * The two can never overlap — the foreground window is either a blocked
      * app or the browser showing a covered site, never both — but they are
      * not the same question. [startSpending]'s ticker is keyed to
-     * [currentBlockedPackage] and interleaves with [accessDenied],
-     * [graceActive] and the enforce loop; none of that applies here; a
+     * [currentBlockedPackage] and interleaves with [accessDenied] and the
+     * enforce loop; none of that applies here; a
      * covered site is never enforced against; [SiteBlocker.match] already
      * says it is open. Bolting a second identity onto a state machine built
      * for the first would risk the two questions answering each other's.

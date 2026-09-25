@@ -6,17 +6,19 @@ object BlockEnforcementPolicy {
     /**
      * Whether a blocked app must be kept shut right now.
      *
-     * Two eras in one function. Under the balance, access was a purchase and
-     * this asked whether there was anything left to spend. Under the gate it
-     * asks a different question entirely — has the day's reading been done —
-     * and the balance has no vote, which is what stops "read one minute,
-     * browse one minute" from surviving the change.
+     * One question, where there used to be two. The old browse balance asked
+     * whether anything was left to spend; the gate asks whether the reading has
+     * been done. Both ran at once, picked between by a switch, and which of the
+     * two numbers on screen actually governed anything depended on that switch
+     * — which is what made the app impossible to reason about.
+     *
+     * Only the gate remains. With it off nothing is blocked at all, rather than
+     * falling back to a second currency: an off switch should mean off.
      */
     fun accessDenied(
         gateEnabled: Boolean,
         gateOpen: Boolean,
-        balanceSeconds: Long,
-    ): Boolean = if (gateEnabled) !gateOpen else balanceSeconds <= 0
+    ): Boolean = gateEnabled && !gateOpen
 
     /**
      * What a hard lock's end time becomes when one is set.
@@ -32,35 +34,6 @@ object BlockEnforcementPolicy {
      */
     fun hardLockAfterSetting(currentUntil: Long, proposedUntil: Long, nowMillis: Long): Long =
         if (nowMillis < currentUntil) maxOf(currentUntil, proposedUntil) else proposedUntil
-
-    /**
-     * Whether a user-approved override is lifting the block.
-     *
-     * A hard lock beats everything, as it always did. The quick-disable grace
-     * never applies under the gate: a two-hour boundary with a five-minute
-     * bypass button next to it is not a boundary, it is a button.
-     *
-     * Its buttons have since been deleted from the app entirely, so nothing
-     * can set this any more. The check stays because an install upgrading
-     * mid-grace still carries a stored expiry, and the honest thing is to let
-     * a pause the reader was already given run out rather than cancel it. Once
-     * those have expired the parameter is permanently zero.
-     *
-     * The consequence is worth stating plainly: under the gate the only ways
-     * out are reading, or turning the gate off in Settings — which itself
-     * takes a day. Neither is reachable from the block screen, which is where
-     * someone would look at the moment they least want to be told no.
-     */
-    fun graceApplies(
-        gateEnabled: Boolean,
-        nowMillis: Long,
-        quickDisableUntil: Long,
-        hardLockUntil: Long,
-    ): Boolean {
-        if (nowMillis < hardLockUntil) return false
-        if (gateEnabled) return false
-        return nowMillis < quickDisableUntil
-    }
 
     /**
      * An attached overlay must never be shown again: repeating WindowManager

@@ -29,14 +29,15 @@ class BalanceManager(
     private val ledger: UsageRepository? = null
 ) {
 
-    val browseBalanceSeconds: Flow<Long> =
-        repository.settings.map { it.browseBalanceSeconds }
-
     val totalReadingSeconds: Flow<Long> =
         repository.settings.map { it.totalReadingSeconds }
 
-    val ratio: Flow<Double> =
-        repository.settings.map { it.ratio }
+    /**
+     * Bought app time not yet burned — the one spendable number left, and the
+     * successor to the browse balance this app used to keep alongside it.
+     */
+    val sessionSecondsRemainingFlow: Flow<Long> =
+        repository.settings.map { it.sessionSecondsRemaining }
 
     /**
      * The access gate.
@@ -96,16 +97,13 @@ class BalanceManager(
     }
 
     /**
-     * Burns one second of whichever counter is currently paying for access,
-     * and returns what is left of it.
+     * Burns one second of bought app time and returns what is left.
      *
-     * One ticker, two counters. Under the gate it is bought app time; on the
-     * browse balance it is the old currency. Keeping the branch here rather
-     * than in the controller means the screen-off rule, the ledger flush and
-     * the UsageStats reconciliation are written once and cannot drift apart.
+     * One ticker, one counter. It used to branch on which of two currencies
+     * was live; there is only one now, and with the gate off nothing is
+     * blocked, so nothing is metered either.
      */
-    suspend fun spendAccessSecond(): Long =
-        if (repository.gateEnabled()) repository.spendSessionSecond() else spendSecond()
+    suspend fun spendAccessSecond(): Long = repository.spendSessionSecond()
 
     /**
      * Turns the stored switch off once its cooling-off has elapsed.
@@ -123,40 +121,26 @@ class BalanceManager(
         }
     }
 
-    suspend fun browseBalance(): Long = repository.browseBalanceSeconds()
+    /** How much bought app time is left, for callers that cannot wait for a flow. */
+    suspend fun sessionSecondsRemaining(): Long = repository.sessionSecondsRemaining()
 
     /**
-     * The one mutation path. Read-modify-write under a mutex; never negative.
-     * Returns the resulting balance so callers (spend ticker) stay in sync with
-     * exactly what was persisted.
+     * Takes [seconds] of bought app time that the live ticker missed — see
+     * [com.pagetime.app.data.usage.UsageReconciler]. Returns what is left.
+     *
+     * The one mutation path for retroactive charging, serialized with every
+     * other mutation so an audit landing mid-session cannot clobber the
+     * ticker's own write.
      */
-    suspend fun adjustBalance(deltaSeconds: Long): Long = mutex.withLock {
-        val current = repository.browseBalanceSeconds()
-        val next = (current + deltaSeconds).coerceAtLeast(0L)
-        if (next != current) {
-            repository.setBrowseBalanceSeconds(next)
-        }
-        next
+    suspend fun chargeMissedSessionSeconds(seconds: Long): Long = mutex.withLock {
+        repository.spendSessionSeconds(seconds)
     }
-
-    /** Spend exactly one second of browse time. Returns the remaining balance. */
-    suspend fun spendSecond(): Long = adjustBalance(-1L)
 
     suspend fun earnFromReading(seconds: Long) {
         if (seconds <= 0) return
         mutex.withLock {
             repository.addTotalReadingSeconds(seconds)
-            if (repository.gateEnabled()) {
-                // Reading banks credit toward the next session, and the browse
-                // balance stops growing. It is not spent either — the reader
-                // keeps whatever they had — but continuing to credit a currency
-                // nobody can spend would bank a month of browse time against
-                // the day they switch the gate off, and hand them an afternoon
-                // of it as a reward for having read.
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds((seconds * repository.ratio()).toLong())
-            }
+            repository.addReadingCredit(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
@@ -250,11 +234,7 @@ class BalanceManager(
             )
             if (payable > 0) {
                 repository.setFlashcardEarnedToday(today, earnedSoFar + payable)
-                if (repository.gateEnabled()) {
-                    repository.addReadingCredit(payable)
-                } else {
-                    repository.addBrowseBalanceSeconds(payable)
-                }
+                repository.addReadingCredit(payable)
             }
             payable
         }
@@ -312,11 +292,7 @@ class BalanceManager(
             )
             if (payable > 0) {
                 repository.setExternalReadingEarnedToday(today, earnedSoFar + payable)
-                if (repository.gateEnabled()) {
-                    repository.addReadingCredit(payable)
-                } else {
-                    repository.addBrowseBalanceSeconds(payable)
-                }
+                repository.addReadingCredit(payable)
             }
             payable
         }
@@ -349,11 +325,7 @@ class BalanceManager(
         val seconds = repository.explainBackRewardSeconds()
         if (seconds <= 0) return
         mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
-            }
+            repository.addReadingCredit(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
@@ -377,11 +349,7 @@ class BalanceManager(
         val seconds = repository.lumenLinkRewardSeconds()
         if (seconds <= 0) return
         mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
-            }
+            repository.addReadingCredit(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
@@ -410,11 +378,7 @@ class BalanceManager(
         val seconds = repository.readingMomentumBonusSeconds()
         if (seconds <= 0) return 0
         mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
-            }
+            repository.addReadingCredit(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
         return seconds
@@ -424,7 +388,6 @@ class BalanceManager(
         repository.setBrowseBalanceSeconds(seconds.coerceAtLeast(0L))
     }
 
-    suspend fun setRatio(value: Double) = repository.setRatio(value)
 
     private val mutex = Mutex()
 

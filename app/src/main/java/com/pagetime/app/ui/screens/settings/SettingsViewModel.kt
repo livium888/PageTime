@@ -41,13 +41,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val container = (app as PageTimeApp).container
 
-    val balanceSeconds = container.balanceManager.browseBalanceSeconds
+    val balanceSeconds = container.balanceManager.sessionSecondsRemainingFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     val totalReadingSeconds = container.balanceManager.totalReadingSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
-    val ratio = container.balanceManager.ratio
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1.0)
 
     /**
@@ -289,10 +288,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
-    fun setRatio(value: Double) {
-        viewModelScope.launch { container.balanceManager.setRatio(value) }
-    }
 
     fun setGateSwitchedOn(on: Boolean) {
         viewModelScope.launch { container.settingsRepository.setGateSwitchedOn(on) }

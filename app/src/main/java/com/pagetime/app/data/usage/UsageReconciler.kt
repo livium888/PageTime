@@ -129,8 +129,8 @@ class UsageReconciler(
             val missed = fgSeconds - (alreadyCharged[pkg] ?: 0L)
             if (missed <= 0) continue
 
-            val before = balanceManager.browseBalance()
-            val remaining = balanceManager.adjustBalance(-missed)
+            val before = balanceManager.sessionSecondsRemaining()
+            val remaining = balanceManager.chargeMissedSessionSeconds(missed)
             usageRepository.log(UsageRepository.TYPE_RECONCILED, pkg, missed)
 
             if (before > 0L && remaining <= 0L) {

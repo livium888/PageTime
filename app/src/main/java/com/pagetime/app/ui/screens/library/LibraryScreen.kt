@@ -289,7 +289,7 @@ fun LibraryScreen(
             ) {
                 item {
                     Text(
-                        "${formatMinutes(totalReadingSeconds)} read · ${formatMinutes(balanceSeconds)} earned",
+                        "${formatMinutes(totalReadingSeconds)} read · ${formatMinutes(balanceSeconds)} app time",
                         style = MaterialTheme.typography.titleMedium
                     )
                 }

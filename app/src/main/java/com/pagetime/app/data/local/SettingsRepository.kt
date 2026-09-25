@@ -5,7 +5,6 @@ import android.content.res.Configuration
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -30,10 +29,7 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 data class Settings(
-    val browseBalanceSeconds: Long = 0,
-    /** Browse seconds earned per 1 second of reading. */
-    val ratio: Double = 1.0,
-    /** Browse seconds earned per correct flashcard review (HARD/GOOD/EASY). */
+    /** Reading credit earned per correct flashcard review (HARD/GOOD/EASY). */
     val flashcardRewardSeconds: Long = 30,
     /**
      * How many of those seconds flashcards (PageTime's own cards AND Anki,
@@ -96,8 +92,6 @@ data class Settings(
      */
     val readingMomentumBonusSeconds: Long = 60,
     val totalReadingSeconds: Long = 0,
-    /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
-    val quickDisableUntil: Long = 0,
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
     val hardLockUntil: Long = 0,
     /** The one app an emergency unlock is currently covering, if any. */
@@ -266,8 +260,13 @@ class SettingsRepository(private val context: Context) {
     }
 
     private object Keys {
+        /**
+         * The deleted browse balance. The key survives only so
+         * [migrateBrowseBalanceIntoSession] can find what an upgrading install
+         * still has banked and hand it back as app time; nothing writes it.
+         */
         val BALANCE = longPreferencesKey("browse_balance_seconds")
-        val RATIO = doublePreferencesKey("ratio")
+        val BALANCE_MIGRATED = booleanPreferencesKey("browse_balance_migrated")
         val FLASHCARD_REWARD = longPreferencesKey("flashcard_reward_seconds")
         val FLASHCARD_DAILY_CAP = longPreferencesKey("flashcard_daily_cap_seconds")
         val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
@@ -292,7 +291,6 @@ class SettingsRepository(private val context: Context) {
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
-        val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
         val EMERGENCY_PACKAGE = stringPreferencesKey("emergency_unlock_package")
         val EMERGENCY_UNTIL = longPreferencesKey("emergency_unlock_until")
@@ -619,8 +617,6 @@ class SettingsRepository(private val context: Context) {
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
         Settings(
-            browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
-            ratio = p[Keys.RATIO] ?: 1.0,
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
             flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
             siteMode = SiteMode.fromKey(p[Keys.SITE_MODE]),
@@ -631,7 +627,6 @@ class SettingsRepository(private val context: Context) {
             lumenLinkRewardSeconds = p[Keys.LUMEN_LINK_REWARD] ?: 45L,
             readingMomentumBonusSeconds = p[Keys.READING_MOMENTUM_BONUS] ?: 60L,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
-            quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
             emergencyPackage = p[Keys.EMERGENCY_PACKAGE],
             emergencyUntil = p[Keys.EMERGENCY_UNTIL] ?: 0L,
@@ -935,41 +930,9 @@ class SettingsRepository(private val context: Context) {
         ).normalized()
     }
 
-    suspend fun browseBalanceSeconds(): Long =
-        context.dataStore.data.first()[Keys.BALANCE] ?: 0L
-
-    suspend fun ratio(): Double =
-        context.dataStore.data.first()[Keys.RATIO] ?: 1.0
-
-    suspend fun setBrowseBalanceSeconds(value: Long) {
-        context.dataStore.edit { it[Keys.BALANCE] = value.coerceAtLeast(0L) }
-    }
-
-    suspend fun addBrowseBalanceSeconds(delta: Long) {
-        context.dataStore.edit { p ->
-            p[Keys.BALANCE] = ((p[Keys.BALANCE] ?: 0L) + delta).coerceAtLeast(0L)
-        }
-    }
-
-    /** Wall-clock time (epoch millis) until the temporary quick-disable grace ends (0 = none). */
-    suspend fun quickDisableUntil(): Long =
-        context.dataStore.data.first()[Keys.QUICK_DISABLE_UNTIL] ?: 0L
-
     /** Wall-clock time (epoch millis) until the non-cancellable hard lock ends (0 = none). */
     suspend fun hardLockUntil(): Long =
         context.dataStore.data.first()[Keys.HARD_LOCK_UNTIL] ?: 0L
-
-    /**
-     * Clears any legacy quick-disable grace.
-     *
-     * The buttons that set one were deleted; this remains because an install
-     * upgrading mid-grace still carries a stored expiry. There is deliberately
-     * no setter any more — a method that grants a bypass is a loaded gun left
-     * on the table for whoever writes the next screen.
-     */
-    suspend fun clearQuickDisableUntil() {
-        context.dataStore.edit { it.remove(Keys.QUICK_DISABLE_UNTIL) }
-    }
 
     /**
      * Starts or extends a hard lock.
@@ -1120,11 +1083,54 @@ class SettingsRepository(private val context: Context) {
      * between this and a countdown: time the reader is not spending is time
      * they still have.
      */
-    suspend fun spendSessionSecond(): Long {
+    /**
+     * Hands back, as bought app time, whatever an upgrading install still had
+     * in the deleted browse balance. Runs once.
+     *
+     * The browse balance was spendable seconds of access, so app time is what
+     * it already was — no exchange rate applies, and inventing one would be a
+     * guess at what the reader had earned. What it cannot carry over is the
+     * old currency's lack of a ceiling: a balance above
+     * [GateState.maxSessionSecondsFor] is clamped to it, because an unbounded
+     * pile of access is the thing the session model exists to replace.
+     *
+     * Deliberately does NOT switch the gate on. Someone who was never under it
+     * is not put under it by an app update — they simply have no blocking until
+     * they choose it, which is the safe direction to be wrong in.
+     */
+    suspend fun migrateBrowseBalanceIntoSession() {
+        context.dataStore.edit { p ->
+            if (p[Keys.BALANCE_MIGRATED] == true) return@edit
+            p[Keys.BALANCE_MIGRATED] = true
+            val banked = (p[Keys.BALANCE] ?: 0L).coerceAtLeast(0L)
+            p.remove(Keys.BALANCE)
+            if (banked <= 0L) return@edit
+            val length = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS
+            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
+            p[Keys.SESSION_REMAINING] =
+                (remaining + banked).coerceAtMost(GateState.maxSessionSecondsFor(length))
+        }
+    }
+
+    suspend fun spendSessionSecond(): Long = spendSessionSeconds(1)
+
+    /** How much bought app time is left. */
+    suspend fun sessionSecondsRemaining(): Long =
+        (context.dataStore.data.first()[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
+
+    /**
+     * Burns [seconds] of bought app time at once and returns what is left.
+     *
+     * The bulk form exists for the retroactive audit, which discovers whole
+     * stretches the live ticker never saw. Read-modify-write inside one
+     * DataStore transaction, so a sweep landing while the ticker is running
+     * cannot lose either one's write.
+     */
+    suspend fun spendSessionSeconds(seconds: Long): Long {
         var left = 0L
         context.dataStore.edit { p ->
             val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
-            left = (remaining - 1).coerceAtLeast(0L)
+            left = (remaining - seconds.coerceAtLeast(0L)).coerceAtLeast(0L)
             p[Keys.SESSION_REMAINING] = left
         }
         return left
@@ -1177,10 +1183,6 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             p[Keys.TOTAL_READING] = (p[Keys.TOTAL_READING] ?: 0L) + delta
         }
-    }
-
-    suspend fun setRatio(value: Double) {
-        context.dataStore.edit { it[Keys.RATIO] = value.coerceIn(0.1, 10.0) }
     }
 
     suspend fun flashcardRewardSeconds(): Long =

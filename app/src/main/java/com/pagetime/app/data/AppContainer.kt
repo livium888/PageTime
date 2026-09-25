@@ -415,6 +415,9 @@ class AppContainer(context: Context) {
     )
 
     init {
+        // Hand back whatever an upgrading install still had in the deleted
+        // browse balance before anything can read or spend app time.
+        scope.launch { settingsRepository.migrateBrowseBalanceIntoSession() }
         blockController.start()
         siteBlocker.start()
         usageReconciler.start()

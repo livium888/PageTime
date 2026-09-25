@@ -112,7 +112,6 @@ fun SettingsScreen(
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
-    val ratio by viewModel.ratio.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
@@ -517,30 +516,15 @@ fun SettingsScreen(
                     )
                 }
 
-                if (!gate.enabled) {
+                if (gate.enabled) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("App time in hand", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
                             formatMinutes(balanceSeconds),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                    Spacer(Modifier.height(4.dp))
-                    TypedSettingField(
-                        title = "Reading rate",
-                        help = "1 minute of reading earns ${"%.1f".format(ratio)} minutes of " +
-                            "browsing.",
-                        current = "${"%.1f".format(ratio)} min of browsing per minute read",
-                        inputLabel = "Minutes of browsing",
-                        inputHint = "e.g. 1.5",
-                        allowDecimal = true,
-                        minAllowed = MIN_READING_RATE,
-                        maxAllowed = MAX_READING_RATE,
-                        unit = "min per min",
-                        describe = { "×${"%.1f".format(it)}" },
-                        onCommit = { viewModel.setRatio(it) },
-                    )
                 }
             }
 
@@ -1908,8 +1892,6 @@ private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
 private const val MAX_READING_MOMENTUM_BONUS_SECONDS = 180.0
 
 /** The reading-rate slider's old range, kept as the field's bounds. */
-private const val MIN_READING_RATE = 0.5
-private const val MAX_READING_RATE = 3.0
 
 /** A typed number as it reads back: 90, or 1.5 when it is not whole. */
 private fun typedNumberLabel(value: Double): String =

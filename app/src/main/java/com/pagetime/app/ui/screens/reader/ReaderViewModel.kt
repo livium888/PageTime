@@ -153,7 +153,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ConceptMap(emptyList(), emptyList()))
 
 
-    val balanceSeconds = balanceManager.browseBalanceSeconds
+    val balanceSeconds = balanceManager.sessionSecondsRemainingFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     /** What a qualifying explain-back answer currently banks — shown on the chapter-completion nudge. */

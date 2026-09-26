@@ -208,4 +208,121 @@ class ChapterTopicsTest {
         )
         assertTrue(ChapterTopics.select(rows, count = 2).isNotEmpty())
     }
+
+    // --- What the model is actually handed ---------------------------------
+
+    /**
+     * A chapter of known sentences, so a window can be measured against it.
+     *
+     * Real prose, because the point of these tests is where a window may begin
+     * and end: a run of one character cannot show that a boundary was snapped
+     * to a word.
+     */
+    private fun chapter(sentences: Int): String =
+        (0 until sentences).joinToString(" ") {
+            "Sentence number $it carries one idea about the world."
+        }
+
+    /** The chunk the index cut, at [from] and [to] of the same chapter. */
+    private fun chunkRow(id: Int, text: String, from: Int, to: Int): BookChunkEmbeddingEntity =
+        row(id, unit(id), from, to, text = text.substring(from, to))
+
+    private fun unit(id: Int): FloatArray = when (id % 3) {
+        0 -> floatArrayOf(1f, 0f, 0f)
+        1 -> floatArrayOf(0f, 1f, 0f)
+        else -> floatArrayOf(0f, 0f, 1f)
+    }
+
+    /**
+     * The reported defect: a prompt was written from a sixty-word fragment.
+     *
+     * The index chunks to the embedding model's budget — 380 characters — which
+     * is the right size for a vector and far too small for a question. Asked for
+     * up to three prompts from one paragraph, the only honest answer is a
+     * lookup, because a paragraph contains no mechanism, cause or contrast to
+     * ask about.
+     */
+    @Test
+    fun `a chosen passage arrives with the prose around it`() {
+        val text = chapter(160)
+        val cut = listOf(0 to 300, 3_000 to 3_300, 6_000 to 6_300)
+        val rows = cut.mapIndexed { id, (from, to) -> chunkRow(id, text, from, to) }
+
+        val picked = ChapterTopics.select(rows, count = 3, chapterText = text)
+        assertEquals(3, picked.size)
+        picked.forEachIndexed { index, passage ->
+            val (from, to) = cut[index]
+            assertTrue(
+                "a ${passage.text.length}-character passage is still a fragment",
+                passage.text.length >= 1_500,
+            )
+            // The idea the vectors picked is still in it, and the offsets still
+            // describe the text that was handed over: a prompt surfaces by
+            // fraction, and a window that did not line up would surface it in
+            // the wrong place in the book.
+            assertTrue(passage.text.contains(text.substring(from, to)))
+            assertEquals(passage.text, text.substring(passage.startOffset, passage.endOffset))
+        }
+    }
+
+    /**
+     * Overlap would be the same words sent twice, and the same question asked
+     * twice for the price of two requests.
+     */
+    @Test
+    fun `two passages never cover the same text`() {
+        val text = chapter(160)
+        val rows = listOf(
+            chunkRow(0, text, 500, 800),
+            chunkRow(1, text, 900, 1_200),
+        )
+        val picked = ChapterTopics.select(rows, count = 2, chapterText = text)
+        assertEquals(2, picked.size)
+        assertTrue(
+            "passages overlap: ${picked.map { it.startOffset..it.endOffset }}",
+            picked[0].endOffset <= picked[1].startOffset,
+        )
+    }
+
+    /**
+     * Growing by a third of the shortfall in characters lands wherever it
+     * lands, and a window opening on the middle of a word is the defect the
+     * chunker was versioned twice to remove. It must not come back through the
+     * window.
+     */
+    @Test
+    fun `a widened passage begins and ends on whole words`() {
+        val text = chapter(160)
+        val rows = listOf(chunkRow(0, text, 1_400, 1_700), chunkRow(1, text, 500, 800))
+        val picked = ChapterTopics.select(rows, count = 2, chapterText = text)
+        picked.forEach { passage ->
+            if (passage.startOffset > 0) {
+                assertTrue(
+                    "opens mid-word: ${passage.text.take(24)}",
+                    text[passage.startOffset].isWhitespace() ||
+                        text[passage.startOffset - 1].isWhitespace(),
+                )
+            }
+            if (passage.endOffset < text.length) {
+                assertTrue(
+                    "ends mid-word: ${passage.text.takeLast(24)}",
+                    text[passage.endOffset].isWhitespace() ||
+                        text[passage.endOffset - 1].isWhitespace(),
+                )
+            }
+        }
+    }
+
+    /**
+     * A caller with no chapter to read from — and every existing test — must
+     * keep the old behaviour rather than crashing on a null.
+     */
+    @Test
+    fun `with no chapter text the index's own chunks are returned`() {
+        val rows = listOf(row(7, floatArrayOf(1f, 0f, 0f), 1200, 1600))
+        val only = ChapterTopics.select(rows, count = 1).single()
+        assertEquals(1200, only.startOffset)
+        assertEquals(1600, only.endOffset)
+        assertEquals("chunk 7", only.text)
+    }
 }

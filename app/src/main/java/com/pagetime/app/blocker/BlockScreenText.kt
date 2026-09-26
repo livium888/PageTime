@@ -56,6 +56,49 @@ object BlockScreenText {
     fun startButtonLabel(gate: GateState): String = "Start ${span(gate.sessionLengthSeconds)}"
 
     /**
+     * The block screen for a site rather than an app.
+     *
+     * A DIFFERENT REASON, SO A DIFFERENT SENTENCE AGAIN
+     *
+     * Both existing sentences are wrong here, though for a narrower reason
+     * than they used to be. "Time is up!" still describes a debt that does
+     * not exist. The gate's distance ("1h 12m of 2h") is wrong for a
+     * different one: reading DOES eventually open this site now, the same
+     * session that opens a blocked app — but this screen only ever appears
+     * while that session is not the answer, either because none is running
+     * or because the reader has not read enough to start one, and repeating
+     * the app screen's distance here would explain the wrong rule (site
+     * versus app) for the number it shows. So the screen says the address,
+     * says that it is off limits, and offers the two things that are honest
+     * at this moment: go back, or read instead — which is no longer merely
+     * something to do while shut out, but the way to earn the session that
+     * opens this exact page.
+     *
+     * The address is the title rather than a decoration. It is the one piece of
+     * information that makes the screen explicable at a glance — a reader who
+     * sees `bbc.co.uk` knows instantly which rule fired and can go and change
+     * it — and naming the section when the rule names one shows that a rule
+     * narrower than the whole site is being honoured as written.
+     */
+    fun siteTitle(rule: SiteRules.Rule): String = rule.id
+
+    fun siteSubtitle(rule: SiteRules.Rule, mode: SiteMode): String = when (mode) {
+        SiteMode.BLOCKLIST -> if (rule.pathPrefix == null) {
+            "You put this site off limits. Go back, or read for a while."
+        } else {
+            "You put this part of the site off limits. Go back, or read for a while."
+        }
+        // No rule to name here — nothing was typed to explain this block, only
+        // the absence of a rule that would have let it through. Saying so is
+        // the honest version of "you put this off limits": the reader chose
+        // the allowlist itself, just not this address.
+        SiteMode.ALLOWLIST -> "This isn't on your allowed list. Go back, or read for a while."
+    }
+
+    /** The secondary action on a site block: leave the page. */
+    fun siteBackLabel(): String = "Go back"
+
+    /**
      * What the emergency button offers, or why it cannot.
      *
      * Names the app rather than saying "unlock", because naming it is the

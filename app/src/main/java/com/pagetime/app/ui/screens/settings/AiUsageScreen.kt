@@ -113,6 +113,7 @@ fun AiUsageScreen(
                     UsageRow("Successful requests", stats.successfulCalls.toString())
                     UsageRow("Failed requests", stats.failedCalls.toString())
                     UsageRow("Concept-map analyses", stats.conceptCalls.toString())
+                    UsageRow("Flashcard generations", stats.chapterPromptCalls.toString())
                     UsageRow("Transcript reformats", stats.reformatCalls.toString())
                     UsageRow("Lumen card drafts", stats.lumenCalls.toString())
                     UsageRow("Word explanations", stats.glossCalls.toString())

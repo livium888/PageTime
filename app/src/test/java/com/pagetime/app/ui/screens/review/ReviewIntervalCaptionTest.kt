@@ -15,7 +15,18 @@ class ReviewIntervalCaptionTest {
     @Test
     fun `sub-hour intervals show minutes`() {
         assertEquals("10m", formatIntervalShort(Duration.ofMinutes(10)))
-        assertEquals("0m", formatIntervalShort(Duration.ZERO))
+        assertEquals("1m", formatIntervalShort(Duration.ofMinutes(1)))
+        assertEquals("59m", formatIntervalShort(Duration.ofMinutes(59)))
+    }
+
+    @Test
+    fun `under a minute says less than a minute`() {
+        // Not "0m". A rating button that offers to bring the card back in zero
+        // minutes reads as a broken schedule rather than as the shortest
+        // learning step, which is what it actually is.
+        assertEquals("<1m", formatIntervalShort(Duration.ZERO))
+        assertEquals("<1m", formatIntervalShort(Duration.ofSeconds(59)))
+        assertEquals("<1m", formatIntervalShort(Duration.ofSeconds(-30)))
     }
 
     @Test

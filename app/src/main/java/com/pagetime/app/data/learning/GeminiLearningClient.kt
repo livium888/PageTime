@@ -171,6 +171,7 @@ class GeminiLearningClient(
         chapterTitle: String,
         passages: List<String>,
         insist: Boolean,
+        template: String?,
     ): List<RawPrompt> = withContext(Dispatchers.IO) {
         val apiKey = currentApiKey()
         check(apiKey.isNotBlank()) { "Gemini API key is not configured" }
@@ -195,14 +196,27 @@ class GeminiLearningClient(
                 .put("prompts", JSONObject().put("type", "ARRAY").put("items", promptSchema)))
             .put("required", JSONArray(listOf("prompts")))
 
-        val instructions = ChapterPromptText.build(bookTitle, chapterTitle, passages, insist = insist)
+        val instructions = ChapterPromptText.build(
+            bookTitle = bookTitle,
+            chapterTitle = chapterTitle,
+            passages = passages,
+            insist = insist,
+            template = template,
+        )
 
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject()
                 .put("parts", JSONArray().put(JSONObject().put("text", instructions)))))
             .put("generationConfig", JSONObject()
                 .put("responseMimeType", "application/json")
-                .put("responseSchema", schema))
+                .put("responseSchema", schema)
+                // Written down rather than left to the API's default of 1.0,
+                // which is the setting for a creative task. This is an
+                // extraction: the fact is in the passage, and the only useful
+                // thing the model can do with freedom is invent one. The same
+                // setting the Lumen card draft uses, so the two card types
+                // cannot drift apart on this.
+                .put("temperature", 0.4))
             .toString()
         val request = Request.Builder()
             .url("$endpointBase/models/${currentModel()}:generateContent")
@@ -639,6 +653,36 @@ class GeminiLearningClient(
             .put("generationConfig", JSONObject()
                 .put("temperature", 0.4)
                 .put("maxOutputTokens", 512))
+            .toString()
+
+        val request = Request.Builder()
+            .url("$endpointBase/models/${currentModel()}:generateContent")
+            .header("x-goog-api-key", currentApiKey())
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val raw = executeWithRetry(request)
+        JSONObject(raw).getJSONArray("candidates")
+            .getJSONObject(0).getJSONObject("content")
+            .getJSONArray("parts").getJSONObject(0)
+            .getString("text")
+            .trim()
+    }
+
+    /**
+     * The generic version of the call above: one rendered prompt in, raw text
+     * back, no Lumen-specific JSON contract. For short, low-stakes asks (like
+     * classifying a book's genre from its title) that don't deserve their own
+     * named method, low temperature since the point is a consistent, boring
+     * answer rather than a creative one.
+     */
+    suspend fun generateText(prompt: String, maxOutputTokens: Int = 200): String = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject()
+                .put("temperature", 0.1)
+                .put("maxOutputTokens", maxOutputTokens))
             .toString()
 
         val request = Request.Builder()

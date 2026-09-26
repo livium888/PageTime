@@ -24,6 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         BookEntity::class,
         BlockedAppEntity::class,
+        BlockedSiteEntity::class,
         UsageEventEntity::class,
         LearningCardEntity::class,
         LearningReviewLogEntity::class,
@@ -38,14 +39,19 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookChunkEmbeddingEntity::class,
         ShelfBookEntity::class,
         PagemarkEntity::class,
-        TextHighlightEntity::class
+        TextHighlightEntity::class,
+        ExternalReadingAppEntity::class,
+        AllowedSiteEntity::class
     ],
-    version = 23,
+    version = 28,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun blockedAppDao(): BlockedAppDao
+    abstract fun externalReadingAppDao(): ExternalReadingAppDao
+    abstract fun allowedSiteDao(): AllowedSiteDao
+    abstract fun blockedSiteDao(): BlockedSiteDao
     abstract fun usageEventDao(): UsageEventDao
     abstract fun learningCardDao(): LearningCardDao
     abstract fun learningReviewLogDao(): LearningReviewLogDao
@@ -369,6 +375,86 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_text_highlights_bookId " +
                         "ON text_highlights(bookId)"
                 )
+            }
+        }
+
+        /**
+         * Site rules: whole domains and sections of them, by address.
+         *
+         * Read on the main thread inside an accessibility event, so the host
+         * and the path are stored separately rather than as one string that
+         * would have to be re-parsed on every address bar read.
+         */
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS blocked_sites (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "host TEXT NOT NULL, " +
+                        "pathPrefix TEXT, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "enabled INTEGER NOT NULL DEFAULT 1)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_sites_enabled ON blocked_sites(enabled)")
+            }
+        }
+
+        /**
+         * A book's genre — Fiction, Poetry, Science, and so on — set once by
+         * [com.pagetime.app.data.BookGenreClassifier] and never re-asked.
+         * Null on every existing row until classified in the background.
+         */
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN genre TEXT")
+            }
+        }
+
+        /**
+         * A book's total word count, computed once by
+         * [com.pagetime.app.data.BookWordCounter] the first time a reading
+         * sitting needs it — see [com.pagetime.app.ui.screens.reader.ReadingPace].
+         * Null on every existing row until then.
+         */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN wordCount INTEGER")
+            }
+        }
+
+        /**
+         * Which apps the reader trusts for [com.pagetime.app.data.usage.ExternalReadingTracker] —
+         * same shape as blocked_apps, since both are just "a chosen set of
+         * packages with a human label", one restricting and one granting.
+         * Starts empty: nothing is trusted until the reader picks it.
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS external_reading_apps (" +
+                        "packageName TEXT NOT NULL, appName TEXT NOT NULL, " +
+                        "enabled INTEGER NOT NULL, PRIMARY KEY(packageName))"
+                )
+            }
+        }
+
+        /**
+         * Sites the reader lets through under
+         * [com.pagetime.app.blocker.SiteMode.ALLOWLIST] — same shape as
+         * blocked_sites (see [MIGRATION_23_24]), stored separately so
+         * switching between block and allow mode never loses either list.
+         */
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS allowed_sites (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "host TEXT NOT NULL, " +
+                        "pathPrefix TEXT, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "enabled INTEGER NOT NULL DEFAULT 1)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_allowed_sites_enabled ON allowed_sites(enabled)")
             }
         }
 

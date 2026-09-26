@@ -4,8 +4,8 @@ import com.pagetime.app.data.local.PagemarkDao
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.local.PendingReaderSource
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.review.CardScheduler
 import io.github.openspacedrepetition.Card
-import io.github.openspacedrepetition.Scheduler
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -14,18 +14,19 @@ import kotlinx.coroutines.flow.Flow
  * Incremental reading: chunks of a book, their priorities, and their FSRS
  * re-read schedules.
  *
- * The scheduler is the same one learning cards and Lumen training use
- * (desired retention 0.9, no fuzzing), so a chunk closed with the same
- * rating as a flashcard comes back on the same calendar. A chunk is not a
- * different kind of memory; it is a bigger card.
+ * The scheduler is the same one learning cards and Lumen training use, so a
+ * chunk closed with the same rating as a flashcard comes back on the same
+ * calendar. A chunk is not a different kind of memory; it is a bigger card.
+ *
+ * That was the intent and it was not the case — this class and LumenRepository
+ * both built schedulers with fuzzing off while the chapter grader built one
+ * with fuzzing on. All three now go through [CardScheduler]; see
+ * [com.pagetime.app.data.review.FsrsScheduling] for what the difference cost.
  */
 class PagemarkRepository(
     private val dao: PagemarkDao,
     private val settingsRepository: SettingsRepository,
-    private val scheduler: Scheduler = Scheduler.builder()
-        .desiredRetention(0.9)
-        .enableFuzzing(false)
-        .build()
+    private val schedulers: CardScheduler = CardScheduler.DEFAULT
 ) {
 
     fun observeForBook(bookId: String): Flow<List<PagemarkEntity>> = dao.observeForBook(bookId)
@@ -120,7 +121,7 @@ class PagemarkRepository(
         val chunk = dao.get(id) ?: return null
         val oldCard = chunk.fsrsCardJson?.let { FsrsCardCodec.fromJson(it) }
             ?: Card.builder().due(now).build()
-        val result = scheduler.reviewCard(oldCard, PagemarkSession.ratingToFsrs(rating), now, null)
+        val result = schedulers.review(id, oldCard, PagemarkSession.ratingToFsrs(rating), now)
         var card = result.card()
         var nextDue = card.due ?: now.plusSeconds(86_400)
         if (card.due == null) {

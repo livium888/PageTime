@@ -43,18 +43,23 @@ class ForegroundParser {
     }
 
     /**
-     * Returns, for each package in [blockedPackages], the number of milliseconds
+     * Returns, for each package in [trackedPackages], the number of milliseconds
      * it was foreground with the screen interactive, clipped to [from]..[to].
      * Events are assumed to be in [from]..[to] (queryEvents semantics); the
      * clipping is defensive.
+     *
+     * Package-agnostic on purpose: [UsageReconciler] tracks blocked apps to
+     * charge them, and [ExternalReadingTracker] tracks a trusted reader app
+     * to credit it — both are just "how long was this foreground", asked of
+     * a different set.
      */
     fun screenOnForegroundMillis(
         events: List<UsageEventSample>,
-        blockedPackages: Set<String>,
+        trackedPackages: Set<String>,
         from: Long,
         to: Long
     ): Map<String, Long> {
-        if (blockedPackages.isEmpty()) return emptyMap()
+        if (trackedPackages.isEmpty()) return emptyMap()
         val sorted = events.sortedBy { it.time }
 
         // Default to screen-on at the window start. In-window screen/keyguard
@@ -121,6 +126,6 @@ class ForegroundParser {
         }
         chargeTo(to)
 
-        return totals.filterKeys { it in blockedPackages }
+        return totals.filterKeys { it in trackedPackages }
     }
 }

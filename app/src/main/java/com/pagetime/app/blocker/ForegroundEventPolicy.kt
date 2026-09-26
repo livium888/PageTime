@@ -93,4 +93,24 @@ object ForegroundEventPolicy {
      */
     fun foregroundForEvent(activeWindowPackage: String?, selfPackage: String): String? =
         activeWindowPackage?.takeIf { isTrustedForegroundPackage(it, selfPackage) }
+
+    /**
+     * Whether becoming the foreground window is a genuine RETURN to it, as
+     * opposed to continuing to sit inside the one already in front.
+     *
+     * Exists for one gap: a browser resumed onto a page from before fires the
+     * same window-state event whether the reader switched away for a second or
+     * has been reading the page continuously, and a page cannot have become
+     * newly blocked by nobody touching it — so re-checking on every one of
+     * those events would be pure waste, not correctness. Only the first event
+     * after a real absence is worth paying for.
+     *
+     * [current] is assumed already trusted (see [isTrustedForegroundPackage]);
+     * this only asks whether it is DIFFERENT from the last trusted package
+     * seen, which is the entire rule. Null for [previous] means nothing has
+     * been established yet — a cold service connect, or the first event since
+     * launch — and counts as a return, the same way the first sight of a
+     * blocked app starts a block rather than waiting for a second sighting.
+     */
+    fun enteredForeground(previous: String?, current: String): Boolean = current != previous
 }

@@ -1,6 +1,7 @@
 package com.pagetime.app.data.local
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -14,7 +15,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
+import com.pagetime.app.data.review.CardTextSize
+import com.pagetime.app.data.review.SchedulingPolicy
+import com.pagetime.app.data.review.Steps
 import com.pagetime.app.blocker.BlockEnforcementPolicy
+import com.pagetime.app.blocker.SiteMode
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +34,66 @@ data class Settings(
     val ratio: Double = 1.0,
     /** Browse seconds earned per correct flashcard review (HARD/GOOD/EASY). */
     val flashcardRewardSeconds: Long = 30,
+    /**
+     * How many of those seconds flashcards (PageTime's own cards AND Anki,
+     * both route through the same reward call) can pay in total per day —
+     * see [com.pagetime.app.domain.BalanceManager.earnFromFlashcard]. Meant
+     * to keep flashcards a quick top-up rather than a way to fund a whole
+     * day's browsing without ever opening a book; reading itself has no cap.
+     */
+    val flashcardDailyCapSeconds: Long = 300,
+    /**
+     * Which direction site rules work in — see [SiteMode]. Defaults to the
+     * original blocklist behaviour, so nothing changes for a reader who
+     * never visits the toggle.
+     */
+    val siteMode: SiteMode = SiteMode.BLOCKLIST,
+    /**
+     * When the current allowlist's one-time free-setup window closes (0 =
+     * none active) — see [SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS]. Set by
+     * [SettingsRepository.setSiteMode] on the transition into allowlist
+     * mode, nowhere else, so re-reading it never mistakes "still in
+     * blocklist mode" for a window that should be running.
+     */
+    val allowlistSetupGraceUntil: Long = 0,
+    /**
+     * Whether time spent in a reader-chosen trusted app (e.g. Kindle, picked
+     * on [com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen]) is
+     * credited as reading — off by default, since unlike every other reward
+     * here it grants credit on trust rather than on something PageTime can
+     * itself verify. See [com.pagetime.app.data.usage.ExternalReadingTracker]
+     * and [com.pagetime.app.domain.ExternalReadingCredit].
+     */
+    val externalReadingEnabled: Boolean = false,
+    /**
+     * The most external-reading credit (already discounted by
+     * [com.pagetime.app.domain.ExternalReadingCredit]) that can be banked per
+     * day — see [com.pagetime.app.domain.BalanceManager.earnFromExternalReading].
+     * Bounds what a phone merely left open on a trusted app can cost, the
+     * same way [flashcardDailyCapSeconds] bounds a flashcard's better hourly
+     * rate.
+     */
+    val externalReadingDailyCapSeconds: Long = 3_600,
+    /**
+     * Browse seconds earned per explain-back attempt scored at least PARTLY.
+     * Higher than the flashcard reward by default: writing and being marked on
+     * a real explanation is minutes of work, not a single tap.
+     */
+    val explainBackRewardSeconds: Long = 90,
+    /**
+     * Browse seconds earned per new link made in the slip box. Between the
+     * flashcard and explain-back rewards: connecting two already-captured
+     * ideas is real synthesis, but less work than writing a fresh explanation.
+     */
+    val lumenLinkRewardSeconds: Long = 45,
+    /**
+     * Browse seconds paid out as a surprise bonus for sustained reading in one
+     * sitting — see [com.pagetime.app.domain.ReadingMomentum] for when. Unlike
+     * the other rewards, nothing is graded; every second behind it was already
+     * guard-approved reading time, so the only question is timing, not
+     * correctness.
+     */
+    val readingMomentumBonusSeconds: Long = 60,
     val totalReadingSeconds: Long = 0,
     /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
     val quickDisableUntil: Long = 0,
@@ -72,8 +137,16 @@ data class ReaderSettings(
     val lineHeight: Float = 1.5f,
     /** "serif", "sans", "literata", or "mono" */
     val fontFamily: String = "serif",
-    /** "paper", "light", "sepia", "dark", or "night" */
-    val theme: String = "light",
+    /**
+     * "paper", "light", "sepia", "dark", or "night".
+     *
+     * The stored value is the reader's own choice; when they have never made
+     * one, the repository resolves it from the system's light/dark setting
+     * rather than defaulting to a white page — see
+     * [SettingsRepository.readerSettings]. The default here is only what a
+     * value that never went through the repository looks like.
+     */
+    val theme: String = "paper",
     val marginDp: Float = 20f,
     /** "justify" or "left" — how both plain-text and EPUB pages align body copy. */
     val alignment: String = "justify",
@@ -125,7 +198,7 @@ internal fun ReaderSettings.normalized(): ReaderSettings = copy(
     fontSizeSp = fontSizeSp.coerceIn(12f, 32f),
     lineHeight = lineHeight.coerceIn(1.0f, 2.2f),
     fontFamily = fontFamily.takeIf { it in setOf("serif", "sans", "literata", "mono") } ?: "serif",
-    theme = theme.takeIf { it in setOf("paper", "light", "sepia", "dark", "night") } ?: "light",
+    theme = theme.takeIf { it in setOf("paper", "light", "sepia", "dark", "night") } ?: "paper",
     marginDp = marginDp.coerceIn(8f, 48f),
     warmth = warmth.coerceIn(0f, 1f),
     // Capped well short of 1: a veil dense enough to hide the text would look
@@ -149,6 +222,20 @@ data class MapMoment(
     val featuredConcept: String?,
     val featuredRelationship: String?,
     val createdAt: Long
+)
+
+/**
+ * The Library screen's one daily, dismissible book suggestion — see
+ * [com.pagetime.app.data.LibrarianSuggester]. [shownEpochDay] is what makes
+ * it daily rather than permanent: a new day with a different
+ * [shownEpochDay] means [com.pagetime.app.data.LibrarianPicks.needsRefresh]
+ * is true again, and [dismissed] resets the moment a fresh one is saved.
+ */
+data class LibrarianSuggestion(
+    val bookId: String,
+    val message: String,
+    val shownEpochDay: Long,
+    val dismissed: Boolean
 )
 
 class SettingsRepository(private val context: Context) {
@@ -181,6 +268,19 @@ class SettingsRepository(private val context: Context) {
         val BALANCE = longPreferencesKey("browse_balance_seconds")
         val RATIO = doublePreferencesKey("ratio")
         val FLASHCARD_REWARD = longPreferencesKey("flashcard_reward_seconds")
+        val FLASHCARD_DAILY_CAP = longPreferencesKey("flashcard_daily_cap_seconds")
+        val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
+        val FLASHCARD_EARNED_EPOCH_DAY = longPreferencesKey("flashcard_earned_epoch_day")
+        val SITE_MODE = stringPreferencesKey("site_mode")
+        val ALLOWLIST_SETUP_GRACE_UNTIL = longPreferencesKey("allowlist_setup_grace_until")
+        val EXTERNAL_READING_ENABLED = booleanPreferencesKey("external_reading_enabled")
+        val EXTERNAL_READING_DAILY_CAP = longPreferencesKey("external_reading_daily_cap_seconds")
+        val EXTERNAL_READING_EARNED_TODAY = longPreferencesKey("external_reading_earned_today_seconds")
+        val EXTERNAL_READING_EARNED_EPOCH_DAY = longPreferencesKey("external_reading_earned_epoch_day")
+        val LAST_EXTERNAL_READING_CHECK_AT = longPreferencesKey("last_external_reading_check_at")
+        val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
+        val LUMEN_LINK_REWARD = longPreferencesKey("lumen_link_reward_seconds")
+        val READING_MOMENTUM_BONUS = longPreferencesKey("reading_momentum_bonus_seconds")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
@@ -198,6 +298,7 @@ class SettingsRepository(private val context: Context) {
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
+        val CHAPTER_PROMPT = stringPreferencesKey("chapter_prompt_template")
         val LUMEN_MODEL_URL = stringPreferencesKey("lumen_model_url")
         val LUMEN_CLOUD_RESCUE = booleanPreferencesKey("lumen_cloud_rescue")
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
@@ -208,6 +309,21 @@ class SettingsRepository(private val context: Context) {
         val REVIEW_REMINDER_LAST_SENT = longPreferencesKey("review_reminder_last_sent")
         val REVIEW_REMINDER_STREAK = intPreferencesKey("review_reminder_streak")
 
+
+        val PDF_DARK = booleanPreferencesKey("pdf_reader_dark")
+
+        /** Small/medium/large review card text; see [CardTextSize]. */
+        val CARD_TEXT_SIZE = stringPreferencesKey("review_card_text_size")
+
+        // Anki's deck options, in the subset FSRS leaves standing; see
+        // [SchedulingPolicy]. Steps are stored in Anki's own syntax ("10m",
+        // "1m 10m 1d") and the empty string is a real value meaning no steps.
+        val LEARNING_STEPS = stringPreferencesKey("scheduler_learning_steps")
+        val RELEARNING_STEPS = stringPreferencesKey("scheduler_relearning_steps")
+        val MINIMUM_INTERVAL_DAYS = intPreferencesKey("scheduler_minimum_interval_days")
+        val MAXIMUM_INTERVAL_DAYS = intPreferencesKey("scheduler_maximum_interval_days")
+        val DESIRED_RETENTION = floatPreferencesKey("scheduler_desired_retention")
+        val FUZZING_ENABLED = booleanPreferencesKey("scheduler_fuzzing_enabled")
 
         val READER_WARMTH = floatPreferencesKey("reader_warmth")
         val READER_NIGHT_DIM = floatPreferencesKey("reader_night_dim")
@@ -238,6 +354,11 @@ class SettingsRepository(private val context: Context) {
         val MAP_MOMENT_FEATURED_CONCEPT = stringPreferencesKey("map_moment_featured_concept")
         val MAP_MOMENT_FEATURED_RELATIONSHIP = stringPreferencesKey("map_moment_featured_relationship")
         val MAP_MOMENT_CREATED_AT = longPreferencesKey("map_moment_created_at")
+
+        val LIBRARIAN_BOOK_ID = stringPreferencesKey("librarian_book_id")
+        val LIBRARIAN_MESSAGE = stringPreferencesKey("librarian_message")
+        val LIBRARIAN_SHOWN_EPOCH_DAY = longPreferencesKey("librarian_shown_epoch_day")
+        val LIBRARIAN_DISMISSED = booleanPreferencesKey("librarian_dismissed")
     }
 
     private companion object {
@@ -280,6 +401,10 @@ class SettingsRepository(private val context: Context) {
         return id?.takeIf { it.isNotBlank() }
     }
 
+    /** Reactive form of [lastReadBookId], for UI that should update the moment a new book is opened. */
+    val observeLastReadBookId: Flow<String?> =
+        context.dataStore.data.map { it[Keys.LAST_READ_BOOK]?.takeIf { id -> id.isNotBlank() } }
+
     suspend fun setLastReadBookId(id: String) {
         context.dataStore.edit { it[Keys.LAST_READ_BOOK] = id }
     }
@@ -311,6 +436,42 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    val librarianSuggestion: Flow<LibrarianSuggestion?> = context.dataStore.data.map { p ->
+        val bookId = p[Keys.LIBRARIAN_BOOK_ID] ?: return@map null
+        LibrarianSuggestion(
+            bookId = bookId,
+            message = p[Keys.LIBRARIAN_MESSAGE] ?: return@map null,
+            shownEpochDay = p[Keys.LIBRARIAN_SHOWN_EPOCH_DAY] ?: 0L,
+            dismissed = p[Keys.LIBRARIAN_DISMISSED] ?: false
+        )
+    }
+
+    suspend fun currentLibrarianSuggestion(): LibrarianSuggestion? = librarianSuggestion.first()
+
+    /** Replaces the day's suggestion outright — always undismissed, since it's new. */
+    suspend fun saveLibrarianSuggestion(bookId: String, message: String, epochDay: Long) {
+        context.dataStore.edit {
+            it[Keys.LIBRARIAN_BOOK_ID] = bookId
+            it[Keys.LIBRARIAN_MESSAGE] = message
+            it[Keys.LIBRARIAN_SHOWN_EPOCH_DAY] = epochDay
+            it[Keys.LIBRARIAN_DISMISSED] = false
+        }
+    }
+
+    suspend fun dismissLibrarianSuggestion() {
+        context.dataStore.edit { it[Keys.LIBRARIAN_DISMISSED] = true }
+    }
+
+    /** Nothing was worth suggesting today (empty library, or nothing near-done or unopened). */
+    suspend fun clearLibrarianSuggestion() {
+        context.dataStore.edit {
+            it.remove(Keys.LIBRARIAN_BOOK_ID)
+            it.remove(Keys.LIBRARIAN_MESSAGE)
+            it.remove(Keys.LIBRARIAN_SHOWN_EPOCH_DAY)
+            it.remove(Keys.LIBRARIAN_DISMISSED)
+        }
+    }
+
     /** Exact reading position of a book as a Readium Locator JSON string. */
     suspend fun savedLocator(bookId: String): String? {
         val json = context.dataStore.data.first()[locatorKey(bookId)]
@@ -339,6 +500,19 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun getPdfPage(bookId: String): Int =
         context.dataStore.data.first()[pdfPageKey(bookId)] ?: 0
+
+    /**
+     * The page theme the PDF reader was last left in, or null if never chosen.
+     *
+     * Null is a real answer and not the same as false: it means "follow the
+     * system", which is what lets the reader open dark at night without
+     * overriding someone who deliberately chose a white page in the daytime.
+     */
+    suspend fun pdfDarkMode(): Boolean? = context.dataStore.data.first()[Keys.PDF_DARK]
+
+    suspend fun setPdfDarkMode(dark: Boolean) {
+        context.dataStore.edit { it[Keys.PDF_DARK] = dark }
+    }
 
     private fun locatorKey(bookId: String) =
         stringPreferencesKey("locator_$bookId")
@@ -433,6 +607,14 @@ class SettingsRepository(private val context: Context) {
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
             ratio = p[Keys.RATIO] ?: 1.0,
             flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
+            flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
+            siteMode = SiteMode.fromKey(p[Keys.SITE_MODE]),
+            allowlistSetupGraceUntil = p[Keys.ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
+            externalReadingEnabled = p[Keys.EXTERNAL_READING_ENABLED] ?: false,
+            externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L,
+            explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
+            lumenLinkRewardSeconds = p[Keys.LUMEN_LINK_REWARD] ?: 45L,
+            readingMomentumBonusSeconds = p[Keys.READING_MOMENTUM_BONUS] ?: 60L,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
@@ -457,6 +639,24 @@ class SettingsRepository(private val context: Context) {
      */
     suspend fun lumenPromptTemplate(): String? =
         context.dataStore.data.first()[Keys.LUMEN_PROMPT]?.takeIf { it.isNotBlank() }
+
+    /**
+     * The reader's own instructions for chapter and PDF flashcards, or null
+     * while the built-in ones are in use.
+     *
+     * Stored only when it differs from the default, for the same reason as the
+     * capture prompt: an app update that improves the shipped text should
+     * reach everyone who never tailored theirs.
+     */
+    suspend fun chapterPromptTemplate(): String? =
+        context.dataStore.data.first()[Keys.CHAPTER_PROMPT]?.takeIf { it.isNotBlank() }
+
+    suspend fun setChapterPromptTemplate(value: String?) {
+        context.dataStore.edit { prefs ->
+            if (value.isNullOrBlank()) prefs.remove(Keys.CHAPTER_PROMPT)
+            else prefs[Keys.CHAPTER_PROMPT] = value
+        }
+    }
 
     /**
      * Where the offline model is downloaded from, or null for the built-in one.
@@ -539,6 +739,62 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setRemindersPermissionAsked(value: Boolean) {
         context.dataStore.edit { it[Keys.REVIEW_REMINDERS_ASKED] = value }
+    }
+
+    /**
+     * How large the review card's own text is drawn.
+     *
+     * A separate Flow rather than a field on [Settings] because it is a reading
+     * comfort setting, like [readerSettings], and it is read by a screen that
+     * has no other use for the settings bundle.
+     */
+    val cardTextSize: Flow<CardTextSize> = context.dataStore.data.map { p ->
+        CardTextSize.fromKey(p[Keys.CARD_TEXT_SIZE])
+    }
+
+    suspend fun setCardTextSize(size: CardTextSize) {
+        context.dataStore.edit { it[Keys.CARD_TEXT_SIZE] = size.key }
+    }
+
+    /**
+     * How the reader has asked to be scheduled; see [SchedulingPolicy].
+     *
+     * Read per review rather than captured once at startup, so a change in
+     * Settings applies to the next card answered instead of the next launch.
+     * The scheduler used to be built once when the app started, which meant a
+     * setting could sit on screen looking saved while nothing acted on it.
+     */
+    val schedulingPolicy: Flow<SchedulingPolicy> = context.dataStore.data.map { p ->
+        val defaults = SchedulingPolicy()
+        SchedulingPolicy(
+            // A stored key that will not parse falls back to the default rather
+            // than to an empty list: a corrupt value must not silently switch
+            // the reader onto "no steps", which is a real and quite different
+            // schedule. Blank is only ever "no steps" when it was stored as
+            // blank, by the reader saying so.
+            learningSteps = p[Keys.LEARNING_STEPS]?.let(Steps::parse) ?: defaults.learningSteps,
+            relearningSteps = p[Keys.RELEARNING_STEPS]?.let(Steps::parse) ?: defaults.relearningSteps,
+            minimumIntervalDays = p[Keys.MINIMUM_INTERVAL_DAYS] ?: defaults.minimumIntervalDays,
+            maximumIntervalDays = p[Keys.MAXIMUM_INTERVAL_DAYS] ?: defaults.maximumIntervalDays,
+            desiredRetention = (p[Keys.DESIRED_RETENTION] ?: defaults.desiredRetention.toFloat())
+                .toDouble(),
+            fuzzingEnabled = p[Keys.FUZZING_ENABLED] ?: defaults.fuzzingEnabled,
+        ).normalised()
+    }
+
+    /** The policy as it stands right now, for a caller that is about to schedule something. */
+    suspend fun currentSchedulingPolicy(): SchedulingPolicy = schedulingPolicy.first()
+
+    suspend fun setSchedulingPolicy(policy: SchedulingPolicy) {
+        val normalised = policy.normalised()
+        context.dataStore.edit {
+            it[Keys.LEARNING_STEPS] = Steps.format(normalised.learningSteps)
+            it[Keys.RELEARNING_STEPS] = Steps.format(normalised.relearningSteps)
+            it[Keys.MINIMUM_INTERVAL_DAYS] = normalised.minimumIntervalDays
+            it[Keys.MAXIMUM_INTERVAL_DAYS] = normalised.maximumIntervalDays
+            it[Keys.DESIRED_RETENTION] = normalised.desiredRetention.toFloat()
+            it[Keys.FUZZING_ENABLED] = normalised.fuzzingEnabled
+        }
     }
 
     /** Reminders stay quiet until this instant. Orbit offers the same escape. */
@@ -634,12 +890,26 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.GENERATION_MODE] = mode.key }
     }
 
+    /**
+     * The page colour a reader who has never chosen one starts on.
+     *
+     * This used to be Light unconditionally — a pure white page, on a phone
+     * that may well be in dark mode, opened at night. The system's own answer
+     * is the right starting point; the appearance sheet is where anyone who
+     * disagrees changes it, and that choice is stored and wins from then on.
+     */
+    private fun defaultReaderTheme(): String = if (isSystemDark()) "dark" else "paper"
+
+    private fun isSystemDark(): Boolean =
+        (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
     val readerSettings: Flow<ReaderSettings> = context.dataStore.data.map { p ->
         ReaderSettings(
             fontSizeSp = p[Keys.FONT_SIZE] ?: 18f,
             lineHeight = p[Keys.LINE_HEIGHT] ?: 1.5f,
             fontFamily = p[Keys.FONT_FAMILY] ?: "serif",
-            theme = p[Keys.THEME] ?: "light",
+            theme = p[Keys.THEME] ?: defaultReaderTheme(),
             marginDp = p[Keys.MARGIN] ?: 20f,
             alignment = p[Keys.ALIGNMENT] ?: "justify",
             conceptHints = p[Keys.CONCEPT_HINTS] ?: "subtle",
@@ -903,6 +1173,105 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setFlashcardRewardSeconds(value: Long) {
         context.dataStore.edit { it[Keys.FLASHCARD_REWARD] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun flashcardDailyCapSeconds(): Long =
+        context.dataStore.data.first()[Keys.FLASHCARD_DAILY_CAP] ?: 300L
+
+    suspend fun setFlashcardDailyCapSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.FLASHCARD_DAILY_CAP] = value.coerceIn(0L, 3_600L) }
+    }
+
+    /**
+     * Switches which site-rule list is active, and — only on a genuine
+     * transition INTO [SiteMode.ALLOWLIST] — opens its one-time free-setup
+     * window. Read-modify-write in one [edit] so a reader who is already in
+     * allowlist mode and merely re-confirms it (tapping an already-selected
+     * option) can never mint a fresh window for free; the comparison has to
+     * see the value this same transaction is about to write.
+     */
+    suspend fun setSiteMode(mode: SiteMode) {
+        context.dataStore.edit { prefs ->
+            val current = SiteMode.fromKey(prefs[Keys.SITE_MODE])
+            if (SiteMode.entersAllowlist(current, mode)) {
+                prefs[Keys.ALLOWLIST_SETUP_GRACE_UNTIL] =
+                    System.currentTimeMillis() + SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS
+            }
+            prefs[Keys.SITE_MODE] = mode.key
+        }
+    }
+
+    /** What's been earned from flashcards/Anki so far today — 0 if nothing has been logged yet. */
+    suspend fun flashcardEarnedToday(): Long =
+        context.dataStore.data.first()[Keys.FLASHCARD_EARNED_TODAY] ?: 0L
+
+    /** The epoch day [flashcardEarnedToday] was last logged against — yesterday's tally if this is stale. */
+    suspend fun flashcardEarnedEpochDay(): Long =
+        context.dataStore.data.first()[Keys.FLASHCARD_EARNED_EPOCH_DAY] ?: 0L
+
+    suspend fun setFlashcardEarnedToday(epochDay: Long, seconds: Long) {
+        context.dataStore.edit {
+            it[Keys.FLASHCARD_EARNED_EPOCH_DAY] = epochDay
+            it[Keys.FLASHCARD_EARNED_TODAY] = seconds
+        }
+    }
+
+    suspend fun externalReadingEnabled(): Boolean =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_ENABLED] ?: false
+
+    suspend fun setExternalReadingEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.EXTERNAL_READING_ENABLED] = value }
+    }
+
+    suspend fun externalReadingDailyCapSeconds(): Long =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L
+
+    suspend fun setExternalReadingDailyCapSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.EXTERNAL_READING_DAILY_CAP] = value.coerceIn(0L, 4L * 3_600L) }
+    }
+
+    /** What's been credited from external reading (Kindle) so far today — 0 if nothing logged yet. */
+    suspend fun externalReadingEarnedToday(): Long =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_EARNED_TODAY] ?: 0L
+
+    /** The epoch day [externalReadingEarnedToday] was last logged against. */
+    suspend fun externalReadingEarnedEpochDay(): Long =
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_EARNED_EPOCH_DAY] ?: 0L
+
+    suspend fun setExternalReadingEarnedToday(epochDay: Long, seconds: Long) {
+        context.dataStore.edit {
+            it[Keys.EXTERNAL_READING_EARNED_EPOCH_DAY] = epochDay
+            it[Keys.EXTERNAL_READING_EARNED_TODAY] = seconds
+        }
+    }
+
+    /** Wall-clock time of the last external-reading sweep, or null before the first one. */
+    suspend fun lastExternalReadingCheckAt(): Long? =
+        context.dataStore.data.first()[Keys.LAST_EXTERNAL_READING_CHECK_AT]
+
+    suspend fun setLastExternalReadingCheckAt(value: Long) {
+        context.dataStore.edit { it[Keys.LAST_EXTERNAL_READING_CHECK_AT] = value }
+    }
+
+    suspend fun explainBackRewardSeconds(): Long =
+        context.dataStore.data.first()[Keys.EXPLAIN_BACK_REWARD] ?: 90L
+
+    suspend fun setExplainBackRewardSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.EXPLAIN_BACK_REWARD] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun lumenLinkRewardSeconds(): Long =
+        context.dataStore.data.first()[Keys.LUMEN_LINK_REWARD] ?: 45L
+
+    suspend fun setLumenLinkRewardSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.LUMEN_LINK_REWARD] = value.coerceIn(0L, 3_600L) }
+    }
+
+    suspend fun readingMomentumBonusSeconds(): Long =
+        context.dataStore.data.first()[Keys.READING_MOMENTUM_BONUS] ?: 60L
+
+    suspend fun setReadingMomentumBonusSeconds(value: Long) {
+        context.dataStore.edit { it[Keys.READING_MOMENTUM_BONUS] = value.coerceIn(0L, 3_600L) }
     }
 
     suspend fun setAiAnalysisLevel(level: AiAnalysisLevel) {

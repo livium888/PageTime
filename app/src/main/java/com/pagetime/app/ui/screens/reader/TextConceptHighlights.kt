@@ -85,12 +85,23 @@ fun rememberAnnotatedPage(
 private val ReaderHighlightBackground = Color(0xFF7CB342).copy(alpha = 0.30f)
 
 /**
+ * The background tint for the span being grabbed right now.
+ *
+ * The same hue as a saved highlight, laid down harder. A reader who has just
+ * long-pressed a sentence is looking at two things at once — what is being
+ * chosen and what was chosen before — and a second colour would read as two
+ * kinds of highlight rather than one in progress. The weight does the work.
+ */
+private val ReaderGrabBackground = Color(0xFF7CB342).copy(alpha = 0.55f)
+
+/**
  * The page with persistent highlights merged in.
  *
  * Highlights are whole-book offsets; [pageStartOffset]..[pageEndOffset] is the
- * page's window onto the text. Concept hints and reader highlights are two
- * separate style layers and both survive the merge: overlapping spans simply
- * carry both style annotations, which Compose merges per property at draw.
+ * page's window onto the text. Concept hints, saved highlights and the live
+ * grab are separate style layers and all of them survive the merge: overlapping
+ * spans simply carry several style annotations, which Compose resolves per
+ * property at draw, and the last one wins where they collide.
  */
 @Composable
 fun rememberAnnotatedPageWithHighlights(
@@ -100,37 +111,62 @@ fun rememberAnnotatedPageWithHighlights(
     highlights: List<TextHighlightEntity>,
     concepts: List<ConceptEntity>,
     level: String,
-    activeConceptId: String?
+    activeConceptId: String?,
+    /** The sentence being grabbed, as whole-book offsets, or null. */
+    pendingSpan: Pair<Int, Int>? = null
 ): AnnotatedString {
     val ranges = remember(pageText, pageStartOffset, pageEndOffset, highlights) {
         TextHighlightSpans.txtPageRanges(highlights, pageStartOffset, pageEndOffset)
     }
-    val concept = rememberAnnotatedPage(pageText, concepts, level, activeConceptId)
-    if (ranges.isEmpty()) return concept
-
-    val background = remember(pageText, ranges) {
-        buildAnnotatedString {
-            var cursor = 0
-            for ((start, end) in ranges) {
-                // The page text is trimmed at layout time, so a range touching
-                // the page edge may run past the rendered text; clamp it.
-                val safeStart = start.coerceIn(0, pageText.length)
-                val safeEnd = end.coerceIn(safeStart, pageText.length)
-                if (safeEnd <= safeStart) continue
-                if (safeStart > cursor) append(pageText.substring(cursor, safeStart))
-                withStyle(SpanStyle(background = ReaderHighlightBackground)) {
-                    append(pageText.substring(safeStart, safeEnd))
-                }
-                cursor = safeEnd
-            }
-            if (cursor < pageText.length) append(pageText.substring(cursor))
+    val grab = remember(pageText, pageStartOffset, pageEndOffset, pendingSpan) {
+        pendingSpan?.let {
+            TextHighlightSpans.clipToPage(it.first, it.second, pageStartOffset, pageEndOffset)
         }
     }
-    return remember(pageText, concept.spanStyles, background.spanStyles) {
+    val concept = rememberAnnotatedPage(pageText, concepts, level, activeConceptId)
+    if (ranges.isEmpty() && grab == null) return concept
+
+    val saved = remember(pageText, ranges) {
+        backgroundLayer(pageText, ranges, ReaderHighlightBackground)
+    }
+    val selecting = remember(pageText, grab) {
+        backgroundLayer(pageText, listOfNotNull(grab), ReaderGrabBackground)
+    }
+    return remember(pageText, concept.spanStyles, saved.spanStyles, selecting.spanStyles) {
         AnnotatedString(
             text = pageText,
-            spanStyles = concept.spanStyles + background.spanStyles,
+            spanStyles = concept.spanStyles + saved.spanStyles + selecting.spanStyles,
             paragraphStyles = concept.paragraphStyles
         )
+    }
+}
+
+/**
+ * One background layer over [text], for [ranges] given page-relative.
+ *
+ * The ranges are already merged, so they never overlap and a single
+ * left-to-right pass with a cursor lays them all down. A range touching a page
+ * edge may run past the rendered text — the page text is trimmed at layout
+ * time — so both ends are clamped rather than trusted.
+ */
+private fun backgroundLayer(
+    text: String,
+    ranges: List<Pair<Int, Int>>,
+    color: Color
+): AnnotatedString {
+    if (ranges.isEmpty()) return AnnotatedString("")
+    return buildAnnotatedString {
+        var cursor = 0
+        for ((start, end) in ranges) {
+            val safeStart = start.coerceIn(0, text.length)
+            val safeEnd = end.coerceIn(safeStart, text.length)
+            if (safeEnd <= safeStart) continue
+            if (safeStart > cursor) append(text.substring(cursor, safeStart))
+            withStyle(SpanStyle(background = color)) {
+                append(text.substring(safeStart, safeEnd))
+            }
+            cursor = safeEnd
+        }
+        if (cursor < text.length) append(text.substring(cursor))
     }
 }

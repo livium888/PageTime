@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessibilityNew
@@ -20,12 +21,15 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,7 +40,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Slider
 import kotlin.math.roundToLong
 import android.Manifest
 import android.content.pm.PackageManager
@@ -60,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import android.content.ClipData
@@ -77,6 +81,7 @@ import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
+import com.pagetime.app.data.learning.ChapterPromptText
 import com.pagetime.app.data.learning.GeminiModel
 import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.PageTimeApp
@@ -96,10 +101,13 @@ import com.pagetime.app.ui.formatMinutes
 @Composable
 fun SettingsScreen(
     onManageBlockedApps: () -> Unit,
+    onManageExternalReadingApps: () -> Unit,
+    onManageSiteRules: () -> Unit,
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
     onAiUsage: () -> Unit,
     onAiModels: () -> Unit,
+    onScheduling: () -> Unit,
     viewModel: SettingsViewModel = viewModel()
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -110,25 +118,18 @@ fun SettingsScreen(
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
     val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
-
-    // Local drag state for the reading-rate slider. Writing to DataStore on
-    // every drag tick made the flow re-emit mid-drag and the thumb fight the
-    // finger (it appeared stuck); the value is committed once on release.
-    var ratioDraft by remember { mutableStateOf<Double?>(null) }
-    var flashcardRewardDraft by remember { mutableStateOf<Long?>(null) }
-    var costDraftMinutes by remember { mutableStateOf<Float?>(null) }
-    var lengthDraftMinutes by remember { mutableStateOf<Float?>(null) }
-    // The travel a fenced slider was given when the drag began, held until the
-    // finger comes up. The gate ticks once a second, so without this a session
-    // expiring mid-drag would move the bounds under the reader's thumb — the
-    // same class of fault as the write-every-frame ratchet these drafts fixed.
-    var costBoundsHeld by remember { mutableStateOf<LongRange?>(null) }
-    var lengthBoundsHeld by remember { mutableStateOf<LongRange?>(null) }
+    val flashcardDailyCapSeconds by viewModel.flashcardDailyCapSeconds.collectAsStateWithLifecycle()
+    val externalReadingEnabled by viewModel.externalReadingEnabled.collectAsStateWithLifecycle()
+    val externalReadingDailyCapSeconds by viewModel.externalReadingDailyCapSeconds.collectAsStateWithLifecycle()
+    val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
+    val lumenLinkRewardSeconds by viewModel.lumenLinkRewardSeconds.collectAsStateWithLifecycle()
+    val readingMomentumBonusSeconds by viewModel.readingMomentumBonusSeconds.collectAsStateWithLifecycle()
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
     var crashLogText by remember { mutableStateOf<String?>(null) }
     val settingsContext = LocalContext.current
+
     LaunchedEffect(Unit) {
         crashLogText =
             PageTimeApp.crashDirOf(settingsContext)
@@ -272,104 +273,215 @@ fun SettingsScreen(
                     Spacer(Modifier.height(4.dp))
                 }
 
-                // Bounds are frozen for the length of a drag and only ever
-                // read live when no finger is down. Recomputing them mid-drag
-                // is what made the first version of this fence unusable.
-                val costBounds = costBoundsHeld
-                    ?: GateState.costBounds(gate.sessionCostSeconds, gate.canLoosenTheRules)
-                val costStart = (costBounds.first / 60).toFloat()
-                val costEnd = (costBounds.last / 60).toFloat()
-                val costMovable = GateState.hasTravel(costBounds)
+                // The bounds are the gate's, not the screen's, and they move
+                // with it: while the reader has no app time in hand the terms
+                // may only be made stricter. Typing is the one instrument that
+                // can hold that rule honestly — a slider can only refuse by
+                // springing back, which reads as broken, and it cannot show the
+                // number the reader actually asked for.
+                val costBounds =
+                    GateState.costBounds(gate.sessionCostSeconds, gate.canLoosenTheRules)
+                TypedSettingField(
+                    title = "Reading per session",
+                    help = "How much focused reading buys one session.",
+                    current = BlockScreenText.span(gate.sessionCostSeconds),
+                    inputLabel = "Minutes of reading",
+                    inputHint = "e.g. 90",
+                    allowDecimal = false,
+                    enabled = GateState.hasTravel(costBounds),
+                    enabledNote =
+                        "Already at the ceiling — ${BlockScreenText.span(costBounds.last)} of " +
+                            "reading per session. That is as cheap as the price can be.",
+                    minAllowed = costBounds.first / 60.0,
+                    maxAllowed = costBounds.last / 60.0,
+                    unit = "minutes",
+                    fenceNote = if (gate.canLoosenTheRules) null else COST_FENCE_NOTE,
+                    describe = { BlockScreenText.span((it * 60).roundToLong()) },
+                    onCommit = { viewModel.setSessionCostSeconds((it * 60).roundToLong()) },
+                )
 
-                Text("Reading per session", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    BlockScreenText.span(gate.sessionCostSeconds),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "How much focused reading buys one session.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = (costDraftMinutes ?: (gate.sessionCostSeconds / 60).toFloat())
-                        .coerceIn(costStart, maxOf(costEnd, costStart)),
-                    onValueChange = {
-                        // Freeze on the first movement, not on release.
-                        if (costBoundsHeld == null) costBoundsHeld = costBounds
-                        costDraftMinutes = it
-                    },
-                    onValueChangeFinished = {
-                        costDraftMinutes?.let {
-                            viewModel.setSessionCostSeconds(it.roundToLong() * 60)
-                        }
-                        costDraftMinutes = null
-                        costBoundsHeld = null
-                    },
-                    // Never a single point: a range of zero width throws.
-                    valueRange = costStart..maxOf(costEnd, costStart + 1f),
-                    enabled = costMovable
-                )
-                Spacer(Modifier.height(12.dp))
-
-                val lengthBounds = lengthBoundsHeld
-                    ?: GateState.lengthBounds(gate.sessionLengthSeconds, gate.canLoosenTheRules)
-                val lengthStart = (lengthBounds.first / 60).toFloat()
-                val lengthEnd = (lengthBounds.last / 60).toFloat()
-                val lengthMovable = GateState.hasTravel(lengthBounds)
-
-                Text("Session length", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    BlockScreenText.span(gate.sessionLengthSeconds),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "The app time one session buys, spent only while you use it.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = (lengthDraftMinutes ?: (gate.sessionLengthSeconds / 60).toFloat())
-                        .coerceIn(lengthStart, maxOf(lengthEnd, lengthStart)),
-                    onValueChange = {
-                        if (lengthBoundsHeld == null) lengthBoundsHeld = lengthBounds
-                        lengthDraftMinutes = it
-                    },
-                    onValueChangeFinished = {
-                        lengthDraftMinutes?.let {
-                            viewModel.setSessionLengthSeconds(it.roundToLong() * 60)
-                        }
-                        lengthDraftMinutes = null
-                        lengthBoundsHeld = null
-                    },
-                    valueRange = lengthStart..maxOf(lengthEnd, lengthStart + 1f),
-                    enabled = lengthMovable
+                val lengthBounds =
+                    GateState.lengthBounds(gate.sessionLengthSeconds, gate.canLoosenTheRules)
+                TypedSettingField(
+                    title = "Session length",
+                    help = "The app time one session buys, spent only while you use it.",
+                    current = BlockScreenText.span(gate.sessionLengthSeconds),
+                    inputLabel = "Minutes of app time",
+                    inputHint = "e.g. 30",
+                    allowDecimal = false,
+                    enabled = GateState.hasTravel(lengthBounds),
+                    enabledNote =
+                        "Already at the floor — ${BlockScreenText.span(lengthBounds.first)} per " +
+                            "session, the shortest allowed. Longer sessions need app time in hand.",
+                    minAllowed = lengthBounds.first / 60.0,
+                    maxAllowed = lengthBounds.last / 60.0,
+                    unit = "minutes",
+                    fenceNote = if (gate.canLoosenTheRules) null else LENGTH_FENCE_NOTE,
+                    describe = { BlockScreenText.span((it * 60).roundToLong()) },
+                    onCommit = { viewModel.setSessionLengthSeconds((it * 60).roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
                 // The reward is paid in whichever currency is live: reading
-                // credit under the gate, browse seconds with it off.
-                Text("Flashcard reward", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Each correct flashcard answer " +
+                // credit under the gate, browse seconds with it off. Typed
+                // rather than dragged because the slider's 23 steps could only
+                // express multiples of five, and a reward is a number a reader
+                // may want exactly.
+                TypedSettingField(
+                    title = "Flashcard reward",
+                    help = "Each correct flashcard answer " +
                         (if (gate.enabled) {
-                            "banks ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of reading credit"
+                            "banks $flashcardRewardSeconds seconds of reading credit"
                         } else {
-                            "earns ${flashcardRewardDraft ?: flashcardRewardSeconds} seconds of browsing"
+                            "earns $flashcardRewardSeconds seconds of browsing"
                         }) +
                         ". \"Again\" always earns nothing.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    current = "$flashcardRewardSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 45",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_FLASHCARD_REWARD_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setFlashcardReward(it.roundToLong()) },
                 )
-                Slider(
-                    value = (flashcardRewardDraft ?: flashcardRewardSeconds).toFloat(),
-                    onValueChange = { flashcardRewardDraft = it.toLong() },
-                    onValueChangeFinished = {
-                        flashcardRewardDraft?.let(viewModel::setFlashcardReward)
-                        flashcardRewardDraft = null
-                    },
-                    valueRange = 0f..120f,
-                    steps = 23
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // A flashcard is a few seconds of work no matter how many are
+                // due, which makes it a far better hourly rate than reading
+                // unless something limits it — this cap (shared with Anki,
+                // since both pay through the same call) is what keeps
+                // flashcards a quick top-up rather than a way to fund a whole
+                // day's browsing without ever opening a book.
+                TypedSettingField(
+                    title = "Daily flashcard cap",
+                    help = "The most flashcards and Anki together can earn per day, combined — " +
+                        "reading itself has no cap. Set to 0 to stop flashcards from earning anything.",
+                    current = "$flashcardDailyCapSeconds seconds/day",
+                    inputLabel = "Seconds per day",
+                    inputHint = "e.g. 300",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_FLASHCARD_DAILY_CAP_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec/day" },
+                    onCommit = { viewModel.setFlashcardDailyCap(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Every other reward on this screen pays for something PageTime
+                // itself verified. This one pays on trust — foreground time in
+                // a chosen app looks the same whether a page is turning or the
+                // phone is just sitting there — so it stays off unless asked
+                // for, nothing is trusted until named on its own screen, and
+                // the daily cap bounds what trusting it wrong can cost.
+                ExternalReadingToggle(
+                    enabled = externalReadingEnabled,
+                    onChange = { viewModel.setExternalReadingEnabled(it) },
+                )
+
+                if (externalReadingEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    AppSettingsRow(
+                        icon = Icons.Outlined.Block,
+                        label = "Choose which apps (Kindle, etc.)",
+                        onClick = onManageExternalReadingApps
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TypedSettingField(
+                        title = "Daily credit cap",
+                        help = "The most these apps combined can bank per day, already at half rate. " +
+                            "Set to 0 to stop them from earning anything without turning the toggle off.",
+                        current = "$externalReadingDailyCapSeconds seconds/day",
+                        inputLabel = "Seconds per day",
+                        inputHint = "e.g. 3600",
+                        allowDecimal = false,
+                        minAllowed = 0.0,
+                        maxAllowed = MAX_EXTERNAL_READING_DAILY_CAP_SECONDS,
+                        unit = "seconds",
+                        describe = { "${it.roundToLong()} sec/day" },
+                        onCommit = { viewModel.setExternalReadingDailyCap(it.roundToLong()) },
+                    )
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Writing and being marked on a real explanation is minutes of
+                // work, not a tap — its own reward, not the flashcard one.
+                TypedSettingField(
+                    title = "Explain-back reward",
+                    help = "An explanation marked at least \"partly right\" " +
+                        (if (gate.enabled) {
+                            "banks $explainBackRewardSeconds seconds of reading credit"
+                        } else {
+                            "earns $explainBackRewardSeconds seconds of browsing"
+                        }) +
+                        ". A wrong explanation always earns nothing.",
+                    current = "$explainBackRewardSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 90",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_EXPLAIN_BACK_REWARD_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setExplainBackReward(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // A new link between two already-captured ideas — real
+                // synthesis, but less work than writing a fresh explanation,
+                // so its own reward sits between the other two.
+                TypedSettingField(
+                    title = "Slip box link reward",
+                    help = "Linking two cards for the first time " +
+                        (if (gate.enabled) {
+                            "banks $lumenLinkRewardSeconds seconds of reading credit"
+                        } else {
+                            "earns $lumenLinkRewardSeconds seconds of browsing"
+                        }) +
+                        ". Re-linking cards that are already connected earns nothing.",
+                    current = "$lumenLinkRewardSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 45",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_LUMEN_LINK_REWARD_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setLumenLinkReward(it.roundToLong()) },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                // Unlike the rewards above, nothing here is graded — every
+                // second behind it was already credited reading time. The
+                // timing is deliberately unpredictable (a few minutes, never
+                // shown counting down), so this number is only how big the
+                // surprise is, not how often it lands.
+                TypedSettingField(
+                    title = "Reading momentum bonus",
+                    help = "Every few minutes of sustained reading, at an unpredictable moment, " +
+                        (if (gate.enabled) {
+                            "banks $readingMomentumBonusSeconds seconds of reading credit"
+                        } else {
+                            "earns $readingMomentumBonusSeconds seconds of browsing"
+                        }) +
+                        " as a surprise. Set to 0 to turn it off.",
+                    current = "$readingMomentumBonusSeconds seconds",
+                    inputLabel = "Seconds",
+                    inputHint = "e.g. 60",
+                    allowDecimal = false,
+                    minAllowed = 0.0,
+                    maxAllowed = MAX_READING_MOMENTUM_BONUS_SECONDS,
+                    unit = "seconds",
+                    describe = { "${it.roundToLong()} sec" },
+                    onCommit = { viewModel.setReadingMomentumBonus(it.roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -415,20 +527,19 @@ fun SettingsScreen(
                         )
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("Reading rate", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "1 minute of reading earns ${"%.1f".format(ratio)} minutes of browsing",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
-                        value = ratioDraft?.toFloat() ?: ratio.toFloat(),
-                        onValueChange = { ratioDraft = it.toDouble() },
-                        onValueChangeFinished = {
-                            ratioDraft?.let(viewModel::setRatio)
-                            ratioDraft = null
-                        },
-                        valueRange = 0.5f..3.0f,
-                        steps = 4
+                    TypedSettingField(
+                        title = "Reading rate",
+                        help = "1 minute of reading earns ${"%.1f".format(ratio)} minutes of " +
+                            "browsing.",
+                        current = "${"%.1f".format(ratio)} min of browsing per minute read",
+                        inputLabel = "Minutes of browsing",
+                        inputHint = "e.g. 1.5",
+                        allowDecimal = true,
+                        minAllowed = MIN_READING_RATE,
+                        maxAllowed = MAX_READING_RATE,
+                        unit = "min per min",
+                        describe = { "×${"%.1f".format(it)}" },
+                        onCommit = { viewModel.setRatio(it) },
                     )
                 }
             }
@@ -438,6 +549,14 @@ fun SettingsScreen(
                 icon = Icons.Outlined.Block,
                 label = "Manage blocked apps",
                 onClick = onManageBlockedApps
+            )
+            // Its own row rather than a section inside blocked apps: the two
+            // lists answer different questions, and a site rule holds whether
+            // or not there is time on the clock.
+            AppSettingsRow(
+                icon = Icons.Outlined.Language,
+                label = "Website rules",
+                onClick = onManageSiteRules
             )
             AppSettingsRow(
                 icon = Icons.Outlined.History,
@@ -485,6 +604,14 @@ fun SettingsScreen(
             ReviewRemindersCard(
                 enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
                 onChange = viewModel::setReviewReminders,
+            )
+
+            SectionHeader("Review scheduling")
+            AppSettingsRow(
+                icon = Icons.Outlined.Schedule,
+                label = "Scheduling",
+                subtitle = "Learning steps, intervals and retention",
+                onClick = onScheduling
             )
 
             SectionHeader("AI & models")
@@ -602,6 +729,120 @@ internal fun CapturePromptCard(
                 Text(
                     "The retry that runs when a reply is unusable always uses the built-in " +
                         "prompt, so a tailored one that misfires still lands a card.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Lets the reader say what a good flashcard is, rather than wait for a release
+ * that guesses.
+ *
+ * WHAT THE INSTRUCTIONS COVER, AND WHAT THEY CANNOT
+ *
+ * Everything the model is told about the cards, and nothing about the shape of
+ * its reply. The app appends that part in the same words whatever is written
+ * here, because the fields it names are what the local checks use to reject a
+ * card that is not grounded in the passage — a settings field that could
+ * remove the check would be a field that can install an invented fact into a
+ * review schedule. The help text says so instead of leaving the reader to find
+ * out from an empty result.
+ *
+ * The how-many paragraph is nearly the same case: when it is not placed, the
+ * app appends the shipped one, because it carries the switch from a ceiling to
+ * a floor for a passage the reader hand-picked and losing that would make a
+ * chosen passage produce nothing.
+ */
+@Composable
+internal fun ChapterPromptCard(
+    prompt: String,
+    isCustom: Boolean,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit
+) {
+    var draft by remember(prompt) { mutableStateOf(prompt) }
+    var expanded by remember { mutableStateOf(false) }
+    val problem = ChapterPromptText.templateProblem(draft)
+    val placesCount = draft.contains(ChapterPromptText.HOW_MANY_TOKEN)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Flashcard prompt", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (isCustom) "Yours" else "The built-in prompt",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Hide" else "Edit")
+                }
+            }
+            if (expanded) {
+                Text(
+                    "What the model is asked for when it writes a chapter's or a PDF " +
+                        "page's cards. ${ChapterPromptText.PASSAGES_TOKEN} is replaced " +
+                        "with the chosen passages, numbered from zero; " +
+                        "${ChapterPromptText.BOOK_TOKEN} with the book's title and " +
+                        "${ChapterPromptText.CHAPTER_TOKEN} with the chapter's. " +
+                        "${ChapterPromptText.HOW_MANY_TOKEN} is replaced with how many " +
+                        "prompts to write per passage.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    minLines = 10,
+                    maxLines = 40,
+                    isError = problem != null,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    problem ?: if (placesCount) {
+                        "The reply's fields — passageIndex, prompt, answer, explanation, " +
+                            "sourceQuote, type — are fixed and added by the app. A quote " +
+                            "that is not in the passage still discards its card."
+                    } else {
+                        "You left out ${ChapterPromptText.HOW_MANY_TOKEN}, so the built-in " +
+                            "count paragraph is added after your instructions. The reply's " +
+                            "fields are fixed and added by the app."
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (problem != null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onSave(draft) },
+                        enabled = problem == null && draft != prompt
+                    ) {
+                        Text("Save")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onReset()
+                            draft = ChapterPromptText.DEFAULT_TEMPLATE
+                        },
+                        enabled = isCustom || draft != ChapterPromptText.DEFAULT_TEMPLATE
+                    ) {
+                        Text("Restore default")
+                    }
+                }
+                Text(
+                    "Used from the next generation on — a new chapter, or one you " +
+                        "regenerate. Cards you have kept are yours and survive.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1123,6 +1364,46 @@ private fun CloudRescueToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
 }
 
 /**
+ * Credits time spent in a chosen app (Kindle, etc.) as reading, on trust.
+ *
+ * PageTime's own reader can tell a page turning from a phone merely left on
+ * — it watches real scroll position. A foreign app's screen offers no such
+ * signal; all this can ever see is "the app was in front with the screen
+ * on". Off by default for that reason, and the description says so plainly
+ * rather than dressing the toggle up as something it isn't. Which apps
+ * qualify is a separate, explicit choice — see
+ * [ExternalReadingAppsScreen][com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen] —
+ * so turning this on alone trusts nothing yet.
+ */
+@Composable
+private fun ExternalReadingToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Credit reading time in other apps", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (enabled) {
+                    "Time spent in an app you choose below, with the screen on, counts toward " +
+                        "reading credit, at half rate, capped per day. This is trust-based — " +
+                        "PageTime cannot tell a page turning from a phone left open, unlike its " +
+                        "own reader."
+                } else {
+                    "Off — only reading inside PageTime counts, since it's the only reading this " +
+                        "app can actually verify."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = enabled, onCheckedChange = onChange)
+    }
+}
+
+/**
  * Which weights to download.
  *
  * The built-in model can paraphrase a passage but not reliably state the idea
@@ -1480,3 +1761,156 @@ private fun ReviewRemindersCard(
         }
     }
 }
+
+/**
+ * A time setting the reader types instead of drags.
+ *
+ * These four were sliders, and a slider is the wrong instrument for a number
+ * the gate fences. Its travel is fixed while the range it may take moves with
+ * the gate; its steps hide the value (a twenty-three-step reward slider cannot
+ * say 47 seconds, and a ratio slider's five positions cannot say 1.2); and the
+ * one thing it always allows — a nudge in either direction — is the one thing
+ * this screen sometimes has to refuse.
+ *
+ * Out of range is REFUSED, not clamped. A typed 5 minutes that silently became
+ * the 15-minute floor would be the app deciding the reader's terms for them,
+ * and nothing on the screen would have said it had.
+ */
+@Composable
+private fun TypedSettingField(
+    title: String,
+    help: String,
+    current: String,
+    inputLabel: String,
+    inputHint: String,
+    allowDecimal: Boolean,
+    minAllowed: Double,
+    maxAllowed: Double,
+    unit: String,
+    describe: (Double) -> String,
+    onCommit: (Double) -> Unit,
+    enabled: Boolean = true,
+    enabledNote: String? = null,
+    fenceNote: String? = null,
+) {
+    var draft by rememberSaveable(title) { mutableStateOf("") }
+    val typed = draft.trim().toDoubleOrNull()
+    val inRange = typed != null && typed >= minAllowed && typed <= maxAllowed
+
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    Text(current, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(
+        help,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    if (!enabled) {
+        // Nothing left to set in either direction: at the ceiling of a price or
+        // the floor of a session. Said plainly rather than left as a dead
+        // control the reader would keep tapping.
+        Text(
+            enabledNote.orEmpty(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = draft,
+                // Filtered as it is typed, so the error state can only mean a
+                // real mistake — a stray minus, or a second decimal point.
+                onValueChange = { text ->
+                    draft = text.filter { char ->
+                        char.isDigit() || (allowDecimal && char == '.')
+                    }
+                },
+                label = { Text(inputLabel) },
+                placeholder = { Text(inputHint) },
+                singleLine = true,
+                isError = draft.isNotBlank() && !inRange,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (allowDecimal) KeyboardType.Decimal else KeyboardType.Number
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            FilledTonalButton(
+                onClick = {
+                    typed?.let(onCommit)
+                    // Cleared on commit so the field can never disagree with
+                    // the value printed above it.
+                    draft = ""
+                },
+                enabled = inRange
+            ) {
+                val label = if (typed != null && inRange) describe(typed) else ""
+                Text(if (label.isEmpty()) "Set" else "Set $label")
+            }
+        }
+        Text(
+            "Allowed now: ${typedNumberLabel(minAllowed)} – " +
+                "${typedNumberLabel(maxAllowed)} $unit.",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        val trimmed = draft.trim()
+        val refusal = if (trimmed.isEmpty()) {
+            null
+        } else if (typed == null) {
+            "Refused — \"$trimmed\" is not a number."
+        } else if (typed < minAllowed || typed > maxAllowed) {
+            "Refused — ${describe(typed)} is outside what is allowed right now."
+        } else {
+            null
+        }
+        if (refusal != null) {
+            Text(
+                refusal,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        fenceNote?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
+/**
+ * The two fences, in the reader's words.
+ *
+ * The rule is the gate's, not the screen's: with no app time in hand the terms
+ * may only be made stricter. Each field says what that means for itself,
+ * because "you cannot do that" without a reason is how a fence starts to look
+ * like a bug.
+ */
+private const val COST_FENCE_NOTE =
+    "Right now the price can only go up — a cheaper session needs app time in hand."
+
+private const val LENGTH_FENCE_NOTE =
+    "Right now sessions can only get shorter — a longer one needs app time in hand."
+
+/** The reward slider's old range, kept as the field's bounds. */
+private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
+private const val MAX_FLASHCARD_DAILY_CAP_SECONDS = 3_600.0
+private const val MAX_EXTERNAL_READING_DAILY_CAP_SECONDS = 4.0 * 3_600.0
+private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
+private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
+private const val MAX_READING_MOMENTUM_BONUS_SECONDS = 180.0
+
+/** The reading-rate slider's old range, kept as the field's bounds. */
+private const val MIN_READING_RATE = 0.5
+private const val MAX_READING_RATE = 3.0
+
+/** A typed number as it reads back: 90, or 1.5 when it is not whole. */
+private fun typedNumberLabel(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString() else "%.1f".format(value)

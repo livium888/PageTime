@@ -25,7 +25,24 @@ data class BookEntity(
     val addedAt: Long,
     val currentChapterIndex: Int = 0,
     val scrollProgress: Float = 0f,
-    val totalReadingSeconds: Long = 0
+    val totalReadingSeconds: Long = 0,
+    /**
+     * A [com.pagetime.app.data.BookGenre] name, or null when never classified
+     * (no AI configured, or not yet this book's turn — see
+     * [com.pagetime.app.data.BookGenreClassifier]). Stores the enum's [Enum.name]
+     * rather than its display label, so relabelling a category never needs a
+     * migration.
+     */
+    val genre: String? = null,
+    /**
+     * Total words in the book, computed once by
+     * [com.pagetime.app.data.BookWordCounter] and cached here — null until a
+     * reading sitting has triggered it. Lets [com.pagetime.app.ui.screens.reader.ReadingGuard]
+     * judge reading pace in words per minute instead of book-fraction per
+     * minute, which a smaller font (or simply a shorter book) would
+     * otherwise throw off; see [com.pagetime.app.ui.screens.reader.ReadingPace].
+     */
+    val wordCount: Int? = null
 )
 
 /**

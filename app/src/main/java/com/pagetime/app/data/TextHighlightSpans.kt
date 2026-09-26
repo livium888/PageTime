@@ -50,13 +50,33 @@ object TextHighlightSpans {
         val clipped = highlights
             .mapNotNull { txtRange(it) }
             .mapNotNull { range ->
-                // Page-relative, because the caller indexes into the page's own
-                // substring: the page window is subtracted back out here.
-                val start = maxOf(range.first, pageStartOffset) - pageStartOffset
-                val end = minOf(range.last + 1, pageEndOffset) - pageStartOffset
-                if (end > start) start to end else null
+                clipToPage(range.first, range.last + 1, pageStartOffset, pageEndOffset)
             }
         return mergeRanges(clipped)
+    }
+
+    /**
+     * One whole-book span clipped to one page, page-relative, or null when the
+     * span does not touch the page at all.
+     *
+     * Split out of [txtPageRanges] because a highlight being *built* needs the
+     * same arithmetic as a highlight being drawn: the reader's live sentence
+     * grab is a whole-book offset range like any other, and it has to be clipped
+     * to whichever page is on screen — the page it starts on, the page it ends
+     * on, and every page in between.
+     */
+    fun clipToPage(
+        start: Int,
+        end: Int,
+        pageStartOffset: Int,
+        pageEndOffset: Int
+    ): Pair<Int, Int>? {
+        if (end <= start || pageEndOffset <= pageStartOffset) return null
+        // Page-relative, because the caller indexes into the page's own
+        // substring: the page window is subtracted back out here.
+        val clippedStart = maxOf(start, pageStartOffset) - pageStartOffset
+        val clippedEnd = minOf(end, pageEndOffset) - pageStartOffset
+        return if (clippedEnd > clippedStart) clippedStart to clippedEnd else null
     }
 
     /**

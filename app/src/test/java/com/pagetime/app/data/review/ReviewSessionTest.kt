@@ -126,4 +126,47 @@ class ReviewSessionTest {
         val now = 1_000_000L
         assertEquals(now + 16L * 60L * 60L * 1000L, ReviewSession.dueThreshold(now))
     }
+
+    // ---- What the lookahead is allowed to reach ----------------------------
+
+    private val hour = 60L * 60L * 1000L
+
+    @Test
+    fun `a graduated card due this evening is answered now`() {
+        // The lookahead exists so the reader does not have to come back later
+        // for one card.
+        assertTrue(ReviewSession.shouldAnswerNow(5 * hour, inLearning = false, nowMillis = 0L))
+    }
+
+    @Test
+    fun `a graduated card due in two days is not`() {
+        assertFalse(ReviewSession.shouldAnswerNow(48 * hour, inLearning = false, nowMillis = 0L))
+    }
+
+    @Test
+    fun `a card inside a ten minute step waits for its step`() {
+        // This is the whole point: being pulled into the sitting you are already
+        // in turns a ten-minute step into "due immediately, every time".
+        assertFalse(ReviewSession.shouldAnswerNow(30 * 60_000L, inLearning = true, nowMillis = 0L))
+        assertFalse(ReviewSession.shouldAnswerNow(24 * hour, inLearning = true, nowMillis = 0L))
+    }
+
+    @Test
+    fun `a learning step gets Anki's twenty minutes of grace`() {
+        // Arriving a few minutes late is not the same as being a day early.
+        assertTrue(ReviewSession.shouldAnswerNow(10 * 60_000L, inLearning = true, nowMillis = 0L))
+        assertTrue(
+            ReviewSession.shouldAnswerNow(
+                dueAt = ReviewSession.EARLY_GRACE_MILLIS,
+                inLearning = true,
+                nowMillis = 0L,
+            )
+        )
+    }
+
+    @Test
+    fun `anything already due is answered, learning or not`() {
+        assertTrue(ReviewSession.shouldAnswerNow(-1L, inLearning = true, nowMillis = 0L))
+        assertTrue(ReviewSession.shouldAnswerNow(0L, inLearning = false, nowMillis = 0L))
+    }
 }

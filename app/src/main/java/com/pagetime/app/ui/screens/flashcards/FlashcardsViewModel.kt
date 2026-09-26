@@ -13,6 +13,14 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** A book/chapter the "Explain" button can jump straight into — see [FlashcardsUiState.nextDueConcept]. */
+data class DueConceptEntry(
+    val bookId: String,
+    val bookTitle: String,
+    val chapterIndex: Int,
+    val chapterTitle: String,
+)
+
 data class FlashcardsUiState(
     val groups: List<FlashcardGroup> = emptyList(),
     val counts: Map<FlashcardFilter, Int> = emptyMap(),
@@ -25,6 +33,10 @@ data class FlashcardsUiState(
      * at all about whether any of it worked.
      */
     val tally: ReviewTally = ReviewTally(),
+    /** How many concepts, across every book, have never been explained — see [FlashcardsViewModel]'s concept queue. */
+    val dueConceptCount: Int = 0,
+    /** Where the "Explain N" button jumps to: the single most overdue concept, in whichever book it lives in. */
+    val nextDueConcept: DueConceptEntry? = null,
     val loading: Boolean = true,
     /** ID of the card currently being edited, or null. */
     val editingCardId: String? = null,
@@ -40,6 +52,7 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     private val reviewLog = container.database.learningReviewLogDao()
     private val bookDao = container.database.bookDao()
     private val generator = container.chapterPromptGenerator
+    private val explainBackRepository = container.explainBackRepository
 
     private val _filter = MutableStateFlow(FlashcardFilter.ALL)
     val filter = _filter.asStateFlow()
@@ -48,24 +61,40 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     val editingCardId = _editingCardId.asStateFlow()
 
     val state = combine(
-        cardDao.observeLive(),
-        bookDao.observeAll(),
-        _filter,
-        reviewLog.observeTally(),
+        combine(
+            cardDao.observeLive(),
+            bookDao.observeAll(),
+            _filter,
+            reviewLog.observeTally(),
+            explainBackRepository.observeConceptQueue(),
+        ) { cards, books, filter, tally, conceptQueue ->
+            val titles = books.associate { it.id to it.title }
+            val now = System.currentTimeMillis()
+            FlashcardsUiState(
+                groups = FlashcardListing.group(cards, titles, filter, now),
+                counts = FlashcardFilter.entries.associateWith {
+                    FlashcardListing.countFor(cards, it, now)
+                },
+                filter = filter,
+                tally = tally,
+                dueConceptCount = conceptQueue.unexplainedCount,
+                // No chapter title is stored on a concept, only the chapter index
+                // it was found in — same fallback ChapterReviewPrompt uses for the
+                // same reason.
+                nextDueConcept = conceptQueue.next?.let { due ->
+                    DueConceptEntry(
+                        bookId = due.bookId,
+                        bookTitle = titles[due.bookId] ?: "Book",
+                        chapterIndex = due.chapterIndex,
+                        chapterTitle = "Chapter ${due.chapterIndex + 1}",
+                    )
+                },
+                loading = false,
+            )
+        },
         _editingCardId,
-    ) { cards, books, filter, tally, editingCardId ->
-        val titles = books.associate { it.id to it.title }
-        val now = System.currentTimeMillis()
-        FlashcardsUiState(
-            groups = FlashcardListing.group(cards, titles, filter, now),
-            counts = FlashcardFilter.entries.associateWith {
-                FlashcardListing.countFor(cards, it, now)
-            },
-            filter = filter,
-            tally = tally,
-            loading = false,
-            editingCardId = editingCardId,
-        )
+    ) { current, editingCardId ->
+        current.copy(editingCardId = editingCardId)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FlashcardsUiState())
 
     fun setFilter(filter: FlashcardFilter) {

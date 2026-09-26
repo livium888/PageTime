@@ -41,6 +41,7 @@ import com.pagetime.app.ui.screens.bookshelf.BookshelfScreen
 import com.pagetime.app.ui.screens.shelf.AuthorShelfScreen
 import com.pagetime.app.ui.screens.shelf.ShelfScreen
 import com.pagetime.app.ui.screens.reader.ReaderScreen
+import com.pagetime.app.ui.screens.reader.ReaderEntryGate
 import com.pagetime.app.ui.screens.reader.PdfReaderScreen
 import com.pagetime.app.ui.screens.discover.DiscoverScreen
 import com.pagetime.app.ui.screens.concepts.ConceptMapScreen
@@ -50,7 +51,10 @@ import com.pagetime.app.ui.screens.lumen.LumenCardsScreen
 import com.pagetime.app.ui.screens.pagemarks.PagemarkQueueScreen
 import com.pagetime.app.ui.screens.review.ReviewSessionScreen
 import com.pagetime.app.ui.screens.settings.BlockedAppsScreen
+import com.pagetime.app.ui.screens.settings.ExternalReadingAppsScreen
+import com.pagetime.app.ui.screens.settings.SiteRulesScreen
 import com.pagetime.app.ui.screens.settings.PermissionsScreen
+import com.pagetime.app.ui.screens.settings.SchedulingScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
 import com.pagetime.app.ui.screens.settings.UsageAuditScreen
 import com.pagetime.app.ui.screens.settings.AiModelsScreen
@@ -260,19 +264,42 @@ fun PageTimeAppUi(
                 FlashcardsScreen(
                     onOpenReview = { navController.navigate("review") },
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
+                    onExplainConcept = { bookId, chapterIndex, chapterTitle, bookTitle ->
+                        val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
+                        val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
+                        // No locator: this concept's own chapter may not be
+                        // the book's current reading position (it might not
+                        // even be the book currently open), so there is no
+                        // "current position" to bound the text to — the same
+                        // reasoning the chapter-completion prompt uses. Null
+                        // lets extractLearningContext take the whole chapter.
+                        navController.navigate(
+                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=&offset=-1"
+                        )
+                    },
                 )
             }
             composable("search") { DiscoverScreen() }
             composable("settings") {
                 SettingsScreen(
                     onManageBlockedApps = { navController.navigate("blocked_apps") },
+                    onManageExternalReadingApps = { navController.navigate("external_reading_apps") },
+                    onManageSiteRules = { navController.navigate("site_rules") },
                     onPermissions = { navController.navigate("permissions") },
                     onUsageAudit = { navController.navigate("usage_audit") },
                     onAiUsage = { navController.navigate("ai_usage") },
-                    onAiModels = { navController.navigate("ai_models") }
+                    onAiModels = { navController.navigate("ai_models") },
+                    onScheduling = { navController.navigate("scheduling") }
                 )
             }
+            composable("scheduling") {
+                SchedulingScreen(onBack = { navController.popBackStack() })
+            }
             composable("blocked_apps") { BlockedAppsScreen(onBack = { navController.popBackStack() }) }
+            composable("external_reading_apps") {
+                ExternalReadingAppsScreen(onBack = { navController.popBackStack() })
+            }
+            composable("site_rules") { SiteRulesScreen(onBack = { navController.popBackStack() }) }
             composable("permissions") { PermissionsScreen(onBack = { navController.popBackStack() }) }
             composable("usage_audit") {
                 UsageAuditScreen(
@@ -303,30 +330,48 @@ fun PageTimeAppUi(
             }
             composable("pdf-reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: return@composable
-                PdfReaderScreen(
-                    bookId = bookId,
+                // Wrapped the same as "reader/{bookId}" below and for the same
+                // reason: "before the user can read" does not stop meaning
+                // that because the book happens to be a PDF.
+                ReaderEntryGate(
                     onBack = { navController.popBackStack() },
-                )
+                    onOpenSource = { srcBookId -> navController.navigate("reader/$srcBookId") },
+                ) {
+                    PdfReaderScreen(
+                        bookId = bookId,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable("reader/{bookId}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: "last"
-                ReaderScreen(
-                    bookId = bookId,
+                // Every path into the reader — library, bookshelf, search, a
+                // concept map, "continue reading", the block screen's own
+                // "Read now", a notification tap — already converges on this
+                // one destination, which is what lets the gate live here
+                // instead of at each of them.
+                ReaderEntryGate(
                     onBack = { navController.popBackStack() },
-                    onOpenHighlights = { highlightBookId ->
-                        navController.navigate("highlights/$highlightBookId")
-                    },
-                    onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
-                    onOpenLumenCards = { navController.navigate("lumen") },
-                    onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
-                        val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
-                        val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
-                        val encodedLocator = URLEncoder.encode(locatorJson.orEmpty(), "UTF-8")
-                        navController.navigate(
-                            "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=$encodedLocator&offset=${textOffset ?: -1}"
-                        )
-                    }
-                )
+                    onOpenSource = { srcBookId -> navController.navigate("reader/$srcBookId") },
+                ) {
+                    ReaderScreen(
+                        bookId = bookId,
+                        onBack = { navController.popBackStack() },
+                        onOpenHighlights = { highlightBookId ->
+                            navController.navigate("highlights/$highlightBookId")
+                        },
+                        onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
+                        onOpenLumenCards = { navController.navigate("lumen") },
+                        onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
+                            val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
+                            val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")
+                            val encodedLocator = URLEncoder.encode(locatorJson.orEmpty(), "UTF-8")
+                            navController.navigate(
+                                "explain-back/$bookId/$chapterIndex/$encodedTitle/$encodedBookTitle?locator=$encodedLocator&offset=${textOffset ?: -1}"
+                            )
+                        }
+                    )
+                }
             }
             composable("explain-back/{bookId}/{chapterIndex}/{chapterTitle}/{bookTitle}?locator={locator}&offset={offset}") { entry ->
                 val bookId = entry.arguments?.getString("bookId") ?: ""
@@ -364,6 +409,7 @@ fun PageTimeAppUi(
                 val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
                 val awaitingRestatement by vm.awaitingRestatement.collectAsStateWithLifecycle()
                 val requestsUsed by vm.requestsUsed.collectAsStateWithLifecycle()
+                val rewardSeconds by vm.rewardSeconds.collectAsStateWithLifecycle()
 
                 if (isFinished) {
                     navController.popBackStack()
@@ -421,7 +467,8 @@ fun PageTimeAppUi(
                         history = explanationHistory,
                         onDeleteHistory = vm::deleteHistory,
                         onBack = { navController.popBackStack() },
-                        onCreateConcept = vm::createLearningConcept
+                        onCreateConcept = vm::createLearningConcept,
+                        rewardSeconds = rewardSeconds
                     )
                 } else {
                     androidx.compose.foundation.layout.Column(

@@ -28,6 +28,7 @@ class TimeUpOverlay(
     onReadNow: () -> Unit,
     onStartSession: () -> Unit = {},
     onEmergency: () -> Unit = {},
+    onSiteBack: () -> Unit = {},
 ) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -37,6 +38,7 @@ class TimeUpOverlay(
         view.findViewById<View>(R.id.btn_read_now).setOnClickListener { onReadNow() }
         view.findViewById<View>(R.id.btn_start_session).setOnClickListener { onStartSession() }
         view.findViewById<View>(R.id.btn_emergency).setOnClickListener { onEmergency() }
+        view.findViewById<View>(R.id.btn_site_back).setOnClickListener { onSiteBack() }
         // Focusable so the overlay swallows BACK instead of letting it fall through
         // to the blocked app underneath.
         view.isFocusableInTouchMode = true
@@ -79,7 +81,44 @@ class TimeUpOverlay(
             start.visibility = View.GONE
         }
 
+        // The site controls belong to the other screen entirely. Left visible
+        // they would be a way out of a site block that the app block never
+        // authorised, and the overlay is re-used between the two.
+        view.findViewById<View>(R.id.btn_site_back).visibility = View.GONE
+
         setEmergency(emergency)
+    }
+
+    /**
+     * Repoints the screen at a blocked site.
+     *
+     * A separate entry point rather than a flag on [setStatus], because almost
+     * nothing is shared, and what looks shareable is not quite the same
+     * thing. This screen can appear while a session IS affordable — the
+     * reader simply has not started one yet — but showing the buy button
+     * here would offer to open every blocked app for the sake of one page,
+     * which is not what this screen is for; starting a session belongs to
+     * the app screen, or to Settings, not to a screen that exists because of
+     * one address. And there is no app to name in an emergency button —
+     * that hatch is scoped to the one app it unlocks, and a site has none.
+     * What is left is the address, why it is on the screen, and two ways off
+     * it: back into the browser, or into the reader, which is also now the
+     * way to earn the session that opens this exact site. Both live in the
+     * same places as on the app screen, so the screen the reader already
+     * knows does not have to be re-learned.
+     */
+    fun setSiteBlock(rule: SiteRules.Rule, mode: SiteMode) {
+        view.findViewById<TextView>(R.id.tv_time_up).text = BlockScreenText.siteTitle(rule)
+        view.findViewById<TextView>(R.id.tv_overlay_subtitle).text =
+            BlockScreenText.siteSubtitle(rule, mode)
+        view.findViewById<View>(R.id.progress_gate).visibility = View.GONE
+        view.findViewById<View>(R.id.btn_start_session).visibility = View.GONE
+        view.findViewById<View>(R.id.btn_emergency).visibility = View.GONE
+        view.findViewById<View>(R.id.tv_emergency_note).visibility = View.GONE
+
+        val back = view.findViewById<Button>(R.id.btn_site_back)
+        back.text = BlockScreenText.siteBackLabel()
+        back.visibility = View.VISIBLE
     }
 
     /**

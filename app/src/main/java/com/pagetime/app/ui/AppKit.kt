@@ -1,5 +1,6 @@
 package com.pagetime.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,7 +80,7 @@ fun AppSecondaryButton(
         enabled = enabled,
         modifier = modifier.height(52.dp),
         shape = AppButtonShape,
-        border = androidx.compose.foundation.BorderStroke(
+        border = BorderStroke(
             1.dp,
             MaterialTheme.colorScheme.outlineVariant
         ),
@@ -108,7 +109,14 @@ fun AppSettingsRow(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 0.dp
+        tonalElevation = 0.dp,
+        // An edge, not a lift. Surface and background are about 8% apart in
+        // luminance in both themes, so with tonalElevation pinned to zero a
+        // row read as part of the page behind it rather than as a card — most
+        // visibly in dark mode, where the raised colour is nearly the same
+        // darkness as the one it sits on. The hairline is the theme's own
+        // outlineVariant, so it is drawn in the right colour for both.
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -169,7 +177,10 @@ fun AppCard(
         color = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp
+        shadowElevation = 0.dp,
+        // See AppSettingsRow: a hairline is what makes a card read as a card
+        // when surface and background are this close together.
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier.padding(20.dp),

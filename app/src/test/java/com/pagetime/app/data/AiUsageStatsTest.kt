@@ -80,4 +80,31 @@ class AiUsageStatsTest {
         assertEquals(3, stats.todayCalls)
         assertEquals(14_000L, stats.todayInputCharacters)
     }
+
+    /**
+     * Flashcard generation has a line of its own now.
+     *
+     * Its calls were always inside the totals, but the screen named every
+     * other operation and not this one — so by volume the largest consumer of
+     * the reader's quota was the only one they could not see broken out.
+     */
+    @Test
+    fun `flashcard generation is counted as its own operation`() {
+        val stats = AiUsageStats.from(
+            listOf(
+                AiUsageEntity(
+                    bookId = "book",
+                    operation = AiUsageRepository.OPERATION_CHAPTER_PROMPTS,
+                    model = "flash",
+                    status = AiUsageRepository.STATUS_SUCCESS,
+                    inputCharacters = 9_000,
+                    outputItems = 4,
+                    createdAt = 0L
+                )
+            )
+        )
+        assertEquals(1, stats.chapterPromptCalls)
+        assertEquals(1, stats.totalCalls)
+        assertEquals(1, stats.successfulCalls)
+    }
 }

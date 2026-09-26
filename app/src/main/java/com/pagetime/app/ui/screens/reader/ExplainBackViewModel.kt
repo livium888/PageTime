@@ -65,6 +65,10 @@ class ExplainBackViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _rewardSeconds = MutableStateFlow(0L)
+    /** What a qualifying explanation currently banks — read once, shown up front. */
+    val rewardSeconds: StateFlow<Long> = _rewardSeconds.asStateFlow()
+
     val currentConcept: String
         get() = _concepts.value.getOrElse(_currentConceptIndex.value) { "" }
 
@@ -73,6 +77,9 @@ class ExplainBackViewModel(
 
     init {
         loadConcepts()
+        viewModelScope.launch {
+            runCatching { _rewardSeconds.value = container.balanceManager.explainBackReward() }
+        }
     }
 
     fun retryConcepts() {
@@ -185,6 +192,16 @@ class ExplainBackViewModel(
                 )
                 evaluationsForConcept += 1
                 _requestsUsed.value += 1
+                // OFF earns nothing, the same "a wrong answer earns nothing"
+                // rule the flashcard reward uses for AGAIN — so guessing your
+                // way to app time is impossible here too. PARTLY and SOLID
+                // both count: getting the gist right is real, rewarded work,
+                // same as a flashcard graded anything above AGAIN.
+                val earnedSeconds = runCatching {
+                    val worthRewarding = evaluation.overallScore >= REWARD_THRESHOLD
+                    container.balanceManager.earnFromExplainBack(worthRewarding)
+                    if (worthRewarding) container.balanceManager.explainBackReward() else 0L
+                }.getOrDefault(0L)
                 val feedbackText = buildString {
                     // Only a grader that scored the three dimensions gets to
                     // show three numbers. The on-device grader returns one
@@ -208,7 +225,8 @@ class ExplainBackViewModel(
                     text = "$feedbackText\n\n$followUp",
                     isUser = false,
                     isAi = true,
-                    score = evaluation.overallScore
+                    score = evaluation.overallScore,
+                    earnedSeconds = earnedSeconds
                 )
                 _awaitingRestatement.value = true
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
@@ -254,6 +272,8 @@ class ExplainBackViewModel(
     companion object {
         private const val MAX_EVALUATIONS_PER_CONCEPT = 2
         private const val MIN_GENERATION_CHARACTERS = 240
+        /** Same floor as [com.pagetime.app.data.ExplainBackGrading.Verdict.PARTLY]. */
+        private const val REWARD_THRESHOLD = 3.0f
     }
 }
 

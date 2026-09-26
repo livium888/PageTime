@@ -1,0 +1,372 @@
+package com.pagetime.app.anki
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Message
+import android.webkit.ConsoleMessage
+import android.webkit.JsPromptResult
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
+import com.pagetime.app.PageTimeApp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private sealed class ReviewState {
+    object Loading : ReviewState()
+    object PermissionNeeded : ReviewState()
+    data class Error(val message: String) : ReviewState()
+    object NoneDue : ReviewState()
+
+    /** Every due card needs an image or sound file — see [AnkiReviewer.NextCardResult.OnlyUnsupportedMediaDue]. */
+    object OnlyMediaDue : ReviewState()
+    data class ShowingQuestion(val card: AnkiReviewer.Card, val startedAt: Long) : ReviewState()
+    data class ShowingAnswer(val card: AnkiReviewer.Card, val startedAt: Long) : ReviewState()
+}
+
+/**
+ * Reviews the reader's real Anki deck from inside PageTime, crediting the
+ * same reading-time reward as a PageTime flashcard for every card answered
+ * Hard, Good or Easy — Again earns nothing, matching how PageTime's own
+ * flashcards already work. See [AnkiReviewer] for why this exists and how
+ * it talks to AnkiDroid.
+ *
+ * Deliberately separate from the flashcard gate that can block opening a
+ * book ([com.pagetime.app.ui.screens.reader.ReaderEntryGate]): an Anki card
+ * failing to render or behave correctly should never stand between the
+ * reader and their book, so this is purely an extra way to earn time, never
+ * a requirement.
+ */
+@Composable
+fun AnkiReviewDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val balanceManager = (context.applicationContext as PageTimeApp).container.balanceManager
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf<ReviewState>(ReviewState.Loading) }
+    // Diagnostic only, for tracking down why a custom card's script doesn't
+    // run — captures the WebView's own console output, since this WebView
+    // has no AnkiDroid JS bridge and a script relying on one may throw.
+    // Cleared on every new card.
+    val jsMessages = remember { mutableStateListOf<String>() }
+
+    suspend fun loadNext() {
+        state = ReviewState.Loading
+        jsMessages.clear()
+        state = try {
+            when (val result = withContext(Dispatchers.IO) { AnkiReviewer.nextCard(context) }) {
+                is AnkiReviewer.NextCardResult.Found ->
+                    ReviewState.ShowingQuestion(result.card, System.currentTimeMillis())
+                AnkiReviewer.NextCardResult.NoneDue -> ReviewState.NoneDue
+                AnkiReviewer.NextCardResult.OnlyUnsupportedMediaDue -> ReviewState.OnlyMediaDue
+            }
+        } catch (e: SecurityException) {
+            ReviewState.PermissionNeeded
+        } catch (e: Exception) {
+            ReviewState.Error(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) scope.launch { loadNext() } else state = ReviewState.PermissionNeeded
+    }
+
+    LaunchedEffect(Unit) {
+        val granted = ContextCompat.checkSelfPermission(context, AnkiReviewer.PERMISSION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) loadNext() else state = ReviewState.PermissionNeeded
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Anki", style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                when (val current = state) {
+                    is ReviewState.Loading -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    is ReviewState.PermissionNeeded -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                "PageTime needs your permission to read AnkiDroid's due cards. " +
+                                    "Android will show its own permission dialog — approve it, then " +
+                                    "come back here."
+                            )
+                            Button(onClick = { permissionLauncher.launch(AnkiReviewer.PERMISSION) }) {
+                                Text("Grant access")
+                            }
+                        }
+                    }
+                    is ReviewState.Error -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Something went wrong: ${current.message}")
+                            Text(
+                                "If this says AnkiDroid's storage isn't configured, open AnkiDroid " +
+                                    "itself once to finish its first-run setup, then try again.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Button(onClick = { scope.launch { loadNext() } }) { Text("Retry") }
+                        }
+                    }
+                    is ReviewState.NoneDue -> {
+                        Text("No Anki cards due right now.")
+                    }
+                    is ReviewState.OnlyMediaDue -> {
+                        Text(
+                            "The Anki cards due right now use images or sound. AnkiDroid " +
+                                "doesn't let other apps read those back, so they can't display " +
+                                "here — open AnkiDroid to review them. Anything without media " +
+                                "will still show up here."
+                        )
+                    }
+                    is ReviewState.ShowingQuestion -> {
+                        current.card.cardName?.let {
+                            Text(it, style = MaterialTheme.typography.labelMedium)
+                        }
+                        AnkiCardWebView(
+                            html = current.card.question,
+                            modifier = Modifier.weight(1f),
+                            onJsMessage = { jsMessages.add(it) },
+                        )
+                        JsDiagnostics(jsMessages)
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(current.card.question)) }) {
+                            Text("Copy question HTML", style = MaterialTheme.typography.labelSmall)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                jsMessages.clear()
+                                state = ReviewState.ShowingAnswer(current.card, current.startedAt)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Show answer")
+                        }
+                    }
+                    is ReviewState.ShowingAnswer -> {
+                        current.card.cardName?.let {
+                            Text(it, style = MaterialTheme.typography.labelMedium)
+                        }
+                        AnkiCardWebView(
+                            html = current.card.answer,
+                            modifier = Modifier.weight(1f),
+                            onJsMessage = { jsMessages.add(it) },
+                        )
+                        JsDiagnostics(jsMessages)
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(current.card.answer)) }) {
+                            Text("Copy answer HTML", style = MaterialTheme.typography.labelSmall)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(1 to "Again", 2 to "Hard", 3 to "Good", 4 to "Easy").forEach { (ease, label) ->
+                                Button(
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp),
+                                    onClick = {
+                                        val elapsed = System.currentTimeMillis() - current.startedAt
+                                        scope.launch {
+                                            val answered = runCatching {
+                                                withContext(Dispatchers.IO) {
+                                                    AnkiReviewer.answer(context, current.card, ease, elapsed)
+                                                }
+                                            }
+                                            answered.onFailure {
+                                                state = ReviewState.Error(it.message ?: it.javaClass.simpleName)
+                                                return@launch
+                                            }
+                                            // Again earns nothing, matching PageTime's own flashcards.
+                                            if (ease != 1) {
+                                                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+                                            }
+                                            loadNext()
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Loads AnkiDroid's own rendered HTML for a card — the reader's real note
+ * type, template and CSS. JavaScript is enabled so cards that use it behave
+ * as closely as possible to AnkiDroid's own reviewer, though no JS bridge is
+ * stubbed in: a card built around AnkiDroid-specific JS APIs may still
+ * behave differently here. [onJsMessage] surfaces script console output
+ * (uncaught errors especially) so a broken custom template can be diagnosed
+ * instead of guessed at. Deliberately NOT surfacing failed sub-resource
+ * loads any more: a card's own bundled web fonts (@font-face referencing a
+ * local .woff2) always 404 here, since AnkiDroid has no read path for any
+ * media at all (confirmed while fixing #82's Image Occlusion case), and
+ * that's permanent, harmless noise — the browser just falls back to a
+ * system font — not something worth alarming the reader with on every
+ * nicely-designed card.
+ *
+ * Confirmed on-device: a null base URL gives the page an opaque origin, and
+ * an opaque origin can't touch sessionStorage/localStorage at all — any
+ * script that reads either on load throws an uncaught SecurityError and
+ * stops right there, taking every later DOM update (revealing the question,
+ * filling in the answer) down with it. [BASE_URL] is a fake but real origin
+ * (an RFC 2606 .invalid host, so it can never resolve to an actual site) so
+ * storage access works like it would in AnkiDroid's own reviewer.
+ *
+ * A bare WebView also has nowhere to send `window.open()` (seen on a custom
+ * "Ask Claude" card template that hands a generated prompt off to an
+ * external site) or `window.prompt()` (that same card's clipboard-write
+ * fallback) — both are silently dropped with no dialog and no new window to
+ * open into, so a button built around either looks like it does nothing.
+ * The WebChromeClient below delegates a new-window request to the system
+ * browser via a throwaway transport WebView, and answers a JS prompt by
+ * copying its text to the real clipboard instead of hosting a blocking
+ * dialog this screen has no UI for anyway.
+ */
+private const val BASE_URL = "https://pagetime-anki-card.invalid/"
+
+@Composable
+private fun AnkiCardWebView(html: String, modifier: Modifier = Modifier, onJsMessage: (String) -> Unit = {}) {
+    AndroidView(
+        modifier = modifier.fillMaxWidth(),
+        factory = { ctx ->
+            WebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                // Required for onCreateWindow below to fire at all — without
+                // it, window.open() is a well-known Android WebView no-op
+                // rather than an error, which is what made this so easy to
+                // miss until a card actually used it.
+                settings.setSupportMultipleWindows(true)
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                        onJsMessage("console.${message.messageLevel()}: ${message.message()} (line ${message.lineNumber()})")
+                        return true
+                    }
+
+                    override fun onCreateWindow(
+                        view: WebView,
+                        isDialog: Boolean,
+                        isUserGesture: Boolean,
+                        resultMsg: Message,
+                    ): Boolean {
+                        val transportWebView = WebView(ctx)
+                        transportWebView.webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView,
+                                request: WebResourceRequest,
+                            ): Boolean {
+                                runCatching {
+                                    ctx.startActivity(
+                                        Intent(Intent.ACTION_VIEW, request.url)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                                return true
+                            }
+                        }
+                        (resultMsg.obj as WebView.WebViewTransport).webView = transportWebView
+                        resultMsg.sendToTarget()
+                        return true
+                    }
+
+                    override fun onJsPrompt(
+                        view: WebView,
+                        url: String,
+                        message: String,
+                        defaultValue: String?,
+                        result: JsPromptResult,
+                    ): Boolean {
+                        val text = defaultValue?.takeIf { it.isNotBlank() } ?: message
+                        ctx.getSystemService(ClipboardManager::class.java)
+                            ?.setPrimaryClip(ClipData.newPlainText("Anki prompt", text))
+                        Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        result.confirm(text)
+                        return true
+                    }
+                }
+            }
+        },
+        update = { webView ->
+            webView.loadDataWithBaseURL(BASE_URL, html, "text/html", "utf-8", null)
+        }
+    )
+}
+
+/** Diagnostic panel for [AnkiCardWebView]'s captured console output — see its doc for why this exists. */
+@Composable
+private fun JsDiagnostics(messages: List<String>) {
+    if (messages.isEmpty()) return
+    Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "Script diagnostics (${messages.size}):",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        messages.takeLast(6).forEach {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}

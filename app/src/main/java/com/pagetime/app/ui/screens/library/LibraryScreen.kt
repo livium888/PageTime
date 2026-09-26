@@ -22,7 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.MoreVert
@@ -102,6 +106,12 @@ fun LibraryScreen(
     val books by viewModel.books.collectAsStateWithLifecycle()
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
     val totalReadingSeconds by viewModel.totalReadingSeconds.collectAsStateWithLifecycle()
+    val readingStreak by viewModel.readingStreak.collectAsStateWithLifecycle()
+    val didReadToday by viewModel.didReadToday.collectAsStateWithLifecycle()
+    val showNeverMissTwiceNudge by viewModel.showNeverMissTwiceNudge.collectAsStateWithLifecycle()
+    val genreSummary by viewModel.genreSummary.collectAsStateWithLifecycle()
+    val librarianSuggestion by viewModel.librarianSuggestion.collectAsStateWithLifecycle()
+    val upNextBook by viewModel.upNextBook.collectAsStateWithLifecycle()
     val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
     val reformatProgress by viewModel.reformatProgress.collectAsStateWithLifecycle()
@@ -111,6 +121,7 @@ fun LibraryScreen(
     var replaceBook by remember { mutableStateOf<BookEntity?>(null) }
     var pasteBook by remember { mutableStateOf<BookEntity?>(null) }
     var openPdfBook by remember { mutableStateOf<BookEntity?>(null) }
+    var moreMenuExpanded by remember { mutableStateOf(false) }
     val replacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val book = replaceBook
         replaceBook = null
@@ -174,6 +185,26 @@ fun LibraryScreen(
                                     text = formatMinutes(balanceSeconds),
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                        Box {
+                            IconButton(onClick = { moreMenuExpanded = true }) {
+                                Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(
+                                expanded = moreMenuExpanded,
+                                onDismissRequest = { moreMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(if (importing) "Importing…" else "Import file") },
+                                    enabled = !importing,
+                                    onClick = { moreMenuExpanded = false; launchImport() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Import YouTube transcript") },
+                                    enabled = !importing,
+                                    onClick = { moreMenuExpanded = false; launchYouTubeImport() }
                                 )
                             }
                         }
@@ -262,43 +293,85 @@ fun LibraryScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                 }
-                // One action at full weight, the rest beside it at half.
-                // Five identical full-width buttons made the library feel
-                // like a menu with a book list attached to the bottom.
-                item {
-                    AppPrimaryButton(
-                        text = "Reading queue — chunks & re-reads",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = onOpenPagemarks
-                    )
-                }
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                        AppSecondaryButton(
-                            text = "Ladder",
-                            modifier = Modifier.weight(1f),
-                            onClick = onOpenShelf
-                        )
-                        AppSecondaryButton(
-                            text = "Bookshelf",
-                            modifier = Modifier.weight(1f),
-                            onClick = onOpenBookshelf
+                // Purely descriptive — a fun fact about the shelf, never a
+                // claim about what the reader should do with it. Absent
+                // entirely until at least one book has been classified, so a
+                // reader with no AI configured never sees a half-finished stat.
+                genreSummary?.let { summary ->
+                    item {
+                        Text(
+                            summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                        AppSecondaryButton(
-                            text = if (importing) "Importing…" else "Import file",
-                            enabled = !importing,
-                            modifier = Modifier.weight(1f),
-                            onClick = launchImport
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.s)
+                    ) {
+                        Icon(
+                            if (readingStreak > 0) Icons.Filled.LocalFireDepartment else Icons.Outlined.LocalFireDepartment,
+                            contentDescription = null,
+                            tint = if (readingStreak > 0) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(18.dp)
                         )
-                        AppSecondaryButton(
-                            text = "YouTube",
-                            enabled = !importing,
-                            modifier = Modifier.weight(1f),
-                            onClick = launchYouTubeImport
+                        Text(
+                            if (readingStreak == 1) "1 day streak" else "$readingStreak day streak",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text("·", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            Icons.Outlined.CheckCircle,
+                            contentDescription = null,
+                            tint = if (didReadToday) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            if (didReadToday) "Done today" else "Not yet today",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (showNeverMissTwiceNudge) {
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ) {
+                            Text(
+                                "You missed yesterday — never miss twice. A few minutes today keeps the chain alive.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(Spacing.m)
+                            )
+                        }
+                    }
+                }
+                // The one thing to do right now, not a menu of equally-weighted
+                // buttons: tapping it opens the reader exactly like tapping the
+                // book in the list below would — including the flashcard gate,
+                // if cards are due — so there is exactly one door into reading,
+                // just a much bigger handle on it.
+                upNextBook?.let { book ->
+                    item {
+                        UpNextBookCard(
+                            book = book,
+                            onClick = {
+                                if (book.format == "pdf") openPdfBook = book
+                                else onOpenBook(book.id)
+                            }
                         )
                     }
                 }
@@ -311,6 +384,41 @@ fun LibraryScreen(
                                 onClick = { onOpenConcepts(book.id) }
                             )
                         }
+                    }
+                }
+                if (librarianSuggestion != null) {
+                    item {
+                        books.firstOrNull { it.id == librarianSuggestion?.bookId }?.let { book ->
+                            LibrarianCard(
+                                message = librarianSuggestion!!.message,
+                                onOpen = {
+                                    if (book.format == "pdf") openPdfBook = book
+                                    else onOpenBook(book.id)
+                                },
+                                onDismiss = viewModel::dismissLibrarianSuggestion
+                            )
+                        }
+                    }
+                }
+                // Occasional actions, not daily ones — demoted to equal, smaller
+                // weight below the fold rather than competing with "read".
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        AppSecondaryButton(
+                            text = "Queue",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenPagemarks
+                        )
+                        AppSecondaryButton(
+                            text = "Ladder",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenShelf
+                        )
+                        AppSecondaryButton(
+                            text = "Bookshelf",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenBookshelf
+                        )
                     }
                 }
                 items(books, key = { it.id }) { book ->
@@ -390,6 +498,80 @@ fun LibraryScreen(
     }
 }
 
+/**
+ * The one big "keep going" tap target: the most recently opened book, cover
+ * and all, standing in for the five equal-weight buttons this screen used to
+ * open with. A finished book (scrollProgress == 1f) still lands here — there
+ * is nowhere better to point "continue" at, and re-opening a finished book to
+ * check something or start a re-read is a legitimate reason to tap it too.
+ */
+@Composable
+private fun UpNextBookCard(book: BookEntity, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (book.coverUrl != null) {
+                AsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.MenuBook, contentDescription = null)
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Continue reading",
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (book.scrollProgress > 0f) {
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { book.scrollProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surface
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.Filled.PlayArrow, contentDescription = null)
+        }
+    }
+}
+
 @Composable
 private fun ContinueThinkingCard(book: BookEntity, moment: MapMoment, onClick: () -> Unit) {
     Surface(
@@ -416,6 +598,35 @@ private fun ContinueThinkingCard(book: BookEntity, moment: MapMoment, onClick: (
                 )
             }
             Text("Explore the map in about 2 minutes", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+/**
+ * The Library screen's one daily, dismissible suggestion — a fact about one
+ * book in the reader's own library, never a mandate. See
+ * [com.pagetime.app.data.LibrarianFacts] for what [message] is actually
+ * allowed to say.
+ */
+@Composable
+private fun LibrarianCard(message: String, onOpen: () -> Unit, onDismiss: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.MenuBook, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("From the shelf", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(message, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onOpen) { Text("Open it") }
+                TextButton(onClick = onDismiss) { Text("Not now") }
+            }
         }
     }
 }

@@ -135,4 +135,37 @@ class ForegroundEventPolicyTest {
         assertNull(ForegroundEventPolicy.foregroundForEvent("com.android.systemui", SELF))
         assertNull(ForegroundEventPolicy.foregroundForEvent("android", SELF))
     }
+
+    // ── Resumed-browser gap (blocked page survived a return to the browser) ──
+
+    @Test
+    fun `switching to a different app and back is a return`() {
+        assertTrue(
+            ForegroundEventPolicy.enteredForeground("com.android.chrome", "com.instagram.android")
+        )
+        assertTrue(
+            ForegroundEventPolicy.enteredForeground("com.instagram.android", "com.android.chrome")
+        )
+    }
+
+    @Test
+    fun `continuing to sit in the same browser is not a return`() {
+        // The case the existing urlChanged check already owns: an ordinary
+        // content-changed or window-state event fired while the reader never
+        // left. Treating this as a return too would mean re-checking the
+        // address bar on every such event, not just the one that matters.
+        assertFalse(
+            ForegroundEventPolicy.enteredForeground("com.android.chrome", "com.android.chrome")
+        )
+    }
+
+    @Test
+    fun `nothing established yet counts as a return`() {
+        // A cold service connect, or the very first trusted event since
+        // launch, while a browser is already sitting on a blocked page. There
+        // is no "previous" to compare against, and treating that as "not a
+        // return" would mean the very first blocked page seen after a service
+        // restart is let through.
+        assertTrue(ForegroundEventPolicy.enteredForeground(null, "com.android.chrome"))
+    }
 }

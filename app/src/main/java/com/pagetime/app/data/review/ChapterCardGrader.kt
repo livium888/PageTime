@@ -6,7 +6,6 @@ import com.pagetime.app.data.local.LearningCardDao
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.LearningReviewLogEntity
 import com.pagetime.app.data.local.LearningReviewLogDao
-import io.github.openspacedrepetition.Scheduler
 import java.time.Duration
 import java.time.Instant
 
@@ -23,16 +22,25 @@ import java.time.Instant
  * eventually two different answers to "when does this card come back" — so
  * there is one copy and both callers use it.
  *
- * THE SCHEDULER IS SHARED ON PURPOSE
+ * THE SCHEDULER IS INJECTED, AND THIS ONE USED TO GET IT WRONG
  *
  * FSRS parameters are per-collection, not per-screen. A card rated Good in the
  * reader and a card rated Good in a sitting must get the same interval, or the
  * reader's memory model is being fitted to two different curves at once.
+ *
+ * That is what this class's comment has always said, and it was not true: this
+ * used to build its own `Scheduler.builder().build()` while the other two
+ * schedulers in the app passed `desiredRetention(0.9).enableFuzzing(false)`.
+ * Fuzzing defaults to on in the library, so chapter cards — the ones from the
+ * book, the ones this feature exists for — were fuzzed and slip-box cards were
+ * not. Everything now goes through [CardScheduler], which there can only be one
+ * of, and the fuzz is seeded per card so a previewed interval and a graded one
+ * are the same number rather than two draws from one generator.
  */
 class ChapterCardGrader(
     private val cards: LearningCardDao,
     private val reviewLog: LearningReviewLogDao,
-    private val scheduler: Scheduler = Scheduler.builder().build(),
+    private val schedulers: CardScheduler = CardScheduler.DEFAULT,
 ) {
 
     /**
@@ -53,14 +61,15 @@ class ChapterCardGrader(
      * call for all four ratings on every card reveal — this is what puts the
      * Anki-style interval captions on the rating buttons.
      */
-    fun previewNextDue(
+    suspend fun previewNextDue(
+        cardId: String,
         fsrsCardJson: String,
         rating: LumenRating,
         now: Instant,
     ): Instant? {
         val old = runCatching { FsrsCardCodec.fromJson(fsrsCardJson) }.getOrNull() ?: return null
         return runCatching {
-            val result = scheduler.reviewCard(old, rating.toFsrs(), now, null)
+            val result = schedulers.review(cardId, old, rating.toFsrs(), now)
             result.card().due ?: now.plusSeconds(86_400)
         }.getOrNull()
     }
@@ -87,7 +96,7 @@ class ChapterCardGrader(
     ): Graded? {
         val existing = cards.get(id) ?: return null
         val old = runCatching { FsrsCardCodec.fromJson(existing.fsrsCardJson) }.getOrNull() ?: return null
-        val result = scheduler.reviewCard(old, rating.toFsrs(), now, null)
+        val result = schedulers.review(id, old, rating.toFsrs(), now)
         val updated = result.card()
         val nextDue = updated.due ?: now.plusSeconds(86_400)
 

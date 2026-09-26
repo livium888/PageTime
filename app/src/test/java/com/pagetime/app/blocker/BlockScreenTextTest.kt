@@ -144,4 +144,29 @@ class BlockScreenTextTest {
         assertTrue(BlockScreenText.showsStartButton(g))
         assertEquals("You've read enough", BlockScreenText.title(g))
     }
+
+    // --- Site subtitle: the one text that differs by SiteMode ---
+
+    @Test
+    fun `blocklist subtitle names the reader's own rule`() {
+        val whole = SiteRules.Rule("bbc.co.uk", null)
+        val section = SiteRules.Rule("bbc.co.uk", "/news")
+        assertEquals(
+            "You put this site off limits. Go back, or read for a while.",
+            BlockScreenText.siteSubtitle(whole, SiteMode.BLOCKLIST),
+        )
+        assertEquals(
+            "You put this part of the site off limits. Go back, or read for a while.",
+            BlockScreenText.siteSubtitle(section, SiteMode.BLOCKLIST),
+        )
+    }
+
+    @Test
+    fun `allowlist subtitle says nothing let it through, not that it was blocked`() {
+        val notAllowed = SiteRules.Rule("example.com", null)
+        assertEquals(
+            "This isn't on your allowed list. Go back, or read for a while.",
+            BlockScreenText.siteSubtitle(notAllowed, SiteMode.ALLOWLIST),
+        )
+    }
 }

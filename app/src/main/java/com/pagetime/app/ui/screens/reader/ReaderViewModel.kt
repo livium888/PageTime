@@ -22,6 +22,8 @@ import com.pagetime.app.data.asAnswer
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.PagemarkSession
+import com.pagetime.app.data.Sentences
+import com.pagetime.app.domain.ReadingMomentum
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,11 +41,29 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.indexOfFirstWithHref
 import org.readium.r2.shared.util.mediatype.MediaType
 import java.io.File
+
+/**
+ * A sentence the reader has grabbed, and what the screen needs to show it.
+ *
+ * [start] and [end] are whole-book character offsets — the same coordinate
+ * stored highlights use, so saving one needs no translation. [reveal] is the
+ * offset to bring on screen after a step: the new end when extending forward,
+ * the new start when extending back, because a step that happens off screen is
+ * indistinguishable from a step that did nothing. [previous] is the span as it
+ * was, so one over-reach costs a tap to undo rather than the whole grab.
+ */
+data class SentenceGrab(
+    val start: Int,
+    val end: Int,
+    val reveal: Int,
+    val previous: Pair<Int, Int>? = null
+)
 
 class ReaderViewModel(private val app: Application, private val bookId: String) : AndroidViewModel(app) {
 
@@ -52,6 +72,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val balanceManager = container.balanceManager
     private val settingsRepository = container.settingsRepository
     private val readium = container.readiumEngine
+    private val bookWordCounter = container.bookWordCounter
 
     // App-lifetime scope for persistence writes. viewModelScope is cancelled the
     // moment this screen is left — launching the "save position" write there meant
@@ -59,6 +80,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val persistenceScope = container.scope
 
     private val guard = ReadingGuard()
+
+    /**
+     * The book's total word count, fetched (and computed/cached if this is
+     * the first time) once the book loads. Null until then, or if counting
+     * genuinely fails — [guard] falls back to its cruder pace check either
+     * way, so this is never load-bearing for the reader to work.
+     */
+    private var bookWordCount: Int? = null
 
     private val _book = MutableStateFlow<BookEntity?>(null)
     val book = _book.asStateFlow()
@@ -127,6 +156,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     val balanceSeconds = balanceManager.browseBalanceSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    /** What a qualifying explain-back answer currently banks — shown on the chapter-completion nudge. */
+    val explainBackRewardSeconds = balanceManager.explainBackRewardSeconds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
+
     private var tickerJob: Job? = null
 
     /** Whether the guard has been started for this book, so resumes resume. */
@@ -143,6 +176,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private val _resumeNotice = MutableStateFlow<String?>(null)
     val resumeNotice = _resumeNotice.asStateFlow()
+
+    /** Surfaced once when a reading-momentum bonus lands; see [ReadingMomentum]. */
+    private val _momentumNotice = MutableStateFlow<String?>(null)
+    val momentumNotice = _momentumNotice.asStateFlow()
+
+    /** Credited seconds toward the next bonus, and how many it takes — reset on each payout. */
+    private var creditedSecondsSinceMomentumBonus = 0L
+    private var nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
 
     private val _mapMoment = MutableStateFlow<com.pagetime.app.data.local.MapMoment?>(null)
     val mapMoment = _mapMoment.asStateFlow()
@@ -186,7 +227,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         viewModelScope.launch {
             val loaded = if (bookId == "last") repo.getMostRecentBook() else repo.getBook(bookId)
             _book.value = loaded
-            loaded?.let { persistenceScope.launch { settingsRepository.setLastReadBookId(it.id) } }
+            loaded?.let { book ->
+                persistenceScope.launch { settingsRepository.setLastReadBookId(book.id) }
+                // Off the main thread, and never blocking the ticker: on a
+                // book's very first sitting this hasn't resolved yet by the
+                // time the guard starts, which just means that one sitting
+                // uses the guard's cruder fallback pace check — every
+                // sitting after the first has it instantly from the cache.
+                viewModelScope.launch(Dispatchers.IO) {
+                    bookWordCount = runCatching { bookWordCounter.wordCount(book) }.getOrNull()
+                }
+            }
             if (loaded == null) {
                 _error.value = "Book not found in library"
                 return@launch
@@ -260,12 +311,44 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         tryStartTicker()
     }
 
+    /**
+     * Stops the ticker and flushes position and pending seconds — synchronously.
+     *
+     * WHY BLOCKING, HERE SPECIFICALLY
+     *
+     * This runs from ON_PAUSE, which is the moment the app is leaving the
+     * foreground and the one Android gives no guarantee about afterward: the
+     * process can be reclaimed for memory at any point once the app is no
+     * longer visible, sooner on stricter OEM battery managers, and there is
+     * no "finish this coroutine first" contract for a process death. A
+     * fire-and-forget `launch` here is a write that is merely SCHEDULED, not
+     * DONE — and scheduled-but-never-run is indistinguishable from never
+     * asked for. That was the reported bug: read for a while, leave, come
+     * back later, and the position is a few pages behind — the exact shape
+     * of losing whichever locator save was still in flight when the process
+     * went away, landing back on the last one that actually completed.
+     *
+     * blocking = true makes persistPositionNow and flush await the write
+     * with runBlocking instead of launching it into persistenceScope, so by
+     * the time this function returns to the lifecycle callback, the bytes
+     * are on disk. A short block on the main thread at exactly the moment
+     * the reader is already leaving the screen is the accepted trade — the
+     * same one SharedPreferences.commit() makes over .apply() for the same
+     * reason — and nothing else on screen is competing for that thread once
+     * ON_PAUSE has fired.
+     *
+     * The periodic mid-session checkpoint (every 5 ticks, inside the ticker
+     * below) stays non-blocking on purpose: it runs while the reader is
+     * actively reading, blocking there would risk a stutter for a risk this
+     * narrow — the process dying while genuinely foregrounded is not the
+     * failure mode anyone reported.
+     */
     fun stopReading() {
         resumed = false
         tickerJob?.cancel()
         tickerJob = null
-        persistPositionNow()
-        flush()
+        persistPositionNow(blocking = true)
+        flush(blocking = true)
     }
 
     private fun tryStartTicker() {
@@ -280,7 +363,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         if (guardStarted) {
             guard.resume(now)
         } else {
-            guard.start(now, book.scrollProgress)
+            guard.start(now, book.scrollProgress, bookWordCount)
             guardStarted = true
         }
         _guardState.value = guard.state
@@ -295,6 +378,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
+                    creditedSecondsSinceMomentumBonus++
+                    if (ReadingMomentum.shouldFire(creditedSecondsSinceMomentumBonus, nextMomentumThreshold)) {
+                        creditedSecondsSinceMomentumBonus = 0
+                        nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
+                        viewModelScope.launch { awardMomentumBonus() }
+                    }
                 }
                 _sessionSeconds.value++
                 _guardState.value = guard.state
@@ -308,16 +397,27 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    private fun flush() {
+    /**
+     * @param blocking Waits for the write with [runBlocking] instead of merely
+     *   scheduling it. See [stopReading] for why that matters specifically at
+     *   teardown and not on the periodic mid-session checkpoint.
+     */
+    private fun flush(blocking: Boolean = false) {
         if (pendingSeconds <= 0) return
         val seconds = pendingSeconds
         pendingSeconds = 0
         val currentBook = _book.value ?: return
-        // persistenceScope, not viewModelScope: stopReading() runs during teardown
-        // and the pending seconds must still be written after the scope is cancelled.
-        persistenceScope.launch {
+        val write: suspend () -> Unit = {
             balanceManager.earnFromReading(seconds)
             repo.addReadingSeconds(currentBook.id, seconds)
+        }
+        if (blocking) {
+            runBlocking { write() }
+        } else {
+            // persistenceScope, not viewModelScope: stopReading() runs during
+            // teardown and the pending seconds must still be written after
+            // the scope is cancelled.
+            persistenceScope.launch { write() }
         }
     }
 
@@ -451,6 +551,23 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val index = publication.readingOrder.indexOfFirstWithHref(locator.href) ?: return null
         if (index < 0) return null
         return publication.readingOrder.getOrNull(index)?.title
+    }
+
+    /**
+     * A chapter's own title, by index.
+     *
+     * Asked for by the index rather than taken from the current locator because
+     * that is the index the flashcards are being made for — and because a title
+     * the model is given is a context cue, which is the difference between
+     * asking about "the blockade" and asking about the Continental System. It
+     * is also what the card is filed under in the Flashcards list.
+     *
+     * Null for a book with no chapter structure, where the generator falls back
+     * to "Chapter N".
+     */
+    private fun chapterTitleFor(chapterIndex: Int): String? {
+        val publication = _publication.value ?: return null
+        return publication.readingOrder.getOrNull(chapterIndex)?.title?.takeIf { it.isNotBlank() }
     }
 
     private fun currentFraction(): Float {
@@ -598,6 +715,104 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     /** Abandons the pending highlight start. */
     fun clearPendingHighlight() {
         _pendingTxtHighlightStart.value = null
+    }
+
+    /**
+     * The sentence being grabbed right now, or null.
+     *
+     * The second way to mark text in a plain-text book, and the one a thumb can
+     * actually manage. "Start highlight here" and "End highlight here" can only
+     * mark whole pages — the page is the only thing that knows its own offsets —
+     * so until now a reader could not keep a single sentence. This finds the
+     * sentence at the point they pressed and stepping widens it, sentence by
+     * sentence, without ever asking them to drag a handle to a character.
+     */
+    private val _sentenceGrab = MutableStateFlow<SentenceGrab?>(null)
+    val sentenceGrab = _sentenceGrab.asStateFlow()
+
+    /** Grabs the sentence containing [textOffset], a whole-book character offset. */
+    fun grabSentenceAt(textOffset: Int) {
+        val text = _textContent.value ?: return
+        val span = Sentences.spanAt(text, textOffset) ?: return
+        _sentenceGrab.value = SentenceGrab(span.start, span.end, span.start)
+    }
+
+    /** Pulls the next sentence into the grab. */
+    fun extendSentenceGrab() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        val next = Sentences.next(text, Sentences.Span(grab.start, grab.end)) ?: return
+        _sentenceGrab.value = SentenceGrab(
+            start = grab.start,
+            end = next.end,
+            reveal = next.end - 1,
+            previous = grab.start to grab.end
+        )
+    }
+
+    /** Pulls the previous sentence into the grab. */
+    fun extendSentenceGrabBack() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        val previous = Sentences.previous(text, Sentences.Span(grab.start, grab.end)) ?: return
+        _sentenceGrab.value = SentenceGrab(
+            start = previous.start,
+            end = grab.end,
+            reveal = previous.start,
+            previous = grab.start to grab.end
+        )
+    }
+
+    /**
+     * Widens the grab to its whole paragraph.
+     *
+     * The escape hatch for a sentence that was cut in two by an abbreviation
+     * nobody has heard of, and for the common case where the sentence is right
+     * but the thought is one sentence longer than its punctuation suggests.
+     */
+    fun grabWholeParagraph() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        val paragraph = Sentences.paragraphAt(text, grab.start) ?: return
+        if (paragraph.start == grab.start && paragraph.end == grab.end) return
+        _sentenceGrab.value = SentenceGrab(
+            start = paragraph.start,
+            end = paragraph.end,
+            reveal = paragraph.start,
+            previous = grab.start to grab.end
+        )
+    }
+
+    /** Puts the grab back to the span before the last step, or drops it. */
+    fun undoSentenceGrabStep() {
+        val grab = _sentenceGrab.value ?: return
+        val previous = grab.previous
+        _sentenceGrab.value = if (previous == null) {
+            null
+        } else {
+            SentenceGrab(previous.first, previous.second, previous.first)
+        }
+    }
+
+    fun clearSentenceGrab() {
+        _sentenceGrab.value = null
+    }
+
+    /**
+     * Keeps what was grabbed.
+     *
+     * A sentence is written as an ordinary plain-text highlight, so it renders,
+     * lists, opens from the list and can be turned into a card exactly like the
+     * page-aligned marks the old two-tap flow produced — it is simply tighter
+     * than one page.
+     */
+    fun saveSentenceGrab() {
+        val text = _textContent.value ?: return
+        val grab = _sentenceGrab.value ?: return
+        _sentenceGrab.value = null
+        viewModelScope.launch {
+            highlightRepo.createTxtSpan(bookId, grab.start, grab.end, text)
+        }
     }
 
     /** Marks the current Readium selection as a persistent highlight. */
@@ -1121,13 +1336,23 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    /** Flushes the exact current text position before the screen is destroyed. */
-    fun persistTextPositionNow(fraction: Float) {
+    /**
+     * Flushes the exact current text position before the screen is destroyed.
+     *
+     * @param blocking See [stopReading] for why teardown needs the write
+     *   actually finished before this returns, not merely scheduled.
+     */
+    fun persistTextPositionNow(fraction: Float, blocking: Boolean = false) {
         if (!ReaderPositionPolicy.canPersist(txtRestoreComplete)) return
         val b = _book.value ?: return
         latestTxtFraction = ReaderPositionPolicy.clampFraction(fraction)
         txtSaveJob?.cancel()
-        persistenceScope.launch { repo.updateProgress(b.id, 0, latestTxtFraction) }
+        val write: suspend () -> Unit = { repo.updateProgress(b.id, 0, latestTxtFraction) }
+        if (blocking) {
+            runBlocking { write() }
+        } else {
+            persistenceScope.launch { write() }
+        }
     }
 
     /** Marks the Readium initial locator application complete without saving startup state. */
@@ -1153,6 +1378,15 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             delay(4_000)
             _resumeNotice.value = null
         }
+    }
+
+    /** Pays and announces a reading-momentum bonus; a no-op if the reward is off. */
+    private suspend fun awardMomentumBonus() {
+        val seconds = balanceManager.earnReadingMomentumBonus()
+        if (seconds <= 0) return
+        _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
+        delay(6_000)
+        _momentumNotice.value = null
     }
 
     /**
@@ -1215,16 +1449,25 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         repo.updateProgress(b.id, index, overall)
     }
 
-    /** Persists the most recent position immediately (exit, background, checkpoint). */
-    private fun persistPositionNow() {
+    /**
+     * Persists the most recent position immediately (exit, background, checkpoint).
+     *
+     * @param blocking See [stopReading] for why teardown needs the write
+     *   actually finished before this returns, not merely scheduled.
+     */
+    private fun persistPositionNow(blocking: Boolean = false) {
         val b = _book.value ?: return
         if (b.isReadiumBook) {
             if (!ReaderPositionPolicy.canPersist(locatorRestoreComplete)) return
             if (latestLocator == null) return
             locatorSaveJob?.cancel()
-            persistenceScope.launch { saveLocator() }
+            if (blocking) {
+                runBlocking { saveLocator() }
+            } else {
+                persistenceScope.launch { saveLocator() }
+            }
         } else {
-            persistTextPositionNow(latestTxtFraction)
+            persistTextPositionNow(latestTxtFraction, blocking = blocking)
         }
     }
 
@@ -1445,7 +1688,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     _promptState.value = _promptState.value.copy(stage = stage)
                 }
                 val result = chapterPrompts.generateForPassages(
-                    b, chapterIndex, null, ordinals, onStage,
+                    b, chapterIndex, chapterTitleFor(chapterIndex), ordinals, onStage,
                 )
                 // The chapter's pending set is re-read rather than replaced:
                 // this run only covers the chosen passages, and overwriting
@@ -1489,9 +1732,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     _promptState.value = _promptState.value.copy(stage = stage)
                 }
                 val result = if (fresh) {
-                    chapterPrompts.regenerate(b, chapterIndex, null, onStage)
+                    chapterPrompts.regenerate(b, chapterIndex, chapterTitleFor(chapterIndex), onStage)
                 } else {
-                    chapterPrompts.generate(b, chapterIndex, null, onStage = onStage)
+                    chapterPrompts.generate(
+                        b, chapterIndex, chapterTitleFor(chapterIndex), onStage = onStage,
+                    )
                 }
                 val state = _promptState.value
                 _promptState.value = state.copy(
@@ -1536,6 +1781,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         com.pagetime.app.data.review.ChapterCardGrader(
             container.database.learningCardDao(),
             container.database.learningReviewLogDao(),
+            container.schedulers,
         )
     }
 

@@ -19,6 +19,10 @@ interface PagemarkDao {
     @Query("SELECT * FROM pagemarks WHERE id = :id LIMIT 1")
     suspend fun get(id: String): PagemarkEntity?
 
+    /** Every chunk, for moving existing re-reads onto a new schedule. Read once, on demand. */
+    @Query("SELECT * FROM pagemarks")
+    suspend fun allForReschedule(): List<PagemarkEntity>
+
     /** The chunk the reader is currently working through, if any. */
     @Query("SELECT * FROM pagemarks WHERE bookId = :bookId AND state = 'READING' LIMIT 1")
     suspend fun openChunk(bookId: String): PagemarkEntity?

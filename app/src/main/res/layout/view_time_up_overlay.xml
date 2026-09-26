@@ -77,6 +77,23 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
+    <!--
+        Shown only for a blocked site, and for a different reason from the
+        emergency button above it. A site being off limits is not a time
+        problem, so the honest answer is where the reader came from rather
+        than an offer to buy their way past it. Reading is still on offer
+        below; this is simply the way out of the page.
+    -->
+    <Button
+        android:id="@+id/btn_site_back"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="@string/overlay_site_back"
+        android:textColor="#6B7280"
+        android:visibility="gone" />
+
     <Button
         android:id="@+id/btn_read_now"
         android:layout_width="wrap_content"

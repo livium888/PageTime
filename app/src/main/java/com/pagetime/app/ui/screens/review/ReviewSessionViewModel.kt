@@ -2,20 +2,49 @@ package com.pagetime.app.ui.screens.review
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.learning.ClozeText
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.PagemarkEntity
+import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.ChapterCardGrader
+import com.pagetime.app.data.review.ReadingGate
 import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.data.review.ReviewSessionState
+import io.github.openspacedrepetition.State
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
+
+/**
+ * Whether a card's own schedule puts it in a sitting starting now.
+ *
+ * The FSRS state is the part a SQL query cannot see and the part that matters:
+ * a card still inside a learning step waits for its step, while a graduated card
+ * due this evening is pulled forward on purpose. See
+ * [ReviewSession.shouldAnswerNow] for why those two are treated differently.
+ *
+ * No scheduler state at all is treated as still learning, which is what a card
+ * with no state is; so is a state that will not parse. Both are the recoverable
+ * direction — a card shown later than it might have been, rather than a card
+ * yanked out of a step it was deliberately given.
+ */
+internal fun answersNow(dueAt: Long?, fsrsCardJson: String?, nowMillis: Long): Boolean {
+    if (dueAt == null) return true
+    val inLearning = runCatching {
+        fsrsCardJson == null || FsrsCardCodec.fromJson(fsrsCardJson).state != State.REVIEW
+    }.getOrDefault(true)
+    return ReviewSession.shouldAnswerNow(dueAt, inLearning, nowMillis)
+}
 
 /**
  * One thing to answer, whatever kind of card it came from.
@@ -79,9 +108,35 @@ data class ReviewUiState(
     val earnedFeedback: String? = null,
     /** Running total of seconds earned this sitting. */
     val totalEarnedThisSitting: Long = 0,
+    /**
+     * A [ReadingGate] batch just finished with more still due — the next card
+     * is already loaded in [card] but held back until the reader chooses to
+     * keep going. See [ReviewSessionViewModel.gateMode].
+     */
+    val awaitingBatchChoice: Boolean = false,
+    /**
+     * The reader chose to read instead of continuing the gate. Lives here,
+     * not as local Composable state, specifically so it survives a side trip
+     * to Explain-back, Highlights, Concepts or the slip box and back: those
+     * push a new destination and can dispose [ReaderEntryGate]'s own
+     * composition, but they do not recreate its ViewModel, which is what
+     * this needs to ride out. See
+     * [ReaderEntryGate][com.pagetime.app.ui.screens.reader.ReaderEntryGate].
+     */
+    val startReadingRequested: Boolean = false,
 )
 
-class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
+/**
+ * @param gateMode When true, [grade] pauses every [ReadingGate.BATCH_SIZE]
+ *   answers to offer the reader a choice instead of continuing straight
+ *   through — see [ReaderEntryGate][com.pagetime.app.ui.screens.reader.ReaderEntryGate],
+ *   the one caller that passes true. The standalone Review screen never does,
+ *   and every card it shows is graded exactly as before this existed.
+ */
+class ReviewSessionViewModel(
+    app: Application,
+    private val gateMode: Boolean = false,
+) : AndroidViewModel(app) {
 
     private val container = (app as PageTimeApp).container
     private val repository = container.lumenRepository
@@ -95,16 +150,33 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Grading for chapter flashcards, shared with the reading chair.
      *
-     * It builds its own scheduler, matching the one LumenRepository builds.
-     * The important thing is that both card types, and both places a card can
-     * be answered, go through the SAME FSRS configuration — two schedulers
-     * with different parameters would give the same reader different intervals
-     * depending on where they happened to answer.
+     * The important thing is that both card types, and both places a card can be
+     * answered, go through the SAME FSRS configuration — two schedulers with
+     * different parameters would give the same reader different intervals
+     * depending on where they happened to answer. It is handed the container's
+     * [com.pagetime.app.data.review.CardScheduler] rather than building one, so
+     * that is now true by construction instead of by comment.
      */
-    private val grader = ChapterCardGrader(learningCards, reviewLog)
+    private val grader = ChapterCardGrader(learningCards, reviewLog, container.schedulers)
 
     private val _state = MutableStateFlow(ReviewUiState())
     val state = _state.asStateFlow()
+
+    /**
+     * How large the card's own text is drawn.
+     *
+     * Held outside [ReviewUiState] on purpose. `load()` replaces the whole state
+     * object when the due query returns, so a size kept inside it would be
+     * clobbered back to the default by whichever finished last — a race that
+     * would show up as the reader's choice silently reverting on some launches
+     * and not others. A separate flow cannot be overwritten by that path at all.
+     */
+    val cardTextSize = settings.cardTextSize
+        .stateIn(viewModelScope, SharingStarted.Eagerly, CardTextSize.DEFAULT)
+
+    fun setCardTextSize(size: CardTextSize) {
+        viewModelScope.launch { runCatching { settings.setCardTextSize(size) } }
+    }
 
     /** Cards held for the whole sitting; the session itself only carries ids. */
     private var cards: Map<String, ReviewItem> = emptyMap()
@@ -136,6 +208,12 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private var undoStep: UndoStep? = null
 
+    /**
+     * Gradings since the last time the gate paused, or since the sitting
+     * started. Meaningless — and never consulted — outside [gateMode].
+     */
+    private var batchAnswered = 0
+
     init {
         load()
     }
@@ -147,27 +225,47 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             // card falling due this evening should be answered while the
             // reader is here.
             val threshold = ReviewSession.dueThreshold(now.toEpochMilli())
+            val nowMillis = now.toEpochMilli()
 
             // Chapter flashcards first. They are the point of the feature, and
             // a reader who has both should not have to wade through slip box
             // notes to reach them.
+            //
+            // Each list is filtered afterwards rather than queried more
+            // tightly, because whether a card belongs in this sitting depends
+            // on its FSRS state, and that lives inside fsrsCardJson rather than
+            // in a column a WHERE clause could read. The cost is parsing up to a
+            // hundred short JSON objects per sitting, which is nothing next to
+            // the query that produced them.
             val chapter = runCatching {
                 learningCards.dueCards(threshold, ReviewSession.MAX_SESSION)
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).filter { answersNow(it.dueAt, it.fsrsCardJson, nowMillis) }
 
             val slips = runCatching {
                 repository.dueCards(
                     now = Instant.ofEpochMilli(threshold),
                     limit = ReviewSession.MAX_SESSION - chapter.size,
                 )
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).filter { answersNow(it.dueAt, it.fsrsCardJson, nowMillis) }
 
             // Due chunks join the sitting between chapter cards and slip box
             // notes: re-reading is heavier than a flashcard but the memory
             // loop is the same, and neither should have to wait for the other.
-            val chunks = runCatching {
-                pagemarks.dueChunks(threshold)
-            }.getOrDefault(emptyList())
+            //
+            // Left out of gate mode specifically. Answering a chunk means
+            // leaving THIS sitting to open its own book in the reader — which
+            // may not even be the book the gate exists to let the reader
+            // into — and a gate that can hand the reader off to a second,
+            // unrelated gate mid-batch is a gate no one could reason about.
+            // "Flashcards" was also the word used for this; a chunk is a
+            // reading assignment, not a card.
+            val chunks = if (gateMode) {
+                emptyList()
+            } else {
+                runCatching {
+                    pagemarks.dueChunks(threshold)
+                }.getOrDefault(emptyList()).filter { answersNow(it.dueAt, it.fsrsCardJson, nowMillis) }
+            }
 
             val titles = runCatching {
                 bookDao.getAll().associate { it.id to it.title }
@@ -299,10 +397,15 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
             // Correct recall banks the configured bonus. AGAIN proves nothing
             // and earns nothing — guessing can never mint app time.
             var earnedThisCard = 0L
+            var dailyCapReached = false
             if (rating != LumenRating.AGAIN) {
-                runCatching {
-                    balanceManager.earnFromFlashcard(ratingCorrect = true)
-                    earnedThisCard = balanceManager.flashcardReward()
+                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
+                    .onSuccess { earnedThisCard = it }
+                // Zero could also mean the reward itself is turned off — only
+                // call it out as the cap specifically when there was a real
+                // reward to pay and the cap is what stopped it.
+                if (earnedThisCard == 0L) {
+                    dailyCapReached = runCatching { balanceManager.flashcardReward() }.getOrDefault(0L) > 0L
                 }
             }
             val advanced = ReviewSession.grade(_state.value.session, failed = rating == LumenRating.AGAIN)
@@ -310,17 +413,50 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 UndoStep(session = before.session, card = before.card, restore = it)
             }
             val prev = _state.value
+            batchAnswered++
+            // The next card is loaded either way; gate mode only decides
+            // whether it is shown yet. That is what makes continueBatch() a
+            // pure UI un-pause rather than needing to know how to advance
+            // the sitting itself.
+            val pause = gateMode &&
+                ReadingGate.shouldPauseForChoice(batchAnswered, advanced.queue.size)
             _state.value = _state.value.copy(
                 session = advanced,
                 card = advanced.current?.let { cards[it] },
                 revealed = false,
                 lastInterval = nextDue?.let { formatNextReview(it) },
                 canUndo = undoStep != null,
-                earnedFeedback = if (earnedThisCard > 0) "+${earnedThisCard}s" else null,
+                earnedFeedback = when {
+                    earnedThisCard > 0 -> "+${earnedThisCard}s"
+                    dailyCapReached -> "Daily flashcard bonus reached — read to earn more"
+                    else -> null
+                },
                 totalEarnedThisSitting = prev.totalEarnedThisSitting + earnedThisCard,
+                awaitingBatchChoice = pause,
             )
             refreshPreviews()
         }
+    }
+
+    /**
+     * The reader chose to keep going past a paused batch.
+     *
+     * Only clears the pause and restarts the count; the sitting itself never
+     * stopped advancing while paused, so there is nothing else to resume.
+     */
+    fun continueBatch() {
+        batchAnswered = 0
+        _state.value = _state.value.copy(awaitingBatchChoice = false)
+    }
+
+    /**
+     * The reader chose to read rather than continue the gate. See
+     * [ReviewUiState.startReadingRequested] for why this is state here
+     * rather than a flag [ReaderEntryGate][com.pagetime.app.ui.screens.reader.ReaderEntryGate]
+     * keeps for itself.
+     */
+    fun requestStartReading() {
+        _state.value = _state.value.copy(startReadingRequested = true)
     }
 
     /**
@@ -393,15 +529,27 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val previews = LumenRating.entries.mapNotNull { rating ->
-                grader.previewNextDue(json, rating, now)
+                grader.previewNextDue(item.id, json, rating, now)
                     ?.let { due -> rating to formatIntervalShort(due, now) }
             }.toMap()
             _state.value = _state.value.copy(intervalPreviews = previews)
         }
     }
 
-    /** Leaves the card for another day: no rating, so the scheduler is untouched. */
+    /**
+     * Leaves the card for another day: no rating, so the scheduler is untouched.
+     *
+     * A no-op in [gateMode]. The menu item that calls this is already hidden
+     * there (see [showSkip][com.pagetime.app.ui.screens.review.ReviewSessionScreen]),
+     * but hiding a button is not the same as closing the door it opened: a
+     * skipped card is not a graded one, so a gate that let this through would
+     * let the reader skip their way past the whole mandatory batch without
+     * answering a single card in it, which is not a smaller requirement, it
+     * is no requirement at all. Enforced here, at the one function that
+     * actually does it, rather than trusted to stay unreachable.
+     */
     fun skip() {
+        if (gateMode) return
         // A skip changed nothing to take back, and a stale undo would restore
         // the session to a position two cards ago.
         undoStep = null
@@ -416,4 +564,19 @@ class ReviewSessionViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+}
+
+/**
+ * The only way to get a [ReviewSessionViewModel] with [gateMode] on: the
+ * default `viewModel()` factory only knows how to call the single-arg
+ * [Application] constructor `AndroidViewModel` provides for free, which is
+ * exactly why the standalone Review screen never needed one of these.
+ */
+class ReviewSessionViewModelFactory(
+    private val app: Application,
+    private val gateMode: Boolean,
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        ReviewSessionViewModel(app, gateMode) as T
 }

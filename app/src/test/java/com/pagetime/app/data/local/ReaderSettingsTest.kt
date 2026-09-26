@@ -39,11 +39,21 @@ class ReaderSettingsTest {
     }
 
     @Test
-    fun `the new paper theme survives a round trip`() {
-        // normalized() rejects unknown themes by falling back to light, so a
-        // palette added without updating that set would be silently unusable —
-        // which is exactly how a theme ships broken.
-        assertEquals("paper", ReaderSettings(theme = "paper").normalized().theme)
-        assertEquals("light", ReaderSettings(theme = "chartreuse").normalized().theme)
+    fun `every offered palette survives a round trip, and an unknown one is refused`() {
+        // normalized() rejects unknown themes, so a palette added without
+        // updating that set would be silently unusable — which is exactly how
+        // a theme ships broken. All five, not just the newest: the one thing
+        // this can catch is a key offered in the appearance sheet that reads
+        // back as something else.
+        for (theme in listOf("paper", "light", "sepia", "dark", "night")) {
+            assertEquals(theme, ReaderSettings(theme = theme).normalized().theme)
+        }
+        // The fallback is Paper rather than Light, which matters because the
+        // value being replaced is a corrupt or unknown one: the reader is
+        // already in a state they did not choose, and a warm off-white is a
+        // kinder place to land than a pure white page — particularly at night,
+        // where the whole point of the change is that nothing should open
+        // white.
+        assertEquals("paper", ReaderSettings(theme = "chartreuse").normalized().theme)
     }
 }

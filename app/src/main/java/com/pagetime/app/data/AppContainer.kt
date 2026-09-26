@@ -5,6 +5,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.room.Room
 import com.pagetime.app.blocker.BlockController
+import com.pagetime.app.blocker.SiteBlocker
 import com.pagetime.app.data.download.BookDownloader
 import com.pagetime.app.data.gutenberg.GutenbergApi
 import com.pagetime.app.data.library.EpubParser
@@ -21,15 +22,20 @@ import com.pagetime.app.data.embed.BookSearcher
 import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
+import com.pagetime.app.data.usage.ExternalReadingTracker
 import com.pagetime.app.data.usage.ForegroundParser
 import com.pagetime.app.data.usage.UsageReconciler
 import com.pagetime.app.data.usage.UsageStatsReader
+import com.pagetime.app.data.review.CardScheduler
+import com.pagetime.app.data.review.FsrsScheduling
+import com.pagetime.app.data.review.RescheduleRepository
 import com.pagetime.app.domain.BalanceManager
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** Simple manual DI container, owned by the Application. */
@@ -75,12 +81,20 @@ class AppContainer(context: Context) {
                 AppDatabase.MIGRATION_19_20,
                 AppDatabase.MIGRATION_20_21,
                 AppDatabase.MIGRATION_21_22,
-                AppDatabase.MIGRATION_22_23
+                AppDatabase.MIGRATION_22_23,
+                AppDatabase.MIGRATION_23_24,
+                AppDatabase.MIGRATION_24_25,
+                AppDatabase.MIGRATION_25_26,
+                AppDatabase.MIGRATION_26_27,
+                AppDatabase.MIGRATION_27_28
             )
             .build()
 
     private val bookDao = database.bookDao()
     private val blockedAppDao = database.blockedAppDao()
+    private val externalReadingAppDao = database.externalReadingAppDao()
+    private val blockedSiteDao = database.blockedSiteDao()
+    private val allowedSiteDao = database.allowedSiteDao()
     private val usageEventDao = database.usageEventDao()
     private val learningGenerationDao = database.learningGenerationDao()
     private val conceptDao = database.conceptDao()
@@ -109,10 +123,45 @@ class AppContainer(context: Context) {
 
     val youtubeSearchApi = YouTubeSearchApi()
 
+    /**
+     * How every review in the app gets scheduled.
+     *
+     * One object, built from the reader's settings at the moment of each review.
+     * That last part matters as much as the first: the schedulers used to be
+     * built once when the process started, so a scheduling setting would have
+     * looked saved and done nothing until the app was restarted.
+     */
+    val schedulers: CardScheduler = object : CardScheduler {
+        override suspend fun review(
+            seedKey: String,
+            card: io.github.openspacedrepetition.Card,
+            rating: io.github.openspacedrepetition.Rating,
+            now: java.time.Instant,
+        ) = FsrsScheduling.review(
+            policy = settingsRepository.currentSchedulingPolicy(),
+            card = card,
+            rating = rating,
+            now = now,
+            seed = FsrsScheduling.seed(seedKey, rating.value),
+        )
+    }
+
     /** Incremental reading: chunks, priorities, and FSRS re-read schedules. */
     val pagemarkRepository = PagemarkRepository(
         dao = database.pagemarkDao(),
-        settingsRepository = settingsRepository
+        settingsRepository = settingsRepository,
+        schedulers = schedulers,
+    )
+
+    /**
+     * Moving cards that were already scheduled onto the reader's current
+     * schedule. Only ever runs when they press the button that says so.
+     */
+    val rescheduleRepository = RescheduleRepository(
+        learningCards = database.learningCardDao(),
+        lumenCards = database.lumenCardDao(),
+        pagemarks = database.pagemarkDao(),
+        settings = settingsRepository,
     )
 
     /** Persistent text highlights: marked spans in both book formats. */
@@ -144,6 +193,15 @@ class AppContainer(context: Context) {
 
     val blockedAppRepository = BlockedAppRepository(blockedAppDao)
 
+    /** Apps the reader has chosen to trust for [ExternalReadingTracker] — empty by default. */
+    val externalReadingAppRepository = ExternalReadingAppRepository(externalReadingAppDao)
+
+    /** Sites off limits by address, which hold regardless of earned time. */
+    val blockedSiteRepository = BlockedSiteRepository(blockedSiteDao)
+
+    /** Sites let through by address under [com.pagetime.app.blocker.SiteMode.ALLOWLIST]. */
+    val allowedSiteRepository = AllowedSiteRepository(allowedSiteDao)
+
     val usageRepository = UsageRepository(usageEventDao)
 
     val balanceManager = BalanceManager(settingsRepository, usageRepository)
@@ -160,6 +218,28 @@ class AppContainer(context: Context) {
             urlProvider = { settingsRepository.lumenModelUrl() ?: LumenModelStore.MODEL_URL },
         )
     val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
+
+    /** Tags each book Fiction/Poetry/Science/etc., once, in the background — see the class doc. */
+    val bookGenreClassifier = BookGenreClassifier(
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        geminiClient = geminiLearningClient,
+        localLlmProvider = localLlmProvider,
+    )
+
+    /** A book's total word count, computed once on first read — see the class doc. */
+    val bookWordCounter = BookWordCounter(
+        bookDao = bookDao,
+        contextExtractor = learningContextExtractor,
+    )
+
+    /** The Library screen's one daily, dismissible book suggestion — see the class doc. */
+    val librarianSuggester = LibrarianSuggester(
+        bookDao = bookDao,
+        settingsRepository = settingsRepository,
+        geminiClient = geminiLearningClient,
+        localLlmProvider = localLlmProvider,
+    )
 
     /**
      * The retrieval model: separate weights, separate directory, separate
@@ -215,6 +295,17 @@ class AppContainer(context: Context) {
             gemini = geminiLearningClient,
             usage = aiUsageRepository,
             passageDao = database.chapterPassageDao(),
+            // The passages the vectors pick are paragraphs; the questions have
+            // to be written from more of the chapter than that, so the text
+            // goes with them. The same reader the index was built with, so a
+            // passage's offsets index the string handed back here.
+            chapterText = { book, chapter ->
+                learningContextExtractor.chapterText(book, chapter)
+            },
+            // The reader's own instructions, when they have written any. Read
+            // per generation rather than captured here, so an edit in Settings
+            // takes effect on the next chapter instead of the next launch.
+            promptTemplate = { settingsRepository.chapterPromptTemplate() },
         )
 
     val lumenRepository = LumenRepository(
@@ -233,6 +324,7 @@ class AppContainer(context: Context) {
         onCardTextChanged = { card ->
             scope.launch { runCatching { cardEmbeddingIndexer.index(listOf(card)) } }
         },
+        schedulers = schedulers,
     )
 
     val glossRepository = GlossRepository(
@@ -277,6 +369,24 @@ class AppContainer(context: Context) {
         selfPackage = appContext.packageName
     )
 
+    /**
+     * Address rules, read from the accessibility service.
+     *
+     * Separate from [blockController] on purpose — it decides about the PAGE,
+     * not the app — but it shares [balanceManager]'s gate with it: a session
+     * bought with reading covers site rules for exactly as long as it covers
+     * blocked apps. See [SiteBlocker] for why that is not the same thing as
+     * consulting the old browse balance, which it still never does.
+     */
+    val siteBlocker = SiteBlocker(
+        scope = scope,
+        repository = blockedSiteRepository,
+        allowedRepository = allowedSiteRepository,
+        settingsRepository = settingsRepository,
+        usageRepository = usageRepository,
+        balanceManager = balanceManager,
+    )
+
     /** UsageStats audit: charges blocked-app time even if our service was dead. */
     val usageStatsReader = UsageStatsReader(appContext)
     val usageReconciler = UsageReconciler(
@@ -290,9 +400,25 @@ class AppContainer(context: Context) {
         parser = ForegroundParser()
     )
 
+    /**
+     * Credits foreground time in reader-chosen apps as reading, opt-in only —
+     * see [ExternalReadingTracker] for why it stays off unless the reader
+     * turns it on and picks which apps to trust.
+     */
+    val externalReadingTracker = ExternalReadingTracker(
+        scope = scope,
+        settingsRepository = settingsRepository,
+        externalReadingAppRepository = externalReadingAppRepository,
+        balanceManager = balanceManager,
+        reader = usageStatsReader,
+        parser = ForegroundParser()
+    )
+
     init {
         blockController.start()
+        siteBlocker.start()
         usageReconciler.start()
+        externalReadingTracker.start()
         // PDFs imported before a PDF was converted at import are still sitting
         // in the library as extracted text. Both files are on disk, so they can
         // be rebuilt in the background — and until one is, it keeps reading the

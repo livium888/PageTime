@@ -58,6 +58,16 @@ interface LearningCardDao {
     @Query("SELECT * FROM learning_cards WHERE id = :id")
     suspend fun get(id: String): LearningCardEntity?
 
+    /**
+     * Every card, for moving existing reviews onto a new schedule.
+     *
+     * Not observable and not paginated: it is read once by an action the reader
+     * has to press, and then never again. A Flow here would invite a screen to
+     * watch the whole table, which nothing needs to do.
+     */
+    @Query("SELECT * FROM learning_cards")
+    suspend fun allForReschedule(): List<LearningCardEntity>
+
     @Query("SELECT * FROM learning_cards WHERE bookId = :bookId AND status = 'kept' ORDER BY chapterIndex ASC, sourceFraction ASC")
     fun observeKeptForBook(bookId: String): Flow<List<LearningCardEntity>>
 

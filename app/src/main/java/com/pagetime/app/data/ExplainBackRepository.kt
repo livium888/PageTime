@@ -10,6 +10,7 @@ import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 
 /**
  * Drives the Feynman explain-back flow and persists source-grounded evaluations.
@@ -36,6 +37,29 @@ class ExplainBackRepository(
 ) {
     fun observeExplanations(bookId: String): Flow<List<ExplanationEntity>> =
         explanationDao.observeForBook(bookId)
+
+    /** One book/chapter/concept from the cross-book queue — see [observeConceptQueue]. */
+    data class DueConcept(val bookId: String, val chapterIndex: Int, val conceptLabel: String)
+
+    /** The cross-book explain-back queue: how many concepts are waiting, and which one is next. */
+    data class ConceptQueue(val unexplainedCount: Int, val next: DueConcept?)
+
+    /**
+     * The single most overdue concept across every book, live. Unlike
+     * [conceptsForRange], which only ever looks at one book's currently-open
+     * chapter, this is the reader's whole library: with many books, most
+     * unexplained concepts live in books that aren't the one currently open,
+     * and this is the only thing that ever surfaces them.
+     */
+    fun observeConceptQueue(): Flow<ConceptQueue> =
+        combine(conceptDao.observeAll(), explanationDao.observeAll()) { concepts, explanations ->
+            ConceptQueue(
+                unexplainedCount = DueConcepts.unexplainedCount(concepts, explanations),
+                next = DueConcepts.next(concepts, explanations)?.let {
+                    DueConcept(bookId = it.bookId, chapterIndex = it.firstChapterIndex, conceptLabel = it.label)
+                }
+            )
+        }
 
     /**
      * Concepts that are actually grounded in the given reading-range text.

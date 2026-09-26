@@ -27,10 +27,16 @@ internal fun formatNextReview(
  * Anki-style compact interval caption for a rating button: "10m", "2d", "2mo".
  * Mirrors Anki's button captions ("Good 2d") so the reader sees the next
  * review time before pressing it.
+ *
+ * Under a minute it says "<1m" rather than "0m", which is what Anki says and
+ * the only honest reading: FSRS's short learning steps really are sub-minute
+ * in intent, and "0m" in the middle of a button looks like a bug rather than
+ * a schedule.
  */
 internal fun formatIntervalShort(duration: Duration): String {
     val minutes = duration.toMinutes()
     return when {
+        minutes < 1L -> "<1m"
         minutes < 60L -> "${minutes}m"
         minutes < 24L * 60L -> {
             val hours = duration.toHours()

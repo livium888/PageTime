@@ -185,6 +185,14 @@ object ChapterTopics {
         rows: List<BookChunkEmbeddingEntity>,
         count: Int = 0,
         lambda: Float = LAMBDA,
+        /**
+         * The chapter's text, when the caller has it.
+         *
+         * Used to give every chosen passage the prose around it; see [widen].
+         * Null leaves the passages exactly as the index cut them, which is
+         * what a caller without the book — and every test — wants.
+         */
+        chapterText: String? = null,
     ): List<TopicPassage> {
         if (rows.isEmpty()) return emptyList()
 
@@ -258,7 +266,7 @@ object ChapterTopics {
         // Selected by importance, returned by position: a prompt belongs where
         // its idea is, and the reader meets them in the order the chapter
         // makes them.
-        return chosen
+        val picks = chosen
             .map { i ->
                 val row = usable[i]
                 TopicPassage(
@@ -272,6 +280,111 @@ object ChapterTopics {
                 )
             }
             .sortedBy { it.startOffset }
+        return widen(picks, chapterText)
+    }
+
+    /**
+     * Gives every chosen passage the prose around it, so the model is asked
+     * about a passage rather than about a fragment.
+     *
+     * WHY THIS EXISTS
+     *
+     * A chunk is at most [BookTextChunker]'s embedding budget — 380 characters
+     * at the embedder's 128 tokens, which is one paragraph or half of one. That
+     * budget is right for a vector and wrong for a question. Asked for up to
+     * three prompts from sixty words, the only thing a model can honestly
+     * produce is a lookup, because there is nothing else in front of it: no
+     * mechanism, no cause, no contrast, none of the things an understanding
+     * question is made of.
+     *
+     * THE DENSITY WAS ALWAYS MEANT TO BE THE SIZE OF THE PASSAGE
+     *
+     * "One passage per ~400 words" is what [CHARS_PER_TOPIC] counts, and it was
+     * only ever applied to how MANY passages were picked — never to how much of
+     * the chapter each one was. So the number of prompts per chapter was right
+     * and every passage behind them was about six times too small.
+     *
+     * WHAT EACH PICK GETS
+     *
+     * Its own territory, and no more: the window grows to about
+     * [CHARS_PER_TOPIC] characters around the chunk, two thirds of the growth
+     * forward — what a paragraph states is usually continued after it, while
+     * what precedes it is often the tail of the previous idea — and both ends
+     * are clipped so a passage can never run into what a neighbouring pick has
+     * claimed. Overlapping passages would be the same prompt paid for twice.
+     *
+     * Picks stay disjoint, stay in reading order and stay exactly as many as
+     * were chosen, which matters because the coverage sheet and the per-passage
+     * re-ask both address them by ordinal.
+     *
+     * Both ends are snapped to whitespace: growing by a third of the shortfall
+     * in characters lands wherever it lands, and a passage that began mid-word
+     * would hand the model "eillance are no longer…" — the exact defect
+     * [BookTextChunker] was versioned twice to remove. Each end snaps inward
+     * toward its own territory, so neither can land in a neighbour's.
+     */
+    private fun widen(picks: List<TopicPassage>, chapterText: String?): List<TopicPassage> {
+        val source = chapterText?.takeIf { it.isNotBlank() } ?: return picks
+        // Clipped to the chapter once, before anything is done with them. An
+        // offset comes from the index, and a chapter re-parsed since can be
+        // shorter than the index says.
+        val cut = picks.map { pick ->
+            val start = pick.startOffset.coerceIn(0, source.length)
+            start to pick.endOffset.coerceIn(start, source.length)
+        }
+        return picks.mapIndexedNotNull { index, pick ->
+            val (start, end) = cut[index]
+            if (end <= start) return@mapIndexedNotNull null
+
+            // Halfway to each neighbouring pick: far enough that a passage
+            // holds everything its own idea needs, close enough that it never
+            // covers a neighbour's. Both bounds are snapped to a word, because
+            // each is also where the neighbouring window stops — one hard cut
+            // in the middle of a word would spoil both passages.
+            //
+            // The two are the same expression read from either side, so the
+            // window on the left can never reach the window on the right.
+            val floor = if (index == 0) {
+                0
+            } else {
+                val previousEnd = cut[index - 1].second
+                wordStart(source, (previousEnd + start) / 2, previousEnd)
+            }
+            val ceiling = if (index == picks.lastIndex) {
+                source.length
+            } else {
+                val next = cut[index + 1].first
+                wordStart(source, (end + next) / 2, end)
+            }
+
+            val room = (CHARS_PER_TOPIC - (end - start)).coerceAtLeast(0)
+            val from = wordStart(source, (start - room / 3).coerceIn(floor, start), floor)
+            // Ends where a word ends rather than where another begins, so the
+            // passage is prose rather than prose with its last word cut off.
+            // Never before [end]: the chunk the vectors chose is always inside
+            // the passage written about it.
+            val to = maxOf(wordEnd(source, minOf(from + CHARS_PER_TOPIC, ceiling), ceiling), end)
+            pick.copy(
+                startOffset = from,
+                endOffset = to,
+                text = source.substring(from, to),
+                chapterChars = source.length,
+            )
+        }
+    }
+
+    /** The start of the word containing [at], never earlier than [floor]. */
+    private fun wordStart(text: String, at: Int, floor: Int): Int {
+        var i = at.coerceIn(floor, text.length)
+        while (i > floor && !text[i - 1].isWhitespace()) i--
+        return i
+    }
+
+    /** Just past the word containing [at], never later than [ceiling]. */
+    private fun wordEnd(text: String, at: Int, ceiling: Int): Int {
+        var i = at.coerceIn(0, ceiling)
+        while (i < ceiling && !text[i].isWhitespace()) i++
+        return i
     }
 
     private fun overlaps(a: BookChunkEmbeddingEntity, b: BookChunkEmbeddingEntity): Boolean =

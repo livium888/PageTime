@@ -7,16 +7,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.FsrsCardCodec
-import com.pagetime.app.data.learning.ChapterPromptRules
 import com.pagetime.app.data.library.PdfTextCleaner
 import com.pagetime.app.data.library.PdfTextExtractor
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.domain.BalanceManager
+import com.pagetime.app.domain.ReadingMomentum
 import io.github.openspacedrepetition.Card
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,7 +33,7 @@ import java.util.UUID
  * Recall tab with FSRS scheduling, grading, notifications, and time
  * earning via [BalanceManager.earnFromFlashcard].
  *
- * Flashcards are generated using [GeminiLearningClient.generateChapterPrompts],
+ * Flashcards are generated using [ChapterPromptGenerator.promptsForText],
  * the same pipeline the EPUB reader uses for proper Q/A flashcards with
  * questions, answers, and explanations — NOT the Lumen slip-box pipeline.
  *
@@ -46,7 +47,6 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val container = (app as PageTimeApp).container
     private val balanceManager: BalanceManager = container.balanceManager
     private val settingsRepository = container.settingsRepository
-    private val geminiClient = container.geminiLearningClient
     private val learningCardDao = container.database.learningCardDao()
 
     // --- Reading timer ---
@@ -54,6 +54,13 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var pendingSeconds = 0
     private var readingStartTime = 0L
     private var currentBookId: String? = null
+
+    /** Surfaced once when a reading-momentum bonus lands; see [ReadingMomentum]. */
+    private val _momentumNotice = MutableStateFlow<String?>(null)
+    val momentumNotice = _momentumNotice.asStateFlow()
+
+    private var creditedSecondsSinceMomentumBonus = 0L
+    private var nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
 
     // --- AI flashcard state ---
     private val _flashcardState = MutableStateFlow(FlashcardUiState())
@@ -77,6 +84,11 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     currentPage = savedPage.coerceIn(0, renderer.pageCount - 1),
                     loading = false,
                     restoredPage = savedPage.coerceIn(0, renderer.pageCount - 1),
+                    // Read in the same pass as the page, so the first frame is
+                    // already the theme the reader chose. Coming from a
+                    // separate flow made the page flash the other way round on
+                    // the way in.
+                    pdfDarkMode = settingsRepository.pdfDarkMode(),
                 )
                 startReading()
             } else {
@@ -95,8 +107,23 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 delay(1000)
                 pendingSeconds++
                 balanceManager.earnFromReading(1L)
+                creditedSecondsSinceMomentumBonus++
+                if (ReadingMomentum.shouldFire(creditedSecondsSinceMomentumBonus, nextMomentumThreshold)) {
+                    creditedSecondsSinceMomentumBonus = 0
+                    nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
+                    launch { awardMomentumBonus() }
+                }
             }
         }
+    }
+
+    /** Pays and announces a reading-momentum bonus; a no-op if the reward is off. */
+    private suspend fun awardMomentumBonus() {
+        val seconds = balanceManager.earnReadingMomentumBonus()
+        if (seconds <= 0) return
+        _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
+        delay(6_000)
+        _momentumNotice.value = null
     }
 
     private fun stopReading() {
@@ -114,6 +141,16 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Page tracking ---
 
+    /**
+     * Records the page the reader is on.
+     *
+     * Called with the page at the top of the viewport, and deliberately NOT
+     * when a page becomes composed. A lazy list builds the items it is about
+     * to need, several pages beyond the reader, so counting builds made the
+     * page counter race forward on a flick — 30, 33, back to 30 — and it
+     * aimed both "flashcard from this page" and the saved resume position at a
+     * page nobody was looking at.
+     */
     fun markPage(pageIndex: Int) {
         val current = _state.value
         if (pageIndex != current.currentPage) {
@@ -134,6 +171,71 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearTargetScrollPage() {
         _state.value = _state.value.copy(targetScrollPage = null)
+    }
+
+    /**
+     * Forgets the position the document was opened at.
+     *
+     * [PdfState.restoredPage] is set once, when the PDF opens, and its whole
+     * job is to put the reader back where they left the book. It is NOT where
+     * they are now — the list's own scroll state is, and that is what Android
+     * hands back after a rotation. Left set, this restore ran again on every
+     * recreation and dragged the reader back to the page the book happened to
+     * open on, so turning the phone threw the reading away and turning it back
+     * did it a second time.
+     */
+    fun clearRestoredPage() {
+        _state.value = _state.value.copy(restoredPage = null)
+    }
+
+    /**
+     * The shape of each page, remembered for the session.
+     *
+     * A page is rendered off the main thread, and until its bitmap arrives the
+     * list gives the slot a default A4 shape. Rotating the device throws the
+     * composition away, so without this every page above the reader would
+     * briefly claim a height that is not its own, the list would re-measure
+     * its scroll offset against those heights, and the reader would come back
+     * somewhere else on the page than they left.
+     *
+     * The value is the page's width divided by its height — the direction
+     * `Modifier.aspectRatio` takes, so a taller-than-wide page comes out below
+     * 1. Held the other way round it laid every page out at half the height
+     * its bitmap needed. Small, never persisted, and discarded with the
+     * ViewModel.
+     */
+    private val _pageRatios = MutableStateFlow<Map<Int, Float>>(emptyMap())
+    val pageRatios: StateFlow<Map<Int, Float>> = _pageRatios.asStateFlow()
+
+    fun recordPageRatio(pageIndex: Int, ratio: Float) {
+        if (ratio <= 0f || _pageRatios.value[pageIndex] == ratio) return
+        _pageRatios.value = _pageRatios.value + (pageIndex to ratio)
+    }
+
+    /**
+     * Where the reader is now: which page, and how far down it.
+     *
+     * Not the same thing as [PdfState.restoredPage], which is only where the
+     * book was OPENED and is cleared as soon as it has been honoured. This
+     * follows the reader, and exists for one reason: rotation. Android hands a
+     * list back its scroll offset in pixels, and a page's height depends on
+     * the screen's width, so the offset that was halfway down a page in
+     * portrait points somewhere else entirely in landscape. A fraction of the
+     * page does not move when the phone does.
+     *
+     * Held here because the ViewModel is the one thing in this screen that
+     * survives a rotation, and read by the screen at the moment the new layout
+     * appears. Deliberately not a StateFlow: nothing recomposes on it, it is
+     * read once, on the way in.
+     */
+    private var readingAnchor: ReadingAnchor? = null
+
+    fun currentReadingAnchor(): ReadingAnchor? = readingAnchor
+
+    fun recordReadingAnchor(page: Int, fraction: Float) {
+        val next = ReadingAnchor(page, ReaderPositionPolicy.clampFraction(fraction))
+        if (readingAnchor == next) return
+        readingAnchor = next
     }
 
     // --- Text extraction ---
@@ -221,18 +323,32 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                     _flashcardState.value = FlashcardUiState(error = "Book not found")
                     return@launch
                 }
-                val prompts = geminiClient.generateChapterPrompts(
-                    bookTitle = book.title,
+                // Re-clean user edits as well as extracted text: the preview
+                // must not turn document furniture into a source for cards.
+                val text = PdfTextCleaner.cleanForFlashcards(editedText)
+                if (text.isBlank()) {
+                    _flashcardState.value = FlashcardUiState(
+                        error = "The text looks like document clutter. Edit it to include a passage from the main text."
+                    )
+                    return@launch
+                }
+                // Use the same locally-sifted generation path as EPUB. It also
+                // records usage and honours the reader's prompt instructions.
+                val verdict = app.container.chapterPromptGenerator.promptsForText(
+                    book = book,
                     chapterTitle = "Page ${pageIndex + 1}",
-                    passages = listOf(editedText),
-                    insist = true,
+                    text = text,
                 )
-                // The chapter path runs every response through these strict
-                // local checks; this direct PDF path must not bypass them.
-                val accepted = ChapterPromptRules.sift(prompts, listOf(editedText)).accepted
+                val accepted = verdict.accepted
+                val offered = accepted.size + verdict.rejected.size
                 if (accepted.isEmpty()) {
                     _flashcardState.value = FlashcardUiState(
-                        error = "Gemini's questions did not pass the quality checks for this text. Try a cleaner or more complete passage."
+                        error = if (offered == 0) {
+                            "Gemini could not generate a flashcard from this text. Try a cleaner or more complete passage."
+                        } else {
+                            "$offered question${if (offered == 1) "" else "s"} came " +
+                                "back and none passed the checks. Nothing was saved."
+                        }
                     )
                     return@launch
                 }
@@ -274,12 +390,25 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Legacy methods kept for TextSelectionSheet compatibility ---
 
-    /**
-     * Generate a flashcard from user-selected text → Learning Card.
-     * Now routes through preview flow.
-     */
+    /** Legacy selection entry point; all generation now uses the editable preview. */
     fun generateFlashcardFromSelection(selectedText: String) {
         prepareFlashcardPreviewFromSelection(selectedText)
+    }
+
+    /** Shows a page-text sheet's content in the editable preview before generation. */
+    fun generateFlashcardFromText(pageText: String) {
+        val cleaned = PdfTextCleaner.cleanForFlashcards(pageText)
+        if (cleaned.isBlank()) {
+            _flashcardState.value = FlashcardUiState(
+                error = "No readable main text was found on this page."
+            )
+            return
+        }
+        _flashcardState.value = FlashcardUiState(
+            previewing = true,
+            previewText = cleaned,
+            previewSource = PreviewSource.PAGE,
+        )
     }
 
     /**
@@ -304,7 +433,10 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             id = UUID.randomUUID().toString(),
             bookId = bookId,
             chapterIndex = pageIndex,
-            chapterTitle = null,
+            // A PDF page is this reader's unit of text, so it is the card's
+            // chapter. Left null, every card from every PDF showed no source
+            // at all in the Flashcards list.
+            chapterTitle = "Page ${pageIndex + 1}",
             topic = null,
             prompt = prompt.trim(),
             answer = answer.trim(),
@@ -325,6 +457,18 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
         learningCardDao.upsert(card)
     }
 
+    /**
+     * Remembers the PDF page theme.
+     *
+     * It has to outlive the screen. The toggle used to be `rememberSaveable`
+     * and nothing else, so it survived a rotation and was forgotten the moment
+     * the reader went back to the library — which meant re-enabling dark mode
+     * every single time a PDF was opened.
+     */
+    fun setPdfDarkMode(dark: Boolean) {
+        viewModelScope.launch { settingsRepository.setPdfDarkMode(dark) }
+    }
+
     override fun onCleared() {
         super.onCleared()
         stopReading()
@@ -339,6 +483,14 @@ data class PdfState(
     val error: String? = null,
     val restoredPage: Int? = null,
     val targetScrollPage: Int? = null,
+    /**
+     * The reader's stored page theme, or null when they have never chosen one.
+     *
+     * Null means the screen should follow the system rather than assume light.
+     * The two are different: false is "I want a white page", which is a choice
+     * worth honouring in a dark room.
+     */
+    val pdfDarkMode: Boolean? = null,
 )
 
 enum class PreviewSource { PAGE, SELECTION }
@@ -352,3 +504,14 @@ data class FlashcardUiState(
     val lastCreatedFront: String? = null,
     val lastCreatedBack: String? = null,
 )
+
+/**
+ * How far into the document the reader is: which page, and how far down it.
+ *
+ * The fraction is of the whole list item rather than of the page artwork,
+ * because the item is what the list scrolls. The item is a page plus the
+ * page-start marker above it, and the marker's height is fixed, which is what
+ * makes the fraction transferable: the part of the item that scales with the
+ * screen is the page, and it scales by the same amount everywhere.
+ */
+data class ReadingAnchor(val page: Int, val fraction: Float)

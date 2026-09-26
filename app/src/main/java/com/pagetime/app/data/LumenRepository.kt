@@ -6,9 +6,9 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
 import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.SettingsRepository
+import com.pagetime.app.data.review.CardScheduler
 import io.github.openspacedrepetition.Card
 import io.github.openspacedrepetition.Rating
-import io.github.openspacedrepetition.Scheduler
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -95,10 +95,15 @@ class LumenRepository(
      * quality, and must never be able to cost the reader their note.
      */
     private val onCardTextChanged: (LumenCardEntity) -> Unit = {},
-    private val scheduler: Scheduler = Scheduler.builder()
-        .desiredRetention(0.9)
-        .enableFuzzing(false)
-        .build()
+    /**
+     * The one scheduler, injected rather than built here.
+     *
+     * This class used to build its own with fuzzing switched off while
+     * [com.pagetime.app.data.review.ChapterCardGrader] built one with fuzzing
+     * on, so the same rating was fuzzed or not depending on the kind of card.
+     * See [CardScheduler].
+     */
+    private val schedulers: CardScheduler = CardScheduler.DEFAULT,
 ) {
     fun diagContext(): Context = captureDiagContext()
     fun observeAll(): Flow<List<LumenCardEntity>> = dao.observeAll()
@@ -593,13 +598,22 @@ class LumenRepository(
         )
     }
 
-    /** Links this card to another; the relation is bidirectional. */
-    suspend fun link(cardId: String, otherId: String) {
-        if (cardId == otherId) return
-        val a = dao.get(cardId) ?: return
-        val b = dao.get(otherId) ?: return
+    /**
+     * Links this card to another; the relation is bidirectional.
+     *
+     * Returns whether this call actually created a new connection, as
+     * opposed to re-confirming one that already existed — the caller uses
+     * this to decide whether the action is worth a reward. A link that was
+     * already there earns nothing a second time, the same way re-answering
+     * an already-graded flashcard would not pay twice.
+     */
+    suspend fun link(cardId: String, otherId: String): Boolean {
+        if (cardId == otherId) return false
+        val a = dao.get(cardId) ?: return false
+        val b = dao.get(otherId) ?: return false
         val aLinks = LumenCapture.linksFromJson(a.linksJson)
         val bLinks = LumenCapture.linksFromJson(b.linksJson)
+        val isNew = otherId !in aLinks || cardId !in bLinks
         val now = System.currentTimeMillis()
         if (otherId !in aLinks) {
             dao.upsert(
@@ -617,6 +631,7 @@ class LumenRepository(
                 )
             )
         }
+        return isNew
     }
 
     /** Removes the link between two cards (from both sides). */
@@ -690,7 +705,7 @@ class LumenRepository(
         val existing = dao.get(cardId) ?: return null
         val oldJson = existing.fsrsCardJson ?: return null
         val oldCard = FsrsCardCodec.fromJson(oldJson)
-        val result = scheduler.reviewCard(oldCard, rating.toFsrs(), now, null)
+        val result = schedulers.review(cardId, oldCard, rating.toFsrs(), now)
         var persisted = result.card()
         var nextDue = persisted.due ?: now.plusSeconds(86_400)
         if (persisted.due == null) {

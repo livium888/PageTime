@@ -51,6 +51,55 @@ internal object PdfTextCleaner {
     }
 
     /**
+     * Cleans one PDF page before it is offered as flashcard source text.
+     *
+     * Unlike book conversion, a flashcard request sees only the current page, so
+     * it cannot identify running heads by comparing the whole document. It can
+     * still remove page furniture, reflow the PDF's artificial line breaks, and
+     * omit obvious legal notices and explicitly headed back matter. This is
+     * intentionally conservative: ambiguous footnotes are better shown in the
+     * preview than silently removed from text the reader chose to study.
+     */
+    fun cleanForFlashcards(pageText: String): String =
+        filterFlashcardText(cleanPerPage(listOf(pageText)).singleOrNull().orEmpty())
+
+    /**
+     * Cleans one page with document-wide header and section context.
+     *
+     * If a heading such as "Endnotes" appeared on an earlier page, later pages
+     * in that section are not offered as learning material either. This avoids
+     * producing a card from page 204's numbered citation just because the
+     * section heading was on page 203.
+     */
+    fun cleanForFlashcards(pages: List<String>, pageIndex: Int): String {
+        if (pageIndex !in pages.indices) return ""
+        val backMatterStarted = pages
+            .take(pageIndex + 1)
+            .any { page -> page.lines().any { BACK_MATTER_HEADING.matches(it.trim().replace(WHITESPACE, " ")) } }
+        if (backMatterStarted) return ""
+        val cleanedPages = cleanPerPage(pages)
+        return filterFlashcardText(cleanedPages.getOrNull(pageIndex).orEmpty())
+    }
+
+    private fun filterFlashcardText(pageText: String): String {
+        val paragraphs = pageText.split(Regex("\\n\\s*\\n"))
+            .map(String::trim)
+            .filter(String::isNotBlank)
+        val mainText = paragraphs.takeWhile { paragraph ->
+            !BACK_MATTER_HEADING.matches(paragraph.replace(WHITESPACE, " ").trim())
+        }
+        return mainText
+            .filterNot { paragraph ->
+                val normalized = paragraph.replace(WHITESPACE, " ").trim()
+                LEGAL_BOILERPLATE.containsMatchIn(normalized) ||
+                    (normalized.length < 280 && LEGAL_TERMS.containsMatchIn(normalized)) ||
+                    BIBLIOGRAPHIC_LINE.matches(normalized)
+            }
+            .joinToString(BLANK_LINE)
+            .trim()
+    }
+
+    /**
      * The lines that repeat at the margins of most pages, normalized. Empty for
      * a document too short to tell a running head from a chapter title.
      */
@@ -174,6 +223,22 @@ internal object PdfTextCleaner {
 
     private val DIGITS = Regex("[0-9]+")
     private val WHITESPACE = Regex("\\s+")
+    private val BACK_MATTER_HEADING = Regex(
+        "^(?:\\d+\\s+)?(?:endnotes?|footnotes?|references|bibliography|works cited|further reading|image credits|copyright)(?:\\s+(?:continued|—\\s*continued))?$",
+        RegexOption.IGNORE_CASE,
+    )
+    private val LEGAL_BOILERPLATE = Regex(
+        "^(?:copyright(?:\\s+©|\\s+\\(c\\)|\\s+\\d{4})|all rights reserved\\b|no part of this (?:book|publication|work)\\b|isbn\\b|©|printed in (?:the )?(?:united states|uk|england|canada|india)\\b)",
+        RegexOption.IGNORE_CASE,
+    )
+    private val LEGAL_TERMS = Regex(
+        "\\ball rights reserved\\b|\\bno part of this (?:book|publication|work)\\b|\\bisbn\\b|©|\\bprinted in (?:the )?(?:united states|uk|england|canada|india)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+    private val BIBLIOGRAPHIC_LINE = Regex(
+        "^(?:\\[?\\d+\\]?\\.?\\s*)?.*(?:doi\\s*:|doi\\.org/|https?://\\S+).*$",
+        RegexOption.IGNORE_CASE,
+    )
 
     /** Punctuation that ends a sentence, including a closing quote or bracket. */
     private const val SENTENCE_END = ".!?…\":;"

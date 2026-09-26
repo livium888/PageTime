@@ -38,6 +38,8 @@ data class FlashcardsUiState(
     /** Where the "Explain N" button jumps to: the single most overdue concept, in whichever book it lives in. */
     val nextDueConcept: DueConceptEntry? = null,
     val loading: Boolean = true,
+    /** ID of the card currently being edited, or null. */
+    val editingCardId: String? = null,
 ) {
     val total: Int get() = counts[FlashcardFilter.ALL] ?: 0
     val due: Int get() = counts[FlashcardFilter.DUE] ?: 0
@@ -55,39 +57,44 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     private val _filter = MutableStateFlow(FlashcardFilter.ALL)
     val filter = _filter.asStateFlow()
 
+    private val _editingCardId = MutableStateFlow<String?>(null)
+    val editingCardId = _editingCardId.asStateFlow()
+
     val state = combine(
-        cardDao.observeLive(),
-        bookDao.observeAll(),
-        _filter,
-        reviewLog.observeTally(),
-        explainBackRepository.observeConceptQueue(),
-    ) { cards, books, filter, tally, conceptQueue ->
-        val titles = books.associate { it.id to it.title }
-        // Counts are computed from the same list the groups come from, at the
-        // same instant. Two passes over different snapshots would let a chip
-        // say 3 and the list show 2.
-        val now = System.currentTimeMillis()
-        FlashcardsUiState(
-            groups = FlashcardListing.group(cards, titles, filter, now),
-            counts = FlashcardFilter.entries.associateWith {
-                FlashcardListing.countFor(cards, it, now)
-            },
-            filter = filter,
-            tally = tally,
-            dueConceptCount = conceptQueue.unexplainedCount,
-            // No chapter title is stored on a concept, only the chapter index
-            // it was found in — same fallback ChapterReviewPrompt uses for the
-            // same reason.
-            nextDueConcept = conceptQueue.next?.let { due ->
-                DueConceptEntry(
-                    bookId = due.bookId,
-                    bookTitle = titles[due.bookId] ?: "Book",
-                    chapterIndex = due.chapterIndex,
-                    chapterTitle = "Chapter ${due.chapterIndex + 1}",
-                )
-            },
-            loading = false,
-        )
+        combine(
+            cardDao.observeLive(),
+            bookDao.observeAll(),
+            _filter,
+            reviewLog.observeTally(),
+            explainBackRepository.observeConceptQueue(),
+        ) { cards, books, filter, tally, conceptQueue ->
+            val titles = books.associate { it.id to it.title }
+            val now = System.currentTimeMillis()
+            FlashcardsUiState(
+                groups = FlashcardListing.group(cards, titles, filter, now),
+                counts = FlashcardFilter.entries.associateWith {
+                    FlashcardListing.countFor(cards, it, now)
+                },
+                filter = filter,
+                tally = tally,
+                dueConceptCount = conceptQueue.unexplainedCount,
+                // No chapter title is stored on a concept, only the chapter index
+                // it was found in — same fallback ChapterReviewPrompt uses for the
+                // same reason.
+                nextDueConcept = conceptQueue.next?.let { due ->
+                    DueConceptEntry(
+                        bookId = due.bookId,
+                        bookTitle = titles[due.bookId] ?: "Book",
+                        chapterIndex = due.chapterIndex,
+                        chapterTitle = "Chapter ${due.chapterIndex + 1}",
+                    )
+                },
+                loading = false,
+            )
+        },
+        _editingCardId,
+    ) { current, editingCardId ->
+        current.copy(editingCardId = editingCardId)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FlashcardsUiState())
 
     fun setFilter(filter: FlashcardFilter) {
@@ -99,14 +106,42 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { runCatching { generator.keep(card.id) } }
     }
 
-    /**
-     * Throws a card away.
-     *
-     * Marked skipped rather than deleted, for the same reason as in the reader:
-     * a deleted row lets the chapter be generated again and offer the same
-     * rejected question straight back.
-     */
+    /** Throw away — marks as skipped, not deleted, so chapter is not regenerated. */
     fun discard(card: LearningCardEntity) {
         viewModelScope.launch { runCatching { generator.skip(card.id) } }
+    }
+
+    /** Permanently delete a card from the database. */
+    fun delete(card: LearningCardEntity) {
+        viewModelScope.launch {
+            runCatching { cardDao.delete(card.id) }
+        }
+    }
+
+    /** Enter edit mode for a card. */
+    fun startEditing(card: LearningCardEntity) {
+        _editingCardId.value = card.id
+    }
+
+    /** Exit edit mode without saving. */
+    fun cancelEditing() {
+        _editingCardId.value = null
+    }
+
+    /** Save edited prompt and answer for a card. */
+    fun saveEdit(card: LearningCardEntity, newPrompt: String, newAnswer: String) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            runCatching {
+                cardDao.upsert(
+                    card.copy(
+                        prompt = newPrompt.trim(),
+                        answer = newAnswer.trim(),
+                        updatedAt = now,
+                    )
+                )
+            }
+            _editingCardId.value = null
+        }
     }
 }

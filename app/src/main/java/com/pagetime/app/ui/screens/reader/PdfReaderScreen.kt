@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -105,7 +107,7 @@ import kotlinx.coroutines.withContext
  * naturally, pinch to zoom, drag to pan when zoomed in. Features:
  *
  *  - Reading time tracking (earns browse balance like EPUB)
- *  - One-tap AI flashcard generation from current page (Gemini)
+ *  - Text preview → AI flashcard generation from current page (Gemini)
  *  - Text selection bottom sheet → highlight → AI flashcard
  *  - Last-position memory (restores to where you left off)
  *  - Dark mode, zoom controls, go-to-page
@@ -534,12 +536,15 @@ fun PdfReaderScreen(
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("✨ Flashcard from this page") },
+                            text = {
+                                if (isExtracting || flashcardState.previewing) Text("Preparing…")
+                                else Text("✨ Flashcard from this page")
+                            },
                             onClick = {
                                 menuExpanded = false
-                                vm.generateFlashcardFromCurrentPage()
+                                vm.prepareFlashcardPreview()
                             },
-                            enabled = !isExtracting && !flashcardState.generating,
+                            enabled = !isExtracting && !flashcardState.generating && !flashcardState.previewing,
                         )
                         // Show the page's text before spending a call on it.
                         //
@@ -567,7 +572,7 @@ fun PdfReaderScreen(
                                     showPageTextSheet = true
                                 }
                             },
-                            enabled = !isExtracting && !flashcardState.generating,
+                            enabled = !isExtracting && !flashcardState.generating && !flashcardState.previewing,
                         )
                     }
                 },
@@ -597,6 +602,17 @@ fun PdfReaderScreen(
                 vm.goToPage(page)
             },
             onDismiss = { showGoToPage = false }
+        )
+    }
+
+    // --- Flashcard text preview dialog ---
+    if (flashcardState.previewing && flashcardState.previewText != null) {
+        FlashcardPreviewDialog(
+            text = flashcardState.previewText!!,
+            currentPage = state.currentPage,
+            source = flashcardState.previewSource,
+            onConfirm = { editedText -> vm.confirmFlashcardGeneration(editedText) },
+            onDismiss = { vm.dismissFlashcardPreview() },
         )
     }
 
@@ -871,6 +887,80 @@ private fun GoToPageDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
+    )
+}
+
+/**
+ * Flashcard text preview dialog — lets the reader inspect and edit the exact
+ * source text before generation.
+ */
+@Composable
+private fun FlashcardPreviewDialog(
+    text: String,
+    currentPage: Int,
+    source: PreviewSource?,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var editedText by remember(text) { mutableStateOf(text) }
+    val charCount = editedText.length
+    val wordCount = editedText.split(Regex("\\s+")).filter { it.isNotBlank() }.size
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                when (source) {
+                    PreviewSource.SELECTION -> "Selected text → Flashcard"
+                    else -> "Page ${currentPage + 1} text → Flashcard"
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "This is the text Gemini will receive. Edit it to focus on what you want to remember.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = editedText,
+                    onValueChange = { editedText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 400.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    label = { Text("Text for flashcard") },
+                    supportingText = {
+                        Text(
+                            "$wordCount words · $charCount characters",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(editedText) },
+                enabled = editedText.isNotBlank(),
+            ) {
+                Icon(
+                    Icons.Outlined.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Generate flashcard")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
     )
 }
 

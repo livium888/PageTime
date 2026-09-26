@@ -46,6 +46,7 @@ enum class PromptRejection(val reason: String) {
     CLOZE_MALFORMED("has no deletion in it, or deletes the whole sentence"),
     NO_EXPLANATION("has no explanation of why the answer is the answer"),
     EXPLANATION_IS_THE_PASSAGE("explains by quoting the book back at the reader"),
+    DOCUMENT_CLUTTER("is based on a page number, citation, or document notice rather than the main text"),
 }
 
 data class PromptVerdict(
@@ -140,6 +141,9 @@ object ChapterPromptRules {
 
         if (quote.isBlank() || !containsQuote(passage, quote)) {
             return PromptRejection.QUOTE_NOT_IN_PASSAGE
+        }
+        if (looksLikeDocumentClutter(prompt, answer, quote)) {
+            return PromptRejection.DOCUMENT_CLUTTER
         }
         explanationProblem(raw.explanation.trim(), passage)?.let { return it }
         // Wozniak's rule against sets and enumerations. Partial knowledge of a
@@ -336,6 +340,21 @@ object ChapterPromptRules {
         val inner = normalize(needle)
         if (inner.isBlank()) return false
         return " ${normalize(haystack)} ".contains(" $inner ")
+    }
+
+    /**
+     * A structural safety net for text-level cleanup. This catches common
+     * bibliographic/legal fragments even when they slipped through as part of
+     * a larger user-edited passage; it deliberately avoids blanket banning
+     * every number or mention of copyright in substantive prose.
+     */
+    private fun looksLikeDocumentClutter(prompt: String, answer: String, quote: String): Boolean {
+        val all = "$prompt $answer $quote".lowercase()
+        val citationSignals = listOf("doi", "isbn", "all rights reserved", "copyright notice", "retrieved from")
+        if (citationSignals.any { it in all }) return true
+        val citationPunctuation = Regex("\\b(?:vol(?:ume)?\\.?\\s*\\d+|pp?\\.?\\s*\\d+\\s*[–-]\\s*\\d+|https?://\\S+)", RegexOption.IGNORE_CASE)
+        return citationPunctuation.containsMatchIn(all) ||
+            (Regex("^\\s*\\[?\\d{1,3}[.)\\]]?\\s+").containsMatchIn(quote) && quote.split(Regex("\\s+")).size < 20)
     }
 
     private fun asksSomething(prompt: String): Boolean {

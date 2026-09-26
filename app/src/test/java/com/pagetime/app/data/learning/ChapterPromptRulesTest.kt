@@ -73,6 +73,37 @@ class ChapterPromptRulesTest {
         )
     }
 
+    @Test
+    fun `a source quote that is an endnote citation is rejected as document clutter`() {
+        val citation = "[12] Smith, A. The history of trade, DOI: 10.1234/example"
+        val result = ChapterPromptRules.check(
+            raw(
+                prompt = "What year did Smith publish the cited work?",
+                answer = "1998",
+                quote = citation,
+                explanation = goodWhy,
+            ),
+            listOf(citation),
+        )
+        assertEquals(PromptRejection.DOCUMENT_CLUTTER, result)
+    }
+
+    @Test
+    fun `a substantive question may discuss copyright without being rejected`() {
+        val passage = "Copyright law gives authors control over reproduction, but exceptions permit research and criticism."
+        val result = ChapterPromptRules.check(
+            RawPrompt(
+                passageIndex = 0,
+                prompt = "Why do copyright exceptions matter to researchers?",
+                answer = "They permit research and criticism",
+                explanation = "Without exceptions, using a short excerpt for analysis could require permission every time.",
+                sourceQuote = "exceptions permit research and criticism",
+            ),
+            listOf(passage),
+        )
+        assertNull(result)
+    }
+
     /**
      * The rule the whole thing rests on. A model asked for a supporting quote
      * will happily return a plausible paraphrase, and a paraphrase is exactly

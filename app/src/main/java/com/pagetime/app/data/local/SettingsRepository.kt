@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import com.pagetime.app.data.LumenCapture
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.learning.GenerationMode
@@ -19,6 +20,8 @@ import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.SchedulingPolicy
 import com.pagetime.app.data.review.Steps
 import com.pagetime.app.blocker.BlockEnforcementPolicy
+import com.pagetime.app.blocker.AppAllowlist
+import com.pagetime.app.blocker.AppMode
 import com.pagetime.app.blocker.SiteMode
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
@@ -106,25 +109,32 @@ data class Settings(
     /** When the recent emergency unlocks were spent, newest first. */
     val emergencyUses: List<Long> = emptyList(),
     /**
-     * Whether blocked apps are governed by the access gate rather than the
-     * browse balance.
+     * Whether blocked apps are governed by the daily reading lock rather than
+     * the browse balance.
      *
-     * Off by default, including for readers upgrading into it. The gate is a
-     * much sharper instrument than the ratio it replaces — two hours or
-     * nothing — and switching someone into it without their say-so would lock
-     * them out of their phone on the strength of an app update.
+     * Off by default, including for readers upgrading into it: switching
+     * someone into a lock without their say-so would shut them out of their
+     * phone on the strength of an app update.
      */
     val gateEnabled: Boolean = false,
-    /** Reading banked toward the next session. */
-    val readingCreditSeconds: Long = 0,
-    /** App time bought and not yet used, in seconds. */
-    val sessionSecondsRemaining: Long = 0,
-    /** When the cooling-off finishes and the gate switches off; 0 = not winding down. */
+    /** When the cooling-off finishes and the lock switches off; 0 = not winding down. */
     val gateDisableAt: Long = 0,
-    /** Reading needed to buy one session. */
-    val sessionCostSeconds: Long = GateState.DEFAULT_SESSION_COST_SECONDS,
-    /** How long a session lasts once opened. */
-    val sessionLengthSeconds: Long = GateState.DEFAULT_SESSION_LENGTH_SECONDS,
+    /** Reading needed each lock day before blocked apps open. */
+    val dailyTargetSeconds: Long = GateState.DEFAULT_DAILY_TARGET_SECONDS,
+    /**
+     * Reading counted on [readTodayLockDay]. Only meaningful for that day —
+     * read it through [com.pagetime.app.domain.LockDay.readToday], which
+     * treats any other day's tally as zero.
+     */
+    val readTodaySeconds: Long = 0,
+    /** The lock day ([com.pagetime.app.domain.LockDay.of]) [readTodaySeconds] belongs to. */
+    val readTodayLockDay: Long = 0,
+    /** Which direction app rules work in — see [AppMode]. */
+    val appMode: AppMode = AppMode.BLOCKLIST,
+    /** Apps allowed in [AppMode.ALLOWLIST], at most [AppAllowlist.MAX_APPS]. */
+    val allowedApps: Set<String> = emptySet(),
+    /** When the app allowlist's one-time free-setup window closes (0 = none). */
+    val appAllowlistSetupGraceUntil: Long = 0,
     /** Whether the slip box shows newcomer help / confirmations before card actions. */
     val helpEnabled: Boolean = true,
     /** Provider used for optional AI-assisted learning features. */
@@ -290,11 +300,22 @@ class SettingsRepository(private val context: Context) {
         val EMERGENCY_UNTIL = longPreferencesKey("emergency_unlock_until")
         val EMERGENCY_USES = stringPreferencesKey("emergency_unlock_uses")
         val GATE_ENABLED = booleanPreferencesKey("access_gate_enabled")
-        val READING_CREDIT = longPreferencesKey("access_gate_reading_credit_seconds")
-        val SESSION_REMAINING = longPreferencesKey("access_gate_session_seconds_remaining")
         val GATE_DISABLE_AT = longPreferencesKey("access_gate_disable_at")
-        val SESSION_COST = longPreferencesKey("access_gate_session_cost_seconds")
-        val SESSION_LENGTH = longPreferencesKey("access_gate_session_length_seconds")
+        // The session gate's keys (reading credit, session time, session cost
+        // and length) are no longer read; stale values on upgraded installs
+        // are inert and are removed when a wind-down settles.
+        val LEGACY_SESSION_KEYS = listOf(
+            longPreferencesKey("access_gate_reading_credit_seconds"),
+            longPreferencesKey("access_gate_session_seconds_remaining"),
+            longPreferencesKey("access_gate_session_cost_seconds"),
+            longPreferencesKey("access_gate_session_length_seconds"),
+        )
+        val DAILY_TARGET = longPreferencesKey("reading_lock_daily_target_seconds")
+        val READ_TODAY = longPreferencesKey("reading_lock_read_today_seconds")
+        val READ_TODAY_DAY = longPreferencesKey("reading_lock_read_today_day")
+        val APP_MODE = stringPreferencesKey("app_mode")
+        val ALLOWED_APPS = stringSetPreferencesKey("allowed_apps")
+        val APP_ALLOWLIST_SETUP_GRACE_UNTIL = longPreferencesKey("app_allowlist_setup_grace_until")
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
@@ -622,11 +643,13 @@ class SettingsRepository(private val context: Context) {
             emergencyUntil = p[Keys.EMERGENCY_UNTIL] ?: 0L,
             emergencyUses = EmergencyUnlock.decode(p[Keys.EMERGENCY_USES]),
             gateEnabled = p[Keys.GATE_ENABLED] ?: false,
-            readingCreditSeconds = p[Keys.READING_CREDIT] ?: 0L,
-            sessionSecondsRemaining = p[Keys.SESSION_REMAINING] ?: 0L,
             gateDisableAt = p[Keys.GATE_DISABLE_AT] ?: 0L,
-            sessionCostSeconds = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS,
-            sessionLengthSeconds = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS,
+            dailyTargetSeconds = p[Keys.DAILY_TARGET] ?: GateState.DEFAULT_DAILY_TARGET_SECONDS,
+            readTodaySeconds = p[Keys.READ_TODAY] ?: 0L,
+            readTodayLockDay = p[Keys.READ_TODAY_DAY] ?: 0L,
+            appMode = AppMode.fromKey(p[Keys.APP_MODE]),
+            allowedApps = p[Keys.ALLOWED_APPS] ?: emptySet(),
+            appAllowlistSetupGraceUntil = p[Keys.APP_ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
             helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
             llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
@@ -1050,111 +1073,86 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             p[Keys.GATE_ENABLED] = false
             p.remove(Keys.GATE_DISABLE_AT)
-            p.remove(Keys.SESSION_REMAINING)
+            Keys.LEGACY_SESSION_KEYS.forEach { p.remove(it) }
         }
     }
 
     /**
-     * Banks reading toward the next session, capped.
+     * Counts [delta] seconds of reading toward [lockDay]'s target.
      *
-     * Reading past the cap still counts as reading — the ledger records it and
-     * the book advances — it simply stops buying. Without the cap a heavy
-     * weekend funds a week of not reading, which is the currency returning in
-     * a larger denomination.
+     * A tally stored against an earlier day is replaced rather than added to —
+     * that is the 04:00 reset, done at the first write of the new day with no
+     * job having to run at 04:00. Uncapped: reading past the target still
+     * counts, and there is nothing it could be hoarded toward, because the
+     * tally is only ever read for its own day.
      */
-    suspend fun addReadingCredit(delta: Long) {
+    suspend fun addReadToday(delta: Long, lockDay: Long) {
         if (delta <= 0) return
         context.dataStore.edit { p ->
-            val cost = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
-            val current = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
-            p[Keys.READING_CREDIT] = (current + delta).coerceAtMost(GateState.maxCreditFor(cost))
+            val storedDay = p[Keys.READ_TODAY_DAY] ?: Long.MIN_VALUE
+            val current = if (storedDay == lockDay) (p[Keys.READ_TODAY] ?: 0L).coerceAtLeast(0L) else 0L
+            p[Keys.READ_TODAY_DAY] = lockDay
+            p[Keys.READ_TODAY] = current + delta
         }
     }
 
     /**
-     * Converts one session's worth of reading credit into app time, or reports
-     * that it could not be afforded.
-     *
-     * Read-modify-write inside one DataStore edit so two taps cannot both see
-     * the same credit and both buy with it. The caller serializes as well;
-     * this is the part that has to be right regardless.
+     * Sets the daily reading target, clamped to its range. Unfenced here; the
+     * fence (a lower target is loosening) lives in
+     * [com.pagetime.app.domain.BalanceManager.setDailyTargetSeconds], which
+     * serializes it with the reading that decides whether loosening is allowed.
      */
-    suspend fun startSessionIfAffordable(): Boolean {
-        var started = false
+    suspend fun setDailyTargetSeconds(seconds: Long) {
+        val clamped = seconds.coerceIn(
+            GateState.MIN_DAILY_TARGET_SECONDS,
+            GateState.MAX_DAILY_TARGET_SECONDS,
+        )
+        context.dataStore.edit { it[Keys.DAILY_TARGET] = clamped }
+    }
+
+    /**
+     * Switches which app-rule list is active and, only on a genuine transition
+     * INTO [AppMode.ALLOWLIST], opens its one-time free-setup window — the
+     * same read-modify-write as [setSiteMode], for the same reason: re-tapping
+     * an already-selected option must never mint a fresh window.
+     */
+    suspend fun setAppMode(mode: AppMode, nowMillis: Long = System.currentTimeMillis()) {
         context.dataStore.edit { p ->
-            val cost = p[Keys.SESSION_COST] ?: GateState.DEFAULT_SESSION_COST_SECONDS
-            val length = p[Keys.SESSION_LENGTH] ?: GateState.DEFAULT_SESSION_LENGTH_SECONDS
-            val credit = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
-            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
-            val ceiling = GateState.maxSessionSecondsFor(length)
-            if (credit >= cost && remaining < ceiling) {
-                p[Keys.READING_CREDIT] = credit - cost
-                p[Keys.SESSION_REMAINING] = (remaining + length).coerceAtMost(ceiling)
-                started = true
+            val current = AppMode.fromKey(p[Keys.APP_MODE])
+            if (AppMode.entersAllowlist(current, mode)) {
+                p[Keys.APP_ALLOWLIST_SETUP_GRACE_UNTIL] = nowMillis + AppAllowlist.SETUP_GRACE_MILLIS
+            }
+            p[Keys.APP_MODE] = mode.key
+        }
+    }
+
+    /**
+     * Adds an allowed app if there is room. Returns whether it is now allowed.
+     *
+     * The limit is checked inside the edit so two quick taps cannot both see
+     * four apps and both add a fifth. Whether adding is permitted at all
+     * (setup window, today's reading) is the caller's check.
+     */
+    suspend fun addAllowedApp(packageName: String): Boolean {
+        var ok = false
+        context.dataStore.edit { p ->
+            val current = p[Keys.ALLOWED_APPS] ?: emptySet()
+            ok = when {
+                packageName in current -> true
+                current.size >= AppAllowlist.MAX_APPS -> false
+                else -> {
+                    p[Keys.ALLOWED_APPS] = current + packageName
+                    true
+                }
             }
         }
-        return started
+        return ok
     }
 
-    /**
-     * Burns one second of app time. Returns what is left.
-     *
-     * Called once a second by the block controller's spend ticker while a
-     * blocked app is genuinely in front — never while the screen is off, and
-     * never while the reader is somewhere else. That is the whole difference
-     * between this and a countdown: time the reader is not spending is time
-     * they still have.
-     */
-    suspend fun spendSessionSecond(): Long {
-        var left = 0L
+    /** Removing is the strict direction, so it is always allowed. */
+    suspend fun removeAllowedApp(packageName: String) {
         context.dataStore.edit { p ->
-            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
-            left = (remaining - 1).coerceAtLeast(0L)
-            p[Keys.SESSION_REMAINING] = left
-        }
-        return left
-    }
-
-    /**
-     * Sets the price of a session: how much focused reading buys one.
-     *
-     * The reader's own terms, and settable in either direction at any time.
-     * They used to be fenced — lowering the price was treated as an escape and
-     * waited for app time in hand — which meant that outside a session the
-     * slider accepted only the stricter direction. A single touch on the track
-     * then pinned the price at its eight-hour ceiling with no way back down:
-     * the reader had locked themselves out of their own settings. What keeps
-     * the gate honest is the blocked list and the cooling-off on the switch,
-     * not whether the reader may change their mind about the price.
-     */
-    suspend fun setSessionCostSeconds(seconds: Long) {
-        val clamped = seconds.coerceIn(
-            GateState.MIN_SESSION_COST_SECONDS,
-            GateState.MAX_SESSION_COST_SECONDS,
-        )
-        context.dataStore.edit { p ->
-            p[Keys.SESSION_COST] = clamped
-            // Banked credit is denominated in sessions, so a cost change has
-            // to re-cap it or an old balance could buy more sessions than the
-            // new setting allows.
-            val credit = (p[Keys.READING_CREDIT] ?: 0L).coerceAtLeast(0L)
-            p[Keys.READING_CREDIT] = credit.coerceAtMost(GateState.maxCreditFor(clamped))
-        }
-    }
-
-    /** How much app time one session buys. The same terms, the same freedom. */
-    suspend fun setSessionLengthSeconds(seconds: Long) {
-        val clamped = seconds.coerceIn(
-            GateState.MIN_SESSION_LENGTH_SECONDS,
-            GateState.MAX_SESSION_LENGTH_SECONDS,
-        )
-        context.dataStore.edit { p ->
-            p[Keys.SESSION_LENGTH] = clamped
-            // Unspent app time is denominated in sessions too, so shortening
-            // one has to re-cap what is already banked.
-            val remaining = (p[Keys.SESSION_REMAINING] ?: 0L).coerceAtLeast(0L)
-            p[Keys.SESSION_REMAINING] =
-                remaining.coerceAtMost(GateState.maxSessionSecondsFor(clamped))
+            p[Keys.ALLOWED_APPS] = (p[Keys.ALLOWED_APPS] ?: emptySet()) - packageName
         }
     }
 

@@ -724,7 +724,6 @@ class AppBlockerService : AccessibilityService() {
         val current = overlay ?: TimeUpOverlay(
             context = this,
             onReadNow = { openReader() },
-            onStartSession = { controller?.startSessionFromBlockScreen() },
             onEmergency = { controller?.useEmergencyUnlock() },
         ).also { overlay = it }
         val gate = controller?.gate ?: GateState.Unknown
@@ -738,15 +737,15 @@ class AppBlockerService : AccessibilityService() {
     /**
      * The hatch, if it is on offer.
      *
-     * Withheld entirely when a session is already affordable: an escape route
-     * next to an unlocked door teaches the reader to take the escape.
+     * Withheld once today's reading is done: an escape route next to an open
+     * door teaches the reader to take the escape.
      */
     private fun emergencyOffer(gate: GateState): TimeUpOverlay.EmergencyOffer? {
         val c = controller ?: return null
-        if (gate.canStartSession) return null
+        if (gate.enabled && gate.targetMet) return null
         // A hard lock hides it altogether rather than showing a refusal: the
         // reader chose that lock and does not need arguing with. Merely having
-        // spent both for today still shows the button, disabled, saying when
+        // spent both for this week still shows the button, disabled, saying when
         // the next one is back — that is information, not temptation.
         val hardLocked = !c.canUseEmergency() && c.emergencyUsesLeft() > 0
         if (hardLocked) return null

@@ -14,7 +14,8 @@ import com.pagetime.app.R
 import com.pagetime.app.domain.GateState
 
 /**
- * A full-screen, input-capturing overlay shown over a blocked app while the balance is zero.
+ * A full-screen, input-capturing overlay shown over a blocked app while access
+ * is denied: the balance is zero, or today's reading is not done yet.
  *
  * Window type matters here. `TYPE_APPLICATION_OVERLAY` needs the SYSTEM_ALERT_WINDOW
  * special permission, so if the user never granted "Display over other apps" the
@@ -26,7 +27,6 @@ import com.pagetime.app.domain.GateState
 class TimeUpOverlay(
     context: Context,
     onReadNow: () -> Unit,
-    onStartSession: () -> Unit = {},
     onEmergency: () -> Unit = {},
     onSiteBack: () -> Unit = {},
 ) {
@@ -36,7 +36,6 @@ class TimeUpOverlay(
 
     init {
         view.findViewById<View>(R.id.btn_read_now).setOnClickListener { onReadNow() }
-        view.findViewById<View>(R.id.btn_start_session).setOnClickListener { onStartSession() }
         view.findViewById<View>(R.id.btn_emergency).setOnClickListener { onEmergency() }
         view.findViewById<View>(R.id.btn_site_back).setOnClickListener { onSiteBack() }
         // Focusable so the overlay swallows BACK instead of letting it fall through
@@ -72,15 +71,6 @@ class TimeUpOverlay(
             bar.progress = (progress * bar.max).toInt()
         }
 
-        // The one moment this screen is a door rather than a wall.
-        val start = view.findViewById<Button>(R.id.btn_start_session)
-        if (BlockScreenText.showsStartButton(gate)) {
-            start.text = BlockScreenText.startButtonLabel(gate)
-            start.visibility = View.VISIBLE
-        } else {
-            start.visibility = View.GONE
-        }
-
         // The site controls belong to the other screen entirely. Left visible
         // they would be a way out of a site block that the app block never
         // authorised, and the overlay is re-used between the two.
@@ -112,7 +102,6 @@ class TimeUpOverlay(
         view.findViewById<TextView>(R.id.tv_overlay_subtitle).text =
             BlockScreenText.siteSubtitle(rule, mode)
         view.findViewById<View>(R.id.progress_gate).visibility = View.GONE
-        view.findViewById<View>(R.id.btn_start_session).visibility = View.GONE
         view.findViewById<View>(R.id.btn_emergency).visibility = View.GONE
         view.findViewById<View>(R.id.tv_emergency_note).visibility = View.GONE
 
@@ -125,9 +114,8 @@ class TimeUpOverlay(
      * The hatch, shown only when there is one to spend and the reader is
      * actually shut out.
      *
-     * Hidden entirely once a session is affordable: offering an emergency
-     * escape beside a door the reader can simply walk through would teach them
-     * to use the escape, which is the one outcome this must not produce.
+     * Never offered once today's reading is done: there is nothing to escape
+     * from then, and an escape beside an open door teaches the escape.
      */
     private fun setEmergency(offer: EmergencyOffer?) {
         val button = view.findViewById<Button>(R.id.btn_emergency)

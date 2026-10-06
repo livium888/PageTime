@@ -299,17 +299,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // Through the balance manager rather than straight to storage: the fence
-    // on loosening the terms lives there, with the gate it has to consult.
-    fun setSessionCostSeconds(seconds: Long) {
-        viewModelScope.launch { container.balanceManager.setSessionCostSeconds(seconds) }
-    }
-
-    fun setSessionLengthSeconds(seconds: Long) {
-        viewModelScope.launch { container.balanceManager.setSessionLengthSeconds(seconds) }
-    }
-
-    fun startSession() {
-        viewModelScope.launch { container.balanceManager.startSession() }
+    // on lowering the target lives there, with the lock it has to consult.
+    fun setDailyTargetSeconds(seconds: Long) {
+        viewModelScope.launch { container.balanceManager.setDailyTargetSeconds(seconds) }
     }
 
     fun setFlashcardReward(value: Long) {

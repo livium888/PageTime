@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.PowerManager
 import android.util.Log
 import androidx.room.Room
+import com.pagetime.app.blocker.AndroidAppClassifier
 import com.pagetime.app.blocker.BlockController
 import com.pagetime.app.blocker.SiteBlocker
 import com.pagetime.app.data.download.BookDownloader
@@ -359,6 +360,12 @@ class AppContainer(context: Context) {
     private val powerManager =
         appContext.getSystemService(Context.POWER_SERVICE) as PowerManager
 
+    /**
+     * Essentials and launchability for app allowlist mode. One instance so the
+     * blocker and the settings screen agree on what "always allowed" means.
+     */
+    val appClassifier = AndroidAppClassifier(appContext)
+
     val blockController = BlockController(
         scope = scope,
         settingsRepository = settingsRepository,
@@ -366,6 +373,7 @@ class AppContainer(context: Context) {
         balanceManager = balanceManager,
         usageRepository = usageRepository,
         powerManager = powerManager,
+        appClassifier = appClassifier,
         selfPackage = appContext.packageName
     )
 

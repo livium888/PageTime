@@ -6,6 +6,8 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.blocker.AppAllowlist
+import com.pagetime.app.blocker.AppMode
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +49,30 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
     val gate = container.balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
 
+    /** Blocklist or allowlist — see [AppMode]. */
+    val appMode = settingsRepo.settings
+        .map { it.appMode }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppMode.BLOCKLIST)
+
+    /** The apps chosen for allowlist mode, at most [AppAllowlist.MAX_APPS]. */
+    val allowedApps = settingsRepo.settings
+        .map { it.allowedApps }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** When the free setup window for the app allowlist closes (0 = none). */
+    val appAllowlistSetupGraceUntil = settingsRepo.settings
+        .map { it.appAllowlistSetupGraceUntil }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
+    private val _essentials = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Never blocked in allowlist mode and never counted against the five. */
+    val essentials = _essentials.asStateFlow()
+
+    /** Set when the last change was refused, so the screen can say why. */
+    private val _refusal = MutableStateFlow<String?>(null)
+    val refusal = _refusal.asStateFlow()
+
     private val _installed = MutableStateFlow<List<InstalledApp>>(emptyList())
     val installed = _installed.asStateFlow()
 
@@ -77,6 +103,39 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
             _installed.value = loadLaunchableApps(app)
             _packageLabels.value = _installed.value.associate { it.packageName to it.label }
         }
+        viewModelScope.launch(Dispatchers.IO) {
+            val classifier = container.appClassifier
+            _essentials.value = classifier.essentials() + AppAllowlist.KNOWN_AUTHENTICATORS
+        }
+    }
+
+    /**
+     * Switches between blocking chosen apps and allowing only chosen apps.
+     * Leaving the allowlist is loosening and can be refused; the balance
+     * manager is where that rule lives.
+     */
+    fun setAppMode(mode: AppMode) {
+        viewModelScope.launch {
+            val ok = container.balanceManager.setAppMode(mode)
+            _refusal.value = if (ok) null else
+                "Switching back to blocking only some apps opens everything else, so it waits " +
+                    "until today's reading is done."
+        }
+    }
+
+    /** Allows or disallows [app] in allowlist mode. */
+    fun setAllowed(app: InstalledApp, allowed: Boolean) {
+        viewModelScope.launch {
+            if (allowed) {
+                val ok = container.balanceManager.addAllowedApp(app.packageName)
+                _refusal.value = if (ok) null else
+                    "Couldn't add ${app.label}: you can allow at most ${AppAllowlist.MAX_APPS} " +
+                        "apps, and after the setup window adding one waits for today's reading."
+            } else {
+                container.balanceManager.removeAllowedApp(app.packageName)
+                _refusal.value = null
+            }
+        }
     }
 
     fun toggle(app: InstalledApp, blocked: Boolean) {
@@ -86,7 +145,7 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Commit to the block for [minutes] with no way to lift it early: while a
      * hard lock is active every soft escape is disabled — the per-app toggles
-     * included — "no matter what". It outranks a running session too.
+     * included — "no matter what". It outranks today's reading too.
      */
     fun hardLock(minutes: Long) {
         viewModelScope.launch {

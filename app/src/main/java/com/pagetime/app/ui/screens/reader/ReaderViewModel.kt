@@ -157,7 +157,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     /** What a qualifying explain-back answer currently banks — shown on the chapter-completion nudge. */
-    val explainBackRewardSeconds = balanceManager.explainBackRewardSeconds
+    val explainBackRewardSeconds = balanceManager.explainBackRewardPayable
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
 
     private var tickerJob: Job? = null

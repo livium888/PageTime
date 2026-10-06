@@ -5,55 +5,38 @@ import com.pagetime.app.domain.GateState
 /**
  * What the block screen says.
  *
- * A DIFFERENT SENTENCE, NOT A DIFFERENT TONE
+ * A DISTANCE, NOT A DEBT
  *
  * The old screen said "Time is up!", which is the correct sentence for a
- * currency: something was spent, and now there is none. It is the wrong
- * sentence under the session gate, where nothing was spent and nothing ran
- * out — the reading for the next session simply is not done yet. So the screen
- * reports a DISTANCE ("1h 12m of 2h") rather than a debt, because a distance
- * is a thing the reader can close and a debt is a thing that happened to them.
+ * currency: something was spent and now there is none. Under the daily
+ * reading lock nothing was spent — today's reading simply is not done yet. So
+ * the screen reports a distance ("12m of 20m read today") and how far is left,
+ * because a distance is a thing the reader can close.
  *
- * THE ONE MOMENT THIS SCREEN CAN SAY YES
- *
- * When the reading is already done, the block screen stops being a wall and
- * becomes the door: it offers the session rather than announcing a refusal.
- * That is deliberately the only place the offer appears besides Settings,
- * because it is the place the reader actually is when they want it.
+ * There is no button to buy anything any more. The way through is the "Read
+ * now" button that was always there, and the reward for using it is the rest
+ * of the phone until 04:00.
  *
  * Kept out of the overlay class so the wording and the arithmetic can be
- * tested without a WindowManager, which is the only reason anything about the
- * block screen has ever been checkable.
+ * tested without a WindowManager.
  */
 object BlockScreenText {
 
-    /** Whether to draw the credit bar, and how full. Null on the browse balance. */
-    fun progress(gate: GateState): Float? = if (gate.enabled) gate.creditProgress else null
-
-    /** Whether the screen should offer to open a session. */
-    fun showsStartButton(gate: GateState): Boolean = gate.canStartSession
+    /** Whether to draw the progress bar, and how full. Null on the browse balance. */
+    fun progress(gate: GateState): Float? = if (gate.enabled) gate.progress else null
 
     fun title(gate: GateState): String = when {
         !gate.enabled -> "Time is up!"
-        gate.canStartSession -> "You've read enough"
-        // Distance covered is the cost minus the distance left, so the two
-        // halves of the sentence can never disagree with each other.
-        else -> "${span(gate.sessionCostSeconds - gate.secondsToNextSession)} of " +
-            span(gate.sessionCostSeconds)
+        // Read today is the target minus what is left, so the two halves of
+        // this sentence and the subtitle can never disagree.
+        else -> "${span(gate.target - gate.secondsToUnlock)} of ${span(gate.target)} read today"
     }
 
     fun subtitle(gate: GateState): String = when {
         !gate.enabled -> "Read a few minutes to earn time in this app."
-        gate.canStartSession ->
-            "Start your ${span(gate.sessionLengthSeconds)}. It only counts down " +
-                "while you are using these apps."
-        else ->
-            "${span(gate.secondsToNextSession)} of reading before your next " +
-                "${span(gate.sessionLengthSeconds)}."
+        gate.targetMet -> "Today's reading is done. Your phone is open until 4am."
+        else -> "Read ${span(gate.secondsToUnlock)} more to unlock your phone until 4am."
     }
-
-    /** The button that opens a session, when there is one to open. */
-    fun startButtonLabel(gate: GateState): String = "Start ${span(gate.sessionLengthSeconds)}"
 
     /**
      * The block screen for a site rather than an app.
@@ -112,11 +95,11 @@ object BlockScreenText {
 
     /** The line under it: how many are left, or when the next one returns. */
     fun emergencyNote(usesLeft: Int, nextAvailableInSeconds: Long?): String = when {
-        usesLeft > 1 -> "$usesLeft left today. Only this app opens."
-        usesLeft == 1 -> "1 left today. Only this app opens."
+        usesLeft > 1 -> "$usesLeft left this week. Only this app opens."
+        usesLeft == 1 -> "1 left this week. Only this app opens."
         nextAvailableInSeconds != null ->
             "None left. The next one is back in ${span(nextAvailableInSeconds)}."
-        else -> "None left today."
+        else -> "None left this week."
     }
 
     /**
@@ -138,22 +121,5 @@ object BlockScreenText {
             minutes == 0L -> "${hours}h"
             else -> "${hours}h ${minutes}m"
         }
-    }
-
-    /**
-     * App time left, which unlike [span] shows seconds.
-     *
-     * The opposite decision to the one above, for the opposite reason: a
-     * session that says "1m" for a minute and then ends feels like it was
-     * taken away. While something is being spent, the seconds are the
-     * information — and this one only moves while it is genuinely being
-     * spent, so a reader who looks at it after a day away sees exactly the
-     * number they left.
-     */
-    fun countdown(seconds: Long): String {
-        val safe = seconds.coerceAtLeast(0L)
-        val m = safe / 60
-        val s = safe % 60
-        return "$m:${s.toString().padStart(2, '0')}"
     }
 }

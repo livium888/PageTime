@@ -287,7 +287,7 @@ class ReviewSessionViewModel(
                 session = session,
                 card = session.current?.let { cards[it] },
                 revealed = false,
-                rewardSeconds = runCatching { balanceManager.flashcardReward() }.getOrDefault(0L),
+                rewardSeconds = runCatching { balanceManager.flashcardRewardPayable() }.getOrDefault(0L),
             )
             refreshPreviews()
         }

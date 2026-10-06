@@ -78,7 +78,7 @@ class ExplainBackViewModel(
     init {
         loadConcepts()
         viewModelScope.launch {
-            runCatching { _rewardSeconds.value = container.balanceManager.explainBackReward() }
+            runCatching { _rewardSeconds.value = container.balanceManager.explainBackRewardPayable() }
         }
     }
 

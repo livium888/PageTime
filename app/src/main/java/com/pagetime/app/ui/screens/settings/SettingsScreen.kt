@@ -155,78 +155,37 @@ fun SettingsScreen(
                 Text("Your time", style = MaterialTheme.typography.titleLarge)
 
                 if (gate.enabled) {
-                    if (gate.sessionActive) {
-                        // Unspent app time is the only thing on this card
-                        // worth looking at, so it gets the big number.
-                        Text("App time left", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Read today", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            BlockScreenText.countdown(gate.sessionRemainingSeconds),
-                            style = MaterialTheme.typography.displaySmall,
+                            BlockScreenText.span(gate.target - gate.secondsToUnlock) +
+                                " of " + BlockScreenText.span(gate.target),
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
-                        Text(
-                            "Your apps are open. This only counts down while you are actually " +
-                                "using them, and what is left keeps until you do. It is also " +
-                                "the only time apps can be taken off the blocked list.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (gate.canStartSession) {
-                            Button(
-                                onClick = { viewModel.startSession() },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Add ${BlockScreenText.span(gate.sessionLengthSeconds)} more")
-                            }
-                        }
-                    } else {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Read toward your next " +
-                                    BlockScreenText.span(gate.sessionLengthSeconds),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                BlockScreenText.span(
-                                    gate.sessionCostSeconds - gate.secondsToNextSession
-                                ) + " of " + BlockScreenText.span(gate.sessionCostSeconds),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        LinearProgressIndicator(
-                            progress = { gate.creditProgress },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        if (gate.sessionsBanked > 1) {
-                            Text(
-                                "${gate.sessionsBanked} sessions banked — the most you can hold.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Button(
-                            onClick = { viewModel.startSession() },
-                            enabled = gate.canStartSession,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                if (gate.canStartSession) {
-                                    "Start ${BlockScreenText.span(gate.sessionLengthSeconds)}"
-                                } else {
-                                    BlockScreenText.span(gate.secondsToNextSession) + " to go"
-                                }
-                            )
-                        }
                     }
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { gate.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        if (gate.targetMet) {
+                            "Done for today. Your phone is open until 4am."
+                        } else {
+                            "Read ${BlockScreenText.span(gate.secondsToUnlock)} more to unlock " +
+                                "your phone until 4am."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 // Shown whichever rule is in force: what was actually read.
-                // Not the same question as the credit counter above — that one
+                // Not the same question as today's reading above — that one
                 // says what is left, this says what happened.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Read in the last 24 hours", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -253,78 +212,40 @@ fun SettingsScreen(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
-                // Session configuration — always visible, whether or not
-                // enforcement is on, so the reader can set their terms before
-                // turning the gate on.
-                Text("Session settings", style = MaterialTheme.typography.titleMedium)
+                // The target is always visible, whether or not the lock is on,
+                // so the reader can set their terms before switching it on.
+                Text("Daily reading", style = MaterialTheme.typography.titleMedium)
 
-                // Outside a session the terms move only in the strict
-                // direction. Making them easier dissolves the gate outright,
-                // which is a bigger escape than unblocking one app, so it
-                // costs the same thing: app time already in hand.
-                if (!gate.canLoosenTheRules) {
-                    Text(
-                        "These can be made stricter any time. Making them easier — cheaper " +
-                            "sessions, or longer ones — needs app time in hand, the same " +
-                            "price as unblocking an app.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-
-                // The bounds are the gate's, not the screen's, and they move
-                // with it: while the reader has no app time in hand the terms
-                // may only be made stricter. Typing is the one instrument that
-                // can hold that rule honestly — a slider can only refuse by
-                // springing back, which reads as broken, and it cannot show the
-                // number the reader actually asked for.
-                val costBounds =
-                    GateState.costBounds(gate.sessionCostSeconds, gate.canLoosenTheRules)
+                // The bounds are the lock's, not the screen's: before today's
+                // reading is done the target may only go up. Typing is the one
+                // instrument that holds that honestly — a slider can only refuse
+                // by springing back, which reads as broken.
+                val targetBounds =
+                    GateState.targetBounds(gate.target, gate.canLoosenTheRules)
                 TypedSettingField(
-                    title = "Reading per session",
-                    help = "How much focused reading buys one session.",
-                    current = BlockScreenText.span(gate.sessionCostSeconds),
+                    title = "Daily reading target",
+                    help = "Minutes of reading each day, counted from 4am, before the rest " +
+                        "of your phone opens.",
+                    current = BlockScreenText.span(gate.target),
                     inputLabel = "Minutes of reading",
-                    inputHint = "e.g. 90",
+                    inputHint = "e.g. 20",
                     allowDecimal = false,
-                    enabled = GateState.hasTravel(costBounds),
+                    enabled = GateState.hasTravel(targetBounds),
                     enabledNote =
-                        "Already at the ceiling — ${BlockScreenText.span(costBounds.last)} of " +
-                            "reading per session. That is as cheap as the price can be.",
-                    minAllowed = costBounds.first / 60.0,
-                    maxAllowed = costBounds.last / 60.0,
+                        "Already at the ceiling — ${BlockScreenText.span(targetBounds.last)} " +
+                            "a day. Lowering it waits until today's reading is done.",
+                    minAllowed = targetBounds.first / 60.0,
+                    maxAllowed = targetBounds.last / 60.0,
                     unit = "minutes",
-                    fenceNote = if (gate.canLoosenTheRules) null else COST_FENCE_NOTE,
+                    fenceNote = if (gate.canLoosenTheRules) null else TARGET_FENCE_NOTE,
                     describe = { BlockScreenText.span((it * 60).roundToLong()) },
-                    onCommit = { viewModel.setSessionCostSeconds((it * 60).roundToLong()) },
-                )
-
-                val lengthBounds =
-                    GateState.lengthBounds(gate.sessionLengthSeconds, gate.canLoosenTheRules)
-                TypedSettingField(
-                    title = "Session length",
-                    help = "The app time one session buys, spent only while you use it.",
-                    current = BlockScreenText.span(gate.sessionLengthSeconds),
-                    inputLabel = "Minutes of app time",
-                    inputHint = "e.g. 30",
-                    allowDecimal = false,
-                    enabled = GateState.hasTravel(lengthBounds),
-                    enabledNote =
-                        "Already at the floor — ${BlockScreenText.span(lengthBounds.first)} per " +
-                            "session, the shortest allowed. Longer sessions need app time in hand.",
-                    minAllowed = lengthBounds.first / 60.0,
-                    maxAllowed = lengthBounds.last / 60.0,
-                    unit = "minutes",
-                    fenceNote = if (gate.canLoosenTheRules) null else LENGTH_FENCE_NOTE,
-                    describe = { BlockScreenText.span((it * 60).roundToLong()) },
-                    onCommit = { viewModel.setSessionLengthSeconds((it * 60).roundToLong()) },
+                    onCommit = { viewModel.setDailyTargetSeconds((it * 60).roundToLong()) },
                 )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
-                // The reward is paid in whichever currency is live: reading
-                // credit under the gate, browse seconds with it off. Typed
+                // Paid in browse seconds with the lock off. Under the lock only
+                // reading counts toward the daily target, so it pays nothing. Typed
                 // rather than dragged because the slider's 23 steps could only
                 // express multiples of five, and a reward is a number a reader
                 // may want exactly.
@@ -332,7 +253,7 @@ fun SettingsScreen(
                     title = "Flashcard reward",
                     help = "Each correct flashcard answer " +
                         (if (gate.enabled) {
-                            "banks $flashcardRewardSeconds seconds of reading credit"
+                            "earns nothing while the reading lock is on — only reading counts toward it"
                         } else {
                             "earns $flashcardRewardSeconds seconds of browsing"
                         }) +
@@ -416,7 +337,7 @@ fun SettingsScreen(
                     title = "Explain-back reward",
                     help = "An explanation marked at least \"partly right\" " +
                         (if (gate.enabled) {
-                            "banks $explainBackRewardSeconds seconds of reading credit"
+                            "earns nothing while the reading lock is on — only reading counts toward it"
                         } else {
                             "earns $explainBackRewardSeconds seconds of browsing"
                         }) +
@@ -441,7 +362,7 @@ fun SettingsScreen(
                     title = "Slip box link reward",
                     help = "Linking two cards for the first time " +
                         (if (gate.enabled) {
-                            "banks $lumenLinkRewardSeconds seconds of reading credit"
+                            "earns nothing while the reading lock is on — only reading counts toward it"
                         } else {
                             "earns $lumenLinkRewardSeconds seconds of browsing"
                         }) +
@@ -468,7 +389,7 @@ fun SettingsScreen(
                     title = "Reading momentum bonus",
                     help = "Every few minutes of sustained reading, at an unpredictable moment, " +
                         (if (gate.enabled) {
-                            "banks $readingMomentumBonusSeconds seconds of reading credit"
+                            "earns nothing while the reading lock is on — only reading counts toward it"
                         } else {
                             "earns $readingMomentumBonusSeconds seconds of browsing"
                         }) +
@@ -492,12 +413,11 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Earn the day", style = MaterialTheme.typography.titleMedium)
+                        Text("Daily reading lock", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "${BlockScreenText.span(gate.sessionCostSeconds)} of reading buys " +
-                                "${BlockScreenText.span(gate.sessionLengthSeconds)} of app time, " +
-                                "spent only while you use them. No minute-for-minute trading, " +
-                                "and no pause button.",
+                            "Until you have read ${BlockScreenText.span(gate.target)} today, " +
+                                "only your allowed apps open. Then everything opens until 4am. " +
+                                "Turning this off takes 24 hours.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -511,7 +431,7 @@ fun SettingsScreen(
                 if (gate.windingDown) {
                     Text(
                         "Switching off in " + BlockScreenText.span(gate.secondsUntilDisabled) +
-                            ". Until then the gate still applies. Turn it back on any time.",
+                            ". Until then the lock still applies. Turn it back on any time.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -1386,8 +1306,8 @@ private fun ExternalReadingToggle(enabled: Boolean, onChange: (Boolean) -> Unit)
             Spacer(Modifier.height(4.dp))
             Text(
                 if (enabled) {
-                    "Time spent in an app you choose below, with the screen on, counts toward " +
-                        "reading credit, at half rate, capped per day. This is trust-based — " +
+                    "Time spent in an app you choose below, with the screen on, counts as " +
+                        "reading (and toward today's target), at half rate, capped per day. This is trust-based — " +
                         "PageTime cannot tell a page turning from a phone left open, unlike its " +
                         "own reader."
                 } else {
@@ -1806,9 +1726,9 @@ private fun TypedSettingField(
     )
 
     if (!enabled) {
-        // Nothing left to set in either direction: at the ceiling of a price or
-        // the floor of a session. Said plainly rather than left as a dead
-        // control the reader would keep tapping.
+        // Nothing left to set in the allowed direction (e.g. a target already
+        // at its ceiling). Said plainly rather than left as a dead control the
+        // reader would keep tapping.
         Text(
             enabledNote.orEmpty(),
             style = MaterialTheme.typography.bodySmall,
@@ -1893,11 +1813,9 @@ private fun TypedSettingField(
  * because "you cannot do that" without a reason is how a fence starts to look
  * like a bug.
  */
-private const val COST_FENCE_NOTE =
-    "Right now the price can only go up — a cheaper session needs app time in hand."
+private const val TARGET_FENCE_NOTE =
+    "Right now the target can only go up — lowering it waits until today's reading is done."
 
-private const val LENGTH_FENCE_NOTE =
-    "Right now sessions can only get shorter — a longer one needs app time in hand."
 
 /** The reward slider's old range, kept as the field's bounds. */
 private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0

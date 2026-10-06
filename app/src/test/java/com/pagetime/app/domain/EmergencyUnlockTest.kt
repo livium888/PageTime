@@ -12,6 +12,7 @@ class EmergencyUnlockTest {
         const val T0 = 1_700_000_000_000L
         const val HOUR = 60L * 60 * 1000
         const val DAY = 24 * HOUR
+        const val WEEK = 7 * DAY
     }
 
     // --- The scope, which is the whole point ---
@@ -51,10 +52,10 @@ class EmergencyUnlockTest {
         assertEquals(0L, EmergencyUnlock.remainingSeconds(until, T0 + 999_000))
     }
 
-    // --- Two per rolling day ---
+    // --- Two per rolling week ---
 
     @Test
-    fun `a fresh day has two`() {
+    fun `a fresh week has two`() {
         assertEquals(2, EmergencyUnlock.usesLeft(emptyList(), T0))
         assertTrue(EmergencyUnlock.canUnlock(emptyList(), T0, hardLockUntil = 0))
     }
@@ -70,24 +71,28 @@ class EmergencyUnlockTest {
     }
 
     /**
-     * Rolling, not calendar. A midnight reset would let someone spend two at
-     * 11:55pm and two more at midnight — twenty minutes in ten.
+     * Rolling, not calendar. A fixed weekly reset would let someone spend two
+     * just before it and two more just after.
      */
     @Test
-    fun `each use comes back exactly a day after it was spent`() {
+    fun `each use comes back exactly a week after it was spent`() {
         val used = EmergencyUnlock.recordUse(EmergencyUnlock.recordUse(emptyList(), T0), T0 + 6 * HOUR)
         assertEquals(0, EmergencyUnlock.usesLeft(used, T0 + 7 * HOUR))
 
-        // The first one is a day old: one back.
-        assertEquals(1, EmergencyUnlock.usesLeft(used, T0 + DAY + 1))
+        // A day later is no longer enough: under the reading lock a daily
+        // pair of hatches would be a daily way round it.
+        assertEquals(0, EmergencyUnlock.usesLeft(used, T0 + DAY + 1))
+
+        // The first one is a week old: one back.
+        assertEquals(1, EmergencyUnlock.usesLeft(used, T0 + WEEK + 1))
         // The second follows six hours later.
-        assertEquals(2, EmergencyUnlock.usesLeft(used, T0 + 6 * HOUR + DAY + 1))
+        assertEquals(2, EmergencyUnlock.usesLeft(used, T0 + 6 * HOUR + WEEK + 1))
     }
 
     @Test
     fun `the wait is until the oldest counting use expires`() {
         val used = EmergencyUnlock.recordUse(EmergencyUnlock.recordUse(emptyList(), T0), T0 + 6 * HOUR)
-        assertEquals(T0 + DAY, EmergencyUnlock.nextAvailableAt(used, T0 + 7 * HOUR))
+        assertEquals(T0 + WEEK, EmergencyUnlock.nextAvailableAt(used, T0 + 7 * HOUR))
         assertNull(EmergencyUnlock.nextAvailableAt(emptyList(), T0))
         assertNull(EmergencyUnlock.nextAvailableAt(listOf(T0), T0))
     }
@@ -111,13 +116,12 @@ class EmergencyUnlockTest {
      */
     @Test
     fun `an emergency unlock does not unlock the rules`() {
-        // The hatch writes nothing to session time, and canLoosenTheRules
+        // The hatch writes nothing to today's reading, and canLoosenTheRules
         // reads only that. Stated as a test so a future change that "helpfully"
-        // grants a moment of session time has to argue with this.
+        // credits a moment of reading has to argue with this.
         val lockedOut = GateState(
             switchedOn = true,
-            creditSeconds = 0,
-            sessionSecondsRemaining = 0,
+            readTodaySeconds = 0,
             disableAtMillis = 0,
             nowMillis = T0,
         )
@@ -146,7 +150,7 @@ class EmergencyUnlockTest {
     }
 
     /**
-     * The stored list must not grow by two a day forever — a preference that
+     * The stored list must not grow by two a week forever — a preference that
      * only ever gets longer is a leak nobody notices until it is large.
      */
     @Test
@@ -164,8 +168,10 @@ class EmergencyUnlockTest {
     fun `the shipped numbers are a hatch and not a second economy`() {
         assertEquals(5L * 60, EmergencyUnlock.DURATION_SECONDS)
         assertEquals(2, EmergencyUnlock.USES_PER_WINDOW)
-        // Ten free minutes a day, against thirty that cost two hours of reading.
-        val freeDaily = EmergencyUnlock.DURATION_SECONDS * EmergencyUnlock.USES_PER_WINDOW
-        assertTrue(freeDaily < GateState.DEFAULT_SESSION_LENGTH_SECONDS)
+        assertEquals(7L * DAY, EmergencyUnlock.WINDOW_MILLIS)
+        // Ten free minutes a WEEK, against a daily target of twenty minutes of
+        // reading: the hatch cannot stand in for even one day's reading.
+        val freeWeekly = EmergencyUnlock.DURATION_SECONDS * EmergencyUnlock.USES_PER_WINDOW
+        assertTrue(freeWeekly < GateState.DEFAULT_DAILY_TARGET_SECONDS)
     }
 }

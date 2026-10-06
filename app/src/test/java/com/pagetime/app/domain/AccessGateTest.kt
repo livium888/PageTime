@@ -9,147 +9,75 @@ class AccessGateTest {
 
     private companion object {
         const val T0 = 1_700_000_000_000L
-        const val COST = GateState.DEFAULT_SESSION_COST_SECONDS      // 7200
-        const val LENGTH = GateState.DEFAULT_SESSION_LENGTH_SECONDS  // 1800
+        const val TARGET = GateState.DEFAULT_DAILY_TARGET_SECONDS // 1200
+        const val MIN = GateState.MIN_DAILY_TARGET_SECONDS
+        const val MAX = GateState.MAX_DAILY_TARGET_SECONDS
     }
 
     private fun gate(
         switchedOn: Boolean = true,
-        credit: Long = 0,
-        sessionRemaining: Long = 0,
+        read: Long = 0,
         disableAt: Long = 0,
         now: Long = T0,
-        cost: Long = COST,
-        length: Long = LENGTH,
-    ) = GateState(switchedOn, credit, sessionRemaining, disableAt, now, cost, length)
+        target: Long = TARGET,
+    ) = GateState(switchedOn, read, disableAt, now, target)
 
-    // --- The exchange ---
+    // --- The lock ---
 
     @Test
-    fun `a minute of reading buys nothing`() {
-        assertFalse(gate(credit = 60).canStartSession)
-        assertFalse(gate(credit = 60).open)
-        assertFalse(gate(credit = COST - 1).canStartSession)
+    fun `before today's reading the phone is locked`() {
+        assertFalse(gate(read = 0).open)
+        assertFalse(gate(read = TARGET - 1).open)
+        assertEquals(1L, gate(read = TARGET - 1).secondsToUnlock)
     }
 
     @Test
-    fun `the full price buys a session`() {
-        assertTrue(gate(credit = COST).canStartSession)
-        assertEquals(0L, gate(credit = COST).secondsToNextSession)
-    }
-
-    /**
-     * The heart of it: the door being affordable is not the door being open.
-     * Credit has to be spent deliberately, which is what makes a session a
-     * thing you decide to take rather than a state you drift into.
-     */
-    @Test
-    fun `affording a session is not the same as being in one`() {
-        val afford = gate(credit = COST * 2)
-        assertTrue(afford.canStartSession)
-        assertFalse(afford.open)
-    }
-
-    // --- The session ---
-
-    @Test
-    fun `unspent app time opens the apps`() {
-        val g = gate(credit = 0, sessionRemaining = 20 * 60)
-        assertTrue(g.sessionActive)
+    fun `reading the target opens the phone`() {
+        val g = gate(read = TARGET)
+        assertTrue(g.targetMet)
         assertTrue(g.open)
-        assertEquals(20L * 60, g.sessionRemainingSeconds)
+        assertEquals(0L, g.secondsToUnlock)
     }
 
     @Test
-    fun `spent-out app time closes them again`() {
-        val g = gate(sessionRemaining = 0)
-        assertFalse(g.sessionActive)
-        assertFalse(g.open)
-    }
-
-    // --- Sites open during a session, exactly as apps do ---
-
-    @Test
-    fun `a live session opens site rules too`() {
-        assertTrue(gate(sessionRemaining = 60).coversSites)
-    }
-
-    @Test
-    fun `sites close again the same instant the session runs out`() {
-        assertFalse(gate(sessionRemaining = 0).coversSites)
-    }
-
-    /**
-     * The one place [coversSites] must NOT track [open]. Switching the gate
-     * off falls an app back to the old browse-balance economy rather than
-     * setting it free — but a site rule set up with no gate in play at all has
-     * no session to run out, and treating [open]'s "the switch is off" case as
-     * cover here would mean a blocked site could only ever stay blocked for a
-     * reader who had also turned the reading-time gate on.
-     */
-    @Test
-    fun `with the gate off, sites stay exactly as blocked as the rule says`() {
-        val g = gate(switchedOn = false)
+    fun `reading past the target keeps it open and the distance at zero`() {
+        val g = gate(read = TARGET * 3)
         assertTrue(g.open)
-        assertFalse(g.coversSites)
-    }
-
-    /**
-     * A meter, not a wall clock. Nothing in this state depends on the time,
-     * so app time cannot evaporate while the phone is face-down — the reader
-     * paid two hours for it and it is still there tomorrow.
-     */
-    @Test
-    fun `app time does not run down on its own`() {
-        val g = gate(sessionRemaining = 12 * 60)
-        val aWeekLater = g.copy(nowMillis = T0 + 7L * 24 * 60 * 60 * 1000)
-        assertEquals(g.sessionRemainingSeconds, aWeekLater.sessionRemainingSeconds)
-        assertTrue(aWeekLater.open)
-    }
-
-    /**
-     * Buying more while some is left is allowed — it is the reader's two
-     * hours — but it stops at the ceiling, or a month of reading could
-     * stockpile an afternoon of scrolling.
-     */
-    @Test
-    fun `app time can be topped up but not hoarded`() {
-        assertTrue(gate(credit = COST, sessionRemaining = LENGTH).canStartSession)
-        assertFalse(gate(credit = COST * 2, sessionRemaining = LENGTH * 2).canStartSession)
-        assertEquals(LENGTH * 2, GateState.maxSessionSecondsFor(LENGTH))
-    }
-
-    // --- Banking ---
-
-    @Test
-    fun `credit banks whole sessions`() {
-        assertEquals(0, gate(credit = COST - 1).sessionsBanked)
-        assertEquals(1, gate(credit = COST).sessionsBanked)
-        assertEquals(2, gate(credit = COST * 2).sessionsBanked)
+        assertEquals(0L, g.secondsToUnlock)
+        assertEquals(1f, g.progress)
     }
 
     @Test
-    fun `banking is capped at two sessions`() {
-        assertEquals(COST * 2, GateState.maxCreditFor(COST))
-        assertEquals(0L, GateState.maxCreditFor(0))
-        assertEquals(0L, GateState.maxCreditFor(-5))
+    fun `progress is the share of today's target read`() {
+        assertEquals(0f, gate(read = 0).progress)
+        assertEquals(0.5f, gate(read = TARGET / 2).progress)
     }
 
     @Test
-    fun `progress reads as fullness toward the next session`() {
-        assertEquals(0f, gate(credit = 0).creditProgress, 0.0001f)
-        assertEquals(0.5f, gate(credit = COST / 2).creditProgress, 0.0001f)
-        // A whole session banked is full, not back to empty.
-        assertEquals(1f, gate(credit = COST).creditProgress, 0.0001f)
-        // Part-way to a second.
-        assertEquals(0.25f, gate(credit = COST + COST / 4).creditProgress, 0.0001f)
+    fun `the shipped default is twenty minutes`() {
+        assertEquals(20L * 60, GateState.DEFAULT_DAILY_TARGET_SECONDS)
     }
 
-    // --- The off switch ---
+    // --- Sites ---
+
+    @Test
+    fun `today's reading opens blocked sites too`() {
+        assertTrue(gate(read = TARGET).coversSites)
+        assertFalse(gate(read = TARGET - 1).coversSites)
+    }
+
+    @Test
+    fun `with the lock off, sites stay exactly as blocked as the rule says`() {
+        val off = gate(switchedOn = false, read = TARGET * 2)
+        assertTrue(off.open)
+        assertFalse(off.coversSites)
+    }
+
+    // --- Switching off takes a day ---
 
     @Test
     fun `switching off does not take effect for a day`() {
-        val g = gate(switchedOn = true, disableAt = T0 + GateState.COOLING_OFF_MILLIS)
+        val g = gate(read = 0, disableAt = T0 + GateState.COOLING_OFF_MILLIS)
         assertTrue(g.enabled)
         assertTrue(g.windingDown)
         assertFalse(g.open)
@@ -157,162 +85,111 @@ class AccessGateTest {
     }
 
     @Test
-    fun `once the day has passed the gate really is off`() {
-        val g = gate(switchedOn = true, disableAt = T0 - 1, now = T0)
+    fun `once the day has passed the lock really is off`() {
+        val disableAt = T0 + GateState.COOLING_OFF_MILLIS
+        val g = gate(read = 0, disableAt = disableAt, now = disableAt)
         assertFalse(g.enabled)
+        assertTrue(g.open)
+        assertEquals(0L, g.secondsUntilDisabled)
+    }
+
+    @Test
+    fun `a lock that was never switched on is simply off`() {
+        val g = gate(switchedOn = false)
+        assertFalse(g.enabled)
+        assertTrue(g.open)
         assertFalse(g.windingDown)
-        assertTrue(g.open)
     }
 
-    /**
-     * Nothing runs to expire the cooling-off. The rule is a function of the
-     * clock, so the next question anyone asks gets the right answer even if
-     * the process died for the whole day in between.
-     */
-    @Test
-    fun `the cooling-off expires without anything having to run`() {
-        val flipped = gate(switchedOn = true, disableAt = T0 + GateState.COOLING_OFF_MILLIS)
-        assertTrue(flipped.enabled)
-        val muchLater = flipped.copy(nowMillis = T0 + 40L * 24 * 60 * 60 * 1000)
-        assertFalse(muchLater.enabled)
-    }
+    // --- Loosening is earned ---
 
     @Test
-    fun `a gate that was never switched on is simply off`() {
-        val g = gate(switchedOn = false, credit = 0)
-        assertFalse(g.enabled)
-        assertTrue(g.open)
-        assertFalse(g.canStartSession)
-        assertTrue(g.canRemoveBlockedApps)
-    }
-
-    // --- The list freeze, which is what makes the rest mean anything ---
-
-    /**
-     * Without this the gate is decorative: two hours of reading, or Settings →
-     * uncheck. The escape and the front door now cost the same.
-     */
-    @Test
-    fun `apps cannot be unblocked while the reading is being done`() {
-        assertFalse(gate(credit = 0).canRemoveBlockedApps)
-        assertFalse(gate(credit = COST).canRemoveBlockedApps)
-    }
-
-    @Test
-    fun `apps can be unblocked while app time is in hand`() {
-        assertTrue(gate(sessionRemaining = 60).canRemoveBlockedApps)
-    }
-
-    @Test
-    fun `winding down does not unfreeze the list early`() {
-        val g = gate(disableAt = T0 + GateState.COOLING_OFF_MILLIS)
+    fun `the rules cannot be loosened before today's reading`() {
+        val g = gate(read = TARGET - 1)
+        assertFalse(g.canLoosenTheRules)
         assertFalse(g.canRemoveBlockedApps)
-    }
-
-    // --- Taking an app off the blocked list, which is the way out ---
-
-    /**
-     * The hole this closes. The app the reader blocked is the one thing
-     * standing between them and the app they are reaching for, so removing it
-     * while locked out is the escape the price exists to cover.
-     */
-    @Test
-    fun `the blocked list cannot be loosened while locked out`() {
-        assertFalse(gate(credit = 0).canLoosenTheRules)
-        assertFalse(gate(credit = COST).canLoosenTheRules)
-        assertFalse(gate(disableAt = T0 + GateState.COOLING_OFF_MILLIS).canLoosenTheRules)
+        assertFalse(g.canAddAllowedSite)
+        assertFalse(g.canAddAllowedApp)
+        assertFalse(g.canSwitchToBlocklist)
     }
 
     @Test
-    fun `the blocked list can be loosened with app time in hand`() {
-        assertTrue(gate(sessionRemaining = 60).canLoosenTheRules)
+    fun `after today's reading the rules can be loosened`() {
+        val g = gate(read = TARGET)
+        assertTrue(g.canLoosenTheRules)
+        assertTrue(g.canAddAllowedApp)
+        assertTrue(g.canSwitchToBlocklist)
     }
 
     @Test
-    fun `with the gate off nothing is locked`() {
+    fun `winding down does not unfreeze the rules early`() {
+        val g = gate(read = 0, disableAt = T0 + GateState.COOLING_OFF_MILLIS)
+        assertFalse(g.canLoosenTheRules)
+    }
+
+    @Test
+    fun `with the lock off nothing is fenced`() {
         assertTrue(gate(switchedOn = false).canLoosenTheRules)
     }
 
-    /** Unblocking an app is the general rule's one remaining instance. */
-    @Test
-    fun `unblocking an app is the thing that has to be earned`() {
-        listOf(
-            gate(credit = 0),
-            gate(sessionRemaining = 60),
-            gate(switchedOn = false),
-        ).forEach {
-            assertEquals(it.canLoosenTheRules, it.canRemoveBlockedApps)
-        }
-    }
-
-    /**
-     * Adding to an allowlist (once its one-time setup window has passed —
-     * that part lives in the screen, not here) and switching an active
-     * allowlist back to a blocklist are the other two ways site rules can
-     * be loosened — both fenced by exactly the same rule as unblocking an
-     * app.
-     */
-    @Test
-    fun `adding an allowed site and leaving an allowlist are the same earned thing`() {
-        listOf(
-            gate(credit = 0),
-            gate(sessionRemaining = 60),
-            gate(switchedOn = false),
-        ).forEach {
-            assertEquals(it.canLoosenTheRules, it.canAddAllowedSite)
-            assertEquals(it.canLoosenTheRules, it.canSwitchToBlocklist)
-        }
-    }
-
-    /**
-     * The terms of a session are the reader's, in either direction, at any
-     * time. They were fenced once — lowering the price counted as an escape
-     * and waited for app time in hand — but outside a session that left only
-     * the stricter direction on the slider, so a single touch could pin the
-     * price at its ceiling with no way back down.
-     *
-     * What remains is the range itself, applied on the way to storage so every
-     * caller passes it. A price of zero would be an open door with extra
-     * steps, which is why the floor is fifteen minutes rather than nothing.
-     */
-    @Test
-    fun `the price of a session can never be nothing`() {
-        assertTrue(GateState.MIN_SESSION_COST_SECONDS > 0)
-        assertTrue(GateState.MIN_SESSION_COST_SECONDS < GateState.DEFAULT_SESSION_COST_SECONDS)
-        assertTrue(GateState.MAX_SESSION_COST_SECONDS > GateState.DEFAULT_SESSION_COST_SECONDS)
-        assertTrue(GateState.MIN_SESSION_LENGTH_SECONDS > 0)
-        assertTrue(GateState.MIN_SESSION_LENGTH_SECONDS < GateState.DEFAULT_SESSION_LENGTH_SECONDS)
-        assertTrue(GateState.MAX_SESSION_LENGTH_SECONDS > GateState.DEFAULT_SESSION_LENGTH_SECONDS)
-    }
-
-    // --- Degenerate configurations ---
+    // --- Nonsense in storage ---
 
     @Test
-    fun `a zero cost does not divide by zero`() {
-        val g = gate(credit = 0, cost = 0)
-        assertEquals(1f, g.creditProgress, 0.0001f)
-        assertEquals(0, g.sessionsBanked)
-        assertTrue(g.canStartSession)
+    fun `a stored target of nothing still demands the minimum`() {
+        val g = gate(read = 0, target = 0)
+        assertEquals(MIN, g.target)
+        assertFalse(g.open)
+        assertTrue(gate(read = MIN, target = 0).open)
     }
 
     @Test
-    fun `nonsense credit does not produce negative distances`() {
-        val g = gate(credit = -500)
-        assertEquals(COST, g.secondsToNextSession)
-        assertFalse(g.canStartSession)
-        assertEquals(0, g.sessionsBanked)
+    fun `a negative reading counter is not reading`() {
+        val g = gate(read = -500)
+        assertEquals(0L, g.readToday)
+        assertEquals(TARGET, g.secondsToUnlock)
+        assertEquals(0f, g.progress)
     }
 
     @Test
-    fun `a negative counter is not app time`() {
-        assertFalse(gate(sessionRemaining = -30).sessionActive)
-        assertEquals(0L, gate(sessionRemaining = -30).sessionRemainingSeconds)
+    fun `before anything is known the lock is off`() {
+        assertFalse(GateState.Unknown.enabled)
+        assertTrue(GateState.Unknown.open)
+    }
+
+    // --- The target control's fence ---
+
+    @Test
+    fun `before today's reading the target may only go up`() {
+        val bounds = GateState.targetBounds(TARGET, canLoosen = false)
+        assertEquals(TARGET, bounds.first)
+        assertEquals(MAX, bounds.last)
     }
 
     @Test
-    fun `the shipped defaults are four hours of reading to one of apps`() {
-        assertEquals(2L * 60 * 60, GateState.DEFAULT_SESSION_COST_SECONDS)
-        assertEquals(30L * 60, GateState.DEFAULT_SESSION_LENGTH_SECONDS)
-        assertEquals(4L, GateState.DEFAULT_SESSION_COST_SECONDS / GateState.DEFAULT_SESSION_LENGTH_SECONDS)
+    fun `after today's reading the target moves anywhere`() {
+        assertEquals(MIN..MAX, GateState.targetBounds(TARGET, canLoosen = true))
+    }
+
+    @Test
+    fun `lower is loosening, higher is not`() {
+        assertTrue(GateState.loosensTarget(TARGET, TARGET - 60))
+        assertFalse(GateState.loosensTarget(TARGET, TARGET + 60))
+        assertFalse(GateState.loosensTarget(TARGET, TARGET))
+    }
+
+    /** An inverted range would give the slider negative travel. */
+    @Test
+    fun `a stored target outside the range still gives a sane fence`() {
+        val low = GateState.targetBounds(0, canLoosen = false)
+        assertEquals(MIN, low.first)
+        assertTrue(low.first <= low.last)
+        val high = GateState.targetBounds(MAX * 10, canLoosen = false)
+        assertEquals(MAX..MAX, high)
+        assertFalse(GateState.hasTravel(high))
+    }
+
+    @Test
+    fun `a target in the middle always has travel`() {
+        assertTrue(GateState.hasTravel(GateState.targetBounds(TARGET, canLoosen = false)))
     }
 }

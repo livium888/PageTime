@@ -23,12 +23,22 @@ This is a native **Kotlin + Jetpack Compose** Android app.
    positions and book-style typography. Reader settings include serif/sans/mono fonts,
    sepia and night themes, spacing, margins, and a per-reader brightness override.
    A timer banks browsing time while the reader is open.
-3. **Enforce** — an `AccessibilityService` watches the foreground app. When a
-   blocked app opens with a zero balance, PageTime shows a full-screen
-   "time is up" overlay and offers to reopen the reader. With a positive balance,
-   the balance is spent one second at a time while you're in the blocked app.
+3. **Enforce** — an `AccessibilityService` watches the foreground app. Two rules:
+   - **Daily reading lock** (Settings → Daily reading lock): until you have read
+     your daily target (default 20 minutes, counted from 4am), blocked apps show
+     a full-screen screen with your progress and a "Read now" button. Once the
+     target is met, everything opens until the next 4am. Turning the lock off
+     takes 24 hours; lowering the target or loosening any rule waits until
+     today's reading is done. Reading in PageTime and in trusted external
+     readers (e.g. Kindle, if enabled) counts; flashcards and other rewards don't.
+   - **Browse balance** (lock off): reading earns browse minutes at a
+     configurable rate, spent one second at a time in blocked apps.
 
-The reading rate is configurable (default: 1 minute reading = 1 minute browsing).
+   Apps can be blocked individually (**Block chosen apps**) or with **Allow only
+   chosen apps**: everything is blocked except up to 5 apps you choose plus the
+   essentials (phone, messages, home screen, Settings, clock, keyboard,
+   authenticator apps). Two emergency unlocks per week open one app for 5
+   minutes. See `docs/decisions/0001-daily-reading-lock.md`.
 
 ## Explain Back learning
 

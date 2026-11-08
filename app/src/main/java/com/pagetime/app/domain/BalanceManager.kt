@@ -1,5 +1,7 @@
 package com.pagetime.app.domain
 
+import com.pagetime.app.blocker.AppAllowlist
+import com.pagetime.app.blocker.AppMode
 import com.pagetime.app.data.UsageRepository
 import com.pagetime.app.data.local.Settings
 import com.pagetime.app.data.local.SettingsRepository
@@ -39,17 +41,13 @@ class BalanceManager(
         repository.settings.map { it.ratio }
 
     /**
-     * The access gate.
+     * The daily reading lock.
      *
-     * Almost everything here changes because something was written: reading
-     * banks credit, buying a session spends it, and the spend ticker writes
-     * the remaining second every second it burns one. All of that arrives
-     * through the settings flow with no polling at all — which is the quiet
-     * benefit of metering the session rather than counting down to a deadline.
-     *
-     * The one exception is the wind-down, which completes because a day
-     * passed and nothing was written anywhere. That is what the slow tick is
-     * for; a deadline that far out does not need watching more often.
+     * Reading arrives as a DataStore write, so most changes need no polling.
+     * Two do not: the 04:00 reset (the stored tally simply stops counting once
+     * the lock day changes) and the end of a wind-down. Both happen because
+     * time passed and nothing was written, which is what the slow tick is for —
+     * it re-locks the phone within a minute of 04:00.
      */
     val gate: Flow<GateState> =
         repository.settings
@@ -65,12 +63,14 @@ class BalanceManager(
 
     private fun stateOf(settings: Settings, now: Long) = GateState(
         switchedOn = settings.gateEnabled,
-        creditSeconds = settings.readingCreditSeconds,
-        sessionSecondsRemaining = settings.sessionSecondsRemaining,
+        readTodaySeconds = LockDay.readToday(
+            storedDay = settings.readTodayLockDay,
+            storedSeconds = settings.readTodaySeconds,
+            today = LockDay.of(now),
+        ),
         disableAtMillis = settings.gateDisableAt,
         nowMillis = now,
-        sessionCostSeconds = settings.sessionCostSeconds,
-        sessionLengthSeconds = settings.sessionLengthSeconds,
+        dailyTargetSeconds = settings.dailyTargetSeconds,
     )
 
     /** The gate right now, for callers that cannot wait for a flow. */
@@ -78,34 +78,17 @@ class BalanceManager(
         stateOf(repository.settings.first(), System.currentTimeMillis())
 
     /**
-     * Buys app time with banked reading. Returns whether the purchase went
-     * through.
+     * Burns one second of whatever is paying for access, and returns what is
+     * left of it.
      *
-     * Serialized with every other mutation, and the affordability check lives
-     * inside the DataStore edit as well: two taps on the block screen's start
-     * button must not both read the same credit and both come back yes.
-     */
-    suspend fun startSession(): Boolean = mutex.withLock {
-        val state = stateOf(repository.settings.first(), System.currentTimeMillis())
-        if (!state.enabled) return@withLock false
-        val started = repository.startSessionIfAffordable()
-        if (started) {
-            ledger?.log(UsageRepository.TYPE_SESSION, packageName = null, seconds = state.sessionLengthSeconds)
-        }
-        started
-    }
-
-    /**
-     * Burns one second of whichever counter is currently paying for access,
-     * and returns what is left of it.
-     *
-     * One ticker, two counters. Under the gate it is bought app time; on the
-     * browse balance it is the old currency. Keeping the branch here rather
-     * than in the controller means the screen-off rule, the ledger flush and
-     * the UsageStats reconciliation are written once and cannot drift apart.
+     * Under the reading lock nothing is metered: once today's reading is done
+     * the phone is open until 04:00, so there is no counter to burn and this
+     * returns [UNMETERED]. The controller's ticker still runs, because it is
+     * also what records time spent per app in the usage ledger. On the browse
+     * balance it burns the old currency, as it always did.
      */
     suspend fun spendAccessSecond(): Long =
-        if (repository.gateEnabled()) repository.spendSessionSecond() else spendSecond()
+        if (repository.gateEnabled()) UNMETERED else spendSecond()
 
     /**
      * Turns the stored switch off once its cooling-off has elapsed.
@@ -146,20 +129,34 @@ class BalanceManager(
         if (seconds <= 0) return
         mutex.withLock {
             repository.addTotalReadingSeconds(seconds)
-            if (repository.gateEnabled()) {
-                // Reading banks credit toward the next session, and the browse
-                // balance stops growing. It is not spent either — the reader
-                // keeps whatever they had — but continuing to credit a currency
-                // nobody can spend would bank a month of browse time against
-                // the day they switch the gate off, and hand them an afternoon
-                // of it as a reward for having read.
-                repository.addReadingCredit(seconds)
-            } else {
+            // Counted toward today's target whether or not the lock is on, so
+            // switching it on mid-day credits the reading already done today.
+            repository.addReadToday(seconds, LockDay.of(System.currentTimeMillis()))
+            if (!repository.gateEnabled()) {
+                // Under the lock the browse balance stops growing: crediting a
+                // currency nobody can spend would bank a month of browse time
+                // against the day the lock is switched off.
                 repository.addBrowseBalanceSeconds((seconds * repository.ratio()).toLong())
             }
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
+
+    /**
+     * What the reader screens may PROMISE for an explain-back, a flashcard or
+     * a chapter review. Under the reading lock those rewards pay nothing (only
+     * reading counts — decision 0001), so a prompt saying "you'll bank 90s"
+     * would be untrue. Settings keeps showing the configured amounts through
+     * the plain accessors below; only the promises go through these.
+     */
+    val explainBackRewardPayable: Flow<Long> =
+        repository.settings.map { if (it.gateEnabled) 0L else it.explainBackRewardSeconds }
+
+    suspend fun explainBackRewardPayable(): Long =
+        if (repository.gateEnabled()) 0L else repository.explainBackRewardSeconds()
+
+    suspend fun flashcardRewardPayable(): Long =
+        if (repository.gateEnabled()) 0L else repository.flashcardRewardSeconds()
 
     /**
      * Browse seconds earned per correct flashcard review (HARD/GOOD/EASY).
@@ -181,38 +178,62 @@ class BalanceManager(
     suspend fun setFlashcardDailyCap(seconds: Long) = repository.setFlashcardDailyCapSeconds(seconds)
 
     /**
-     * Sets the price of a session. Returns whether the change was accepted.
+     * Sets the daily reading target. Returns whether the change was accepted.
      *
      * The fence lives here and not in the screen because a rule enforced only
-     * by a slider's travel is a rule enforced by one caller. The screen clips
-     * the thumb so the reader is never offered a move that will be refused;
-     * this is what makes the refusal true.
-     *
-     * Serialized with every other mutation for the same reason startSession
-     * is: reading the gate and then writing against it must not interleave
-     * with a session starting or expiring in between.
+     * by a slider's travel is enforced for one caller. Raising the target is
+     * always allowed; lowering it is loosening, so it waits for today's reading
+     * (or for the lock to be off). Serialized with reading so the check and
+     * the write cannot interleave with today's target being reached.
      */
-    suspend fun setSessionCostSeconds(seconds: Long): Boolean = mutex.withLock {
+    suspend fun setDailyTargetSeconds(seconds: Long): Boolean = mutex.withLock {
         val state = stateOf(repository.settings.first(), System.currentTimeMillis())
-        if (!state.canLoosenTheRules &&
-            GateState.loosensCost(state.sessionCostSeconds, seconds)
-        ) {
+        if (!state.canLoosenTheRules && GateState.loosensTarget(state.target, seconds)) {
             return@withLock false
         }
-        repository.setSessionCostSeconds(seconds)
+        repository.setDailyTargetSeconds(seconds)
         true
     }
 
-    /** The same fence on session length, whose easy direction is longer. */
-    suspend fun setSessionLengthSeconds(seconds: Long): Boolean = mutex.withLock {
-        val state = stateOf(repository.settings.first(), System.currentTimeMillis())
-        if (!state.canLoosenTheRules &&
-            GateState.loosensLength(state.sessionLengthSeconds, seconds)
-        ) {
-            return@withLock false
-        }
-        repository.setSessionLengthSeconds(seconds)
+    /**
+     * Switches app rules between blocklist and allowlist. Returns whether it
+     * was accepted. Entering the allowlist only narrows what opens, so it is
+     * always allowed; leaving it reopens everything it did not name, so it is
+     * fenced like any other loosening.
+     */
+    suspend fun setAppMode(mode: AppMode): Boolean = mutex.withLock {
+        val settings = repository.settings.first()
+        val state = stateOf(settings, System.currentTimeMillis())
+        val leaving = settings.appMode == AppMode.ALLOWLIST && mode == AppMode.BLOCKLIST
+        if (leaving && !state.canSwitchToBlocklist) return@withLock false
+        repository.setAppMode(mode)
         true
+    }
+
+    /**
+     * Allows one more app. Returns whether it is allowed afterwards.
+     *
+     * Free during the one-time setup window; after that it costs today's
+     * reading, the same as any loosening. The five-app limit is enforced again
+     * inside the repository's edit, so it holds against concurrent taps.
+     */
+    suspend fun addAllowedApp(packageName: String): Boolean = mutex.withLock {
+        val settings = repository.settings.first()
+        val now = System.currentTimeMillis()
+        if (packageName in settings.allowedApps) return@withLock true
+        val state = stateOf(settings, now)
+        val permitted = AppAllowlist.canAdd(
+            allowedCount = settings.allowedApps.size,
+            inSetupWindow = AppAllowlist.inSetupWindow(settings.appAllowlistSetupGraceUntil, now),
+            canLoosen = state.canAddAllowedApp,
+        )
+        if (!permitted) return@withLock false
+        repository.addAllowedApp(packageName)
+    }
+
+    /** Fewer allowed apps is the strict direction: always allowed. */
+    suspend fun removeAllowedApp(packageName: String) = mutex.withLock {
+        repository.removeAllowedApp(packageName)
     }
 
     suspend fun setFlashcardReward(seconds: Long) = repository.setFlashcardRewardSeconds(seconds)
@@ -234,6 +255,9 @@ class BalanceManager(
      */
     suspend fun earnFromFlashcard(ratingCorrect: Boolean): Long {
         if (!ratingCorrect) return 0
+        // The reading lock counts minutes of reading only; a flashcard is not
+        // reading, so under the lock it pays nothing (decision 0001).
+        if (repository.gateEnabled()) return 0
         val requested = repository.flashcardRewardSeconds()
         if (requested <= 0) return 0
         val today = java.time.LocalDate.now().toEpochDay()
@@ -250,11 +274,7 @@ class BalanceManager(
             )
             if (payable > 0) {
                 repository.setFlashcardEarnedToday(today, earnedSoFar + payable)
-                if (repository.gateEnabled()) {
-                    repository.addReadingCredit(payable)
-                } else {
-                    repository.addBrowseBalanceSeconds(payable)
-                }
+                repository.addBrowseBalanceSeconds(payable)
             }
             payable
         }
@@ -312,9 +332,11 @@ class BalanceManager(
             )
             if (payable > 0) {
                 repository.setExternalReadingEarnedToday(today, earnedSoFar + payable)
-                if (repository.gateEnabled()) {
-                    repository.addReadingCredit(payable)
-                } else {
+                // Reading in a trusted external app (e.g. Kindle) is reading:
+                // it counts toward today's target, after the discount and cap
+                // above that bound what an unverifiable signal can pay.
+                repository.addReadToday(payable, LockDay.of(System.currentTimeMillis()))
+                if (!repository.gateEnabled()) {
                     repository.addBrowseBalanceSeconds(payable)
                 }
             }
@@ -346,14 +368,12 @@ class BalanceManager(
      */
     suspend fun earnFromExplainBack(worthRewarding: Boolean) {
         if (!worthRewarding) return
+        // Not reading, so nothing under the lock (decision 0001).
+        if (repository.gateEnabled()) return
         val seconds = repository.explainBackRewardSeconds()
         if (seconds <= 0) return
         mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
-            }
+            repository.addBrowseBalanceSeconds(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
@@ -374,14 +394,12 @@ class BalanceManager(
      */
     suspend fun earnFromLumenLink(isNewLink: Boolean) {
         if (!isNewLink) return
+        // Not reading, so nothing under the lock (decision 0001).
+        if (repository.gateEnabled()) return
         val seconds = repository.lumenLinkRewardSeconds()
         if (seconds <= 0) return
         mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
-            }
+            repository.addBrowseBalanceSeconds(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
     }
@@ -407,14 +425,13 @@ class BalanceManager(
      * function's decision either.
      */
     suspend fun earnReadingMomentumBonus(): Long {
+        // A bonus on top of reading already counted in full; under the lock it
+        // would be minutes nobody read, so it pays nothing (decision 0001).
+        if (repository.gateEnabled()) return 0
         val seconds = repository.readingMomentumBonusSeconds()
         if (seconds <= 0) return 0
         mutex.withLock {
-            if (repository.gateEnabled()) {
-                repository.addReadingCredit(seconds)
-            } else {
-                repository.addBrowseBalanceSeconds(seconds)
-            }
+            repository.addBrowseBalanceSeconds(seconds)
         }
         ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
         return seconds
@@ -428,13 +445,14 @@ class BalanceManager(
 
     private val mutex = Mutex()
 
-    private companion object {
+    companion object {
         /**
-         * The wind-down is the only deadline left, and it is a day away.
-         *
-         * Everything else reaches this flow as a DataStore write, so there is
-         * nothing else worth waking up for.
+         * The 04:00 reset and the end of a wind-down are the only things that
+         * happen without a write. A minute is close enough for both.
          */
-        const val WIND_DOWN_TICK_MS = 60_000L
+        private const val WIND_DOWN_TICK_MS = 60_000L
+
+        /** What [spendAccessSecond] returns when nothing is being metered. */
+        const val UNMETERED = Long.MAX_VALUE
     }
 }

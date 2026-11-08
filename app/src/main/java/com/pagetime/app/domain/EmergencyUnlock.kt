@@ -1,7 +1,7 @@
 package com.pagetime.app.domain
 
 /**
- * The escape hatch: one app, five minutes, twice a day.
+ * The escape hatch: one app, five minutes, twice a week.
  *
  * WHY THERE IS ONE AT ALL
  *
@@ -40,11 +40,18 @@ package com.pagetime.app.domain
  * would be a second currency. So this one does run out on the clock, and the
  * difference in reasoning is the difference in who paid.
  *
- * TWICE PER ROLLING DAY
+ * TWICE PER ROLLING WEEK
  *
- * Each use comes back twenty-four hours after it was spent, rather than both
- * resetting at midnight — a midnight reset invites spending two at 11:55pm and
- * two more at midnight, which is twenty minutes in ten.
+ * It was twice a day under the session gate, when only a handful of chosen
+ * apps were ever blocked. Under the daily reading lock with an app allowlist,
+ * almost everything is blocked until the reading is done, so a daily pair of
+ * hatches would be a daily way round the lock. Twice a week is enough for a
+ * lost-on-the-way map or a banking code, and too little to live on
+ * (docs/decisions/0001-daily-reading-lock.md).
+ *
+ * Each use comes back a full window after it was spent, rather than both
+ * resetting on a fixed day — a fixed reset invites spending two just before it
+ * and two more just after.
  */
 object EmergencyUnlock {
 
@@ -52,7 +59,7 @@ object EmergencyUnlock {
 
     const val USES_PER_WINDOW = 2
 
-    const val WINDOW_MILLIS = 24L * 60 * 60 * 1000
+    const val WINDOW_MILLIS = 7L * 24 * 60 * 60 * 1000
 
     /** Uses inside the rolling window, newest first. Anything older has expired. */
     fun usesInWindow(stamps: List<Long>, nowMillis: Long): List<Long> =
@@ -81,9 +88,9 @@ object EmergencyUnlock {
      * hard lock is a promise the reader made to themselves for a fixed time,
      * and its entire value is that nothing lifts it — a hatch that punched
      * through would make it just another setting. It costs less than it
-     * sounds, because a hard lock only covers apps the reader chose to block;
-     * calls, messages, maps and the camera were never blocked, so a genuine
-     * safety emergency does not route through any of this.
+     * sounds, because calls, messages and the other essentials are never
+     * blocked in any mode (see [com.pagetime.app.blocker.AppAllowlist]), so a
+     * genuine safety emergency does not route through any of this.
      */
     fun canUnlock(stamps: List<Long>, nowMillis: Long, hardLockUntil: Long): Boolean =
         nowMillis >= hardLockUntil && usesLeft(stamps, nowMillis) > 0
@@ -114,7 +121,7 @@ object EmergencyUnlock {
      * The use list after spending one, with expired entries dropped.
      *
      * Pruning on write keeps the stored value bounded — otherwise it grows by
-     * two a day forever, and a preference that only ever gets longer is a slow
+     * two a week forever, and a preference that only ever gets longer is a slow
      * leak nobody notices until it is large.
      */
     fun recordUse(stamps: List<Long>, nowMillis: Long): List<Long> =

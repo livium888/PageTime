@@ -48,20 +48,16 @@ import kotlinx.coroutines.withContext
  * "Access is denied" means one of two different things depending on
  * [GateState.enabled], and everything above is written to hold under both. On
  * the balance it means there is nothing left to spend, and the whole spending
- * apparatus runs. Under the gate it means no session is open, the spend ticker
- * never starts, and the balance is not consulted at all — the reason being
- * that a divisible currency is a toll rather than a boundary, and a minute of
- * reading buying a minute of scrolling is the exact loop the gate exists to
- * break.
+ * apparatus runs. Under the daily reading lock it means today's reading is not
+ * done yet; nothing is metered (see [BalanceManager.spendAccessSecond]) and the
+ * balance is not consulted at all.
  *
- * Under the gate the block screen is also the only place a session can be
- * bought from besides Settings, so this controller is where the door is, not
- * merely where the wall is.
+ * WHICH APPS ARE BLOCKED
  *
- * Bought app time is METERED by the same spend ticker as the balance: it
- * drains only while a blocked app is genuinely in front with the screen on,
- * and what is left is still there tomorrow. A session that counted down on a
- * wall clock would charge the reader for answering the door.
+ * In [AppMode.BLOCKLIST] the ones the reader named, as always. In
+ * [AppMode.ALLOWLIST] every launchable app except up to five chosen ones and
+ * the essentials — see [AppAllowlist]. The decision is made in one place,
+ * [isBlockedPackage], so both foreground paths below agree on it.
  */
 class BlockController(
     private val scope: CoroutineScope,
@@ -70,6 +66,8 @@ class BlockController(
     private val balanceManager: BalanceManager,
     private val usageRepository: UsageRepository,
     private val powerManager: PowerManager,
+    /** Essentials and launchability for allowlist mode. */
+    private val appClassifier: AppClassifier,
     /** PageTime's own package, needed to classify poll results as trusted/unknown. */
     private val selfPackage: String = "com.pagetime.app"
 ) {
@@ -101,6 +99,22 @@ class BlockController(
     /** False until the blocked-app set has been read from Room at least once. */
     @Volatile
     private var blockedPackagesLoaded = false
+
+    /** Which direction app rules work in, mirrored from settings. */
+    @Volatile
+    private var appMode: AppMode = AppMode.BLOCKLIST
+
+    /** The chosen apps for [AppMode.ALLOWLIST]. */
+    @Volatile
+    private var allowedApps: Set<String> = emptySet()
+
+    /**
+     * False until settings have been read once. Until then nothing is blocked:
+     * guessing "allowlist" on a cold boot would shut the reader out of every
+     * app before the real answer arrived.
+     */
+    @Volatile
+    private var appRulesLoaded = false
 
     @Volatile
     var balanceSeconds: Long = 0
@@ -249,6 +263,18 @@ class BlockController(
                 quickDisableUntil = s.quickDisableUntil
                 hardLockUntil = s.hardLockUntil
 
+                val rulesChanged = !appRulesLoaded ||
+                    s.appMode != appMode || s.allowedApps != allowedApps
+                appMode = s.appMode
+                allowedApps = s.allowedApps
+                appRulesLoaded = true
+                // The same re-decision the blocked-list collector makes: an app
+                // just allowed (or a switch of mode) must take effect on the app
+                // already in front, not on the next one opened.
+                if (rulesChanged && lastForegroundPackage != null) {
+                    onForegroundPackage(lastForegroundPackage)
+                }
+
                 val wasDenied = accessDenied()
                 emergencyPackage = s.emergencyPackage
                 emergencyUntil = s.emergencyUntil
@@ -263,9 +289,10 @@ class BlockController(
             balanceManager.gate.collect { next ->
                 val wasDenied = accessDenied()
                 gate = next
-                // Crossing the line mid-session is the moment that matters:
-                // the reader finished their two hours while the block screen
-                // was up, and it has to come down without them going anywhere.
+                // Crossing the line is the moment that matters: today's reading
+                // was finished (in an allowed reading app, say) while a block
+                // screen was up, and it has to come down without them going
+                // anywhere — or 04:00 has passed and it has to go back up.
                 if (wasDenied != accessDenied()) onAccessChanged()
                 // The site-coverage meter stops on this same tick rather than
                 // waiting for the service's next poll. Starting a beat late
@@ -342,30 +369,30 @@ class BlockController(
     }
 
     /**
-     * Opens a session from the block screen and, if one opened, stands down.
+     * Whether [packageName] is blocked under the current app rules.
      *
-     * The gate flow will report the change within a second anyway, but a
-     * second of the block screen still sitting there after the reader has
-     * paid for it reads as the button not having worked.
+     * Unknown until both the blocked list and the settings have loaded, and
+     * unknown means no — see [appRulesLoaded].
      */
-    fun startSessionFromBlockScreen() {
-        scope.launch {
-            if (balanceManager.startSession()) {
-                gate = balanceManager.gateNow()
-                if (!accessDenied()) onAccessChanged()
-            }
-        }
+    private fun isBlockedPackage(packageName: String?): Boolean {
+        if (packageName == null || packageName == selfPackage) return false
+        return AppAllowlist.isBlocked(
+            packageName = packageName,
+            mode = appMode,
+            blockedPackages = blockedPackages,
+            allowedPackages = allowedApps,
+            essentials = if (appMode == AppMode.ALLOWLIST) appClassifier.essentials() else emptySet(),
+            isLaunchable = appClassifier::isLaunchable,
+        )
     }
 
     fun onForegroundPackage(packageName: String?) {
         if (packageName != null) lastForegroundPackage = packageName
         // Nothing is known about which apps are blocked yet — don't clear an active
         // block on an empty set. The collector above re-runs this once Room answers.
-        if (!blockedPackagesLoaded) return
+        if (!blockedPackagesLoaded || !appRulesLoaded) return
 
-        val isBlocked = packageName != null &&
-            packageName in blockedPackages &&
-            !graceActive()
+        val isBlocked = isBlockedPackage(packageName) && !graceActive()
         if (!isBlocked) {
             if (currentBlockedPackage != null) endSpendSession()
             currentBlockedPackage = null
@@ -405,7 +432,7 @@ class BlockController(
      * appearing over the home screen or over background apps.
      */
     fun onPolledForeground(packageName: String?) {
-        if (!blockedPackagesLoaded) return
+        if (!blockedPackagesLoaded || !appRulesLoaded) return
         // Unknown focus (null, self overlay, keyboard, shade): stand down, change nothing.
         if (!ForegroundEventPolicy.isTrustedForegroundPackage(packageName, selfPackage)) return
         val pkg = packageName ?: return
@@ -416,7 +443,7 @@ class BlockController(
             blockedSeenAtMs = android.os.SystemClock.elapsedRealtime()
             return
         }
-        if (pkg in blockedPackages) {
+        if (isBlockedPackage(pkg)) {
             // The poll proved a DIFFERENT blocked app took the front (window events
             // were missed). Treat it as a real switch.
             onForegroundPackage(pkg)
@@ -492,14 +519,10 @@ class BlockController(
         if (spendJob?.isActive == true) return
         val pkg = currentBlockedPackage ?: return
         stopEnforcing()
-        // One ticker for both eras. Under the gate it burns bought app time,
-        // on the balance the old currency; which counter that is belongs to
-        // BalanceManager.spendAccessSecond, not here.
-        //
-        // The gate had no meter at all for one commit, back when a session was
-        // a wall clock. That meant putting the phone down cost you minutes you
-        // had paid two hours of reading for — the same theft the screen-off
-        // rule below exists to prevent, just harder to notice.
+        // One ticker for both eras. On the balance it burns the old currency;
+        // under the reading lock nothing is metered and spendAccessSecond
+        // returns UNMETERED, but the ticker still runs because it is what
+        // records time spent per app in the usage ledger.
         sessionSpentSeconds = 0
         sessionStartWallAt = System.currentTimeMillis()
         spendJob = scope.launch {

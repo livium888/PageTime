@@ -91,7 +91,7 @@ import kotlinx.coroutines.delay
  * ([com.pagetime.app.domain.GateState.canAddAllowedSite]), same as
  * removing a block rule always has. Removing an allow rule stays free
  * forever either way — it only ever narrows. Switching an active allowlist
- * back to a blocklist costs a session too, since that's the one action
+ * back to a blocklist waits for today's reading too, since that's the one action
  * that reopens everything at once. A hard lock blocks adding to the
  * allowlist regardless of the window, since that's a live escape from an
  * active commitment, unlike plain list maintenance.
@@ -125,7 +125,7 @@ fun SiteRulesScreen(
 
     // The direction that widens what is reachable, whichever list is active.
     val canRemoveBlocked = gate.canRemoveBlockedApps && !hardLockActive
-    // Free during the one-time setup window; the earned-session rule takes
+    // Free during the one-time setup window; the today's-reading rule takes
     // back over once it closes. A hard lock blocks adding either way.
     val canAddAllowed = !hardLockActive && (withinSetupGrace || gate.canAddAllowedSite)
     val canSwitchToBlocklist = gate.canSwitchToBlocklist && !hardLockActive
@@ -255,8 +255,8 @@ private fun ModeOption(
 
 private fun introText(mode: SiteMode, gateEnabled: Boolean): String = when (mode) {
     SiteMode.BLOCKLIST -> if (gateEnabled) {
-        "A site here is off limits in every browser — unless a session bought with " +
-            "reading is open, the same as it opens a blocked app. Block a whole site with " +
+        "A site here is off limits in every browser until today's reading is done, " +
+            "the same as a blocked app. Block a whole site with " +
             "bbc.co.uk, or one section of it with bbc.co.uk/news."
     } else {
         "A site here is off limits in every browser, whether or not you have time to " +
@@ -265,7 +265,7 @@ private fun introText(mode: SiteMode, gateEnabled: Boolean): String = when (mode
     }
     SiteMode.ALLOWLIST -> if (gateEnabled) {
         "Only sites listed here are reachable in any browser — everything else is off " +
-            "limits, unless a session bought with reading is open. Allow a whole site " +
+            "limits until today's reading is done. Allow a whole site " +
             "with bbc.co.uk, or one section of it with bbc.co.uk/news."
     } else {
         "Only sites listed here are reachable in any browser — everything else is off " +
@@ -303,7 +303,7 @@ private fun LazyListScope.blockedListItems(
                 if (hardLockActive) {
                     "A hard lock is running, so nothing can be taken off this list until it ends."
                 } else {
-                    "Sites can be added any time, but only removed during a session. " +
+                    "Sites can be added any time, but only removed once today's reading is done. " +
                         "Removing one is how you get back into it."
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -348,12 +348,12 @@ private fun LazyListScope.allowedListItems(
     val notice = when {
         withinSetupGrace ->
             "Free setup window: ${BlockScreenText.span(setupGraceRemainingMillis / 1000)} " +
-                "left to add sites without a session."
+                "left to add sites before any reading."
         hardLockActive ->
             "A hard lock is running, so nothing can be added to this list until it ends."
         !canAdd ->
-            "The free setup window has ended. Adding a new site now costs what " +
-                "removing a blocked site costs — read to bank a session."
+            "The free setup window has ended. Adding a new site now waits until " +
+                "today's reading is done."
         else -> null
     }
     if (notice != null) {

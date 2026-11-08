@@ -39,6 +39,29 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <!--
+             App allowlist mode never blocks the essentials: the home screen,
+             Settings, the clock (a blocked alarm keeps ringing) and the
+             dialer. They are found by intent so they are right on any
+             manufacturer's phone, and API 30+ package visibility hides them
+             unless the intents are declared here. See AndroidAppClassifier.
+        -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+        </intent>
         <!-- TEMPORARY EXPERIMENTAL: see AnkiReviewer.kt. Needed to resolve
              AnkiDroid's ContentProvider under API 30+ package visibility. -->
         <package android:name="com.ichi2.anki" />

@@ -1,12 +1,14 @@
 name: Compile check
 
 # The release workflow only builds main, and needs signing secrets. This one
-# compiles work branches so a change is verified before it reaches main.
+# compiles work branches (claude/** and Claude Code remote ccr-** branches)
+# so a change is verified before it reaches main.
 on:
   workflow_dispatch:
   push:
     branches:
       - 'claude/**'
+      - 'ccr-**'
 
 permissions:
   contents: read

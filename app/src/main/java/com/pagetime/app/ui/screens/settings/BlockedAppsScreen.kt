@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,6 +40,8 @@ import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import com.pagetime.app.blocker.AppAllowlist
+import com.pagetime.app.blocker.AppMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +54,11 @@ fun BlockedAppsScreen(
     val hardLockUntil by viewModel.hardLockUntil.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val blockedStats by viewModel.blockedStats.collectAsStateWithLifecycle()
+    val appMode by viewModel.appMode.collectAsStateWithLifecycle()
+    val allowedApps by viewModel.allowedApps.collectAsStateWithLifecycle()
+    val setupGraceUntil by viewModel.appAllowlistSetupGraceUntil.collectAsStateWithLifecycle()
+    val essentials by viewModel.essentials.collectAsStateWithLifecycle()
+    val refusal by viewModel.refusal.collectAsStateWithLifecycle()
 
     // A lightweight wall-clock ticker so the countdowns stay live and the switches
     // unlock the moment the hard lock expires — without any persisted-state churn.
@@ -64,19 +72,34 @@ fun BlockedAppsScreen(
     val hardRemaining = (hardLockUntil - now).coerceAtLeast(0L)
     val hardLockActive = hardRemaining > 0
 
-    // The rule that makes the gate mean anything. Without it two hours of
-    // reading and "Settings, uncheck, done" are the same thing, and the
-    // second one is quicker.
+    // The rule that makes the lock mean anything. Without it today's reading
+    // and "Settings, uncheck, done" are the same thing, and the second one is
+    // quicker.
     //
     // Adding is never restricted — more blocking is not an escape, and making
     // someone earn the right to block something would be perverse — so the
     // freeze is asymmetric and applies only to switching an app OFF.
     val canUnblock = gate.canRemoveBlockedApps && !hardLockActive
 
+    val allowlist = appMode == AppMode.ALLOWLIST
+    val inSetupWindow = AppAllowlist.inSetupWindow(setupGraceUntil, now)
+    val canAddAllowed = !hardLockActive && AppAllowlist.canAdd(
+        allowedCount = allowedApps.size,
+        inSetupWindow = inSetupWindow,
+        canLoosen = gate.canAddAllowedApp,
+    )
+    // Chosen apps first, so the five are visible without scrolling; then the
+    // rest alphabetically, as loaded.
+    val listed = if (allowlist) {
+        installed.sortedByDescending { it.packageName in allowedApps }
+    } else {
+        installed
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Blocked apps") },
+                title = { Text(if (allowlist) "Allowed apps" else "Blocked apps") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -95,19 +118,52 @@ fun BlockedAppsScreen(
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
             item {
+                AppModeChooser(
+                    mode = appMode,
+                    canLeaveAllowlist = gate.canSwitchToBlocklist && !hardLockActive,
+                    onChoose = viewModel::setAppMode,
+                )
+            }
+            item {
                 Text(
-                    if (gate.enabled) {
-                        "Outside a session, opening one of these sends you back to the reader. " +
-                            "Apps can be added any time, but only removed during a session."
-                    } else {
-                        "While your balance is empty, opening one of these apps sends you back to the reader."
+                    when {
+                        allowlist ->
+                            "Everything is blocked until today's reading is done, except calls, " +
+                                "messages, your home screen, Settings, the clock, your keyboard, " +
+                                "authenticator apps, and up to ${AppAllowlist.MAX_APPS} apps you choose."
+                        gate.enabled ->
+                            "Until today's reading is done, opening one of these sends you back to " +
+                                "the reader. Apps can be added any time, but only removed once " +
+                                "today's reading is done."
+                        else ->
+                            "While your balance is empty, opening one of these apps sends you back to the reader."
                     } +
                         " Sites, by address in every browser, are on the " +
                         "Website rules screen.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
                 )
+            }
+            if (allowlist) {
+                item {
+                    AllowlistStatus(
+                        chosen = allowedApps.size,
+                        inSetupWindow = inSetupWindow,
+                        setupRemainingMillis = (setupGraceUntil - now).coerceAtLeast(0L),
+                        canAdd = canAddAllowed,
+                    )
+                }
+            }
+            refusal?.let { message ->
+                item {
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
             }
             item {
                 BlockOverrideControls(
@@ -119,30 +175,41 @@ fun BlockedAppsScreen(
             item {
                 BlockingStatsCard(stats = blockedStats)
             }
-            items(installed, key = { it.packageName }) { app ->
-                val blocked = app.packageName in blockedPackages
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        app.label,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            items(listed, key = { it.packageName }) { app ->
+                if (allowlist) {
+                    AllowlistRow(
+                        label = app.label,
+                        essential = AppAllowlist.isEssential(app.packageName, essentials),
+                        allowed = app.packageName in allowedApps,
+                        canAdd = canAddAllowed,
+                        onChange = { viewModel.setAllowed(app, it) },
                     )
-                    Switch(
-                        checked = blocked,
-                        onCheckedChange = { viewModel.toggle(app, it) },
-                        // Blocking something is always allowed. Unblocking it
-                        // waits for a session, and a hard lock refuses both
-                        // directions of escape for as long as it is running.
-                        enabled = if (blocked) canUnblock else !hardLockActive
-                    )
+                    HorizontalDivider()
+                } else {
+                    val blocked = app.packageName in blockedPackages
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            app.label,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Switch(
+                            checked = blocked,
+                            onCheckedChange = { viewModel.toggle(app, it) },
+                            // Blocking something is always allowed. Unblocking it
+                            // waits for today's reading, and a hard lock refuses both
+                            // directions of escape for as long as it is running.
+                            enabled = if (blocked) canUnblock else !hardLockActive
+                        )
+                    }
+                    HorizontalDivider()
                 }
-                HorizontalDivider()
             }
         }
     }
@@ -177,7 +244,7 @@ private fun BlockOverrideControls(
             Text("Hard lock", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Commit to the block for a fixed time. Once locked it cannot be cancelled or\n" +
-                    "lifted — not by a session, not by these toggles — no matter what.",
+                    "lifted — not by today's reading, not by these toggles — no matter what.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -254,6 +321,118 @@ private fun BlockOverrideControls(
                 )
             }
         }
+    }
+}
+
+/**
+ * Block chosen apps, or allow only chosen apps.
+ *
+ * Entering the allowlist is always possible (it only narrows what opens) and
+ * starts a free setup window. Leaving it reopens everything it did not name,
+ * so that chip is disabled until today's reading is done.
+ */
+@Composable
+private fun AppModeChooser(
+    mode: AppMode,
+    canLeaveAllowlist: Boolean,
+    onChoose: (AppMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = mode == AppMode.BLOCKLIST,
+            onClick = { onChoose(AppMode.BLOCKLIST) },
+            enabled = mode == AppMode.BLOCKLIST || canLeaveAllowlist,
+            label = { Text("Block chosen apps") }
+        )
+        FilterChip(
+            selected = mode == AppMode.ALLOWLIST,
+            onClick = { onChoose(AppMode.ALLOWLIST) },
+            label = { Text("Allow only chosen apps") }
+        )
+    }
+}
+
+/** "3 of 5 chosen", and whether another can be added right now and why not. */
+@Composable
+private fun AllowlistStatus(
+    chosen: Int,
+    inSetupWindow: Boolean,
+    setupRemainingMillis: Long,
+    canAdd: Boolean,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                "$chosen of ${AppAllowlist.MAX_APPS} chosen",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                when {
+                    chosen >= AppAllowlist.MAX_APPS ->
+                        "That's the limit. Remove one to choose another."
+                    inSetupWindow ->
+                        "Free setup: ${formatRemaining(setupRemainingMillis)} left to choose your apps."
+                    canAdd ->
+                        "You can add an app now, because today's reading is done."
+                    else ->
+                        "Adding an app waits until today's reading is done. Removing one is always allowed."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * One app in allowlist mode. Essentials are shown but cannot be switched off,
+ * and never count against the five.
+ */
+@Composable
+private fun AllowlistRow(
+    label: String,
+    essential: Boolean,
+    allowed: Boolean,
+    canAdd: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (essential) {
+                Text(
+                    "Always allowed",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Switch(
+            checked = essential || allowed,
+            onCheckedChange = onChange,
+            // Removing is the strict direction and always allowed; adding needs
+            // room and either the setup window or today's reading.
+            enabled = !essential && (allowed || canAdd)
+        )
     }
 }
 

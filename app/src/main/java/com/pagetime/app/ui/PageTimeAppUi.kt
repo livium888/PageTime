@@ -410,7 +410,6 @@ fun PageTimeAppUi(
                 val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
                 val awaitingRestatement by vm.awaitingRestatement.collectAsStateWithLifecycle()
                 val requestsUsed by vm.requestsUsed.collectAsStateWithLifecycle()
-                val rewardSeconds by vm.rewardSeconds.collectAsStateWithLifecycle()
 
                 if (isFinished) {
                     navController.popBackStack()
@@ -469,7 +468,6 @@ fun PageTimeAppUi(
                         onDeleteHistory = vm::deleteHistory,
                         onBack = { navController.popBackStack() },
                         onCreateConcept = vm::createLearningConcept,
-                        rewardSeconds = rewardSeconds
                     )
                 } else {
                     androidx.compose.foundation.layout.Column(

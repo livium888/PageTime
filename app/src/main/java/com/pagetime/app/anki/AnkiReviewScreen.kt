@@ -228,10 +228,6 @@ fun AnkiReviewDialog(onDismiss: () -> Unit) {
                                                 state = ReviewState.Error(it.message ?: it.javaClass.simpleName)
                                                 return@launch
                                             }
-                                            // Again earns nothing, matching PageTime's own flashcards.
-                                            if (ease != 1) {
-                                                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
-                                            }
                                             loadNext()
                                         }
                                     }

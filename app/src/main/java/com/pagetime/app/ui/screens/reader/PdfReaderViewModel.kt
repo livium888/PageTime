@@ -14,7 +14,6 @@ import com.pagetime.app.data.learning.ManualCardPrompt
 import com.pagetime.app.data.learning.RawPrompt
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.domain.BalanceManager
-import com.pagetime.app.domain.ReadingMomentum
 import io.github.openspacedrepetition.Card
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,8 +32,7 @@ import java.util.UUID
  *
  * PDF flashcards are saved as [LearningCardEntity] rows — the same
  * recall/review system the EPUB reader uses — so they appear in the
- * Recall tab with FSRS scheduling, grading, notifications, and time
- * earning via [BalanceManager.earnFromFlashcard].
+ * Recall tab with FSRS scheduling, grading and notifications.
  *
  * Flashcards come from the reader's own AI app via [ManualCardPrompt],
  * the same pipeline the EPUB reader uses for proper Q/A flashcards with
@@ -57,13 +55,6 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var pendingSeconds = 0
     private var readingStartTime = 0L
     private var currentBookId: String? = null
-
-    /** Surfaced once when a reading-momentum bonus lands; see [ReadingMomentum]. */
-    private val _momentumNotice = MutableStateFlow<String?>(null)
-    val momentumNotice = _momentumNotice.asStateFlow()
-
-    private var creditedSecondsSinceMomentumBonus = 0L
-    private var nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
 
     // --- AI flashcard state ---
     private val _flashcardState = MutableStateFlow(FlashcardUiState())
@@ -110,23 +101,8 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 delay(1000)
                 pendingSeconds++
                 balanceManager.earnFromReading(1L)
-                creditedSecondsSinceMomentumBonus++
-                if (ReadingMomentum.shouldFire(creditedSecondsSinceMomentumBonus, nextMomentumThreshold)) {
-                    creditedSecondsSinceMomentumBonus = 0
-                    nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
-                    launch { awardMomentumBonus() }
-                }
             }
         }
-    }
-
-    /** Pays and announces a reading-momentum bonus; a no-op if the reward is off. */
-    private suspend fun awardMomentumBonus() {
-        val seconds = balanceManager.earnReadingMomentumBonus()
-        if (seconds <= 0) return
-        _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
-        delay(6_000)
-        _momentumNotice.value = null
     }
 
     private fun stopReading() {

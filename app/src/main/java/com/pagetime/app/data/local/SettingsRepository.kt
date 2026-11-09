@@ -37,16 +37,6 @@ data class Settings(
     val browseBalanceSeconds: Long = 0,
     /** Browse seconds earned per 1 second of reading. */
     val ratio: Double = 1.0,
-    /** Browse seconds earned per correct flashcard review (HARD/GOOD/EASY). */
-    val flashcardRewardSeconds: Long = 30,
-    /**
-     * How many of those seconds flashcards (PageTime's own cards AND Anki,
-     * both route through the same reward call) can pay in total per day —
-     * see [com.pagetime.app.domain.BalanceManager.earnFromFlashcard]. Meant
-     * to keep flashcards a quick top-up rather than a way to fund a whole
-     * day's browsing without ever opening a book; reading itself has no cap.
-     */
-    val flashcardDailyCapSeconds: Long = 300,
     /**
      * Which direction site rules work in — see [SiteMode]. Defaults to the
      * original blocklist behaviour, so nothing changes for a reader who
@@ -74,31 +64,9 @@ data class Settings(
      * The most external-reading credit (already discounted by
      * [com.pagetime.app.domain.ExternalReadingCredit]) that can be banked per
      * day — see [com.pagetime.app.domain.BalanceManager.earnFromExternalReading].
-     * Bounds what a phone merely left open on a trusted app can cost, the
-     * same way [flashcardDailyCapSeconds] bounds a flashcard's better hourly
-     * rate.
+     * Bounds what a phone merely left open on a trusted app can cost.
      */
     val externalReadingDailyCapSeconds: Long = 3_600,
-    /**
-     * Browse seconds earned per explain-back attempt scored at least PARTLY.
-     * Higher than the flashcard reward by default: writing and being marked on
-     * a real explanation is minutes of work, not a single tap.
-     */
-    val explainBackRewardSeconds: Long = 90,
-    /**
-     * Browse seconds earned per new link made in the slip box. Between the
-     * flashcard and explain-back rewards: connecting two already-captured
-     * ideas is real synthesis, but less work than writing a fresh explanation.
-     */
-    val lumenLinkRewardSeconds: Long = 45,
-    /**
-     * Browse seconds paid out as a surprise bonus for sustained reading in one
-     * sitting — see [com.pagetime.app.domain.ReadingMomentum] for when. Unlike
-     * the other rewards, nothing is graded; every second behind it was already
-     * guard-approved reading time, so the only question is timing, not
-     * correctness.
-     */
-    val readingMomentumBonusSeconds: Long = 60,
     val totalReadingSeconds: Long = 0,
     /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
     val quickDisableUntil: Long = 0,
@@ -279,10 +247,6 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val BALANCE = longPreferencesKey("browse_balance_seconds")
         val RATIO = doublePreferencesKey("ratio")
-        val FLASHCARD_REWARD = longPreferencesKey("flashcard_reward_seconds")
-        val FLASHCARD_DAILY_CAP = longPreferencesKey("flashcard_daily_cap_seconds")
-        val FLASHCARD_EARNED_TODAY = longPreferencesKey("flashcard_earned_today_seconds")
-        val FLASHCARD_EARNED_EPOCH_DAY = longPreferencesKey("flashcard_earned_epoch_day")
         val SITE_MODE = stringPreferencesKey("site_mode")
         val ALLOWLIST_SETUP_GRACE_UNTIL = longPreferencesKey("allowlist_setup_grace_until")
         val EXTERNAL_READING_ENABLED = booleanPreferencesKey("external_reading_enabled")
@@ -290,9 +254,6 @@ class SettingsRepository(private val context: Context) {
         val EXTERNAL_READING_EARNED_TODAY = longPreferencesKey("external_reading_earned_today_seconds")
         val EXTERNAL_READING_EARNED_EPOCH_DAY = longPreferencesKey("external_reading_earned_epoch_day")
         val LAST_EXTERNAL_READING_CHECK_AT = longPreferencesKey("last_external_reading_check_at")
-        val EXPLAIN_BACK_REWARD = longPreferencesKey("explain_back_reward_seconds")
-        val LUMEN_LINK_REWARD = longPreferencesKey("lumen_link_reward_seconds")
-        val READING_MOMENTUM_BONUS = longPreferencesKey("reading_momentum_bonus_seconds")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
         val GENERATION_MODE = stringPreferencesKey("generation_mode")
@@ -658,15 +619,10 @@ class SettingsRepository(private val context: Context) {
         Settings(
             browseBalanceSeconds = p[Keys.BALANCE] ?: 0L,
             ratio = p[Keys.RATIO] ?: 1.0,
-            flashcardRewardSeconds = p[Keys.FLASHCARD_REWARD] ?: 30L,
-            flashcardDailyCapSeconds = p[Keys.FLASHCARD_DAILY_CAP] ?: 300L,
             siteMode = SiteMode.fromKey(p[Keys.SITE_MODE]),
             allowlistSetupGraceUntil = p[Keys.ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
             externalReadingEnabled = p[Keys.EXTERNAL_READING_ENABLED] ?: false,
             externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L,
-            explainBackRewardSeconds = p[Keys.EXPLAIN_BACK_REWARD] ?: 90L,
-            lumenLinkRewardSeconds = p[Keys.LUMEN_LINK_REWARD] ?: 45L,
-            readingMomentumBonusSeconds = p[Keys.READING_MOMENTUM_BONUS] ?: 60L,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
@@ -1197,20 +1153,6 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.RATIO] = value.coerceIn(0.1, 10.0) }
     }
 
-    suspend fun flashcardRewardSeconds(): Long =
-        context.dataStore.data.first()[Keys.FLASHCARD_REWARD] ?: 30L
-
-    suspend fun setFlashcardRewardSeconds(value: Long) {
-        context.dataStore.edit { it[Keys.FLASHCARD_REWARD] = value.coerceIn(0L, 3_600L) }
-    }
-
-    suspend fun flashcardDailyCapSeconds(): Long =
-        context.dataStore.data.first()[Keys.FLASHCARD_DAILY_CAP] ?: 300L
-
-    suspend fun setFlashcardDailyCapSeconds(value: Long) {
-        context.dataStore.edit { it[Keys.FLASHCARD_DAILY_CAP] = value.coerceIn(0L, 3_600L) }
-    }
-
     /**
      * Switches which site-rule list is active, and — only on a genuine
      * transition INTO [SiteMode.ALLOWLIST] — opens its one-time free-setup
@@ -1227,21 +1169,6 @@ class SettingsRepository(private val context: Context) {
                     System.currentTimeMillis() + SiteMode.ALLOWLIST_SETUP_GRACE_MILLIS
             }
             prefs[Keys.SITE_MODE] = mode.key
-        }
-    }
-
-    /** What's been earned from flashcards/Anki so far today — 0 if nothing has been logged yet. */
-    suspend fun flashcardEarnedToday(): Long =
-        context.dataStore.data.first()[Keys.FLASHCARD_EARNED_TODAY] ?: 0L
-
-    /** The epoch day [flashcardEarnedToday] was last logged against — yesterday's tally if this is stale. */
-    suspend fun flashcardEarnedEpochDay(): Long =
-        context.dataStore.data.first()[Keys.FLASHCARD_EARNED_EPOCH_DAY] ?: 0L
-
-    suspend fun setFlashcardEarnedToday(epochDay: Long, seconds: Long) {
-        context.dataStore.edit {
-            it[Keys.FLASHCARD_EARNED_EPOCH_DAY] = epochDay
-            it[Keys.FLASHCARD_EARNED_TODAY] = seconds
         }
     }
 
@@ -1280,27 +1207,6 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLastExternalReadingCheckAt(value: Long) {
         context.dataStore.edit { it[Keys.LAST_EXTERNAL_READING_CHECK_AT] = value }
-    }
-
-    suspend fun explainBackRewardSeconds(): Long =
-        context.dataStore.data.first()[Keys.EXPLAIN_BACK_REWARD] ?: 90L
-
-    suspend fun setExplainBackRewardSeconds(value: Long) {
-        context.dataStore.edit { it[Keys.EXPLAIN_BACK_REWARD] = value.coerceIn(0L, 3_600L) }
-    }
-
-    suspend fun lumenLinkRewardSeconds(): Long =
-        context.dataStore.data.first()[Keys.LUMEN_LINK_REWARD] ?: 45L
-
-    suspend fun setLumenLinkRewardSeconds(value: Long) {
-        context.dataStore.edit { it[Keys.LUMEN_LINK_REWARD] = value.coerceIn(0L, 3_600L) }
-    }
-
-    suspend fun readingMomentumBonusSeconds(): Long =
-        context.dataStore.data.first()[Keys.READING_MOMENTUM_BONUS] ?: 60L
-
-    suspend fun setReadingMomentumBonusSeconds(value: Long) {
-        context.dataStore.edit { it[Keys.READING_MOMENTUM_BONUS] = value.coerceIn(0L, 3_600L) }
     }
 
     suspend fun setAiAnalysisLevel(level: AiAnalysisLevel) {

@@ -275,7 +275,6 @@ fun ReaderScreen(
     val enhancing by vm.enhancing.collectAsStateWithLifecycle()
     val enhancementProgress by vm.enhancementProgress.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
-    val momentumNotice by vm.momentumNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
@@ -295,7 +294,6 @@ fun ReaderScreen(
         PagemarkSession.spanLabel(it.startFraction, it.endFraction)
     }
     val highlights by vm.highlights.collectAsStateWithLifecycle()
-    val explainBackRewardSeconds by vm.explainBackRewardSeconds.collectAsStateWithLifecycle()
     val pendingHighlightStart by vm.pendingTxtHighlightStart.collectAsStateWithLifecycle()
     val sentenceGrab by vm.sentenceGrab.collectAsStateWithLifecycle()
 
@@ -789,9 +787,6 @@ fun ReaderScreen(
             ResumeNotice(text = resumeNotice!!)
         }
 
-        if (momentumNotice != null) {
-            ResumeNotice(text = momentumNotice!!)
-        }
 
         // Until now the only sign a capture was running was the spinner on the
         // menu item that started it — and starting it closes the menu, so the
@@ -844,7 +839,6 @@ fun ReaderScreen(
         val promptChapterIndex = reviewPromptChapterIndex
         ChapterReviewPrompt(
             chapterLabel = promptChapterIndex?.let { "Chapter ${it + 1}" } ?: "the chapter you just finished",
-            rewardSeconds = explainBackRewardSeconds,
             onExplain = {
                 showChapterReviewPrompt = false
                 // The chapter just finished, not the one the reader has since

@@ -14,10 +14,8 @@ package com.pagetime.app.domain
  * phone propped up and left alone would also produce. [CONVERSION_RATE] does not
  * close that gap — nothing can, without Kindle's own cooperation — it bounds
  * what it costs: half rate means a false report is worth half of what a false
- * report would otherwise be worth, for the same reason
- * [BalanceManager.earnFromFlashcard]'s daily cap exists despite flashcards
- * being graded honestly by FSRS. See [DailyEarningCap] for the other half of
- * that bound.
+ * report would otherwise be worth. See [DailyEarningCap] for the other half
+ * of that bound.
  */
 object ExternalReadingCredit {
 

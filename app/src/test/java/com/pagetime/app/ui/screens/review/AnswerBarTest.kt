@@ -46,35 +46,12 @@ class AnswerBarTest {
     }
 
     @Test
-    fun `a correct answer says what it earned and what it cost`() {
-        val line = reviewFeedbackLine(
-            ReviewUiState(
-                earnedFeedback = "+30s",
-                lastInterval = "3d",
-                totalEarnedThisSitting = 120,
-            )
-        )
-        assertEquals("+30s · next in 3d · 120s this sitting", line)
-    }
-
-    @Test
-    fun `a lapse still reports the schedule`() {
-        // Again earns nothing, so there is no "+0s" to show — but the reader
-        // still needs to know the card is coming back in ten minutes.
-        val line = reviewFeedbackLine(ReviewUiState(lastInterval = "10m", totalEarnedThisSitting = 90))
-        assertEquals("next in 10m · 90s this sitting", line)
-    }
-
-    @Test
-    fun `a running total with no event is not worth saying`() {
-        // This is the case the permanent note used to cover, and the whole
-        // reason it was removed: a counter updating on a card the reader has
-        // not answered yet is noise, not feedback.
-        assertNull(reviewFeedbackLine(ReviewUiState(totalEarnedThisSitting = 300)))
+    fun `an answer reports when the card comes back`() {
+        assertEquals("next in 3d", reviewFeedbackLine(ReviewUiState(lastInterval = "3d")))
     }
 
     @Test
     fun `blank strings are treated as absent`() {
-        assertNull(reviewFeedbackLine(ReviewUiState(earnedFeedback = "  ", lastInterval = "")))
+        assertNull(reviewFeedbackLine(ReviewUiState(lastInterval = "")))
     }
 }

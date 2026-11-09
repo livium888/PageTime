@@ -3,14 +3,9 @@ package com.pagetime.app.domain
 /**
  * How much of today's allowance a per-day-capped reward still has left to pay.
  *
- * Shared by every reward that is worth limiting per day rather than per use:
- * [BalanceManager.earnFromFlashcard] (a flashcard is a few seconds of work no
- * matter how many are due, which beats reading's hourly rate unless something
- * limits it) and [BalanceManager.earnFromExternalReading] (foreground time in
- * a trusted external reader cannot be verified the way a page turn in
- * PageTime's own reader can, so what it can cost per day is bounded instead).
- * Both problems are the same shape — a source that pays real credit on a
- * signal weaker than [ReadingGuard]'s — so they share one answer.
+ * Used by [BalanceManager.earnFromExternalReading]: foreground time in a
+ * trusted external reader cannot be verified the way a page turn in
+ * PageTime's own reader can, so what it can count per day is bounded instead.
  */
 object DailyEarningCap {
 

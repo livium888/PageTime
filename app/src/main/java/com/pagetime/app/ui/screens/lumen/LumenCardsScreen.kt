@@ -204,12 +204,12 @@ class LumenViewModel(
             com.pagetime.app.data.LumenStrayNotes.queue(emptyList())
         )
 
-    /** What the last successful link banked, so the screen can say so once — see [link]. */
-    private val _linkEarnedSeconds = MutableStateFlow<Long?>(null)
-    val linkEarnedSeconds: StateFlow<Long?> = _linkEarnedSeconds.asStateFlow()
+    /** Set when a new link is made, so the screen can say so once — see [link]. */
+    private val _justLinked = MutableStateFlow(false)
+    val justLinked: StateFlow<Boolean> = _justLinked.asStateFlow()
 
-    fun consumeLinkEarned() {
-        _linkEarnedSeconds.value = null
+    fun consumeJustLinked() {
+        _justLinked.value = false
     }
 
     /** Newcomer help: explains actions before they run until turned off in Settings. */
@@ -274,11 +274,7 @@ class LumenViewModel(
 
     fun link(cardId: String, otherId: String) {
         viewModelScope.launch {
-            val isNewLink = repository.link(cardId, otherId)
-            runCatching {
-                balanceManager.earnFromLumenLink(isNewLink)
-                if (isNewLink) _linkEarnedSeconds.value = balanceManager.lumenLinkReward()
-            }
+            if (repository.link(cardId, otherId)) _justLinked.value = true
         }
     }
 
@@ -358,16 +354,15 @@ fun LumenCardsScreen(
     val hubs by vm.hubs.collectAsStateWithLifecycle()
     val helpEnabled by vm.helpEnabled.collectAsStateWithLifecycle()
     val strayQueue by vm.strayQueue.collectAsStateWithLifecycle()
-    val linkEarnedSeconds by vm.linkEarnedSeconds.collectAsStateWithLifecycle()
+    val justLinked by vm.justLinked.collectAsStateWithLifecycle()
 
     // No confirmation existed anywhere for a completed link before this — the
     // dialog just closed. A Toast, matching the one other feedback moment
-    // already in this screen (JSON export), says what just happened and what
-    // it paid.
-    LaunchedEffect(linkEarnedSeconds) {
-        linkEarnedSeconds?.let { seconds ->
-            Toast.makeText(context, "Linked — +${seconds}s of app time", Toast.LENGTH_SHORT).show()
-            vm.consumeLinkEarned()
+    // already in this screen (JSON export), says what just happened.
+    LaunchedEffect(justLinked) {
+        if (justLinked) {
+            Toast.makeText(context, "Linked", Toast.LENGTH_SHORT).show()
+            vm.consumeJustLinked()
         }
     }
 

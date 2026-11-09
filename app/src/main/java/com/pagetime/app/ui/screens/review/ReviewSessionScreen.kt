@@ -377,16 +377,7 @@ private fun SittingFooter(
 
 /** The one-line summary of the previous answer, or null when there is nothing to say. */
 internal fun reviewFeedbackLine(state: ReviewUiState): String? {
-    val parts = mutableListOf<String>()
-    state.earnedFeedback?.takeIf { it.isNotBlank() }?.let(parts::add)
-    state.lastInterval?.takeIf { it.isNotBlank() }?.let { parts += "next in $it" }
-    // The running total is only worth reading next to the answer that just
-    // added to it. On its own it is a counter with no event — which is exactly
-    // what the permanent note it replaces had become.
-    if (parts.isNotEmpty() && state.totalEarnedThisSitting > 0) {
-        parts += "${state.totalEarnedThisSitting}s this sitting"
-    }
-    return parts.joinToString(" · ").takeIf { it.isNotEmpty() }
+    return state.lastInterval?.takeIf { it.isNotBlank() }?.let { "next in $it" }
 }
 
 /**

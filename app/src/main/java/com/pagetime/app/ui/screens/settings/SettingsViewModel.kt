@@ -76,26 +76,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val gate = container.balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
 
-    val flashcardRewardSeconds = container.balanceManager.flashcardRewardSeconds
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 30L)
-
-    val flashcardDailyCapSeconds = container.balanceManager.flashcardDailyCapSeconds
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 300L)
-
     val externalReadingEnabled = container.balanceManager.externalReadingEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val externalReadingDailyCapSeconds = container.balanceManager.externalReadingDailyCapSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 3_600L)
-
-    val explainBackRewardSeconds = container.balanceManager.explainBackRewardSeconds
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
-
-    val lumenLinkRewardSeconds = container.balanceManager.lumenLinkRewardSeconds
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 45L)
-
-    val readingMomentumBonusSeconds = container.balanceManager.readingMomentumBonusSeconds
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 60L)
 
     init {
         // A wind-down that finished while the app was closed leaves a stored
@@ -304,32 +289,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { container.balanceManager.setDailyTargetSeconds(seconds) }
     }
 
-    fun setFlashcardReward(value: Long) {
-        viewModelScope.launch { container.balanceManager.setFlashcardReward(value) }
-    }
-
-    fun setFlashcardDailyCap(value: Long) {
-        viewModelScope.launch { container.balanceManager.setFlashcardDailyCap(value) }
-    }
-
     fun setExternalReadingEnabled(value: Boolean) {
         viewModelScope.launch { container.balanceManager.setExternalReadingEnabled(value) }
     }
 
     fun setExternalReadingDailyCap(value: Long) {
         viewModelScope.launch { container.balanceManager.setExternalReadingDailyCap(value) }
-    }
-
-    fun setExplainBackReward(value: Long) {
-        viewModelScope.launch { container.balanceManager.setExplainBackReward(value) }
-    }
-
-    fun setLumenLinkReward(value: Long) {
-        viewModelScope.launch { container.balanceManager.setLumenLinkReward(value) }
-    }
-
-    fun setReadingMomentumBonus(value: Long) {
-        viewModelScope.launch { container.balanceManager.setReadingMomentumBonus(value) }
     }
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {

@@ -117,13 +117,8 @@ fun SettingsScreen(
     val readInLastDay by viewModel.readInLastDay.collectAsStateWithLifecycle()
     val emergencyThisWeek by viewModel.emergencyThisWeek.collectAsStateWithLifecycle()
     val helpEnabled by viewModel.helpEnabled.collectAsStateWithLifecycle()
-    val flashcardRewardSeconds by viewModel.flashcardRewardSeconds.collectAsStateWithLifecycle()
-    val flashcardDailyCapSeconds by viewModel.flashcardDailyCapSeconds.collectAsStateWithLifecycle()
     val externalReadingEnabled by viewModel.externalReadingEnabled.collectAsStateWithLifecycle()
     val externalReadingDailyCapSeconds by viewModel.externalReadingDailyCapSeconds.collectAsStateWithLifecycle()
-    val explainBackRewardSeconds by viewModel.explainBackRewardSeconds.collectAsStateWithLifecycle()
-    val lumenLinkRewardSeconds by viewModel.lumenLinkRewardSeconds.collectAsStateWithLifecycle()
-    val readingMomentumBonusSeconds by viewModel.readingMomentumBonusSeconds.collectAsStateWithLifecycle()
 
     // Newest crash log from filesDir/crash, so the user can copy it to support
     // without adb. Read once when Settings opens.
@@ -244,58 +239,7 @@ fun SettingsScreen(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
-                // Paid in browse seconds with the lock off. Under the lock only
-                // reading counts toward the daily target, so it pays nothing. Typed
-                // rather than dragged because the slider's 23 steps could only
-                // express multiples of five, and a reward is a number a reader
-                // may want exactly.
-                TypedSettingField(
-                    title = "Flashcard reward",
-                    help = "Each correct flashcard answer " +
-                        (if (gate.enabled) {
-                            "earns nothing while the reading lock is on — only reading counts toward it"
-                        } else {
-                            "earns $flashcardRewardSeconds seconds of browsing"
-                        }) +
-                        ". \"Again\" always earns nothing.",
-                    current = "$flashcardRewardSeconds seconds",
-                    inputLabel = "Seconds",
-                    inputHint = "e.g. 45",
-                    allowDecimal = false,
-                    minAllowed = 0.0,
-                    maxAllowed = MAX_FLASHCARD_REWARD_SECONDS,
-                    unit = "seconds",
-                    describe = { "${it.roundToLong()} sec" },
-                    onCommit = { viewModel.setFlashcardReward(it.roundToLong()) },
-                )
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // A flashcard is a few seconds of work no matter how many are
-                // due, which makes it a far better hourly rate than reading
-                // unless something limits it — this cap (shared with Anki,
-                // since both pay through the same call) is what keeps
-                // flashcards a quick top-up rather than a way to fund a whole
-                // day's browsing without ever opening a book.
-                TypedSettingField(
-                    title = "Daily flashcard cap",
-                    help = "The most flashcards and Anki together can earn per day, combined — " +
-                        "reading itself has no cap. Set to 0 to stop flashcards from earning anything.",
-                    current = "$flashcardDailyCapSeconds seconds/day",
-                    inputLabel = "Seconds per day",
-                    inputHint = "e.g. 300",
-                    allowDecimal = false,
-                    minAllowed = 0.0,
-                    maxAllowed = MAX_FLASHCARD_DAILY_CAP_SECONDS,
-                    unit = "seconds",
-                    describe = { "${it.roundToLong()} sec/day" },
-                    onCommit = { viewModel.setFlashcardDailyCap(it.roundToLong()) },
-                )
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // Every other reward on this screen pays for something PageTime
-                // itself verified. This one pays on trust — foreground time in
+                // Reading inside PageTime is verified. This counts on trust — foreground time in
                 // a chosen app looks the same whether a page is turning or the
                 // phone is just sitting there — so it stays off unless asked
                 // for, nothing is trusted until named on its own screen, and
@@ -328,82 +272,6 @@ fun SettingsScreen(
                         onCommit = { viewModel.setExternalReadingDailyCap(it.roundToLong()) },
                     )
                 }
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // Writing and being marked on a real explanation is minutes of
-                // work, not a tap — its own reward, not the flashcard one.
-                TypedSettingField(
-                    title = "Explain-back reward",
-                    help = "An explanation marked at least \"partly right\" " +
-                        (if (gate.enabled) {
-                            "earns nothing while the reading lock is on — only reading counts toward it"
-                        } else {
-                            "earns $explainBackRewardSeconds seconds of browsing"
-                        }) +
-                        ". A wrong explanation always earns nothing.",
-                    current = "$explainBackRewardSeconds seconds",
-                    inputLabel = "Seconds",
-                    inputHint = "e.g. 90",
-                    allowDecimal = false,
-                    minAllowed = 0.0,
-                    maxAllowed = MAX_EXPLAIN_BACK_REWARD_SECONDS,
-                    unit = "seconds",
-                    describe = { "${it.roundToLong()} sec" },
-                    onCommit = { viewModel.setExplainBackReward(it.roundToLong()) },
-                )
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // A new link between two already-captured ideas — real
-                // synthesis, but less work than writing a fresh explanation,
-                // so its own reward sits between the other two.
-                TypedSettingField(
-                    title = "Slip box link reward",
-                    help = "Linking two cards for the first time " +
-                        (if (gate.enabled) {
-                            "earns nothing while the reading lock is on — only reading counts toward it"
-                        } else {
-                            "earns $lumenLinkRewardSeconds seconds of browsing"
-                        }) +
-                        ". Re-linking cards that are already connected earns nothing.",
-                    current = "$lumenLinkRewardSeconds seconds",
-                    inputLabel = "Seconds",
-                    inputHint = "e.g. 45",
-                    allowDecimal = false,
-                    minAllowed = 0.0,
-                    maxAllowed = MAX_LUMEN_LINK_REWARD_SECONDS,
-                    unit = "seconds",
-                    describe = { "${it.roundToLong()} sec" },
-                    onCommit = { viewModel.setLumenLinkReward(it.roundToLong()) },
-                )
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // Unlike the rewards above, nothing here is graded — every
-                // second behind it was already credited reading time. The
-                // timing is deliberately unpredictable (a few minutes, never
-                // shown counting down), so this number is only how big the
-                // surprise is, not how often it lands.
-                TypedSettingField(
-                    title = "Reading momentum bonus",
-                    help = "Every few minutes of sustained reading, at an unpredictable moment, " +
-                        (if (gate.enabled) {
-                            "earns nothing while the reading lock is on — only reading counts toward it"
-                        } else {
-                            "earns $readingMomentumBonusSeconds seconds of browsing"
-                        }) +
-                        " as a surprise. Set to 0 to turn it off.",
-                    current = "$readingMomentumBonusSeconds seconds",
-                    inputLabel = "Seconds",
-                    inputHint = "e.g. 60",
-                    allowDecimal = false,
-                    minAllowed = 0.0,
-                    maxAllowed = MAX_READING_MOMENTUM_BONUS_SECONDS,
-                    unit = "seconds",
-                    describe = { "${it.roundToLong()} sec" },
-                    onCommit = { viewModel.setReadingMomentumBonus(it.roundToLong()) },
-                )
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -1818,12 +1686,7 @@ private const val TARGET_FENCE_NOTE =
 
 
 /** The reward slider's old range, kept as the field's bounds. */
-private const val MAX_FLASHCARD_REWARD_SECONDS = 120.0
-private const val MAX_FLASHCARD_DAILY_CAP_SECONDS = 3_600.0
 private const val MAX_EXTERNAL_READING_DAILY_CAP_SECONDS = 4.0 * 3_600.0
-private const val MAX_EXPLAIN_BACK_REWARD_SECONDS = 300.0
-private const val MAX_LUMEN_LINK_REWARD_SECONDS = 200.0
-private const val MAX_READING_MOMENTUM_BONUS_SECONDS = 180.0
 
 /** The reading-rate slider's old range, kept as the field's bounds. */
 private const val MIN_READING_RATE = 0.5

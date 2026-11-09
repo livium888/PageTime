@@ -143,41 +143,6 @@ class BalanceManager(
     }
 
     /**
-     * What the reader screens may PROMISE for an explain-back, a flashcard or
-     * a chapter review. Under the reading lock those rewards pay nothing (only
-     * reading counts — decision 0001), so a prompt saying "you'll bank 90s"
-     * would be untrue. Settings keeps showing the configured amounts through
-     * the plain accessors below; only the promises go through these.
-     */
-    val explainBackRewardPayable: Flow<Long> =
-        repository.settings.map { if (it.gateEnabled) 0L else it.explainBackRewardSeconds }
-
-    suspend fun explainBackRewardPayable(): Long =
-        if (repository.gateEnabled()) 0L else repository.explainBackRewardSeconds()
-
-    suspend fun flashcardRewardPayable(): Long =
-        if (repository.gateEnabled()) 0L else repository.flashcardRewardSeconds()
-
-    /**
-     * Browse seconds earned per correct flashcard review (HARD/GOOD/EASY).
-     * Configurable in Settings; AGAIN earns nothing.
-     */
-    val flashcardRewardSeconds: Flow<Long> =
-        repository.settings.map { it.flashcardRewardSeconds }
-
-    suspend fun flashcardReward(): Long = repository.flashcardRewardSeconds()
-
-    /**
-     * How many of those seconds flashcards (PageTime's own cards and Anki
-     * both) can pay in total per day — see [earnFromFlashcard]. Reading
-     * itself has no such cap.
-     */
-    val flashcardDailyCapSeconds: Flow<Long> =
-        repository.settings.map { it.flashcardDailyCapSeconds }
-
-    suspend fun setFlashcardDailyCap(seconds: Long) = repository.setFlashcardDailyCapSeconds(seconds)
-
-    /**
      * Sets the daily reading target. Returns whether the change was accepted.
      *
      * The fence lives here and not in the screen because a rule enforced only
@@ -236,54 +201,6 @@ class BalanceManager(
         repository.removeAllowedApp(packageName)
     }
 
-    suspend fun setFlashcardReward(seconds: Long) = repository.setFlashcardRewardSeconds(seconds)
-
-    /**
-     * Award the flashcard bonus for one correctly recalled review (PageTime's
-     * own cards and Anki both route through here). AGAIN earns nothing, so
-     * guessing your way to browse time is impossible by design.
-     *
-     * Capped per day via [DailyEarningCap]: a flashcard is a few seconds of
-     * work no matter how many are due, which makes it a far better hourly
-     * rate than reading unless something limits it — the cap is what keeps
-     * flashcards a quick top-up rather than a way to fund a whole day's
-     * browsing without ever opening a book. Reading itself carries no cap.
-     *
-     * Returns how many seconds were actually paid — 0 for AGAIN, for a
-     * disabled reward, or once the day's cap is reached — so a caller can
-     * show what really happened instead of just the configured reward.
-     */
-    suspend fun earnFromFlashcard(ratingCorrect: Boolean): Long {
-        if (!ratingCorrect) return 0
-        // The reading lock counts minutes of reading only; a flashcard is not
-        // reading, so under the lock it pays nothing (decision 0001).
-        if (repository.gateEnabled()) return 0
-        val requested = repository.flashcardRewardSeconds()
-        if (requested <= 0) return 0
-        val today = java.time.LocalDate.now().toEpochDay()
-        val paid = mutex.withLock {
-            val earnedSoFar = DailyEarningCap.earnedSoFar(
-                storedEpochDay = repository.flashcardEarnedEpochDay(),
-                today = today,
-                storedSeconds = repository.flashcardEarnedToday(),
-            )
-            val payable = DailyEarningCap.payable(
-                requestedSeconds = requested,
-                earnedSoFarToday = earnedSoFar,
-                capSeconds = repository.flashcardDailyCapSeconds(),
-            )
-            if (payable > 0) {
-                repository.setFlashcardEarnedToday(today, earnedSoFar + payable)
-                repository.addBrowseBalanceSeconds(payable)
-            }
-            payable
-        }
-        if (paid > 0) {
-            ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = paid)
-        }
-        return paid
-    }
-
     /**
      * Whether time in a reader-chosen trusted external reading app (e.g.
      * Kindle) is credited as reading. Off by default — see
@@ -307,9 +224,7 @@ class BalanceManager(
      * [com.pagetime.app.data.usage.ExternalReadingTracker].
      *
      * Discounted by [ExternalReadingCredit] before it ever reaches here, then
-     * capped per day via [DailyEarningCap] — the same two-part bound
-     * [earnFromFlashcard] uses for a reward this app also can't fully verify.
-     * Neither step can tell a page actually being read from a phone merely
+     * capped per day via [DailyEarningCap]. Neither step can tell a page actually being read from a phone merely
      * left open; together they make sure that gap has a small, predictable
      * price rather than an unlimited one.
      *
@@ -346,95 +261,6 @@ class BalanceManager(
             ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = paid)
         }
         return paid
-    }
-
-    /**
-     * Browse seconds earned per explain-back attempt marked at least PARTLY.
-     * Configurable separately from the flashcard reward: writing a real
-     * explanation and being graded on it is minutes of work, not one tap.
-     */
-    val explainBackRewardSeconds: Flow<Long> =
-        repository.settings.map { it.explainBackRewardSeconds }
-
-    suspend fun explainBackReward(): Long = repository.explainBackRewardSeconds()
-
-    suspend fun setExplainBackReward(seconds: Long) = repository.setExplainBackRewardSeconds(seconds)
-
-    /**
-     * Award the explain-back bonus for one qualifying evaluation. OFF earns
-     * nothing — the same "wrong answer earns nothing" rule flashcards use for
-     * AGAIN — so a caller passes whether the verdict cleared that bar, not the
-     * verdict itself: this stays ignorant of how explanations are graded.
-     */
-    suspend fun earnFromExplainBack(worthRewarding: Boolean) {
-        if (!worthRewarding) return
-        // Not reading, so nothing under the lock (decision 0001).
-        if (repository.gateEnabled()) return
-        val seconds = repository.explainBackRewardSeconds()
-        if (seconds <= 0) return
-        mutex.withLock {
-            repository.addBrowseBalanceSeconds(seconds)
-        }
-        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
-    }
-
-    /** Browse seconds earned per new link made in the slip box. */
-    val lumenLinkRewardSeconds: Flow<Long> =
-        repository.settings.map { it.lumenLinkRewardSeconds }
-
-    suspend fun lumenLinkReward(): Long = repository.lumenLinkRewardSeconds()
-
-    suspend fun setLumenLinkReward(seconds: Long) = repository.setLumenLinkRewardSeconds(seconds)
-
-    /**
-     * Award the slip-box bonus for one new link. [isNewLink] is false when
-     * the two cards were already linked — re-confirming an existing
-     * connection earns nothing, so re-opening the same pair can't be farmed
-     * for repeat rewards.
-     */
-    suspend fun earnFromLumenLink(isNewLink: Boolean) {
-        if (!isNewLink) return
-        // Not reading, so nothing under the lock (decision 0001).
-        if (repository.gateEnabled()) return
-        val seconds = repository.lumenLinkRewardSeconds()
-        if (seconds <= 0) return
-        mutex.withLock {
-            repository.addBrowseBalanceSeconds(seconds)
-        }
-        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
-    }
-
-    /** Browse seconds paid out per surprise reading-momentum bonus. */
-    val readingMomentumBonusSeconds: Flow<Long> =
-        repository.settings.map { it.readingMomentumBonusSeconds }
-
-    suspend fun readingMomentumBonus(): Long = repository.readingMomentumBonusSeconds()
-
-    suspend fun setReadingMomentumBonus(seconds: Long) =
-        repository.setReadingMomentumBonusSeconds(seconds)
-
-    /**
-     * Pays the reading-momentum bonus [ReadingMomentum] decided is due, and
-     * reports how much it paid (0 if the reward is turned off) so the caller
-     * can show it.
-     *
-     * No correctness gate, unlike the flashcard/explain-back/slip-box
-     * rewards: every second behind this was already guard-approved credited
-     * reading time (the same accrual [earnFromReading] pays for), so there is
-     * nothing left to grade — only when to pay it, which is not this
-     * function's decision either.
-     */
-    suspend fun earnReadingMomentumBonus(): Long {
-        // A bonus on top of reading already counted in full; under the lock it
-        // would be minutes nobody read, so it pays nothing (decision 0001).
-        if (repository.gateEnabled()) return 0
-        val seconds = repository.readingMomentumBonusSeconds()
-        if (seconds <= 0) return 0
-        mutex.withLock {
-            repository.addBrowseBalanceSeconds(seconds)
-        }
-        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
-        return seconds
     }
 
     suspend fun setBrowseBalance(seconds: Long) = mutex.withLock {

@@ -68,8 +68,6 @@ fun ExplainBackScreen(
     onBack: () -> Unit,
     /** Always-available escape hatch: generate a fresh concept for this range. */
     onCreateConcept: (() -> Unit)? = null,
-    /** What a qualifying explanation banks — shown up front so this reads as worth doing, not a chore. */
-    rewardSeconds: Long = 0
 ) {
     val listState = rememberLazyListState()
     var inputText by remember { mutableStateOf("") }
@@ -178,8 +176,7 @@ fun ExplainBackScreen(
                         if (awaitingRestatement) {
                             "One focused restatement is enough. Say the idea simply, then continue to the next concept."
                         } else {
-                            "Think about what you just read. Explain this concept as if you're teaching it to someone who knows nothing about the topic." +
-                                if (rewardSeconds > 0) " Get the gist right and you'll bank ${rewardSeconds}s of app time." else ""
+                            "Think about what you just read. Explain this concept as if you're teaching it to someone who knows nothing about the topic."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -304,8 +301,6 @@ data class ChatMessage(
     val isUser: Boolean,
     val isAi: Boolean = false,
     val score: Float? = null,
-    /** Seconds of app time this explanation banked, if any — see [ExplainBackViewModel]. */
-    val earnedSeconds: Long? = null
 )
 
 @Composable
@@ -355,15 +350,6 @@ private fun ChatBubble(message: ChatMessage) {
                             score >= 3.0f -> MaterialTheme.colorScheme.tertiary
                             else -> MaterialTheme.colorScheme.error
                         }
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-                message.earnedSeconds?.takeIf { it > 0 }?.let { seconds ->
-                    Text(
-                        "⏱ +${seconds}s of app time",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(4.dp))
                 }

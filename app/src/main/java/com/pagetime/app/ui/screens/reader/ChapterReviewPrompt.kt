@@ -17,8 +17,6 @@ fun ChapterReviewPrompt(
     chapterLabel: String,
     onExplain: () -> Unit,
     onDismiss: () -> Unit,
-    /** What a qualifying explanation banks — said up front, or this reads as one more chore. */
-    rewardSeconds: Long = 0
 ) {
     Card(
         modifier = Modifier
@@ -31,8 +29,7 @@ fun ChapterReviewPrompt(
         ) {
             Text("Explain what you learned", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Explain the key ideas from $chapterLabel in your own words. The Feynman technique: if you can explain it simply, you understand it." +
-                    if (rewardSeconds > 0) " Get it right and bank ${rewardSeconds}s of app time." else "",
+                "Explain the key ideas from $chapterLabel in your own words. The Feynman technique: if you can explain it simply, you understand it.",
                 style = MaterialTheme.typography.bodyMedium
             )
             TextButton(onClick = onExplain) { Text("Explain what you learned") }

@@ -102,12 +102,6 @@ data class ReviewUiState(
      * the reader sees the cost of a rating before committing to it.
      */
     val intervalPreviews: Map<LumenRating, String> = emptyMap(),
-    /** Browse seconds a correct answer banks; zero hides the note. */
-    val rewardSeconds: Long = 0,
-    /** Brief feedback shown after a correct answer, e.g. "+30s". Cleared on next card. */
-    val earnedFeedback: String? = null,
-    /** Running total of seconds earned this sitting. */
-    val totalEarnedThisSitting: Long = 0,
     /**
      * A [ReadingGate] batch just finished with more still due — the next card
      * is already loaded in [card] but held back until the reader chooses to
@@ -287,7 +281,6 @@ class ReviewSessionViewModel(
                 session = session,
                 card = session.current?.let { cards[it] },
                 revealed = false,
-                rewardSeconds = runCatching { balanceManager.flashcardRewardPayable() }.getOrDefault(0L),
             )
             refreshPreviews()
         }
@@ -355,7 +348,7 @@ class ReviewSessionViewModel(
     }
 
     fun reveal() {
-        _state.value = _state.value.copy(revealed = true, lastInterval = null, earnedFeedback = null)
+        _state.value = _state.value.copy(revealed = true, lastInterval = null)
     }
 
     /**
@@ -394,25 +387,10 @@ class ReviewSessionViewModel(
                     due
                 }
             }.getOrNull()
-            // Correct recall banks the configured bonus. AGAIN proves nothing
-            // and earns nothing — guessing can never mint app time.
-            var earnedThisCard = 0L
-            var dailyCapReached = false
-            if (rating != LumenRating.AGAIN) {
-                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
-                    .onSuccess { earnedThisCard = it }
-                // Zero could also mean the reward itself is turned off — only
-                // call it out as the cap specifically when there was a real
-                // reward to pay and the cap is what stopped it.
-                if (earnedThisCard == 0L) {
-                    dailyCapReached = runCatching { balanceManager.flashcardReward() }.getOrDefault(0L) > 0L
-                }
-            }
             val advanced = ReviewSession.grade(_state.value.session, failed = rating == LumenRating.AGAIN)
             undoStep = restore?.let {
                 UndoStep(session = before.session, card = before.card, restore = it)
             }
-            val prev = _state.value
             batchAnswered++
             // The next card is loaded either way; gate mode only decides
             // whether it is shown yet. That is what makes continueBatch() a
@@ -426,12 +404,6 @@ class ReviewSessionViewModel(
                 revealed = false,
                 lastInterval = nextDue?.let { formatNextReview(it) },
                 canUndo = undoStep != null,
-                earnedFeedback = when {
-                    earnedThisCard > 0 -> "+${earnedThisCard}s"
-                    dailyCapReached -> "Daily flashcard bonus reached — read to earn more"
-                    else -> null
-                },
-                totalEarnedThisSitting = prev.totalEarnedThisSitting + earnedThisCard,
                 awaitingBatchChoice = pause,
             )
             refreshPreviews()
@@ -560,7 +532,6 @@ class ReviewSessionViewModel(
             revealed = false,
             lastInterval = null,
             canUndo = false,
-            earnedFeedback = null,
         )
     }
 

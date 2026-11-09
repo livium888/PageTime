@@ -23,7 +23,6 @@ import com.pagetime.app.data.local.LumenCardEntity
 import com.pagetime.app.data.local.PagemarkEntity
 import com.pagetime.app.data.PagemarkSession
 import com.pagetime.app.data.Sentences
-import com.pagetime.app.domain.ReadingMomentum
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -157,7 +156,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     /** What a qualifying explain-back answer currently banks — shown on the chapter-completion nudge. */
-    val explainBackRewardSeconds = balanceManager.explainBackRewardPayable
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 90L)
 
     private var tickerJob: Job? = null
@@ -176,14 +174,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private val _resumeNotice = MutableStateFlow<String?>(null)
     val resumeNotice = _resumeNotice.asStateFlow()
-
-    /** Surfaced once when a reading-momentum bonus lands; see [ReadingMomentum]. */
-    private val _momentumNotice = MutableStateFlow<String?>(null)
-    val momentumNotice = _momentumNotice.asStateFlow()
-
-    /** Credited seconds toward the next bonus, and how many it takes — reset on each payout. */
-    private var creditedSecondsSinceMomentumBonus = 0L
-    private var nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
 
     private val _mapMoment = MutableStateFlow<com.pagetime.app.data.local.MapMoment?>(null)
     val mapMoment = _mapMoment.asStateFlow()
@@ -378,12 +368,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (guard.onTick(now)) {
                     pendingSeconds++
                     _creditedSeconds.value++
-                    creditedSecondsSinceMomentumBonus++
-                    if (ReadingMomentum.shouldFire(creditedSecondsSinceMomentumBonus, nextMomentumThreshold)) {
-                        creditedSecondsSinceMomentumBonus = 0
-                        nextMomentumThreshold = ReadingMomentum.nextThresholdSeconds()
-                        viewModelScope.launch { awardMomentumBonus() }
-                    }
                 }
                 _sessionSeconds.value++
                 _guardState.value = guard.state
@@ -1425,15 +1409,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    /** Pays and announces a reading-momentum bonus; a no-op if the reward is off. */
-    private suspend fun awardMomentumBonus() {
-        val seconds = balanceManager.earnReadingMomentumBonus()
-        if (seconds <= 0) return
-        _momentumNotice.value = "Reading momentum — +${seconds}s of app time"
-        delay(6_000)
-        _momentumNotice.value = null
-    }
-
     /**
      * Called by the Readium navigator whenever the visible position changes.
      * Persists the exact locator (debounced) so re-opening resumes the precise spot,
@@ -1716,11 +1691,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         viewModelScope.launch {
             runCatching {
                 chapterCardGrader.grade(cardId, applied, java.time.Instant.now(), keepIfUnjudged = true)
-            }
-            // Answering in the chair is a review too: correct recall banks the
-            // same configured bonus a review sitting pays. Again earns nothing.
-            if (applied != com.pagetime.app.data.LumenRating.AGAIN) {
-                runCatching { balanceManager.earnFromFlashcard(ratingCorrect = true) }
             }
             // The reader now owns a card with a date on it, and this is the
             // moment to ask whether the app may say so when that date comes.

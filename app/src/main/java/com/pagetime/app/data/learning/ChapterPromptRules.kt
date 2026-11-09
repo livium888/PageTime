@@ -350,8 +350,14 @@ object ChapterPromptRules {
      */
     private fun looksLikeDocumentClutter(prompt: String, answer: String, quote: String): Boolean {
         val all = "$prompt $answer $quote".lowercase()
-        val citationSignals = listOf("doi", "isbn", "all rights reserved", "copyright notice", "retrieved from")
-        if (citationSignals.any { it in all }) return true
+        // Whole words for the short markers. This was a plain substring test,
+        // and "doi" is inside "doing" and "undoing": any prompt,
+        // answer or quote with such a word was thrown away as a citation.
+        val citationSignals = Regex(
+            "\\b(?:doi|isbn)\\b|all rights reserved|copyright notice|retrieved from",
+            RegexOption.IGNORE_CASE,
+        )
+        if (citationSignals.containsMatchIn(all)) return true
         val citationPunctuation = Regex("\\b(?:vol(?:ume)?\\.?\\s*\\d+|pp?\\.?\\s*\\d+\\s*[–-]\\s*\\d+|https?://\\S+)", RegexOption.IGNORE_CASE)
         return citationPunctuation.containsMatchIn(all) ||
             (Regex("^\\s*\\[?\\d{1,3}[.)\\]]?\\s+").containsMatchIn(quote) && quote.split(Regex("\\s+")).size < 20)

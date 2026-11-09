@@ -154,6 +154,45 @@ class LearningContextExtractor(
             }.getOrDefault("")
         }
 
+    /**
+     * The text between two reading positions, across however many chapters lie
+     * between, cut at paragraph boundaries — see [ReadingSpan].
+     *
+     * Unlike [extract], which stays inside one chapter, a reading sitting
+     * routinely crosses chapter ends, so this reads each chapter in the span
+     * and only those. Blocking work, so it is confined to IO here.
+     */
+    suspend fun readingSpan(
+        book: BookEntity,
+        start: SpanPoint,
+        end: SpanPoint,
+        endAdjust: Int = 0,
+    ): ReadingSpan.Slice = withContext(Dispatchers.IO) {
+        if (!book.isReadiumBook) {
+            val full = runCatching { File(book.localPath).readText() }.getOrDefault("")
+            return@withContext ReadingSpan.slicePlain(full, start, end, endAdjust)
+        }
+        val parsed = try {
+            epubParser.parse(File(book.localPath), File(context.cacheDir, "epub/${book.id}"), extractAssets = false)
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            return@withContext ReadingSpan.slice({ "" }, 0, start, end)
+        }
+        val chapters = parsed.chapters
+        ReadingSpan.slice(
+            chapterText = { index ->
+                val chapter = chapters.getOrNull(index)
+                if (chapter == null) "" else runCatching {
+                    chapterRawText(book, chapter.filePath, chapter.title)
+                }.getOrDefault("")
+            },
+            chapterCount = chapters.size,
+            start = start,
+            end = end,
+            endAdjust = endAdjust,
+        )
+    }
+
     suspend fun captureEpub(
         book: BookEntity,
         chapterIndex: Int,

@@ -245,11 +245,16 @@ fun ReaderScreen(
     onExplainBack: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String, locatorJson: String?, textOffset: Int?) -> Unit = { _, _, _, _, _, _ -> },
     onOpenLumenCards: (String) -> Unit = {},
     onOpenPagemarks: () -> Unit = {},
-    onOpenHighlights: (String) -> Unit = {}
+    onOpenHighlights: (String) -> Unit = {},
+    onOpenReview: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
     val vm: ReaderViewModel = viewModel(factory = ReaderViewModelFactory(app, bookId))
+    // Cards from your own LLM (docs/decisions/0002). Its own view model so the
+    // sheet's state survives the reader recomposing while the reader is away.
+    val cardsVm: ManualCardsViewModel =
+        viewModel(key = "make-cards-$bookId", factory = ManualCardsViewModelFactory(app, bookId))
 
     val book by vm.book.collectAsStateWithLifecycle()
     val textContent by vm.textContent.collectAsStateWithLifecycle()
@@ -315,6 +320,7 @@ fun ReaderScreen(
     var showGoTo by remember { mutableStateOf(false) }
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
+    var showMakeCards by remember { mutableStateOf(false) }
     var showCoverage by remember { mutableStateOf(false) }
     var confirmRegenerate by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
@@ -627,6 +633,18 @@ fun ReaderScreen(
                     }
                 } else null,
                 onSetCheckpoint = vm::setLearningCheckpoint,
+                onMakeCards = {
+                    book?.let { b ->
+                        // The sheet reads the position once, as it opens, so the
+                        // span does not move while the reader looks at its edges.
+                        cardsVm.open(
+                            b,
+                            startHere = vm.currentSpanPoint(forStart = true),
+                            endHere = vm.currentSpanPoint(forStart = false),
+                        )
+                        showMakeCards = true
+                    }
+                },
                 // This is an explicit reader action, so it must work mid-chapter;
                 // the chapter-completion prompt is reserved for automatic reminders.
                 onExplainBack = {
@@ -903,6 +921,14 @@ fun ReaderScreen(
             dismissButton = {
                 TextButton(onClick = { confirmRegenerate = false }) { Text("Cancel") }
             }
+        )
+    }
+
+    if (showMakeCards) {
+        MakeCardsSheet(
+            vm = cardsVm,
+            onDismiss = { showMakeCards = false },
+            onOpenReview = onOpenReview,
         )
     }
 
@@ -1876,6 +1902,7 @@ private fun ReaderTopBar(
     onCopyTranscript: (() -> Unit)? = null,
     onShareTranscript: (() -> Unit)? = null,
     onSetCheckpoint: () -> Unit = {},
+    onMakeCards: () -> Unit = {},
     onExplainBack: () -> Unit,
     isTextBook: Boolean = false,
     enhancing: Boolean = false,
@@ -2027,6 +2054,14 @@ private fun ReaderTopBar(
                         onClick = {
                             optionsExpanded = false
                             onSetCheckpoint()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Make cards from this stretch") },
+                        leadingIcon = { Icon(Icons.Outlined.NoteAdd, contentDescription = null) },
+                        onClick = {
+                            optionsExpanded = false
+                            onMakeCards()
                         }
                     )
                     DropdownMenuItem(

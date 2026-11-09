@@ -56,7 +56,9 @@ object ChunkCard {
         sourceLocator: String? = null,
         sourceFraction: Float = 0f,
         sourceQuote: String? = null,
-        now: Long
+        now: Long,
+        /** [LearningCardEntity.TYPE_QA] or [LearningCardEntity.TYPE_CLOZE]. */
+        cardType: String = LearningCardEntity.TYPE_QA,
     ): LearningCardEntity? {
         val question = prompt.trim()
         val reply = answer.trim()
@@ -76,7 +78,7 @@ object ChunkCard {
             sourceLocator = sourceLocator,
             sourceFraction = sourceFraction.coerceIn(0f, 1f),
             sourceQuote = sourceQuote?.trim()?.takeIf { it.isNotBlank() },
-            cardType = LearningCardEntity.TYPE_QA,
+            cardType = if (cardType == LearningCardEntity.TYPE_CLOZE) LearningCardEntity.TYPE_CLOZE else LearningCardEntity.TYPE_QA,
             fsrsCardJson = FsrsCardCodec.toJson(Card.builder().due(due).build()),
             createdAt = now,
             updatedAt = now,

@@ -88,6 +88,21 @@ class ChapterPromptRulesTest {
         assertEquals(PromptRejection.DOCUMENT_CLUTTER, result)
     }
 
+    /** "doing" contains "doi". A citation marker has to be a word, not a substring. */
+    @Test
+    fun `ordinary words that merely contain doi are not mistaken for a citation`() {
+        val text = "Firms kept doing business through neutral ports despite the ban."
+        val result = ChapterPromptRules.check(
+            raw(
+                prompt = "Why did firms keep doing business through neutral ports?",
+                answer = "The ban could not be enforced at sea.",
+                quote = "Firms kept doing business through neutral ports",
+            ),
+            listOf(text),
+        )
+        assertNull(result)
+    }
+
     @Test
     fun `a substantive question may discuss copyright without being rejected`() {
         val passage = "Copyright law gives authors control over reproduction, but exceptions permit research and criticism."

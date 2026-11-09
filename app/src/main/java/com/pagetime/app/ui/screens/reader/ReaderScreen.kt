@@ -503,6 +503,7 @@ fun ReaderScreen(
             // — figures and all — through the branch above.
             book?.isReflowedText == true && textContent != null -> TextReaderHost(
                 content = textContent!!,
+                styleSpans = vm.textStyles.collectAsStateWithLifecycle().value,
                 initialFraction = initialTextFraction,
                 initialOffset = initialTextOffset,
                 settings = settings,
@@ -1117,6 +1118,8 @@ fun ReaderScreen(
 @Composable
 private fun TextReaderHost(
     content: String,
+    /** Headings, bold and italic from pasted markdown, as whole-book offsets. */
+    styleSpans: List<com.pagetime.app.data.library.MarkdownText.StyleSpan> = emptyList(),
     initialFraction: Float,
     initialOffset: Int,
     settings: ReaderSettings,
@@ -1433,7 +1436,8 @@ private fun TextReaderHost(
                 concepts = concepts,
                 level = conceptLevel,
                 activeConceptId = activeConceptId,
-                pendingSpan = sentenceGrab?.let { it.start to it.end }
+                pendingSpan = sentenceGrab?.let { it.start to it.end },
+                styleSpans = styleSpans,
             )
             Text(
                 text = annotatedText,

@@ -35,6 +35,7 @@ import com.pagetime.app.data.learning.SpanPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -93,6 +94,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     private val _textContent = MutableStateFlow<String?>(null)
     val textContent = _textContent.asStateFlow()
+
+    /**
+     * Headings, bold and italic for the text book on screen, from pasted
+     * markdown. Reloaded whenever the text changes, because the ranges are
+     * offsets into one exact text and are dropped when it is replaced.
+     */
+    val textStyles: StateFlow<List<com.pagetime.app.data.library.MarkdownText.StyleSpan>> =
+        combine(_book, _textContent) { book, text ->
+            if (book == null || text == null) emptyList() else repo.textStyles(book, text)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _initialTextFraction = MutableStateFlow(0f)
     val initialTextFraction = _initialTextFraction.asStateFlow()

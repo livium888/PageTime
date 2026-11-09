@@ -258,6 +258,21 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _importError.value = null
     }
 
+    /** Makes a book from text the reader pasted in. Markdown becomes formatted text. */
+    fun importPastedText(title: String, text: String, onImported: (BookEntity) -> Unit) {
+        if (_importing.value) return
+        viewModelScope.launch {
+            _importing.value = true
+            _importError.value = null
+            container.libraryRepository.importPastedText(title, text)
+                .onSuccess(onImported)
+                .onFailure { error ->
+                    _importError.value = error.message ?: "Could not import the pasted text"
+                }
+            _importing.value = false
+        }
+    }
+
     fun importYouTubeUrl(url: String, onImported: (BookEntity) -> Unit) {
         if (_importing.value) return
         viewModelScope.launch {

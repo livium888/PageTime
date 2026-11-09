@@ -15,6 +15,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.learning.GeminiLearningClient
+import com.pagetime.app.data.library.MarkdownText
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -221,6 +222,59 @@ class LibraryRepository(
         }
     }
 
+    /** Where a text book's heading/bold/italic ranges are kept. See [MarkdownText]. */
+    private fun stylesFile(textFile: File): File =
+        File(textFile.parentFile, "${textFile.nameWithoutExtension}.styles.json")
+
+    /**
+     * Writes [source] as a text book's content: markdown symbols removed, and
+     * what they meant stored beside the text. Returns the clean text. Plain
+     * text is written as it is, with an empty style file.
+     */
+    private fun writeBookText(textFile: File, source: String): String {
+        val converted = MarkdownText.convert(source)
+        textFile.writeText(converted.text)
+        stylesFile(textFile).writeText(MarkdownText.encode(converted.text.length, converted.spans))
+        return converted.text
+    }
+
+    /**
+     * The heading/bold/italic ranges for [text], the book's current content.
+     * Empty for a book that never had any, or whose text has changed since
+     * they were recorded.
+     */
+    suspend fun textStyles(book: BookEntity, text: String): List<MarkdownText.StyleSpan> =
+        withContext(Dispatchers.IO) {
+            val raw = runCatching { stylesFile(File(book.localPath)).takeIf { it.exists() }?.readText() }.getOrNull()
+            MarkdownText.decode(raw, text.length)
+        }
+
+    /**
+     * Makes a book out of text the reader pasted in: an article, notes, an
+     * AI's answer, anything. Markdown is turned into formatted text; plain
+     * text is kept as it is. [title] is used when given, else the first
+     * heading or first line.
+     */
+    suspend fun importPastedText(title: String, pasted: String): Result<BookEntity> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(pasted.isNotBlank()) { "There is no text to import" }
+            val id = "paste-${UUID.randomUUID()}"
+            val booksDir = File(context.filesDir, "books").apply { mkdirs() }
+            val destination = File(booksDir, "$id.txt")
+            val text = writeBookText(destination, pasted)
+            require(text.isNotBlank()) { "There is no text to import" }
+            BookEntity(
+                id = id,
+                title = title.trim().ifBlank { MarkdownText.suggestTitle(MarkdownText.convert(pasted)) },
+                author = "",
+                format = "txt",
+                localPath = destination.absolutePath,
+                coverUrl = null,
+                addedAt = System.currentTimeMillis()
+            ).also { bookDao.upsert(it) }
+        }
+    }
+
     suspend fun replaceTextTranscript(bookId: String, editedText: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val book = bookDao.getById(bookId) ?: error("Book not found")
@@ -230,8 +284,7 @@ class LibraryRepository(
             val original = File(book.localPath)
             val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
             if (!backup.exists()) backup.writeText(original.readText())
-            original.writeText(edited)
-            edited
+            writeBookText(original, edited)
         }
     }
 
@@ -245,8 +298,7 @@ class LibraryRepository(
             val original = File(book.localPath)
             val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
             if (!backup.exists()) backup.writeText(original.readText())
-            original.writeText(edited)
-            edited
+            writeBookText(original, edited)
         }
     }
 
@@ -259,6 +311,8 @@ class LibraryRepository(
             val raw = backup.readText().trim()
             require(raw.isNotBlank()) { "The original transcript backup is empty" }
             original.writeText(raw)
+            // The ranges were recorded for the text being replaced.
+            runCatching { stylesFile(original).delete() }
             raw
         }
     }
@@ -325,6 +379,7 @@ class LibraryRepository(
     suspend fun deleteBook(book: BookEntity) = withContext(Dispatchers.IO) {
         bookDao.deleteById(book.id)
         runCatching { File(book.localPath).delete() }
+        runCatching { stylesFile(File(book.localPath)).delete() }
         pdfSourceFile(book)?.let { source ->
             runCatching { source.delete() }
             // The note left behind by a conversion that failed; it belongs to
@@ -413,8 +468,9 @@ class LibraryRepository(
             if (!backup.exists()) {
                 backup.writeText(pending.rawText)
             }
-            original.writeText(formatted)
-            formatted
+            // The prompt asks for "# " headings and "**Host:**" labels; store
+            // them as formatting, not as symbols on the page.
+            writeBookText(original, formatted)
         }
     }
 }

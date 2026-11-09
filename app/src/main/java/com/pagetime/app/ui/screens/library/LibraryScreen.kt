@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -140,6 +141,7 @@ fun LibraryScreen(
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showYouTubeDialog by remember { mutableStateOf(false) }
+    var showPasteTextDialog by remember { mutableStateOf(false) }
     var replaceBook by remember { mutableStateOf<BookEntity?>(null) }
     var pasteBook by remember { mutableStateOf<BookEntity?>(null) }
     var openPdfBook by remember { mutableStateOf<BookEntity?>(null) }
@@ -227,6 +229,11 @@ fun LibraryScreen(
                                     text = { Text("Import YouTube transcript") },
                                     enabled = !importing,
                                     onClick = { moreMenuExpanded = false; launchYouTubeImport() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Paste text") },
+                                    enabled = !importing,
+                                    onClick = { moreMenuExpanded = false; showPasteTextDialog = true }
                                 )
                             }
                         }
@@ -490,6 +497,16 @@ fun LibraryScreen(
                 viewModel.replaceTranscript(book.id, text)
             },
             onDismiss = { pasteBook = null }
+        )
+    }
+
+    if (showPasteTextDialog) {
+        PasteTextDialog(
+            onImport = { title, text ->
+                showPasteTextDialog = false
+                viewModel.importPastedText(title, text) { imported -> onOpenBook(imported.id) }
+            },
+            onDismiss = { showPasteTextDialog = false }
         )
     }
 
@@ -814,6 +831,80 @@ private fun BookRow(
             }
         }
     }
+}
+
+/**
+ * Text from anywhere, as a book: an article, notes, an AI's answer.
+ *
+ * The clipboard button is the main path. A long article pasted through the
+ * keyboard's own paste works too, but one tap that fills the box is what
+ * "copy it over there, read it here" should cost.
+ */
+@Composable
+private fun PasteTextDialog(
+    onImport: (title: String, text: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var title by remember { mutableStateOf("") }
+    var text by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf<String?>(null) }
+    val words = remember(text) { text.trim().split(Regex("\\s+")).count { it.isNotEmpty() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Paste text") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Paste any text to read it as a book. Markdown headings, bold, " +
+                        "italic and lists are shown as formatting.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                    val pasted = clipboard?.primaryClip
+                        ?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)?.coerceToText(context)?.toString()
+                        .orEmpty()
+                    if (pasted.isBlank()) {
+                        note = "The clipboard is empty. Copy some text first."
+                    } else {
+                        text = pasted
+                        note = null
+                    }
+                }) { Text("Paste from clipboard") }
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Title (optional)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                    placeholder = { Text("Paste text here…") },
+                    minLines = 8,
+                    maxLines = 12
+                )
+                Text(
+                    note ?: if (words > 0) "$words words" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (note != null) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onImport(title, text) }, enabled = text.isNotBlank()) {
+                Text("Add to library")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable

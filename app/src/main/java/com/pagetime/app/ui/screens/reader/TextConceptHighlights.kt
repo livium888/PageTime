@@ -6,10 +6,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import com.pagetime.app.data.TextHighlightSpans
 import com.pagetime.app.data.learning.ConceptHighlightMatcher
+import com.pagetime.app.data.library.MarkdownText
 import com.pagetime.app.data.local.ConceptEntity
 import com.pagetime.app.data.local.TextHighlightEntity
 
@@ -113,8 +115,13 @@ fun rememberAnnotatedPageWithHighlights(
     level: String,
     activeConceptId: String?,
     /** The sentence being grabbed, as whole-book offsets, or null. */
-    pendingSpan: Pair<Int, Int>? = null
+    pendingSpan: Pair<Int, Int>? = null,
+    /** Headings, bold and italic from pasted markdown, as whole-book offsets. */
+    styleSpans: List<MarkdownText.StyleSpan> = emptyList(),
 ): AnnotatedString {
+    val formatting = remember(pageText, pageStartOffset, pageEndOffset, styleSpans) {
+        formattingLayer(pageText, MarkdownText.pageSpans(styleSpans, pageStartOffset, pageEndOffset))
+    }
     val ranges = remember(pageText, pageStartOffset, pageEndOffset, highlights) {
         TextHighlightSpans.txtPageRanges(highlights, pageStartOffset, pageEndOffset)
     }
@@ -124,7 +131,7 @@ fun rememberAnnotatedPageWithHighlights(
         }
     }
     val concept = rememberAnnotatedPage(pageText, concepts, level, activeConceptId)
-    if (ranges.isEmpty() && grab == null) return concept
+    if (ranges.isEmpty() && grab == null && formatting.isEmpty()) return concept
 
     val saved = remember(pageText, ranges) {
         backgroundLayer(pageText, ranges, ReaderHighlightBackground)
@@ -132,13 +139,36 @@ fun rememberAnnotatedPageWithHighlights(
     val selecting = remember(pageText, grab) {
         backgroundLayer(pageText, listOfNotNull(grab), ReaderGrabBackground)
     }
-    return remember(pageText, concept.spanStyles, saved.spanStyles, selecting.spanStyles) {
+    return remember(pageText, formatting, concept.spanStyles, saved.spanStyles, selecting.spanStyles) {
         AnnotatedString(
             text = pageText,
-            spanStyles = concept.spanStyles + saved.spanStyles + selecting.spanStyles,
+            // Formatting first: it sets weight and slant only, and the layers
+            // after it set colour and background, so none of them collide.
+            spanStyles = formatting + concept.spanStyles + saved.spanStyles + selecting.spanStyles,
             paragraphStyles = concept.paragraphStyles
         )
     }
+}
+
+/**
+ * The weight and slant for [spans], given page-relative.
+ *
+ * A heading is drawn bold at the body size, not larger. Pages are measured
+ * from the plain text before any of this is applied, so a span that changed
+ * the height of a line would push the end of the page off the screen.
+ */
+private fun formattingLayer(
+    text: String,
+    spans: List<MarkdownText.StyleSpan>,
+): List<AnnotatedString.Range<SpanStyle>> = spans.mapNotNull { span ->
+    val start = span.start.coerceIn(0, text.length)
+    val end = span.end.coerceIn(start, text.length)
+    if (end <= start) return@mapNotNull null
+    val style = when (span.kind) {
+        MarkdownText.Kind.HEADING, MarkdownText.Kind.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
+        MarkdownText.Kind.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
+    }
+    AnnotatedString.Range(style, start, end)
 }
 
 /**

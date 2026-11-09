@@ -1,50 +1,42 @@
 package com.pagetime.app.data
 
-import com.pagetime.app.data.learning.GeminiLearningClient
-import com.pagetime.app.data.local.SettingsRepository
-
 /**
- * Answers the two questions a reader asks about text they pointed at: what does
- * this word mean, and what is this sentence saying.
+ * Prepares the two questions a reader asks about text they pointed at: what
+ * does this word mean, and what is this sentence saying.
  *
- * Deliberately not part of [LumenRepository]: a word the reader did not follow
- * is not a slip, and nothing here is filed, scheduled or addressed. It shares
- * only the provider routing, which is pure and already covered by tests.
+ * Nothing here calls a model. Each function returns a [ManualAsk]: the prompt
+ * the reader takes to their own AI app, and the reader for the reply they
+ * paste back. See [ManualAsk].
  *
- * Unlike a capture, this fails rather than falling back. A card has a useful
- * non-AI form — the passage itself — but there is no plain-text version of "what
- * does this mean here", and inventing one would be worse than saying no model
- * is available.
+ * A reply that cannot be read fails rather than falling back. A card has a
+ * useful non-AI form — the passage itself — but there is no plain-text version
+ * of "what does this mean here", and inventing one would be worse than saying
+ * the reply was not usable.
  */
-class GlossRepository(
-    private val geminiClient: GeminiLearningClient,
-    private val settingsRepository: SettingsRepository? = null,
-    private val localLlmProvider: LlmProvider? = null,
-    private val aiUsageRepository: AiUsageRepository? = null,
-) {
+class GlossRepository {
 
-    /** Tokens reserved for the answer. Four short fields need far less than a card. */
-    private val replyTokens = 256
-
-    suspend fun explain(
+    fun explain(
         term: String,
         before: String,
         after: String,
         bookTitle: String,
-        bookId: String?,
-    ): Result<Gloss> {
+    ): Result<ManualAsk<Gloss>> {
         WordGloss.termProblem(term)?.let { return Result.failure(IllegalArgumentException(it)) }
 
         val sentence = WordGloss.sentenceAround(before, term, after)
-        return ask(
-            prompt = WordGloss.prompt(term, before, after, bookTitle),
-            replyTokens = replyTokens,
-            bookId = bookId,
-        ) { raw, kind ->
-            val parts = WordGloss.parse(raw, term)?.takeIf { !it.isEmpty }
-                ?: throw IllegalStateException("The model had nothing to say about that word.")
-            Gloss(WordGloss.cleanTerm(term), sentence, parts, kind)
-        }
+        val clean = WordGloss.cleanTerm(term)
+        return Result.success(
+            ManualAsk(
+                heading = clean,
+                prompt = WordGloss.prompt(term, before, after, bookTitle),
+            ) { reply ->
+                runCatching {
+                    val parts = WordGloss.parse(reply, term)?.takeIf { !it.isEmpty }
+                        ?: throw IllegalStateException(UNREADABLE)
+                    Gloss(clean, sentence, parts)
+                }
+            }
+        )
     }
 
     /**
@@ -55,80 +47,30 @@ class GlossRepository(
      * the answer, so a reader who cannot judge the rewrite on its own can still
      * see whether the two say the same thing.
      */
-    suspend fun simplify(
+    fun simplify(
         passage: String,
         bookTitle: String,
-        bookId: String?,
-    ): Result<PlainReading> {
+    ): Result<ManualAsk<PlainReading>> {
         PlainEnglish.passageProblem(passage)?.let {
             return Result.failure(IllegalArgumentException(it))
         }
         val original = passage.trim()
-        return ask(
-            prompt = PlainEnglish.prompt(original, bookTitle),
-            replyTokens = PlainEnglish.REPLY_TOKENS,
-            bookId = bookId,
-        ) { raw, kind ->
-            val parts = PlainEnglish.parse(raw)
-                ?: throw IllegalStateException("The model did not manage a simpler version.")
-            PlainReading(original, parts, kind)
-        }
-    }
-
-    /**
-     * Runs [prompt] on the reader's chosen provider and hands the reply to
-     * [read]. Both asks share this: the routing, the usage tracking, and the
-     * refusal to invent an answer when no model is configured.
-     */
-    private suspend fun <T> ask(
-        prompt: String,
-        replyTokens: Int,
-        bookId: String?,
-        read: (raw: String, kind: LlmProviderKind) -> T,
-    ): Result<T> {
-        val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
-        val source =
-            LumenDraftRouter.sourceFor(
-                provider = provider,
-                geminiConfigured = geminiClient.hasKey(),
-                localModelAvailable = localLlmProvider?.isAvailable == true,
-            )
-
-        return when (source) {
-            LumenDraftSource.GEMINI ->
+        return Result.success(
+            ManualAsk(
+                heading = "In plain English",
+                prompt = PlainEnglish.prompt(original, bookTitle),
+            ) { reply ->
                 runCatching {
-                    val call: suspend () -> String = {
-                        geminiClient.draftLumenCardFromPrompt(prompt)
-                    }
-                    val raw =
-                        if (aiUsageRepository != null && bookId != null) {
-                            aiUsageRepository.track(
-                                bookId = bookId,
-                                operation = AiUsageRepository.OPERATION_GLOSS,
-                                model = geminiClient.currentModel(),
-                                inputCharacters = prompt.length,
-                                outputItems = { it.length },
-                                block = call,
-                            )
-                        } else {
-                            call()
-                        }
-                    read(raw, LlmProviderKind.GEMINI)
+                    val parts = PlainEnglish.parse(reply)
+                        ?: throw IllegalStateException(UNREADABLE)
+                    PlainReading(original, parts)
                 }
-
-            LumenDraftSource.LOCAL -> {
-                val local = localLlmProvider
-                    ?: return Result.failure(IllegalStateException(NO_MODEL))
-                local.generate(LlmRequest(prompt, maxOutputTokens = replyTokens))
-                    .mapCatching { read(it.text, LlmProviderKind.OFFLINE) }
             }
-
-            LumenDraftSource.FALLBACK -> Result.failure(IllegalStateException(NO_MODEL))
-        }
+        )
     }
 
     private companion object {
-        const val NO_MODEL =
-            "No AI is set up. Add a Gemini key or install the offline model in Settings."
+        const val UNREADABLE =
+            "That reply isn't in the format the prompt asked for. Copy the AI's whole reply and try again."
     }
 }

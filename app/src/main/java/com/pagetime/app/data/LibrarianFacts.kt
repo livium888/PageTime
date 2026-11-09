@@ -5,8 +5,7 @@ package com.pagetime.app.data
  * AI anything — built entirely from real fields already on the book
  * ([com.pagetime.app.data.local.BookEntity.addedAt],
  * [com.pagetime.app.data.local.BookEntity.scrollProgress]). This is what gets
- * shown when no AI is configured, and it is also the only "fact" an AI is
- * ever handed to reword — see [LibrarianPrompts.rephrase]. Never a claim
+ * shown as the daily suggestion, word for word. Never a claim
  * about research, psychology, or what the reader "needs"; only what's true
  * of this one book in this one library.
  */

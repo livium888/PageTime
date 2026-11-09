@@ -80,4 +80,50 @@ class ConceptMapViewModel(app: Application) : AndroidViewModel(app) {
     fun clearMessage() {
         _message.value = null
     }
+
+    /** A richer map waiting for the reader's own AI app. */
+    private val _pendingMap = MutableStateFlow<ConceptMapRepository.PendingMap?>(null)
+    val pendingMap = _pendingMap.asStateFlow()
+
+    /** Why the last pasted reply could not be used. Shown inside the ask dialog. */
+    private val _mapAskError = MutableStateFlow<String?>(null)
+    val mapAskError = _mapAskError.asStateFlow()
+
+    /** Builds the prompt for the chapter the reader is in and opens the ask dialog. */
+    fun askYourAi() {
+        val bookId = _selectedBookId.value ?: return
+        if (_generating.value) return
+        viewModelScope.launch {
+            _mapAskError.value = null
+            try {
+                val book = _books.value.firstOrNull { it.id == bookId }
+                _pendingMap.value = repository.prepareManualMap(bookId, book?.currentChapterIndex ?: 0)
+            } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                _message.value = error.message ?: "Could not prepare the prompt"
+            }
+        }
+    }
+
+    /** The reader pasted their AI app's reply to the pending map prompt. */
+    fun submitMapReply(reply: String) {
+        val pending = _pendingMap.value ?: return
+        viewModelScope.launch {
+            try {
+                val merged = repository.mergeManualMap(pending, reply)
+                _pendingMap.value = null
+                _mapAskError.value = null
+                _message.value = "Added ${merged.concepts.size} ideas and ${merged.relationships.size} connections."
+            } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                // Stays in the dialog so the reader can copy the reply again.
+                _mapAskError.value = error.message ?: "That reply couldn't be read. Try again."
+            }
+        }
+    }
+
+    fun dismissMapAsk() {
+        _pendingMap.value = null
+        _mapAskError.value = null
+    }
 }

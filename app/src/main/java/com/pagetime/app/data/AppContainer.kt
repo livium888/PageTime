@@ -220,13 +220,8 @@ class AppContainer(context: Context) {
         )
     val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
 
-    /** Tags each book Fiction/Poetry/Science/etc., once, in the background — see the class doc. */
-    val bookGenreClassifier = BookGenreClassifier(
-        bookDao = bookDao,
-        settingsRepository = settingsRepository,
-        geminiClient = geminiLearningClient,
-        localLlmProvider = localLlmProvider,
-    )
+    /** Tags books Fiction/Poetry/Science/etc. when the reader asks — see the class doc. */
+    val bookGenreClassifier = BookGenreClassifier(bookDao = bookDao)
 
     /** A book's total word count, computed once on first read — see the class doc. */
     val bookWordCounter = BookWordCounter(
@@ -238,8 +233,6 @@ class AppContainer(context: Context) {
     val librarianSuggester = LibrarianSuggester(
         bookDao = bookDao,
         settingsRepository = settingsRepository,
-        geminiClient = geminiLearningClient,
-        localLlmProvider = localLlmProvider,
     )
 
     /**
@@ -306,12 +299,7 @@ class AppContainer(context: Context) {
         schedulers = schedulers,
     )
 
-    val glossRepository = GlossRepository(
-        geminiClient = geminiLearningClient,
-        settingsRepository = settingsRepository,
-        localLlmProvider = localLlmProvider,
-        aiUsageRepository = aiUsageRepository,
-    )
+    val glossRepository = GlossRepository()
 
     val conceptMapRepository = ConceptMapRepository(
         database = database,
@@ -320,19 +308,12 @@ class AppContainer(context: Context) {
         bookDao = bookDao,
         generationDao = learningGenerationDao,
         contextExtractor = learningContextExtractor,
-        geminiClient = geminiLearningClient,
         settingsRepository = settingsRepository,
-        aiUsageRepository = aiUsageRepository
     )
 
     val explainBackRepository = ExplainBackRepository(
         conceptDao = conceptDao,
         explanationDao = explanationDao,
-        geminiClient = geminiLearningClient,
-        contextExtractor = learningContextExtractor,
-        settingsRepository = settingsRepository,
-        localLlmProvider = localLlmProvider,
-        aiUsageRepository = aiUsageRepository
     )
 
     private val powerManager =

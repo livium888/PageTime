@@ -258,5 +258,4 @@ data class Gloss(
     val term: String,
     val sentence: String,
     val parts: GlossParts,
-    val source: LlmProviderKind?,
 )

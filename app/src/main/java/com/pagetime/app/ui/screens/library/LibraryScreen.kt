@@ -110,11 +110,33 @@ fun LibraryScreen(
     val didReadToday by viewModel.didReadToday.collectAsStateWithLifecycle()
     val showNeverMissTwiceNudge by viewModel.showNeverMissTwiceNudge.collectAsStateWithLifecycle()
     val genreSummary by viewModel.genreSummary.collectAsStateWithLifecycle()
+    val untaggedCount by viewModel.untaggedCount.collectAsStateWithLifecycle()
+    val pendingGenres by viewModel.pendingGenres.collectAsStateWithLifecycle()
+    val genreError by viewModel.genreError.collectAsStateWithLifecycle()
+    pendingGenres?.let { pending ->
+        com.pagetime.app.ui.components.AskYourAiDialog(
+            title = "Sort ${pending.count} book${if (pending.count == 1) "" else "s"} by genre",
+            prompt = pending.prompt,
+            error = genreError,
+            onReply = viewModel::submitGenreReply,
+            onDismiss = viewModel::dismissGenres,
+        )
+    }
     val librarianSuggestion by viewModel.librarianSuggestion.collectAsStateWithLifecycle()
     val upNextBook by viewModel.upNextBook.collectAsStateWithLifecycle()
     val lastMapMoment by viewModel.lastMapMoment.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
-    val reformatProgress by viewModel.reformatProgress.collectAsStateWithLifecycle()
+    val pendingFormat by viewModel.pendingFormat.collectAsStateWithLifecycle()
+    val formatError by viewModel.formatError.collectAsStateWithLifecycle()
+    pendingFormat?.let { pending ->
+        com.pagetime.app.ui.components.AskYourAiDialog(
+            title = "Tidy the text with your AI",
+            prompt = pending.prompt,
+            error = formatError,
+            onReply = viewModel::submitFormatReply,
+            onDismiss = viewModel::dismissFormat,
+        )
+    }
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showYouTubeDialog by remember { mutableStateOf(false) }
@@ -295,8 +317,8 @@ fun LibraryScreen(
                 }
                 // Purely descriptive — a fun fact about the shelf, never a
                 // claim about what the reader should do with it. Absent
-                // entirely until at least one book has been classified, so a
-                // reader with no AI configured never sees a half-finished stat.
+                // entirely until at least one book has a genre, so a reader
+                // who never sorts the shelf never sees a half-finished stat.
                 genreSummary?.let { summary ->
                     item {
                         Text(
@@ -304,6 +326,16 @@ fun LibraryScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+                if (untaggedCount > 0) {
+                    item {
+                        TextButton(onClick = viewModel::sortByGenre) {
+                            Text(
+                                "Sort $untaggedCount book${if (untaggedCount == 1) "" else "s"} " +
+                                    "by genre with your AI"
+                            )
+                        }
                     }
                 }
                 item {
@@ -422,7 +454,6 @@ fun LibraryScreen(
                     }
                 }
                 items(books, key = { it.id }) { book ->
-                    val isReformatting by viewModel.reformatting.collectAsStateWithLifecycle()
                     BookRow(
                         book = book,
                         onClick = {
@@ -436,8 +467,6 @@ fun LibraryScreen(
                         onPaste = { pasteBook = book },
                         onRestore = { viewModel.restoreTranscript(book.id) },
                         hasRawBackup = viewModel.hasRawBackup(book),
-                        isReformatting = book.id in isReformatting,
-                        reformatProgress = reformatProgress[book.id],
                         onCopy = if (book.isReflowedText) {
                             { viewModel.copyTranscript(book) }
                         } else null,
@@ -641,8 +670,6 @@ private fun BookRow(
     onRestore: (() -> Unit)? = null,
     hasRawBackup: Boolean = false,
     onReformat: (() -> Unit)? = null,
-    isReformatting: Boolean = false,
-    reformatProgress: Pair<Int, Int>? = null,
     onCopy: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
     /** Tapping the author opens everything else they wrote. */
@@ -769,9 +796,8 @@ private fun BookRow(
                         onClick = { actionsExpanded = false; onRestore() }
                     )
                     if (onReformat != null && book.isReflowedText) DropdownMenuItem(
-                        text = { Text(if (isReformatting) "Formatting…" else "Enhance with AI") },
-                        onClick = { if (!isReformatting) { actionsExpanded = false; onReformat() } },
-                        enabled = !isReformatting
+                        text = { Text("Tidy the text with your AI") },
+                        onClick = { actionsExpanded = false; onReformat() },
                     )
                     if (onOpenPdf != null && book.format == "pdf") DropdownMenuItem(
                         text = { Text("Read original PDF") },
@@ -784,33 +810,6 @@ private fun BookRow(
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (false && onReformat != null && book.isReflowedText) {
-                    IconButton(
-                        onClick = onReformat,
-                        enabled = !isReformatting
-                    ) {
-                        if (isReformatting) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                reformatProgress?.let { (completed, total) ->
-                                    Text(
-                                        "$completed/$total",
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        } else {
-                            Icon(
-                                Icons.Outlined.AutoAwesome,
-                                contentDescription = "AI Format",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
                 // Book actions are consolidated in the overflow menu above.
             }
         }

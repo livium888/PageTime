@@ -372,40 +372,46 @@ class LibraryRepository(
     }
 
     /**
-     * Sends the book's transcript to Gemini for AI-powered reformatting.
-     * Replaces the local file with the cleaned-up version.
-     * Returns the formatted text, or throws on failure.
+     * A transcript waiting for the reader's own AI app to tidy it: the prompt
+     * to take there, and the original text the reply is checked against.
      */
-    suspend fun reformatTranscriptWithAI(
-        bookId: String,
-        geminiClient: GeminiLearningClient,
-        onProgress: (suspend (completed: Int, total: Int) -> Unit)? = null
+    class PendingTranscriptFormat internal constructor(
+        val prompt: String,
+        internal val bookId: String,
+        internal val rawText: String,
+    )
+
+    /** Builds the formatting prompt for a text book. Changes nothing on disk. */
+    suspend fun prepareTranscriptFormat(bookId: String): Result<PendingTranscriptFormat> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val book = bookDao.getById(bookId) ?: error("Book not found")
+                val rawText = File(book.localPath).readText()
+                TranscriptFormatPrompt.problem(rawText)?.let { error(it) }
+                PendingTranscriptFormat(
+                    prompt = TranscriptFormatPrompt.build(book.title, rawText),
+                    bookId = bookId,
+                    rawText = rawText,
+                )
+            }
+        }
+
+    /**
+     * Replaces the book's text with the formatted version the reader pasted
+     * back, keeping the original beside it as a `.raw.txt` backup. Fails,
+     * changing nothing, when the reply is empty, a summary, or cut off.
+     */
+    suspend fun applyFormattedTranscript(
+        pending: PendingTranscriptFormat,
+        reply: String,
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val book = bookDao.getById(bookId) ?: error("Book not found")
-            val rawText = File(book.localPath).readText()
-            if (rawText.isBlank()) error("Book has no text content")
-
-            val call: suspend () -> String = {
-                geminiClient.formatTranscriptWithAI(rawText, book.title, onProgress)
-            }
-            val formatted = if (aiUsageRepository != null) {
-                aiUsageRepository.track(
-                    bookId = bookId,
-                    operation = AiUsageRepository.OPERATION_REFORMAT,
-                    model = geminiClient.currentModel(),
-                    inputCharacters = rawText.length,
-                    outputItems = { it.length },
-                    block = call
-                )
-            } else {
-                call()
-            }
-            require(formatted.isNotBlank()) { "AI formatting returned empty text" }
+            val formatted = TranscriptFormatPrompt.accept(reply, pending.rawText).getOrThrow()
+            val book = bookDao.getById(pending.bookId) ?: error("Book not found")
             val original = File(book.localPath)
             val backup = File(original.parentFile, "${original.nameWithoutExtension}.raw.txt")
             if (!backup.exists()) {
-                backup.writeText(rawText)
+                backup.writeText(pending.rawText)
             }
             original.writeText(formatted)
             formatted

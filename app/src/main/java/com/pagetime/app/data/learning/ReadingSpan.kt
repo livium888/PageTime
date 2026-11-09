@@ -161,7 +161,7 @@ object ReadingSpan {
         val parts = mutableListOf<String>()
         var next: SpanPoint? = null
         for (index in first..last) {
-            val raw = chapterText(index)
+            val raw = breakUpLongParagraphs(chapterText(index))
             if (raw.isBlank()) continue
             val from = when {
                 index != first -> 0
@@ -188,6 +188,50 @@ object ReadingSpan {
             }
         }
         return sliceOf(parts.joinToString(PARAGRAPH), next = next)
+    }
+
+    /** A paragraph longer than this is treated as unbroken markup, not as one paragraph. */
+    internal const val LONG_PARAGRAPH_WORDS = 250
+
+    /** Where an over-long paragraph is cut: the first sentence end after this many words. */
+    private const val CHUNK_WORDS = 120
+
+    /**
+     * Gives text with no real paragraph breaks some.
+     *
+     * Some EPUBs (typically ones converted from PDF) put a whole chapter in one
+     * element. Snapping to "the paragraph" then snaps to the chapter's first
+     * and last word, and three pages read becomes twenty thousand words. Any
+     * paragraph over [LONG_PARAGRAPH_WORDS] is cut into chunks of about
+     * [CHUNK_WORDS] words at sentence ends (or at a word, if there is no
+     * punctuation). Deterministic, so a position taken on the result stays
+     * valid on a later call.
+     */
+    internal fun breakUpLongParagraphs(raw: String): String {
+        if (raw.isBlank()) return raw
+        return raw.split(PARAGRAPH).joinToString(PARAGRAPH) { para ->
+            if (words(para) <= LONG_PARAGRAPH_WORDS) para else chunk(para)
+        }
+    }
+
+    private fun chunk(para: String): String {
+        val out = StringBuilder()
+        var count = 0
+        var i = 0
+        val n = para.length
+        while (i < n) {
+            val start = i
+            while (i < n && !para[i].isWhitespace()) i++
+            val word = para.substring(start, i)
+            while (i < n && para[i].isWhitespace()) i++
+            out.append(word)
+            count++
+            val sentenceEnd = word.isNotEmpty() && word.last() in SENTENCE_ENDERS &&
+                word.any { it == '.' || it == '!' || it == '?' }
+            val cut = i < n && (count >= CHUNK_WORDS * 2 || (count >= CHUNK_WORDS && sentenceEnd))
+            if (cut) { out.append(PARAGRAPH); count = 0 } else if (i < n) out.append(' ')
+        }
+        return out.toString()
     }
 
     private fun positionIn(raw: String, fraction: Float): Int =

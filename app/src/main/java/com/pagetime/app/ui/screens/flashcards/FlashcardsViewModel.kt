@@ -51,7 +51,7 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     private val cardDao = container.database.learningCardDao()
     private val reviewLog = container.database.learningReviewLogDao()
     private val bookDao = container.database.bookDao()
-    private val generator = container.chapterPromptGenerator
+    private val generator = container.chapterQuestions
     private val explainBackRepository = container.explainBackRepository
 
     private val _filter = MutableStateFlow(FlashcardFilter.ALL)

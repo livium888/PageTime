@@ -23,6 +23,8 @@ import com.pagetime.app.blocker.BlockEnforcementPolicy
 import com.pagetime.app.blocker.AppAllowlist
 import com.pagetime.app.blocker.AppMode
 import com.pagetime.app.blocker.SiteMode
+import com.pagetime.app.data.learning.SpanMarker
+import com.pagetime.app.data.learning.SpanPoint
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.flow.Flow
@@ -544,6 +546,9 @@ class SettingsRepository(private val context: Context) {
     private fun bookmarkScrollKey(bookId: String) =
         floatPreferencesKey("bookmark_scroll_$bookId")
 
+    private fun spanMarkerKey(bookId: String) =
+        stringPreferencesKey("card_span_marker_$bookId")
+
     private fun pendingLocatorKey(bookId: String) =
         stringPreferencesKey("pending_reader_locator_$bookId")
 
@@ -614,6 +619,32 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun saveBookmarkScroll(bookId: String, fraction: Float) {
         context.dataStore.edit { it[bookmarkScrollKey(bookId)] = fraction.coerceIn(0f, 1f) }
+    }
+
+    /** Where this book's next batch of cards starts; null until the book has been opened once. */
+    suspend fun spanMarker(bookId: String): SpanMarker? =
+        SpanMarker.decode(context.dataStore.data.first()[spanMarkerKey(bookId)])
+
+    suspend fun saveSpanMarker(bookId: String, marker: SpanMarker) {
+        context.dataStore.edit { it[spanMarkerKey(bookId)] = marker.encode() }
+    }
+
+    /**
+     * Sets the start marker only if the book has none, and returns whichever
+     * marker is now in force.
+     *
+     * Opening a book calls this every time, so it must never move a marker
+     * that exists: the start persists until cards are made from it, and
+     * resetting it on open would silently drop yesterday's reading.
+     * Read-and-write in one edit so two quick opens cannot both see "none".
+     */
+    suspend fun ensureSpanMarker(bookId: String, start: SpanPoint, now: Long): SpanMarker {
+        var result: SpanMarker? = null
+        context.dataStore.edit { p ->
+            val existing = SpanMarker.decode(p[spanMarkerKey(bookId)])
+            result = existing ?: SpanMarker(start, now).also { p[spanMarkerKey(bookId)] = it.encode() }
+        }
+        return checkNotNull(result)
     }
 
     suspend fun clearBookmark(bookId: String) {

@@ -33,6 +33,7 @@ import com.pagetime.app.data.LumenDraftSource
 import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
+import com.pagetime.app.data.learning.SpanPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -491,6 +492,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtRestoreComplete = true
         _progress.value = latestTxtFraction
         showResumeNotice(latestTxtFraction)
+        ensureSpanMarker()
     }
 
     /** Updates text progress only after the initial page has been restored. */
@@ -506,6 +508,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         latestTxtPageEndOffset = pageEndOffset
         val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
         _progress.value = fraction
+        if (txtRestoreComplete) ensureSpanMarker()
         if (!userInitiated || !txtRestoreComplete) return
         // Progress, not merely movement.
         //
@@ -1232,6 +1235,65 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
+    // region Card span (manual flashcards, docs/decisions/0002)
+
+    /** Whether this open of the book has already made sure a start marker exists. */
+    @Volatile
+    private var spanMarkerChecked = false
+
+    /**
+     * Where the reader is, in the form the span cutter needs.
+     *
+     * [forStart] picks which edge of a plain-text page counts: a marker begins
+     * where the page BEGINS, while a span ends where the page ENDS. An EPUB
+     * only knows the chapter and how far through it the page starts, so both
+     * are the same point and the cutter snaps to paragraphs. Null until the
+     * reader has reported a position at all.
+     */
+    fun currentSpanPoint(forStart: Boolean): SpanPoint? {
+        val b = _book.value ?: return null
+        if (b.isReadiumBook) {
+            val locator = latestLocator ?: return null
+            val publication = _publication.value ?: return null
+            val index = publication.readingOrder.indexOfFirstWithHref(locator.href) ?: return null
+            if (index < 0) return null
+            return SpanPoint(
+                chapterIndex = index,
+                fraction = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f),
+                chapterTitle = publication.readingOrder.getOrNull(index)?.title,
+            )
+        }
+        val full = _textContent.value?.takeIf { it.isNotEmpty() } ?: return null
+        val offset = (
+            if (forStart) latestTxtOffset()
+            else latestTxtPageEndOffset.takeIf { it > 0 } ?: latestTxtOffset()
+            ).coerceIn(0, full.length)
+        return SpanPoint(
+            chapterIndex = 0,
+            fraction = offset.toFloat() / full.length,
+            textOffset = offset,
+        )
+    }
+
+    /**
+     * Makes sure this book has a start marker, once per open.
+     *
+     * Never moves an existing one — the start persists until cards are made
+     * from it — so calling this on every open is safe. Called only after the
+     * position has been restored: a marker taken before that would be the
+     * start of the book.
+     */
+    private fun ensureSpanMarker() {
+        if (spanMarkerChecked) return
+        val point = currentSpanPoint(forStart = true) ?: return
+        spanMarkerChecked = true
+        persistenceScope.launch {
+            runCatching { settingsRepository.ensureSpanMarker(bookId, point, System.currentTimeMillis()) }
+        }
+    }
+
+    // endregion
+
     fun setLearningCheckpoint() {
         val b = _book.value ?: return
         persistenceScope.launch {
@@ -1397,6 +1459,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun onLocatorChanged(locator: org.readium.r2.shared.publication.Locator) {
         latestLocator = locator
         if (!locatorRestoreComplete) return
+        ensureSpanMarker()
 
         // Compute whole-book progress from the Readium locator and feed it to the
         // anti-cheat guard. This is what lets the guard distinguish real reading

@@ -321,8 +321,6 @@ fun ReaderScreen(
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
     var showMakeCards by remember { mutableStateOf(false) }
-    var showCoverage by remember { mutableStateOf(false) }
-    var confirmRegenerate by remember { mutableStateOf(false) }
     var showMapMoment by remember { mutableStateOf(false) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -603,16 +601,8 @@ fun ReaderScreen(
                     vm.refreshSearchState()
                     showBookSearch = true
                 },
-                onMakePrompts = vm::generateChapterPrompts,
                 onSeePrompts = { showPromptList = true },
-                onSeeCoverage = {
-                    vm.loadChapterCoverage()
-                    showCoverage = true
-                },
-                onRegeneratePrompts = { confirmRegenerate = true },
-                promptsOfferable = promptState.offerable,
                 promptsPending = promptState.pending.size,
-                promptsGenerated = promptState.result != null || promptState.pending.isNotEmpty(),
                 onStats = { showStats = true },
                 onSleepTimer = { showSleepTimer = true },
                 onBookmark = vm::toggleBookmark,
@@ -729,24 +719,6 @@ fun ReaderScreen(
                 modifier = if (controlsVisible) Modifier else Modifier.navigationBarsPadding(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Progress and outcome, in the reading surface where the reader is
-                // looking — not in the dropdown that closed the moment they
-                // tapped it.
-                promptState.message?.let { message ->
-                    ChapterPromptStatus(
-                        message = message,
-                        working = promptState.generating,
-                        pendingCount = promptState.pending.size,
-                        detail = promptState.result?.detail,
-                        onSeeQuestions = { showPromptList = true },
-                        onSeeCoverage = {
-                            vm.loadChapterCoverage()
-                            showCoverage = true
-                        },
-                        onDismiss = vm::clearPromptMessage,
-                    )
-                }
-
                 // A question about the paragraph just read. Never a dialog: it has
                 // to be ignorable, because the one thing this must not become is a
                 // toll booth on the page turn.
@@ -898,32 +870,6 @@ fun ReaderScreen(
         )
     }
 
-    if (confirmRegenerate) {
-        // Confirmed rather than immediate: it spends another API call, and the
-        // reader should know what it does and does not throw away.
-        AlertDialog(
-            onDismissRequest = { confirmRegenerate = false },
-            title = { Text("Make different questions?") },
-            text = {
-                Text(
-                    "This asks Gemini for a fresh set for this chapter, which " +
-                        "costs another request. Questions you have already kept " +
-                        "are not affected — they stay in your reviews with their " +
-                        "history. Anything you have not judged yet is replaced."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmRegenerate = false
-                    vm.regenerateChapterPrompts()
-                }) { Text("Make new ones") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmRegenerate = false }) { Text("Cancel") }
-            }
-        )
-    }
-
     if (showMakeCards) {
         MakeCardsSheet(
             vm = cardsVm,
@@ -937,19 +883,6 @@ fun ReaderScreen(
             prompts = promptState.pending,
             progression = promptState.progression,
             onDismiss = { showPromptList = false },
-        )
-    }
-
-    // Everything the chapter was asked about, and the reader's right of reply.
-    if (showCoverage) {
-        ChapterCoverageSheet(
-            passages = promptState.coverage,
-            busy = promptState.generating,
-            onMakeCards = { ordinals ->
-                showCoverage = false
-                vm.makeCardsForPassages(ordinals)
-            },
-            onDismiss = { showCoverage = false },
         )
     }
 
@@ -1888,13 +1821,8 @@ private fun ReaderTopBar(
     onToc: () -> Unit,
     onGoTo: () -> Unit,
     onSearchBook: () -> Unit,
-    onMakePrompts: () -> Unit,
     onSeePrompts: () -> Unit,
-    onSeeCoverage: () -> Unit,
-    onRegeneratePrompts: () -> Unit,
-    promptsOfferable: Boolean,
     promptsPending: Int,
-    promptsGenerated: Boolean,
     onStats: () -> Unit,
     onSleepTimer: () -> Unit,
     onBookmark: () -> Unit,
@@ -2003,50 +1931,15 @@ private fun ReaderTopBar(
                         }
                     )
                     MenuSectionLabel("Study")
-                    if (promptsOfferable) {
+                    if (promptsPending > 0) {
                         DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (promptsPending > 0) {
-                                        "See this chapter's questions ($promptsPending)"
-                                    } else {
-                                        "Make questions for this chapter"
-                                    }
-                                )
-                            },
+                            text = { Text("See this chapter's questions ($promptsPending)") },
                             leadingIcon = { Icon(Icons.Outlined.Quiz, contentDescription = null) },
                             onClick = {
                                 optionsExpanded = false
-                                if (promptsPending > 0) onSeePrompts() else onMakePrompts()
+                                onSeePrompts()
                             }
                         )
-                        if (promptsGenerated) {
-                            // The reader's right of reply. Sits above
-                            // "different questions" deliberately: disagreeing
-                            // with what was skipped is almost always the more
-                            // useful of the two, and costs one request rather
-                            // than a whole chapter's worth.
-                            DropdownMenuItem(
-                                text = { Text("What was skipped, and why") },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Rule, contentDescription = null)
-                                },
-                                onClick = {
-                                    optionsExpanded = false
-                                    onSeeCoverage()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Make different questions") },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Refresh, contentDescription = null)
-                                },
-                                onClick = {
-                                    optionsExpanded = false
-                                    onRegeneratePrompts()
-                                }
-                            )
-                        }
                     }
                     DropdownMenuItem(
                         text = { Text(if (checkpointPresent) "Update learning checkpoint" else "Set learning checkpoint") },

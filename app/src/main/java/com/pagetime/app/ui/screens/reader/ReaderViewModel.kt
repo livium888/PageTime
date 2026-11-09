@@ -30,7 +30,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.LumenDraftSource
-import com.pagetime.app.data.learning.ChapterPromptGenerator
 import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
 import com.pagetime.app.data.learning.SpanPoint
@@ -556,22 +555,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         return publication.readingOrder.getOrNull(index)?.title
     }
 
-    /**
-     * A chapter's own title, by index.
-     *
-     * Asked for by the index rather than taken from the current locator because
-     * that is the index the flashcards are being made for — and because a title
-     * the model is given is a context cue, which is the difference between
-     * asking about "the blockade" and asking about the Continental System. It
-     * is also what the card is filed under in the Flashcards list.
-     *
-     * Null for a book with no chapter structure, where the generator falls back
-     * to "Chapter N".
-     */
-    private fun chapterTitleFor(chapterIndex: Int): String? {
-        val publication = _publication.value ?: return null
-        return publication.readingOrder.getOrNull(chapterIndex)?.title?.takeIf { it.isNotBlank() }
-    }
 
     private fun currentFraction(): Float {
         val book = _book.value ?: return _progress.value
@@ -1650,13 +1633,15 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
 
     // ---- Chapter prompts -----------------------------------------------------
+    //
+    // Questions are no longer written for the reader. What remains is showing
+    // the ones already made as the reader reaches their passages; new cards come
+    // from "Make cards from this stretch".
 
-    private val chapterPrompts = container.chapterPromptGenerator
+    private val chapterPrompts = container.chapterQuestions
 
     private val _promptState = MutableStateFlow(ChapterPromptState())
     val promptState = _promptState.asStateFlow()
-
-    private var promptJob: Job? = null
 
     /** Ids judged this sitting, so a dismissed prompt cannot flicker back. */
     private val judgedPrompts = mutableSetOf<String>()
@@ -1689,149 +1674,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private fun loadPendingPrompts(chapterIndex: Int) {
         val b = _book.value ?: return
         viewModelScope.launch {
-            val ready = runCatching { chapterPrompts.isReady(b, chapterIndex) }.getOrDefault(false)
             val pending = chapterPrompts.pending(b, chapterIndex)
             _promptState.value = _promptState.value.copy(
                 chapterIndex = chapterIndex,
-                ready = ready,
                 pending = pending,
             )
         }
-    }
-
-    /**
-     * Writes this chapter's questions.
-     *
-     * Deliberately a deliberate act. Generating costs an API call, and doing it
-     * automatically on every chapter of a forty-chapter book would spend the
-     * reader's quota on chapters they may never reach and questions they may
-     * never want.
-     */
-    fun generateChapterPrompts() = runGeneration(fresh = false)
-
-    /**
-     * Asks for a different set of questions.
-     *
-     * Never automatic. A change to the instructions could otherwise invalidate
-     * every chapter of every book at once and spend the reader's quota
-     * re-answering questions they were perfectly happy with.
-     */
-    fun regenerateChapterPrompts() = runGeneration(fresh = true)
-
-    /**
-     * Loads what became of each passage the last generation sent.
-     *
-     * Read on demand rather than kept in the reading state: it is a diagnostic
-     * the reader opens occasionally, and holding two dozen paragraphs of text
-     * in memory for every chapter they walk past is not worth it.
-     */
-    fun loadChapterCoverage() {
-        val b = _book.value ?: return
-        val chapterIndex = _promptState.value.chapterIndex
-        viewModelScope.launch {
-            val rows = chapterPrompts.passages(b, chapterIndex)
-            _promptState.value = _promptState.value.copy(coverage = rows)
-        }
-    }
-
-    /**
-     * The reader disagreed: write a question for these passages.
-     *
-     * Additive. Nothing already made is thrown away — the reader is asking for
-     * more from paragraphs that produced none, not for a different set.
-     */
-    fun makeCardsForPassages(ordinals: Set<Int>) {
-        val b = _book.value ?: return
-        if (promptJob?.isActive == true || ordinals.isEmpty()) return
-        val chapterIndex = _promptState.value.chapterIndex
-        _promptState.value = _promptState.value.copy(generating = true, stage = null, result = null)
-        promptJob = viewModelScope.launch {
-            try {
-                val onStage: (ChapterPromptGenerator.Stage) -> Unit = { stage ->
-                    _promptState.value = _promptState.value.copy(stage = stage)
-                }
-                val result = chapterPrompts.generateForPassages(
-                    b, chapterIndex, chapterTitleFor(chapterIndex), ordinals, onStage,
-                )
-                // The chapter's pending set is re-read rather than replaced:
-                // this run only covers the chosen passages, and overwriting
-                // would drop every question the earlier run had made.
-                val pending = chapterPrompts.pending(b, chapterIndex)
-                val state = _promptState.value
-                _promptState.value = state.copy(
-                    pending = pending,
-                    result = result,
-                    coverage = chapterPrompts.passages(b, chapterIndex),
-                    surfacedId = PromptSurfacing.next(
-                        pending.map {
-                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
-                        },
-                        state.progression,
-                        judgedPrompts,
-                    )?.id,
-                    stillAhead = PromptSurfacing.remaining(
-                        pending.map {
-                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
-                        },
-                        state.progression,
-                        judgedPrompts,
-                    ),
-                )
-            } finally {
-                _promptState.value = _promptState.value.copy(generating = false, stage = null)
-            }
-        }
-    }
-
-    private fun runGeneration(fresh: Boolean) {
-        val b = _book.value ?: return
-        if (promptJob?.isActive == true) return
-        val chapterIndex = _promptState.value.chapterIndex
-        judgedPrompts.clear()
-        _promptState.value = _promptState.value.copy(generating = true, stage = null, result = null)
-        promptJob = viewModelScope.launch {
-            try {
-                val onStage: (ChapterPromptGenerator.Stage) -> Unit = { stage ->
-                    _promptState.value = _promptState.value.copy(stage = stage)
-                }
-                val result = if (fresh) {
-                    chapterPrompts.regenerate(b, chapterIndex, chapterTitleFor(chapterIndex), onStage)
-                } else {
-                    chapterPrompts.generate(
-                        b, chapterIndex, chapterTitleFor(chapterIndex), onStage = onStage,
-                    )
-                }
-                val state = _promptState.value
-                _promptState.value = state.copy(
-                    pending = result.cards,
-                    result = result,
-                    coverage = chapterPrompts.passages(b, chapterIndex),
-                    // Anything already behind the reader can show at once
-                    // rather than waiting for the next page turn.
-                    surfacedId = PromptSurfacing.next(
-                        result.cards.map {
-                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
-                        },
-                        state.progression,
-                        judgedPrompts,
-                    )?.id,
-                    stillAhead = PromptSurfacing.remaining(
-                        result.cards.map {
-                            com.pagetime.app.data.learning.SurfaceablePrompt(it.id, it.sourceFraction ?: 0f)
-                        },
-                        state.progression,
-                        judgedPrompts,
-                    ),
-                )
-            } finally {
-                _promptState.value = _promptState.value.copy(generating = false, stage = null)
-            }
-        }
-    }
-
-    /** Dismisses the status line without touching the questions themselves. */
-    fun clearPromptMessage() {
-        _promptState.value = _promptState.value.copy(result = null)
     }
 
     /**
@@ -1966,7 +1814,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtSaveJob?.cancel()
         indexJob?.cancel()
         searchJob?.cancel()
-        promptJob?.cancel()
         super.onCleared()
     }
 }

@@ -343,7 +343,7 @@ internal object ChapterPromptText {
      * The instructions for one chapter, edited or shipped.
      *
      * [template] defaults to the built-in text; the reader's own reaches here
-     * from storage through [ChapterPromptGenerator].
+     * from storage through the card store.
      */
     fun build(
         bookTitle: String,

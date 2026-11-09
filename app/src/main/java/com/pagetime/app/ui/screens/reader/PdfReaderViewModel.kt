@@ -9,6 +9,9 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.library.PdfTextCleaner
 import com.pagetime.app.data.library.PdfTextExtractor
+import com.pagetime.app.data.learning.ManualCardImport
+import com.pagetime.app.data.learning.ManualCardPrompt
+import com.pagetime.app.data.learning.RawPrompt
 import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.domain.BalanceManager
 import com.pagetime.app.domain.ReadingMomentum
@@ -26,14 +29,14 @@ import java.util.UUID
 
 /**
  * Manages PDF reading state, reading-time tracking, text extraction,
- * AI-powered flashcard generation via Gemini, and last-position memory.
+ * flashcards written by the reader's own AI app (copy, paste back), and last-position memory.
  *
  * PDF flashcards are saved as [LearningCardEntity] rows — the same
  * recall/review system the EPUB reader uses — so they appear in the
  * Recall tab with FSRS scheduling, grading, notifications, and time
  * earning via [BalanceManager.earnFromFlashcard].
  *
- * Flashcards are generated using [ChapterPromptGenerator.promptsForText],
+ * Flashcards come from the reader's own AI app via [ManualCardPrompt],
  * the same pipeline the EPUB reader uses for proper Q/A flashcards with
  * questions, answers, and explanations — NOT the Lumen slip-box pipeline.
  *
@@ -263,8 +266,8 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Step 1: Extract text from the current page and show it for review.
-     * The user sees exactly what will be sent to Gemini and can edit it
-     * before confirming generation.
+     * The reader sees exactly what the prompt will carry and can edit it
+     * before confirming.
      */
     fun prepareFlashcardPreview() {
         val pageIndex = _state.value.currentPage
@@ -303,8 +306,10 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Step 2: User confirmed (and possibly edited) the text.
-     * Send it to Gemini and save the flashcards.
+     * Step 2: the reader confirmed (and possibly edited) the text.
+     *
+     * Nothing is sent anywhere. The prompt is built here and the reader takes
+     * it to their own LLM app: copy or share it, then paste the reply back.
      */
     fun confirmFlashcardGeneration(editedText: String) {
         val bookId = currentBookId ?: return
@@ -313,46 +318,114 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             _flashcardState.value = FlashcardUiState(error = "Text is empty")
             return
         }
-        _flashcardState.value = FlashcardUiState(generating = true)
+        viewModelScope.launch {
+            val app = getApplication<PageTimeApp>()
+            val book = app.container.database.bookDao().getById(bookId)
+            if (book == null) {
+                _flashcardState.value = FlashcardUiState(error = "Book not found")
+                return@launch
+            }
+            // Re-clean user edits as well as extracted text: the preview
+            // must not turn document furniture into a source for cards.
+            val text = PdfTextCleaner.cleanForFlashcards(editedText)
+            if (text.isBlank()) {
+                _flashcardState.value = FlashcardUiState(
+                    error = "The text looks like document clutter. Edit it to include a passage from the main text."
+                )
+                return@launch
+            }
+            val prompt = ManualCardPrompt.build(
+                bookTitle = book.title,
+                chapterLabel = "Page ${pageIndex + 1}",
+                span = text,
+                template = runCatching { settingsRepository.chapterPromptTemplate() }.getOrNull(),
+            )
+            _flashcardState.value = FlashcardUiState(
+                prompt = prompt,
+                sourceText = text,
+                sourcePage = pageIndex,
+            )
+        }
+    }
+
+    fun copyFlashcardPrompt(context: android.content.Context) {
+        val prompt = _flashcardState.value.prompt ?: return
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Card prompt", prompt))
+        _flashcardState.value = _flashcardState.value.copy(
+            notice = "Copied. Paste it into your AI app and send it.",
+            error = null,
+        )
+    }
+
+    fun shareFlashcardPrompt(context: android.content.Context) {
+        val prompt = _flashcardState.value.prompt ?: return
+        runCatching {
+            context.startActivity(
+                android.content.Intent.createChooser(
+                    android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, prompt)
+                    },
+                    "Send to your AI app",
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure {
+            _flashcardState.value = _flashcardState.value.copy(
+                error = "Couldn't open the share sheet. Use Copy instead.",
+            )
+        }
+    }
+
+    /** Reads the AI's reply from the clipboard and shows the cards for ticking. */
+    fun pasteFlashcardReply(context: android.content.Context) {
+        val state = _flashcardState.value
+        val source = state.sourceText ?: return
+        val clip = context.getSystemService(android.content.ClipboardManager::class.java)
+        val reply = clip?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)?.coerceToText(context)?.toString()
+            .orEmpty()
+        if (reply.isBlank()) {
+            _flashcardState.value = state.copy(error = "The clipboard is empty. Copy the AI's reply first.")
+            return
+        }
+        val review = ManualCardImport.review(reply, source)
+        _flashcardState.value = when {
+            !review.sawJson -> state.copy(
+                error = "That doesn't look like the cards. Copy the AI's whole reply (the code block) and try again.",
+            )
+            !review.foundAnything -> state.copy(
+                error = "No cards in that reply." + (review.problems.firstOrNull()?.let { " $it" } ?: ""),
+            )
+            else -> state.copy(
+                review = review.accepted.map { PdfReviewCard(it, keep = true) },
+                leftOut = review.leftOut.size,
+                error = null,
+                notice = null,
+            )
+        }
+    }
+
+    fun toggleFlashcard(index: Int) {
+        val state = _flashcardState.value
+        _flashcardState.value = state.copy(
+            review = state.review.mapIndexed { i, c -> if (i == index) c.copy(keep = !c.keep) else c },
+        )
+    }
+
+    fun addChosenFlashcards() {
+        val bookId = currentBookId ?: return
+        val state = _flashcardState.value
+        val pageIndex = state.sourcePage ?: _state.value.currentPage
+        val chosen = state.review.filter { it.keep }.map { it.raw }
+        if (chosen.isEmpty()) {
+            _flashcardState.value = state.copy(error = "Tick at least one card to add.")
+            return
+        }
         viewModelScope.launch {
             try {
-                val app = getApplication<PageTimeApp>()
-                val bookDao = app.container.database.bookDao()
-                val book = bookDao.getById(bookId)
-                if (book == null) {
-                    _flashcardState.value = FlashcardUiState(error = "Book not found")
-                    return@launch
-                }
-                // Re-clean user edits as well as extracted text: the preview
-                // must not turn document furniture into a source for cards.
-                val text = PdfTextCleaner.cleanForFlashcards(editedText)
-                if (text.isBlank()) {
-                    _flashcardState.value = FlashcardUiState(
-                        error = "The text looks like document clutter. Edit it to include a passage from the main text."
-                    )
-                    return@launch
-                }
-                // Use the same locally-sifted generation path as EPUB. It also
-                // records usage and honours the reader's prompt instructions.
-                val verdict = app.container.chapterPromptGenerator.promptsForText(
-                    book = book,
-                    chapterTitle = "Page ${pageIndex + 1}",
-                    text = text,
-                )
-                val accepted = verdict.accepted
-                val offered = accepted.size + verdict.rejected.size
-                if (accepted.isEmpty()) {
-                    _flashcardState.value = FlashcardUiState(
-                        error = if (offered == 0) {
-                            "Gemini could not generate a flashcard from this text. Try a cleaner or more complete passage."
-                        } else {
-                            "$offered question${if (offered == 1) "" else "s"} came " +
-                                "back and none passed the checks. Nothing was saved."
-                        }
-                    )
-                    return@launch
-                }
-                for (raw in accepted.take(3)) {
+                for (raw in chosen) {
                     saveAsLearningCard(
                         bookId = bookId,
                         prompt = raw.prompt,
@@ -365,17 +438,15 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 Toast.makeText(
                     getApplication<Application>(),
-                    "${accepted.size.coerceAtMost(3)} flashcard${if (accepted.size > 1) "s" else ""} created from page ${pageIndex + 1}",
+                    "${chosen.size} flashcard${if (chosen.size > 1) "s" else ""} added from page ${pageIndex + 1}",
                     Toast.LENGTH_SHORT,
                 ).show()
                 _flashcardState.value = FlashcardUiState(
-                    lastCreatedFront = accepted.first().prompt,
-                    lastCreatedBack = accepted.first().answer,
+                    lastCreatedFront = chosen.first().prompt,
+                    lastCreatedBack = chosen.first().answer,
                 )
             } catch (e: Exception) {
-                _flashcardState.value = FlashcardUiState(
-                    error = "Failed to generate flashcard: ${e.message}"
-                )
+                _flashcardState.value = state.copy(error = "Couldn't save the cards. Try again.")
             }
         }
     }
@@ -448,9 +519,9 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
             fsrsCardJson = fsrsCard,
             createdAt = now,
             updatedAt = now,
-            generatedByAi = true,
+            generatedByAi = false,
             generationKey = null,
-            // Immediately due — same as ChapterPromptGenerator.keep()
+            // Immediately due, like every hand-made card
             status = LearningCardEntity.STATUS_KEPT,
             dueAt = now,
         )
@@ -495,14 +566,23 @@ data class PdfState(
 
 enum class PreviewSource { PAGE, SELECTION }
 
+data class PdfReviewCard(val raw: RawPrompt, val keep: Boolean)
+
 data class FlashcardUiState(
-    val generating: Boolean = false,
     val previewing: Boolean = false,
     val previewText: String? = null,
     val previewSource: PreviewSource? = null,
     val error: String? = null,
     val lastCreatedFront: String? = null,
     val lastCreatedBack: String? = null,
+    /** The prompt waiting to be taken to the reader's own AI app. */
+    val prompt: String? = null,
+    /** The exact text the prompt carries; the reply's quotes are checked against it. */
+    val sourceText: String? = null,
+    val sourcePage: Int? = null,
+    val notice: String? = null,
+    val review: List<PdfReviewCard> = emptyList(),
+    val leftOut: Int = 0,
 )
 
 /**

@@ -20,7 +20,7 @@ import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.embed.BookIndexer
 import com.pagetime.app.data.embed.BookSearcher
-import com.pagetime.app.data.learning.ChapterPromptGenerator
+import com.pagetime.app.data.learning.ChapterQuestions
 import com.pagetime.app.data.embed.CardEmbeddingIndexer
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.usage.ExternalReadingTracker
@@ -284,30 +284,8 @@ class AppContainer(context: Context) {
             store = embeddingModelStore,
         )
 
-    /**
-     * Chapter flashcards: the vectors choose the passages, Gemini writes the
-     * questions, and the rules decide which of them the reader is offered.
-     */
-    val chapterPromptGenerator =
-        ChapterPromptGenerator(
-            chunkDao = database.bookChunkEmbeddingDao(),
-            cardDao = database.learningCardDao(),
-            embeddingModelId = embeddingModelStore::modelId,
-            gemini = geminiLearningClient,
-            usage = aiUsageRepository,
-            passageDao = database.chapterPassageDao(),
-            // The passages the vectors pick are paragraphs; the questions have
-            // to be written from more of the chapter than that, so the text
-            // goes with them. The same reader the index was built with, so a
-            // passage's offsets index the string handed back here.
-            chapterText = { book, chapter ->
-                learningContextExtractor.chapterText(book, chapter)
-            },
-            // The reader's own instructions, when they have written any. Read
-            // per generation rather than captured here, so an edit in Settings
-            // takes effect on the next chapter instead of the next launch.
-            promptTemplate = { settingsRepository.chapterPromptTemplate() },
-        )
+    /** Questions an earlier version left waiting for the reader's verdict. */
+    val chapterQuestions = ChapterQuestions(database.learningCardDao())
 
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),

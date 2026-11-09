@@ -15,6 +15,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -107,7 +111,7 @@ import kotlinx.coroutines.withContext
  * naturally, pinch to zoom, drag to pan when zoomed in. Features:
  *
  *  - Reading time tracking (earns browse balance like EPUB)
- *  - Text preview → AI flashcard generation from current page (Gemini)
+ *  - Text preview → flashcards written by the reader's own AI app (copy, paste back)
  *  - Text selection bottom sheet → highlight → AI flashcard
  *  - Last-position memory (restores to where you left off)
  *  - Dark mode, zoom controls, go-to-page
@@ -415,30 +419,6 @@ fun PdfReaderScreen(
             }
         }
 
-        // --- Flashcard generation indicator ---
-        if (flashcardState.generating) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(32.dp),
-                        color = Color.White,
-                        strokeWidth = 3.dp,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Generating flashcard with Gemini…",
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
-
         // --- Flashcard created toast ---
         flashcardState.lastCreatedFront?.let { front ->
             Box(
@@ -544,7 +524,7 @@ fun PdfReaderScreen(
                                 menuExpanded = false
                                 vm.prepareFlashcardPreview()
                             },
-                            enabled = !isExtracting && !flashcardState.generating && !flashcardState.previewing,
+                            enabled = !isExtracting && !flashcardState.previewing,
                         )
                         // Show the page's text before spending a call on it.
                         //
@@ -572,7 +552,7 @@ fun PdfReaderScreen(
                                     showPageTextSheet = true
                                 }
                             },
-                            enabled = !isExtracting && !flashcardState.generating && !flashcardState.previewing,
+                            enabled = !isExtracting && !flashcardState.previewing,
                         )
                     }
                 },
@@ -613,6 +593,20 @@ fun PdfReaderScreen(
             source = flashcardState.previewSource,
             onConfirm = { editedText -> vm.confirmFlashcardGeneration(editedText) },
             onDismiss = { vm.dismissFlashcardPreview() },
+        )
+    }
+
+    // --- Take the prompt to your own AI app, bring the cards back ---
+    if (flashcardState.prompt != null) {
+        val context = LocalContext.current
+        FlashcardPromptDialog(
+            state = flashcardState,
+            onCopy = { vm.copyFlashcardPrompt(context) },
+            onShare = { vm.shareFlashcardPrompt(context) },
+            onPaste = { vm.pasteFlashcardReply(context) },
+            onToggle = vm::toggleFlashcard,
+            onAdd = vm::addChosenFlashcards,
+            onDismiss = vm::dismissFlashcardPreview,
         )
     }
 
@@ -922,7 +916,7 @@ private fun FlashcardPreviewDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "This is the text Gemini will receive. Edit it to focus on what you want to remember.",
+                    "This is the text your AI app will receive. Edit it to focus on what you want to remember.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -955,7 +949,7 @@ private fun FlashcardPreviewDialog(
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text("Generate flashcard")
+                Text("Next: prompt for your AI")
             }
         },
         dismissButton = {
@@ -977,8 +971,8 @@ private fun FlashcardPreviewDialog(
  * misdescribed one of them.
  *
  * The reason it is worth showing the text at all is the card: seeing what
- * Gemini is about to be given tells the reader whether this page is worth a
- * call, and a scanned page that yielded nothing says so plainly instead of
+ * the AI is about to be given tells the reader whether this page is worth
+ * sending, and a scanned page that yielded nothing says so plainly instead of
  * looking like a menu item that does nothing. It is deliberately the card's
  * INPUT that is on screen, and the button says so.
  */
@@ -1062,4 +1056,85 @@ private fun PageTextSheet(
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+
+/**
+ * The two halves of making cards with your own AI app: take the prompt there,
+ * bring the reply back. Nothing leaves the phone except what the reader sends
+ * themselves.
+ */
+@Composable
+private fun FlashcardPromptDialog(
+    state: FlashcardUiState,
+    onCopy: () -> Unit,
+    onShare: () -> Unit,
+    onPaste: () -> Unit,
+    onToggle: (Int) -> Unit,
+    onAdd: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val reviewing = state.review.isNotEmpty()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (reviewing) "Pick the cards to keep" else "Cards from your AI app") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (!reviewing) {
+                    Text(
+                        "1. Copy the prompt (or share it straight to your AI app).\n" +
+                            "2. Send it there.\n" +
+                            "3. Copy the AI's whole reply and come back.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onCopy) { Text("Copy prompt") }
+                        OutlinedButton(onClick = onShare) { Text("Share…") }
+                    }
+                    OutlinedButton(onClick = onPaste, modifier = Modifier.fillMaxWidth()) {
+                        Text("I have a reply — paste it")
+                    }
+                } else {
+                    state.review.forEachIndexed { index, card ->
+                        Row(verticalAlignment = Alignment.Top) {
+                            Checkbox(checked = card.keep, onCheckedChange = { onToggle(index) })
+                            Column(Modifier.padding(top = 12.dp)) {
+                                Text(card.raw.prompt, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    card.raw.answer,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    if (state.leftOut > 0) {
+                        Text(
+                            "${state.leftOut} card${if (state.leftOut == 1) "" else "s"} left out: " +
+                                "the quote wasn't in the text you sent.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                state.notice?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                }
+                state.error?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            if (reviewing) {
+                Button(onClick = onAdd, enabled = state.review.any { it.keep }) {
+                    Text("Add ${state.review.count { it.keep }}")
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

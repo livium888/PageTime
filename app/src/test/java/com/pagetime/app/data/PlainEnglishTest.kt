@@ -79,7 +79,6 @@ class PlainEnglishTest {
         val plain = PlainReading(
             passage = "Notwithstanding the inclement weather, the expedition proceeded.",
             parts = PlainParts(plain = "The weather was bad. They went anyway.", words = null),
-            source = LlmProviderKind.OFFLINE,
         ).asAnswer()
         assertEquals(listOf("SAYS"), plain.parts.map { it.label })
         assertTrue("The original has to stay in view", plain.quoted.contains("Notwithstanding"))
@@ -88,7 +87,6 @@ class PlainEnglishTest {
             term = "sanction",
             sentence = "The council voted to sanction the new library.",
             parts = GlossParts(kind = "verb", meaning = "To allow.", here = null, example = "Yes."),
-            source = LlmProviderKind.OFFLINE,
         ).asAnswer()
         assertEquals(listOf("MEANS", "FOR EXAMPLE"), word.parts.map { it.label })
         assertEquals("verb", word.badge)

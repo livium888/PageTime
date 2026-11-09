@@ -410,6 +410,18 @@ fun PageTimeAppUi(
                 val explanationHistory by vm.explanationHistory.collectAsStateWithLifecycle()
                 val awaitingRestatement by vm.awaitingRestatement.collectAsStateWithLifecycle()
                 val requestsUsed by vm.requestsUsed.collectAsStateWithLifecycle()
+                val pendingMarking by vm.pendingMarking.collectAsStateWithLifecycle()
+                val markingError by vm.markingError.collectAsStateWithLifecycle()
+
+                pendingMarking?.let { pending ->
+                    com.pagetime.app.ui.components.AskYourAiDialog(
+                        title = "Mark your explanation",
+                        prompt = pending.prompt,
+                        error = markingError,
+                        onReply = vm::submitMarkingReply,
+                        onDismiss = vm::dismissMarking,
+                    )
+                }
 
                 if (isFinished) {
                     navController.popBackStack()

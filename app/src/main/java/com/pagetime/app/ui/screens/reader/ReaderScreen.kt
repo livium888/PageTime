@@ -272,15 +272,16 @@ fun ReaderScreen(
     val initialLocatorReady by vm.initialLocatorReady.collectAsStateWithLifecycle()
     val bookmarkPresent by vm.bookmarkPresent.collectAsStateWithLifecycle()
     val checkpointPresent by vm.checkpointPresent.collectAsStateWithLifecycle()
-    val enhancing by vm.enhancing.collectAsStateWithLifecycle()
-    val enhancementProgress by vm.enhancementProgress.collectAsStateWithLifecycle()
+    val pendingFormat by vm.pendingFormat.collectAsStateWithLifecycle()
+    val formatError by vm.formatError.collectAsStateWithLifecycle()
     val resumeNotice by vm.resumeNotice.collectAsStateWithLifecycle()
     val mapMoment by vm.mapMoment.collectAsStateWithLifecycle()
     val conceptMap by vm.conceptMap.collectAsStateWithLifecycle()
     val lumenDraft by vm.lumenDraft.collectAsStateWithLifecycle()
     val lumenCapturing by vm.lumenCapturing.collectAsStateWithLifecycle()
     val answer by vm.answer.collectAsStateWithLifecycle()
-    val answering by vm.answering.collectAsStateWithLifecycle()
+    val pendingAsk by vm.pendingAsk.collectAsStateWithLifecycle()
+    val askError by vm.askError.collectAsStateWithLifecycle()
     val answerError by vm.answerError.collectAsStateWithLifecycle()
     val lumenFileSuggestions by vm.lumenFileSuggestions.collectAsStateWithLifecycle()
     val bookSearch by vm.bookSearch.collectAsStateWithLifecycle()
@@ -502,6 +503,7 @@ fun ReaderScreen(
             // — figures and all — through the branch above.
             book?.isReflowedText == true && textContent != null -> TextReaderHost(
                 content = textContent!!,
+                styleSpans = vm.textStyles.collectAsStateWithLifecycle().value,
                 initialFraction = initialTextFraction,
                 initialOffset = initialTextOffset,
                 settings = settings,
@@ -650,9 +652,7 @@ fun ReaderScreen(
                     }
                 },
                 isTextBook = book?.isReflowedText == true && textContent != null,
-                enhancing = enhancing,
                 onEnhance = vm::enhanceWithAI,
-                enhancementProgress = enhancementProgress,
                 lumenCapturing = lumenCapturing,
                 onCaptureLumen = vm::captureLumenCard,
                 onOpenLumen = { onOpenLumenCards(bookId) },
@@ -888,12 +888,44 @@ fun ReaderScreen(
         )
     }
 
-    if (answer != null || answering != null || answerError != null) {
+    pendingAsk?.let { ask ->
+        com.pagetime.app.ui.components.AskYourAiDialog(
+            title = ask.heading,
+            prompt = ask.prompt,
+            error = askError,
+            onReply = vm::submitAskReply,
+            onDismiss = vm::dismissAsk,
+        )
+    }
+
+    if (answer != null || answerError != null) {
         AnswerSheet(
-            heading = answer?.heading ?: answering.orEmpty(),
+            heading = answer?.heading.orEmpty(),
             answer = answer,
             error = answerError,
             onDismiss = vm::dismissAnswer
+        )
+    }
+
+    pendingFormat?.let { pending ->
+        com.pagetime.app.ui.components.AskYourAiDialog(
+            title = "Tidy the text with your AI",
+            prompt = pending.prompt,
+            error = formatError,
+            onReply = vm::submitFormatReply,
+            onDismiss = vm::dismissFormat,
+        )
+    }
+
+    val pendingDraftAsk by vm.pendingDraftAsk.collectAsStateWithLifecycle()
+    val draftAskError by vm.draftAskError.collectAsStateWithLifecycle()
+    pendingDraftAsk?.let { ask ->
+        com.pagetime.app.ui.components.AskYourAiDialog(
+            title = ask.heading,
+            prompt = ask.prompt,
+            error = draftAskError,
+            onReply = vm::submitLumenDraftReply,
+            onDismiss = vm::dismissLumenDraftAsk,
         )
     }
 
@@ -902,12 +934,7 @@ fun ReaderScreen(
             draft = draft,
             suggestions = lumenFileSuggestions,
             boxCards = vm.lumenBoxCards.collectAsStateWithLifecycle().value,
-            captureDiagnostic = vm.captureDiagnostic.collectAsStateWithLifecycle().value,
-            captureLog = vm.lastCaptureLog(),
-            redrafting = lumenCapturing,
-            geminiAvailable = vm.geminiAvailable.collectAsStateWithLifecycle().value,
-            onRetry = vm::retryLumenCard,
-            onRewriteWithGemini = vm::rewriteLumenCardWithGemini,
+            onAskYourAi = vm::askAiForLumenDraft,
             onSave = { front, back, afterIndex -> vm.saveLumenCard(front, back, afterIndex) },
             onDismiss = vm::dismissLumenDraft
         )
@@ -1091,6 +1118,8 @@ fun ReaderScreen(
 @Composable
 private fun TextReaderHost(
     content: String,
+    /** Headings, bold and italic from pasted markdown, as whole-book offsets. */
+    styleSpans: List<com.pagetime.app.data.library.MarkdownText.StyleSpan> = emptyList(),
     initialFraction: Float,
     initialOffset: Int,
     settings: ReaderSettings,
@@ -1407,7 +1436,8 @@ private fun TextReaderHost(
                 concepts = concepts,
                 level = conceptLevel,
                 activeConceptId = activeConceptId,
-                pendingSpan = sentenceGrab?.let { it.start to it.end }
+                pendingSpan = sentenceGrab?.let { it.start to it.end },
+                styleSpans = styleSpans,
             )
             Text(
                 text = annotatedText,
@@ -1827,9 +1857,7 @@ private fun ReaderTopBar(
     onMakeCards: () -> Unit = {},
     onExplainBack: () -> Unit,
     isTextBook: Boolean = false,
-    enhancing: Boolean = false,
     onEnhance: () -> Unit = {},
-    enhancementProgress: Pair<Int, Int>? = null,
     lumenCapturing: Boolean = false,
     onCaptureLumen: () -> Unit = {},
     onOpenLumen: () -> Unit = {},
@@ -2145,33 +2173,14 @@ private fun ReaderTopBar(
                     }
                     if (isTextBook) {
                         DropdownMenuItem(
-                            text = {
-                                if (enhancing) {
-                                    val progress = enhancementProgress
-                                    Text(
-                                        if (progress != null) {
-                                            "Formatting ${progress.first}/${progress.second}"
-                                        } else {
-                                            "Preparing…"
-                                        }
-                                    )
-                                } else Text("\u2728 Enhance with AI")
-                            },
+                            text = { Text("Tidy the text with your AI") },
                             leadingIcon = {
-                                if (enhancing) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else {
-                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
-                                }
+                                Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                             },
                             onClick = {
                                 optionsExpanded = false
                                 onEnhance()
                             },
-                            enabled = !enhancing
                         )
                     }
                 }
@@ -2808,12 +2817,7 @@ private fun LumenDraftDialog(
     draft: LumenDraft,
     suggestions: List<LumenCardEntity>,
     boxCards: List<LumenCardEntity>,
-    captureDiagnostic: com.pagetime.app.data.CaptureDiagnostic.Record?,
-    captureLog: List<String>,
-    redrafting: Boolean,
-    geminiAvailable: Boolean,
-    onRetry: () -> Unit,
-    onRewriteWithGemini: () -> Unit,
+    onAskYourAi: () -> Unit,
     onSave: (front: String, back: String, afterIndex: String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2838,73 +2842,29 @@ private fun LumenDraftDialog(
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                // Three cases worth saying out loud: no AI at all, AI that
-                // produced nothing usable, and an AI card that needs the
-                // reader's eye — a thin note, or the same idea as a card they
-                // already have. Only the first has nothing to re-ask.
-                // A card the offline model could not produce, finished by
-                // Gemini instead. Said plainly and before anything else: the
-                // reader chose offline, so a passage leaving the phone is
-                // their business, and an offline model quietly failing every
-                // capture is something they would otherwise never notice.
-                if (draft.rescuedOffline) {
-                    Text(
-                        "The offline model couldn't draft this one, so Gemini did. " +
-                            "Turn that off in Settings if you'd rather it never leaves the phone.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
+                // Two things worth saying out loud: a card that is only the
+                // passage, and a card from the reader's AI that restates one
+                // they already have.
+                Text(
+                    when {
+                        draft.aiShortfall != null ->
+                            "Check this one — ${draft.aiShortfall}. Edit it, or ask again."
+                        draft.usedAi -> "From your AI app. Edit freely."
+                        else -> "Straight from the passage. Edit it, or ask your AI for a better one."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // Offered on every card, including one the AI already wrote:
+                // a well-formed summary of the passage is still not the idea
+                // behind it, and asking again is how the reader gets that.
+                TextButton(
+                    onClick = onAskYourAi,
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text(if (draft.usedAi) "Ask your AI again" else "Draft with your AI")
                 }
-                if (!draft.usedAi || draft.aiShortfall != null) {
-                    Text(
-                        when {
-                            draft.aiShortfall == null ->
-                                "Drafted on-device (no AI key or offline) — edit freely."
-                            !draft.usedAi ->
-                                "The offline model didn't land a card — ${draft.aiShortfall}. " +
-                                    "This draft is straight from the passage; edit it, or ask again."
-                            else ->
-                                "Check this one — ${draft.aiShortfall}. Edit it, or ask again."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (draft.aiShortfall != null) {
-                        TextButton(
-                            onClick = onRetry,
-                            enabled = !redrafting,
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            if (redrafting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("Asking again…")
-                            } else {
-                                Text("Try again")
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-                // Offered on EVERY card, not just ones the checks flagged. The
-                // cards that most need a better model are the ones that pass
-                // every check: well-formed, on-topic, and a summary of the
-                // passage rather than an idea taken from it. Gating this on
-                // aiShortfall would hide it exactly when it matters.
-                if (geminiAvailable) {
-                    TextButton(
-                        onClick = onRewriteWithGemini,
-                        enabled = !redrafting,
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        Text(if (redrafting) "Rewriting…" else "Rewrite with Gemini")
-                    }
-                    Spacer(Modifier.height(4.dp))
-                }
+                Spacer(Modifier.height(4.dp))
                 OutlinedTextField(
                     value = front,
                     onValueChange = { front = it },
@@ -2922,21 +2882,6 @@ private fun LumenDraftDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
-                if (captureDiagnostic != null) {
-                    Text(
-                        when (captureDiagnostic.modelState) {
-                            com.pagetime.app.data.CaptureDiagnostic.ModelState.ready -> "Offline model: ready"
-                            com.pagetime.app.data.CaptureDiagnostic.ModelState.notInstalled -> "Offline model: not installed"
-                            com.pagetime.app.data.CaptureDiagnostic.ModelState.damaged -> "Offline model: damaged"
-                            com.pagetime.app.data.CaptureDiagnostic.ModelState.notEnoughMemory -> "Offline model: not enough memory"
-                            com.pagetime.app.data.CaptureDiagnostic.ModelState.generating -> "Offline model: generating..."
-                            com.pagetime.app.data.CaptureDiagnostic.ModelState.fallbackNoModel -> "Offline model: not used"
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = MaterialTheme.shapes.small,
@@ -3076,16 +3021,6 @@ private fun LumenDraftDialog(
                         }
                     }
                 }
-                // Outside the filing block, which is where this used to live —
-                // so it only appeared when the card happened to have filing
-                // suggestions, and was invisible exactly when a capture went
-                // wrong enough to have none. The log is the only evidence of
-                // what the model was actually shown, so it is offered whenever
-                // there is one.
-                if (captureLog.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    CopyCaptureLogButton(captureLog)
-                }
             }
         },
         confirmButton = {
@@ -3196,32 +3131,6 @@ private fun ThreadPathText(address: String, boxCards: List<LumenCardEntity>) {
         maxLines = 2,
         overflow = TextOverflow.Ellipsis
     )
-}
-
-@Composable
-private fun CopyCaptureLogButton(captureLog: List<String>) {
-    val context = LocalContext.current
-    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-    Button(
-        onClick = {
-            try {
-                clipboard?.setPrimaryClip(
-                    android.content.ClipData.newPlainText("PageTime capture log", captureLog.joinToString("\n"))
-                )
-            } catch (t: Throwable) {
-                // Clipboard access failed; no-op.
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Icon(
-            Icons.Outlined.CopyAll,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text("Copy capture log")
-    }
 }
 
 /**

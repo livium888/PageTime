@@ -35,6 +35,7 @@ import com.pagetime.app.data.learning.SpanPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -94,6 +95,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _textContent = MutableStateFlow<String?>(null)
     val textContent = _textContent.asStateFlow()
 
+    /**
+     * Headings, bold and italic for the text book on screen, from pasted
+     * markdown. Reloaded whenever the text changes, because the ranges are
+     * offsets into one exact text and are dropped when it is replaced.
+     */
+    val textStyles: StateFlow<List<com.pagetime.app.data.library.MarkdownText.StyleSpan>> =
+        combine(_book, _textContent) { book, text ->
+            if (book == null || text == null) emptyList() else repo.textStyles(book, text)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _initialTextFraction = MutableStateFlow(0f)
     val initialTextFraction = _initialTextFraction.asStateFlow()
 
@@ -138,11 +149,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _checkpointPresent = MutableStateFlow(false)
     val checkpointPresent = _checkpointPresent.asStateFlow()
 
-    private val _enhancing = MutableStateFlow(false)
-    val enhancing = _enhancing.asStateFlow()
-
-    private val _enhancementProgress = MutableStateFlow<Pair<Int, Int>?>(null)
-    val enhancementProgress = _enhancementProgress.asStateFlow()
 
     val readerSettings = settingsRepository.readerSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderSettings())
@@ -810,9 +816,17 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _answer = MutableStateFlow<com.pagetime.app.data.ReaderAnswer?>(null)
     val answer = _answer.asStateFlow()
 
-    /** The heading to show while an answer is still being written. */
-    private val _answering = MutableStateFlow<String?>(null)
-    val answering = _answering.asStateFlow()
+    /**
+     * A question waiting for the reader's own AI app: the prompt to take
+     * there, and how to read the reply they paste back.
+     */
+    private val _pendingAsk =
+        MutableStateFlow<com.pagetime.app.data.ManualAsk<com.pagetime.app.data.ReaderAnswer>?>(null)
+    val pendingAsk = _pendingAsk.asStateFlow()
+
+    /** Why the last pasted reply could not be used. Shown inside the ask dialog. */
+    private val _askError = MutableStateFlow<String?>(null)
+    val askError = _askError.asStateFlow()
 
     private val _answerError = MutableStateFlow<String?>(null)
     val answerError = _answerError.asStateFlow()
@@ -1017,67 +1031,57 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
+    /** A better-worded card waiting for the reader's own AI app. */
+    private val _pendingDraftAsk =
+        MutableStateFlow<com.pagetime.app.data.ManualAsk<LumenDraft>?>(null)
+    val pendingDraftAsk = _pendingDraftAsk.asStateFlow()
+
+    /** Why the last pasted card reply could not be used. Shown inside the ask dialog. */
+    private val _draftAskError = MutableStateFlow<String?>(null)
+    val draftAskError = _draftAskError.asStateFlow()
+
     /**
-     * Asks the model for another draft of the same passage. The capture window
-     * is already held in the pending context, so this re-runs inference only —
-     * no re-extraction, and the reader never loses their place.
-     */
-    /**
-     * Re-asks the CLOUD model for this same passage, whatever the reader's
-     * configured provider is.
+     * Opens the ask dialog for a better card from the passage already
+     * captured. The capture window is held in the pending context, so nothing
+     * is re-extracted and the reader never loses their place.
      *
-     * The on-device model answers every capture instantly and for nothing, and
-     * is honestly limited: it paraphrases a passage rather than stating the
-     * idea behind it, and no amount of prompting or decoding changed that. So
-     * it drafts everything, and the passages worth more get one tap.
-     *
-     * Deliberately not automatic. A cloud call costs money and sends the
-     * passage off the device, and doing that for every capture would take both
-     * decisions away from the reader. One tap keeps the cost where the value
-     * is — on the passage they actually cared about.
+     * Deliberately one tap and never automatic: sending a passage to an AI app
+     * is the reader's decision, made per card, for the passages worth it.
      */
-    fun rewriteLumenCardWithGemini() {
+    fun askAiForLumenDraft() {
         val b = _book.value ?: return
         val pending = pendingLumenContext ?: return
-        if (_lumenCapturing.value) return
-        _lumenCapturing.value = true
         viewModelScope.launch {
+            _draftAskError.value = null
             try {
-                val draft = lumenRepo.draft(
-                    b,
-                    pending.draft.quote,
-                    forceSource = LumenDraftSource.GEMINI,
-                )
-                pendingLumenContext = pending.copy(draft = draft)
-                _lumenDraft.value = draft
+                _pendingDraftAsk.value = lumenRepo.draftAsk(b, pending.draft.quote)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                _error.value = error.message ?: "Couldn't rewrite this card"
-            } finally {
-                _lumenCapturing.value = false
+                _error.value = error.message ?: "Couldn't prepare the prompt for this card"
             }
         }
     }
 
-    fun retryLumenCard() {
-        val b = _book.value ?: return
+    /** The reader pasted their AI app's reply to the pending card prompt. */
+    fun submitLumenDraftReply(reply: String) {
+        val ask = _pendingDraftAsk.value ?: return
         val pending = pendingLumenContext ?: return
-        if (_lumenCapturing.value) return
-        _lumenCapturing.value = true
-        viewModelScope.launch {
-            try {
-                val draft = lumenRepo.draft(b, pending.draft.quote)
+        ask.read(reply)
+            .onSuccess { draft ->
+                _draftAskError.value = null
+                _pendingDraftAsk.value = null
                 pendingLumenContext = pending.copy(draft = draft)
                 _lumenDraft.value = draft
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                _error.value = error.message ?: "Couldn't draft this card again"
-            } finally {
-                _lumenCapturing.value = false
             }
-        }
+            .onFailure { error ->
+                _draftAskError.value = error.message ?: "That reply couldn't be read. Try again."
+            }
+    }
+
+    fun dismissLumenDraftAsk() {
+        _pendingDraftAsk.value = null
+        _draftAskError.value = null
     }
 
     /**
@@ -1090,17 +1094,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun explainSelection(term: String, before: String, after: String) {
         val b = _book.value ?: return
-        askAboutSelection(term.trim(), "Couldn't explain that here.") {
+        askAboutSelection(
             container.glossRepository
-                .explain(
-                    term = term,
-                    before = before,
-                    after = after,
-                    bookTitle = b.title,
-                    bookId = b.id,
-                )
-                .map { it.asAnswer() }
-        }
+                .explain(term = term, before = before, after = after, bookTitle = b.title)
+                .map { ask -> ask.map { it.asAnswer() } },
+            "Couldn't explain that here.",
+        )
     }
 
     /**
@@ -1113,43 +1112,50 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     fun simplifySelection(passage: String) {
         val b = _book.value ?: return
-        askAboutSelection("In plain English", "Couldn't say that more simply.") {
+        askAboutSelection(
             container.glossRepository
-                .simplify(passage = passage, bookTitle = b.title, bookId = b.id)
-                .map { it.asAnswer() }
-        }
+                .simplify(passage = passage, bookTitle = b.title)
+                .map { ask -> ask.map { it.asAnswer() } },
+            "Couldn't say that more simply.",
+        )
     }
 
     /**
-     * Runs one selection question into the answer sheet. Only one at a time:
-     * the sheet shows a single answer, and a second request would replace the
-     * first mid-flight with no way to tell which one arrived.
+     * Opens the ask dialog for one selection question, or reports why the
+     * selection cannot be asked about (too long, not a word, and so on).
      */
     private fun askAboutSelection(
-        heading: String,
+        ask: Result<com.pagetime.app.data.ManualAsk<com.pagetime.app.data.ReaderAnswer>>,
         whenItFails: String,
-        request: suspend () -> Result<com.pagetime.app.data.ReaderAnswer>,
     ) {
-        if (_answering.value != null) return
-        _answerError.value = null
         _answer.value = null
-        _answering.value = heading
-        viewModelScope.launch {
-            try {
-                request()
-                    .onSuccess { _answer.value = it }
-                    .onFailure { error ->
-                        _answerError.value = error.message ?: whenItFails
-                    }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                Log.e("LumenCapture", "Selection question failed", error)
-                _answerError.value = error.message ?: whenItFails
-            } finally {
-                _answering.value = null
-            }
+        _askError.value = null
+        ask.onSuccess {
+            _answerError.value = null
+            _pendingAsk.value = it
+        }.onFailure { error ->
+            _pendingAsk.value = null
+            _answerError.value = error.message ?: whenItFails
         }
+    }
+
+    /** The reader pasted their AI app's reply to the pending question. */
+    fun submitAskReply(reply: String) {
+        val ask = _pendingAsk.value ?: return
+        ask.read(reply)
+            .onSuccess {
+                _askError.value = null
+                _pendingAsk.value = null
+                _answer.value = it
+            }
+            .onFailure { error ->
+                _askError.value = error.message ?: "That reply couldn't be read. Try again."
+            }
+    }
+
+    fun dismissAsk() {
+        _pendingAsk.value = null
+        _askError.value = null
     }
 
     /** The selection's own position, when the capture came from one. */
@@ -1315,38 +1321,53 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
     }
 
-    /** Enhance the transcript with AI formatting (speaker labels, paragraphs, etc.). */
+    /** This book's text waiting for the reader's own AI app to tidy it. */
+    private val _pendingFormat =
+        MutableStateFlow<com.pagetime.app.data.LibraryRepository.PendingTranscriptFormat?>(null)
+    val pendingFormat = _pendingFormat.asStateFlow()
+
+    /** Why the last pasted reply could not be used. Shown inside the ask dialog. */
+    private val _formatError = MutableStateFlow<String?>(null)
+    val formatError = _formatError.asStateFlow()
+
+    /**
+     * Tidy this book's text (speaker labels, paragraphs, headings) with the
+     * reader's own AI app: builds the prompt and opens the ask dialog.
+     */
     fun enhanceWithAI() {
         val b = _book.value ?: return
         // Any book this app lays out as text, a PDF's extracted text included:
         // tidying bad extraction is exactly what this is for.
         if (!b.isReflowedText) return
-        if (_enhancing.value) return
-        val gemini = container.geminiLearningClient
-        if (!gemini.isConfigured) {
-            _error.value = "Set a Gemini API key in Settings to use AI formatting"
-            return
-        }
         viewModelScope.launch {
-            _enhancing.value = true
-            _enhancementProgress.value = null
-            try {
-                repo.reformatTranscriptWithAI(b.id, gemini) { completed, total ->
-                    _enhancementProgress.value = completed to total
-                }
-                    .onSuccess { formatted ->
-                        _textContent.value = formatted
-                        _initialTextFraction.value = 0f
-                        _initialTextOffset.value = 0
-                    }
-                    .onFailure { t ->
-                        _error.value = t.message ?: "AI formatting failed"
-                    }
-            } finally {
-                _enhancing.value = false
-                _enhancementProgress.value = null
-            }
+            _formatError.value = null
+            repo.prepareTranscriptFormat(b.id)
+                .onSuccess { _pendingFormat.value = it }
+                .onFailure { t -> _error.value = t.message ?: "Couldn't prepare the text" }
         }
+    }
+
+    /** The reader pasted their AI app's formatted version of this book. */
+    fun submitFormatReply(reply: String) {
+        val pending = _pendingFormat.value ?: return
+        viewModelScope.launch {
+            repo.applyFormattedTranscript(pending, reply)
+                .onSuccess { formatted ->
+                    _pendingFormat.value = null
+                    _formatError.value = null
+                    _textContent.value = formatted
+                    _initialTextFraction.value = 0f
+                    _initialTextOffset.value = 0
+                }
+                .onFailure { t ->
+                    _formatError.value = t.message ?: "That reply couldn't be used. Try again."
+                }
+        }
+    }
+
+    fun dismissFormat() {
+        _pendingFormat.value = null
+        _formatError.value = null
     }
 
     /** Called continuously by the plain-text reader while the user scrolls. */

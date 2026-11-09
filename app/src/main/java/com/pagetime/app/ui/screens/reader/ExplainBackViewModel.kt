@@ -65,6 +65,14 @@ class ExplainBackViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /** An explanation waiting for the reader's own AI app to mark it. */
+    private val _pendingMarking = MutableStateFlow<ExplainBackRepository.PendingExplanation?>(null)
+    val pendingMarking: StateFlow<ExplainBackRepository.PendingExplanation?> = _pendingMarking.asStateFlow()
+
+    /** Why the last pasted marking could not be used. Shown inside the ask dialog. */
+    private val _markingError = MutableStateFlow<String?>(null)
+    val markingError: StateFlow<String?> = _markingError.asStateFlow()
+
     val currentConcept: String
         get() = _concepts.value.getOrElse(_currentConceptIndex.value) { "" }
 
@@ -159,6 +167,10 @@ class ExplainBackViewModel(
         }
     }
 
+    /**
+     * The reader wrote an explanation. Builds the marking prompt and opens the
+     * ask dialog; nothing is marked until they paste their AI app's reply.
+     */
     fun submitExplanation(text: String) {
         if (text.isBlank() || _isLoading.value || evaluationsForConcept >= MAX_EVALUATIONS_PER_CONCEPT) return
         val concept = currentConcept
@@ -167,6 +179,7 @@ class ExplainBackViewModel(
         _messages.value += ChatMessage(text = text, isUser = true)
         _isLoading.value = true
         _error.value = null
+        _markingError.value = null
 
         viewModelScope.launch {
             try {
@@ -174,7 +187,7 @@ class ExplainBackViewModel(
                 if (context.recentText.isBlank()) {
                     error("There is no readable text available for this chapter yet")
                 }
-                val evaluation = repository.submitExplanation(
+                _pendingMarking.value = repository.prepareExplanation(
                     bookId = bookId,
                     chapterIndex = chapterIndex,
                     chapterTitle = chapterTitle,
@@ -183,13 +196,30 @@ class ExplainBackViewModel(
                     userExplanation = text,
                     sourceText = context.recentText
                 )
+            } catch (throwable: Throwable) {
+                if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+                _messages.value += ChatMessage(
+                    text = "Sorry, I couldn't prepare that for marking. ${throwable.message ?: "Try again."}",
+                    isUser = false,
+                    isAi = true
+                )
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /** The reader pasted their AI app's marking of the pending explanation. */
+    fun submitMarkingReply(reply: String) {
+        val pending = _pendingMarking.value ?: return
+        viewModelScope.launch {
+            try {
+                val evaluation = repository.recordExplanation(pending, reply)
+                _pendingMarking.value = null
+                _markingError.value = null
                 evaluationsForConcept += 1
                 _requestsUsed.value += 1
                 val feedbackText = buildString {
-                    // Only a grader that scored the three dimensions gets to
-                    // show three numbers. The on-device grader returns one
-                    // verdict instead of inventing a breakdown it never worked
-                    // out, and printing "null/5" would be worse than either.
                     if (evaluation.hasBreakdown) {
                         append("Accuracy: ${evaluation.accuracy}/5 · Completeness: ${evaluation.completeness}/5 · Clarity: ${evaluation.clarity}/5")
                         append("\n\n")
@@ -214,16 +244,17 @@ class ExplainBackViewModel(
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
             } catch (throwable: Throwable) {
                 if (throwable is kotlinx.coroutines.CancellationException) throw throwable
-                _error.value = throwable.message ?: "The AI could not evaluate this explanation"
-                _messages.value += ChatMessage(
-                    text = "Sorry, I couldn't evaluate that. ${throwable.message ?: "Try again."}",
-                    isUser = false,
-                    isAi = true
-                )
-            } finally {
-                _isLoading.value = false
+                // Stays in the dialog: the reader can copy the reply again and
+                // retry without retyping their explanation.
+                _markingError.value = throwable.message ?: "That reply couldn't be read. Try again."
             }
         }
+    }
+
+    /** Closes the ask dialog without a marking. The explanation stays in the chat. */
+    fun dismissMarking() {
+        _pendingMarking.value = null
+        _markingError.value = null
     }
 
     fun deleteHistory(id: String) {

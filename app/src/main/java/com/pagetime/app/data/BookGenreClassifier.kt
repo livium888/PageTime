@@ -1,58 +1,54 @@
 package com.pagetime.app.data
 
-import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.BookDao
-import com.pagetime.app.data.local.SettingsRepository
 
 /**
- * Tags each book with a [BookGenre], once, in the background.
+ * Tags books with a [BookGenre], when the reader asks for it.
  *
- * Not required for the app to work: with no AI configured, [classifyMissing]
- * is a no-op every time it runs, and books simply stay unclassified forever —
- * [BookGenreSummary] already treats that as "nothing to report" rather than
- * an error. There is no urgency here worth a loading spinner or a failure
- * message; it either quietly happens or quietly doesn't.
+ * Not required for the app to work: untagged books simply stay untagged, and
+ * [BookGenreSummary] treats that as "nothing to report". The tagging itself is
+ * done by the reader's own AI app — see [BookGenrePrompts] and [ManualAsk].
  */
 class BookGenreClassifier(
     private val bookDao: BookDao,
-    private val settingsRepository: SettingsRepository,
-    private val geminiClient: GeminiLearningClient,
-    private val localLlmProvider: LlmProvider? = null,
 ) {
-    /**
-     * Classifies up to [limit] books per call, oldest-added first.
-     *
-     * Capped rather than "every unclassified book at once" so importing a
-     * pile of books in one sitting doesn't fire a burst of AI calls the
-     * moment the Library screen opens — it catches up a few books per visit
-     * instead, the same throttling reasoning as
-     * [com.pagetime.app.data.ExplainBackRepository]'s per-chapter concept cap.
-     */
-    suspend fun classifyMissing(limit: Int = 5) {
-        val provider = settingsRepository.llmProvider()
-        val source = LumenDraftRouter.sourceFor(
-            provider = provider,
-            geminiConfigured = geminiClient.hasKey(),
-            localModelAvailable = localLlmProvider?.isAvailable == true,
-        )
-        if (source == LumenDraftSource.FALLBACK) return
-
-        for (book in bookDao.getUnclassified(limit)) {
-            val genre = runCatching { classifyOne(book.title, book.author, source) }.getOrNull() ?: continue
-            bookDao.updateGenre(book.id, genre.name)
-        }
+    /** The untagged books a prompt was built for, in the order it numbered them. */
+    class PendingGenres internal constructor(
+        val prompt: String,
+        internal val bookIds: List<String>,
+    ) {
+        val count: Int get() = bookIds.size
     }
 
-    private suspend fun classifyOne(title: String, author: String, source: LumenDraftSource): BookGenre? {
-        val prompt = BookGenrePrompts.classify(title, author)
-        val reply = when (source) {
-            LumenDraftSource.GEMINI -> geminiClient.generateText(prompt, maxOutputTokens = 16)
-            LumenDraftSource.LOCAL -> {
-                val local = localLlmProvider ?: return null
-                local.generate(LlmRequest(prompt, maxOutputTokens = 16)).getOrNull()?.text ?: return null
-            }
-            LumenDraftSource.FALLBACK -> return null
+    /** How many books have no genre yet. */
+    suspend fun untaggedCount(): Int = bookDao.getUnclassified(Int.MAX_VALUE).size
+
+    /** The prompt for the oldest untagged books, or null when every book is tagged. */
+    suspend fun prepare(): PendingGenres? {
+        val books = bookDao.getUnclassified(BookGenrePrompts.MAX_BOOKS)
+        if (books.isEmpty()) return null
+        return PendingGenres(
+            prompt = BookGenrePrompts.classifyAll(books.map { it.title to it.author }),
+            bookIds = books.map { it.id },
+        )
+    }
+
+    /**
+     * Stores the genres in the reply the reader pasted back and returns how
+     * many books were tagged. Fails, changing nothing, when no line of the
+     * reply could be read.
+     */
+    suspend fun apply(pending: PendingGenres, reply: String): Int {
+        val genres = BookGenrePrompts.parseAll(reply, pending.count)
+        if (genres.isEmpty()) {
+            error(
+                "No genres could be read from that reply. It should be lines like \"1: Fiction\". " +
+                    "Copy the AI's whole reply and try again."
+            )
         }
-        return BookGenre.parse(reply)
+        for ((number, genre) in genres) {
+            bookDao.updateGenre(pending.bookIds[number - 1], genre.name)
+        }
+        return genres.size
     }
 }

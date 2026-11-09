@@ -5,8 +5,7 @@ import androidx.room.withTransaction
 import com.pagetime.app.data.learning.ConceptMapGenerationResult
 import com.pagetime.app.data.learning.ConceptRangeMatcher
 import com.pagetime.app.data.learning.GeneratedConcept
-import com.pagetime.app.data.learning.GeminiLearningClient
-import com.pagetime.app.data.learning.GenerationPolicy
+import com.pagetime.app.data.learning.ConceptMapPrompt
 import com.pagetime.app.data.learning.LearningContext
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.learning.LocalConceptMapGenerator
@@ -33,9 +32,7 @@ class ConceptMapRepository(
     private val bookDao: BookDao,
     private val generationDao: LearningGenerationDao,
     private val contextExtractor: LearningContextExtractor,
-    private val geminiClient: GeminiLearningClient,
     private val settingsRepository: SettingsRepository,
-    private val aiUsageRepository: AiUsageRepository? = null
 ) {
     fun observeBookMap(bookId: String): Flow<ConceptMap> = combine(
         conceptDao.observeForBook(bookId),
@@ -90,6 +87,50 @@ class ConceptMapRepository(
         )
     }
 
+    /**
+     * A concept map waiting for the reader's own AI app: the prompt to take
+     * there, and the exact text the reply will be checked against.
+     */
+    class PendingMap internal constructor(
+        val prompt: String,
+        internal val bookId: String,
+        internal val chapterIndex: Int,
+        internal val sourceText: String,
+    )
+
+    /** Builds the prompt for a richer map of the reader's current chapter. Stores nothing. */
+    suspend fun prepareManualMap(bookId: String, chapterIndex: Int): PendingMap {
+        val book = bookDao.getById(bookId) ?: error("Book not found")
+        // Smaller than the automatic pass reads: this text travels through a
+        // clipboard and a chat box, and a chat app given a whole long chapter
+        // covers its start and ignores the rest.
+        val context = contextExtractor.extract(book, chapterIndex, maxCharacters = MANUAL_MAP_CHARACTERS)
+        if (context.recentText.isBlank()) error("There is no readable text in this chapter yet")
+        return PendingMap(
+            prompt = ConceptMapPrompt.build(context, conceptDao.getForBook(bookId).map { it.label }),
+            bookId = bookId,
+            chapterIndex = chapterIndex,
+            sourceText = context.recentText,
+        )
+    }
+
+    /**
+     * Reads the map the reader pasted back, checks every quote against the
+     * text that was sent, and merges what survives. Fails, changing nothing,
+     * when the reply is not a map or nothing in it could be verified.
+     */
+    suspend fun mergeManualMap(pending: PendingMap, reply: String): ConceptMapGenerationResult {
+        val parsed = ConceptMapPrompt.parse(reply, pending.sourceText)
+            ?: error("That reply isn't a concept map. Copy the AI's whole reply (the code block) and try again.")
+        if (parsed.concepts.isEmpty()) {
+            error("Nothing in that reply could be checked against the chapter: every concept needs a quote copied exactly from the text.")
+        }
+        database.withTransaction {
+            merge(pending.bookId, pending.chapterIndex, parsed)
+        }
+        return parsed
+    }
+
     private suspend fun generateWithContext(
         bookId: String,
         chapterIndex: Int,
@@ -123,42 +164,11 @@ class ConceptMapRepository(
             return cachedResultFor(bookId, context, rangeScopedCache)
         }
         return try {
-            val existing = conceptDao.getForBook(bookId)
-            val local = LocalConceptMapGenerator.generate(context)
-            val useGemini = GenerationPolicy.shouldCallGemini(
-                mode = settingsRepository.generationMode(),
-                localItemCount = local.concepts.size,
-                geminiConfigured = geminiClient.isConfigured
-            )
-            val generated = if (useGemini) {
-                try {
-                    val run = suspend {
-                        geminiClient.generateConceptMap(context, existing.map { it.label })
-                    }
-                    val result = aiUsageRepository?.track(
-                        bookId = context.bookId,
-                        operation = AiUsageRepository.OPERATION_CONCEPTS,
-                        model = geminiClient.currentModel(),
-                        inputCharacters = context.recentText.length,
-                        outputItems = { it.concepts.size },
-                        secondaryItems = { it.relationships.size },
-                        block = run
-                    ) ?: run()
-                    generationDao.complete(bookId, key, STATUS_COMPLETE, result.concepts.size, System.currentTimeMillis())
-                    result
-                } catch (error: Throwable) {
-                    if (error is CancellationException) throw error
-                    // Mark failed so a later checkpoint can retry; never leave the
-                    // reader without a map when Gemini is unavailable.
-                    generationDao.complete(bookId, key, STATUS_FAILED, 0, System.currentTimeMillis())
-                    local
-                }
-            } else {
-                // Local-only pass: merge it but do not claim the cache, so the
-                // chapter can still be upgraded to a Gemini map later.
-                generationDao.release(bookId, key)
-                local
-            }
+            // Built on the device from the text itself, with no model
+            // involved. A richer map is the reader's to ask for: see
+            // [prepareManualMap].
+            val generated = LocalConceptMapGenerator.generate(context)
+            generationDao.complete(bookId, key, STATUS_COMPLETE, generated.concepts.size, System.currentTimeMillis())
             database.withTransaction {
                 merge(bookId, chapterIndex, generated)
             }
@@ -346,6 +356,8 @@ class ConceptMapRepository(
         private const val GENERATION_STALE_AFTER_MS = 10 * 60 * 1000L
         private const val GENERATION_RETRY_AFTER_MS = 15 * 60 * 1000L
         private const val MAX_KEYWORDS = 20
+        /** How much of a chapter a hand-carried prompt holds: about 2,000 words. */
+        private const val MANUAL_MAP_CHARACTERS = 12_000
     }
 }
 

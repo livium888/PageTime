@@ -18,7 +18,6 @@ data class ReaderAnswer(
     val quoted: String,
     val parts: List<NotePart>,
     val footnote: String,
-    val source: LlmProviderKind?,
 )
 
 fun Gloss.asAnswer(): ReaderAnswer = ReaderAnswer(
@@ -30,8 +29,7 @@ fun Gloss.asAnswer(): ReaderAnswer = ReaderAnswer(
         parts.here?.let { NotePart("HERE", it) },
         parts.example?.let { NotePart("FOR EXAMPLE", "“$it”") },
     ),
-    footnote = "Written by the AI, not taken from a dictionary.",
-    source = source,
+    footnote = "Written by your AI app, not taken from a dictionary.",
 )
 
 fun PlainReading.asAnswer(): ReaderAnswer = ReaderAnswer(
@@ -42,6 +40,5 @@ fun PlainReading.asAnswer(): ReaderAnswer = ReaderAnswer(
         NotePart("SAYS", parts.plain),
         parts.words?.let { NotePart("HARD WORDS", it) },
     ),
-    footnote = "The AI's rewording. The original is above it — check they agree.",
-    source = source,
+    footnote = "Your AI app's rewording. The original is above it — check they agree.",
 )

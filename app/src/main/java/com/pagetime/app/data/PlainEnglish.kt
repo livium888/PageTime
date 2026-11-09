@@ -135,5 +135,4 @@ data class PlainParts(val plain: String, val words: String?)
 data class PlainReading(
     val passage: String,
     val parts: PlainParts,
-    val source: LlmProviderKind?,
 )

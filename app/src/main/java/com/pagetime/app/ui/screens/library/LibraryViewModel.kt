@@ -101,20 +101,56 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { runCatching { container.settingsRepository.dismissLibrarianSuggestion() } }
     }
 
+    /** How many books have no genre yet; zero hides the offer to sort them. */
+    val untaggedCount = books
+        .map { list -> list.count { it.genre == null } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /** Untagged books waiting for the reader's own AI app to sort them. */
+    private val _pendingGenres =
+        MutableStateFlow<com.pagetime.app.data.BookGenreClassifier.PendingGenres?>(null)
+    val pendingGenres = _pendingGenres.asStateFlow()
+
+    /** Why the last pasted reply could not be used. Shown inside the ask dialog. */
+    private val _genreError = MutableStateFlow<String?>(null)
+    val genreError = _genreError.asStateFlow()
+
+    /** Builds the one prompt for the untagged books and opens the ask dialog. */
+    fun sortByGenre() {
+        viewModelScope.launch {
+            _genreError.value = null
+            runCatching { container.bookGenreClassifier.prepare() }
+                .onSuccess { _pendingGenres.value = it }
+                .onFailure { error -> _importError.value = error.message ?: "Couldn't prepare the list" }
+        }
+    }
+
+    /** The reader pasted their AI app's genre list. */
+    fun submitGenreReply(reply: String) {
+        val pending = _pendingGenres.value ?: return
+        viewModelScope.launch {
+            runCatching { container.bookGenreClassifier.apply(pending, reply) }
+                .onSuccess {
+                    _pendingGenres.value = null
+                    _genreError.value = null
+                }
+                .onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    _genreError.value = error.message ?: "That reply couldn't be read. Try again."
+                }
+        }
+    }
+
+    fun dismissGenres() {
+        _pendingGenres.value = null
+        _genreError.value = null
+    }
+
     init {
-        // Fire-and-forget: a no-op with no AI configured, and throttled to a
-        // few books per visit otherwise — see BookGenreClassifier's own doc.
-        viewModelScope.launch { runCatching { container.bookGenreClassifier.classifyMissing() } }
         viewModelScope.launch {
             runCatching { container.librarianSuggester.refreshIfNeeded(LocalDate.now().toEpochDay()) }
         }
     }
-
-    private val _reformatting = MutableStateFlow<Set<String>>(emptySet())
-    val reformatting = _reformatting.asStateFlow()
-
-    private val _reformatProgress = MutableStateFlow<Map<String, Pair<Int, Int>>>(emptyMap())
-    val reformatProgress = _reformatProgress.asStateFlow()
 
     fun hasRawBackup(book: BookEntity): Boolean = container.libraryRepository.rawBackupFile(book).exists()
 
@@ -164,26 +200,44 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { container.libraryRepository.deleteBook(book) }
     }
 
+    /** A transcript waiting for the reader's own AI app to tidy it. */
+    private val _pendingFormat =
+        MutableStateFlow<com.pagetime.app.data.LibraryRepository.PendingTranscriptFormat?>(null)
+    val pendingFormat = _pendingFormat.asStateFlow()
+
+    /** Why the last pasted reply could not be used. Shown inside the ask dialog. */
+    private val _formatError = MutableStateFlow<String?>(null)
+    val formatError = _formatError.asStateFlow()
+
+    /** Builds the formatting prompt and opens the ask dialog. */
     fun reformatWithAI(bookId: String) {
-        if (bookId in _reformatting.value) return
-        val gemini = container.geminiLearningClient
-        if (!gemini.isConfigured) {
-            _importError.value = "Set up a Gemini API key in Settings to use AI formatting"
-            return
-        }
         viewModelScope.launch {
-            _reformatting.value += bookId
-            _reformatProgress.value -= bookId
             _importError.value = null
-            container.libraryRepository.reformatTranscriptWithAI(bookId, gemini) { completed, total ->
-                _reformatProgress.value = _reformatProgress.value + (bookId to (completed to total))
-            }
-                .onFailure { error ->
-                    _importError.value = error.message ?: "AI formatting failed"
-                }
-            _reformatting.value -= bookId
-            _reformatProgress.value -= bookId
+            _formatError.value = null
+            container.libraryRepository.prepareTranscriptFormat(bookId)
+                .onSuccess { _pendingFormat.value = it }
+                .onFailure { error -> _importError.value = error.message ?: "Couldn't prepare the text" }
         }
+    }
+
+    /** The reader pasted their AI app's formatted version. */
+    fun submitFormatReply(reply: String) {
+        val pending = _pendingFormat.value ?: return
+        viewModelScope.launch {
+            container.libraryRepository.applyFormattedTranscript(pending, reply)
+                .onSuccess {
+                    _pendingFormat.value = null
+                    _formatError.value = null
+                }
+                .onFailure { error ->
+                    _formatError.value = error.message ?: "That reply couldn't be used. Try again."
+                }
+        }
+    }
+
+    fun dismissFormat() {
+        _pendingFormat.value = null
+        _formatError.value = null
     }
 
     fun importBook(uri: Uri, onImported: (BookEntity) -> Unit) {
@@ -202,6 +256,21 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearImportError() {
         _importError.value = null
+    }
+
+    /** Makes a book from text the reader pasted in. Markdown becomes formatted text. */
+    fun importPastedText(title: String, text: String, onImported: (BookEntity) -> Unit) {
+        if (_importing.value) return
+        viewModelScope.launch {
+            _importing.value = true
+            _importError.value = null
+            container.libraryRepository.importPastedText(title, text)
+                .onSuccess(onImported)
+                .onFailure { error ->
+                    _importError.value = error.message ?: "Could not import the pasted text"
+                }
+            _importing.value = false
+        }
     }
 
     fun importYouTubeUrl(url: String, onImported: (BookEntity) -> Unit) {

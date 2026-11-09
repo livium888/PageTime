@@ -107,6 +107,18 @@ fun ConceptMapScreen(
         }
     }
 
+    val pendingMap by viewModel.pendingMap.collectAsStateWithLifecycle()
+    val mapAskError by viewModel.mapAskError.collectAsStateWithLifecycle()
+    pendingMap?.let { pending ->
+        com.pagetime.app.ui.components.AskYourAiDialog(
+            title = "A richer map from your AI",
+            prompt = pending.prompt,
+            error = mapAskError,
+            onReply = viewModel::submitMapReply,
+            onDismiss = viewModel::dismissMapAsk,
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -117,6 +129,9 @@ fun ConceptMapScreen(
                     }
                 },
                 actions = {
+                    TextButton(onClick = viewModel::askYourAi, enabled = !generating) {
+                        Text("Ask your AI")
+                    }
                     IconButton(onClick = viewModel::generateNow, enabled = !generating) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Update map")
                     }

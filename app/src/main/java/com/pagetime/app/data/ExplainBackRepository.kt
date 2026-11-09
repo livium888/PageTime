@@ -1,39 +1,24 @@
 package com.pagetime.app.data
 
 import com.pagetime.app.data.local.ConceptDao
-import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.local.ExplanationDao
 import com.pagetime.app.data.local.ExplanationEntity
 import com.pagetime.app.data.learning.ConceptRangeMatcher
 import com.pagetime.app.data.learning.ExplanationEvaluation
-import com.pagetime.app.data.learning.GeminiLearningClient
-import com.pagetime.app.data.learning.LearningContextExtractor
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 
 /**
- * Drives the Feynman explain-back flow and persists source-grounded evaluations.
+ * Drives the Feynman explain-back flow and stores source-grounded markings.
  *
- * Grading runs wherever the reader's chosen provider says, through the same
- * router as every other AI ask in the app. It used to call Gemini directly, so
- * the flow accepted an explanation and then threw "Gemini API key is not
- * configured" at anyone without one — including a reader with the offline model
- * installed and working.
- *
- * Like the word lookup and unlike a capture, this fails rather than falling
- * back. A card has a useful non-AI form; there is no non-AI way to tell someone
- * what their explanation missed, and a fabricated mark would be worse than
- * saying no grader is available.
+ * The marking is done by the reader's own AI app: [prepareExplanation] builds
+ * the prompt, the reader takes it there, and [recordExplanation] reads the
+ * reply they paste back. See [ExplainBackMarking] and [ManualAsk].
  */
 class ExplainBackRepository(
     private val conceptDao: ConceptDao,
     private val explanationDao: ExplanationDao,
-    private val geminiClient: GeminiLearningClient,
-    private val contextExtractor: LearningContextExtractor,
-    private val settingsRepository: SettingsRepository? = null,
-    private val localLlmProvider: LlmProvider? = null,
-    private val aiUsageRepository: AiUsageRepository? = null
 ) {
     fun observeExplanations(bookId: String): Flow<List<ExplanationEntity>> =
         explanationDao.observeForBook(bookId)
@@ -87,7 +72,22 @@ class ExplainBackRepository(
             .take(5)
     }
 
-    suspend fun submitExplanation(
+    /**
+     * An explanation waiting to be marked: the prompt for the reader's own AI
+     * app, and everything needed to store the result once the reply is pasted.
+     */
+    class PendingExplanation internal constructor(
+        val prompt: String,
+        internal val bookId: String,
+        internal val chapterIndex: Int,
+        internal val chapterTitle: String?,
+        internal val conceptLabel: String,
+        internal val keyPoints: List<String>,
+        internal val userExplanation: String,
+    )
+
+    /** Builds the marking prompt. Nothing is stored until a reply is recorded. */
+    suspend fun prepareExplanation(
         bookId: String,
         chapterIndex: Int,
         chapterTitle: String?,
@@ -95,7 +95,7 @@ class ExplainBackRepository(
         conceptLabel: String,
         userExplanation: String,
         sourceText: String
-    ): ExplanationEvaluation {
+    ): PendingExplanation {
         val concept = conceptDao.getForBook(bookId).firstOrNull { it.label == conceptLabel }
         val keyPoints = concept?.description
             ?.split(".", ",", ";")
@@ -116,28 +116,43 @@ class ExplainBackRepository(
             }
         }.orEmpty()
         val compactKeyPoints = (keyPoints + memoryHint).filter { it.isNotBlank() }.take(4)
-
-        val evaluation = grade(
+        return PendingExplanation(
+            prompt = ExplainBackMarking.prompt(
+                conceptLabel = conceptLabel,
+                keyPoints = compactKeyPoints,
+                source = sourceText,
+                userExplanation = userExplanation,
+                bookTitle = bookTitle,
+                chapterTitle = chapterTitle ?: "",
+                anchor = concept?.sourceQuote,
+            ),
             bookId = bookId,
+            chapterIndex = chapterIndex,
+            chapterTitle = chapterTitle,
             conceptLabel = conceptLabel,
             keyPoints = compactKeyPoints,
-            anchor = concept?.sourceQuote,
-            sourceText = sourceText,
             userExplanation = userExplanation,
-            bookTitle = bookTitle,
-            chapterTitle = chapterTitle ?: ""
         )
+    }
 
+    /**
+     * Reads the marking the reader pasted back and stores it.
+     *
+     * Fails, storing nothing, when the reply holds no usable marking: a
+     * fabricated mark would be worse than asking for the reply again.
+     */
+    suspend fun recordExplanation(pending: PendingExplanation, reply: String): ExplanationEvaluation {
+        val evaluation = ExplainBackMarking.parse(reply) ?: error(UNREADABLE)
         val now = System.currentTimeMillis()
         explanationDao.upsert(
             ExplanationEntity(
                 id = UUID.randomUUID().toString(),
-                bookId = bookId,
-                chapterIndex = chapterIndex,
-                chapterTitle = chapterTitle,
-                conceptLabel = conceptLabel,
-                conceptKeyPoints = compactKeyPoints.joinToString("||"),
-                userExplanation = userExplanation,
+                bookId = pending.bookId,
+                chapterIndex = pending.chapterIndex,
+                chapterTitle = pending.chapterTitle,
+                conceptLabel = pending.conceptLabel,
+                conceptKeyPoints = pending.keyPoints.joinToString("||"),
+                userExplanation = pending.userExplanation,
                 aiFeedback = buildFeedbackText(evaluation),
                 accuracyScore = evaluation.accuracy,
                 completenessScore = evaluation.completeness,
@@ -152,70 +167,6 @@ class ExplainBackRepository(
             )
         )
         return evaluation
-    }
-
-    /**
-     * Marks the explanation with whichever grader the reader has configured.
-     *
-     * The two graders are handed different amounts of the chapter. Gemini takes
-     * 12,000 characters because it can; the device spends one token budget on
-     * the passage, the reader's answer and the reply together, so the local
-     * prompt takes a window centred on the quote the concept came from.
-     */
-    private suspend fun grade(
-        bookId: String,
-        conceptLabel: String,
-        keyPoints: List<String>,
-        anchor: String?,
-        sourceText: String,
-        userExplanation: String,
-        bookTitle: String,
-        chapterTitle: String
-    ): ExplanationEvaluation {
-        val provider = settingsRepository?.llmProvider() ?: LlmProviderKind.GEMINI
-        val source = LumenDraftRouter.sourceFor(
-            provider = provider,
-            geminiConfigured = geminiClient.hasKey(),
-            localModelAvailable = localLlmProvider?.isAvailable == true
-        )
-        return when (source) {
-            LumenDraftSource.GEMINI -> geminiClient.evaluateExplanation(
-                conceptLabel = conceptLabel,
-                keyPoints = keyPoints,
-                sourceExcerpt = sourceText.take(12_000),
-                userExplanation = userExplanation,
-                bookTitle = bookTitle,
-                chapterTitle = chapterTitle
-            )
-
-            LumenDraftSource.LOCAL -> {
-                val local = localLlmProvider ?: error(NO_GRADER)
-                val prompt = ExplainBackGrading.prompt(
-                    conceptLabel = conceptLabel,
-                    keyPoints = keyPoints,
-                    source = sourceText,
-                    userExplanation = userExplanation,
-                    anchor = anchor
-                )
-                val call: suspend () -> String = {
-                    local.generate(
-                        LlmRequest(prompt, maxOutputTokens = ExplainBackGrading.REPLY_TOKENS)
-                    ).getOrThrow().text
-                }
-                val raw = aiUsageRepository?.track(
-                    bookId = bookId,
-                    operation = AiUsageRepository.OPERATION_EXPLAIN,
-                    model = LlmProviderKind.OFFLINE.key,
-                    inputCharacters = prompt.length,
-                    outputItems = { it.length },
-                    block = call
-                ) ?: call()
-                ExplainBackGrading.parse(raw)
-                    ?: error("The offline model did not return a usable mark. Try again.")
-            }
-
-            LumenDraftSource.FALLBACK -> error(NO_GRADER)
-        }
     }
 
     suspend fun deleteExplanation(id: String) = explanationDao.deleteById(id)
@@ -262,8 +213,7 @@ class ExplainBackRepository(
     }
 
     private companion object {
-        const val NO_GRADER =
-            "No AI is set up to mark this. Add a Gemini key or install the offline " +
-                "model in Settings."
+        const val UNREADABLE =
+            "That reply doesn't hold a marking. Copy the AI's whole reply (the code block) and try again."
     }
 }

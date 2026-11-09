@@ -45,6 +45,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -107,7 +108,17 @@ fun ReviewSessionScreen(
     gateMode: Boolean = false,
     /** Leaves the gate for the book instead of continuing the sitting. Unused, and unreachable, outside [gateMode]. */
     onStartReading: () -> Unit = {},
-    vm: ReviewSessionViewModel = viewModel(),
+    // An explicit factory, never the default one. The default can only call a
+    // constructor taking just the Application, and this view model also takes
+    // gateMode; a default value on a Kotlin parameter does not create that
+    // one-argument constructor, so the default factory throws "Cannot create
+    // an instance" the moment the standalone Review screen opens.
+    vm: ReviewSessionViewModel = viewModel(
+        factory = ReviewSessionViewModelFactory(
+            LocalContext.current.applicationContext as android.app.Application,
+            gateMode = false,
+        ),
+    ),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val cardTextSize by vm.cardTextSize.collectAsStateWithLifecycle()

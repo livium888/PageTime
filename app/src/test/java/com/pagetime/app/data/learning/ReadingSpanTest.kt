@@ -83,6 +83,38 @@ class ReadingSpanTest {
         assertEquals(listOf("C5", "C6"), labels(s))
     }
 
+    // --- Chapters with no paragraph breaks (e.g. converted from PDF) ---
+
+    @Test
+    fun `a chapter that is one huge paragraph still yields a small span`() {
+        val sentences = (1..1000).joinToString(" ") { "Sentence$it has a few plain words." }
+        val one = "CHAPTER 1 " + sentences
+        val s = ReadingSpan.slice({ one }, 1, SpanPoint(0, 0.50f), SpanPoint(0, 0.51f))
+        assertTrue("got ${s.words} words", s.words in 40..600)
+        assertFalse(s.text.contains("Sentence1 "))
+    }
+
+    @Test
+    fun `unpunctuated unbroken text is also cut`() {
+        val one = (1..5000).joinToString(" ") { "w$it" }
+        val s = ReadingSpan.slice({ one }, 1, SpanPoint(0, 0.5f), SpanPoint(0, 0.5f))
+        assertTrue("got ${s.words} words", s.words < 600)
+    }
+
+    @Test
+    fun `normal paragraphs are left exactly as they were`() {
+        assertEquals(chapters[0], ReadingSpan.breakUpLongParagraphs(chapters[0]))
+    }
+
+    @Test
+    fun `breaking up paragraphs loses no words`() {
+        val one = (1..1000).joinToString(" ") { "Sentence$it ends here." }
+        assertEquals(
+            ReadingSpan.words(one),
+            ReadingSpan.words(ReadingSpan.breakUpLongParagraphs(one)),
+        )
+    }
+
     // --- Nudging the end, because an EPUB position is only approximate ---
 
     @Test

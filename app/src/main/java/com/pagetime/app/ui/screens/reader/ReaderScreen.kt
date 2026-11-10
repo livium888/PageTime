@@ -1929,6 +1929,10 @@ private fun ReaderTopBar(
     optionsMenuOpen: MutableState<Boolean>
 ) {
     var optionsExpanded by optionsMenuOpen
+    // Which of the menu's two lists is showing. Back to the short one every
+    // time the menu closes, so it never reopens on the long list.
+    var showMore by remember { mutableStateOf(false) }
+    LaunchedEffect(optionsExpanded) { if (!optionsExpanded) showMore = false }
 
     TopAppBar(
         title = {
@@ -1974,265 +1978,282 @@ private fun ReaderTopBar(
                     expanded = optionsExpanded,
                     onDismissRequest = { optionsExpanded = false }
                 ) {
-                    MenuSectionLabel("Navigate", first = true)
-                    if (hasChapters) {
-                        DropdownMenuItem(
-                            text = { Text("Chapters") },
-                            leadingIcon = { Icon(Icons.Filled.List, contentDescription = null) },
-                            onClick = {
-                                optionsExpanded = false
-                                onToc()
-                            }
-                        )
-                    }
-                    if (hasGoTo) {
-                        DropdownMenuItem(
-                            text = { Text("Go to position") },
-                            leadingIcon = { Icon(Icons.Outlined.FindInPage, contentDescription = null) },
-                            onClick = {
-                                optionsExpanded = false
-                                onGoTo()
-                            }
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Search this book") },
-                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onSearchBook()
-                        }
-                    )
-                    MenuSectionLabel("Study")
-                    if (promptsPending > 0) {
-                        DropdownMenuItem(
-                            text = { Text("See this chapter's questions ($promptsPending)") },
-                            leadingIcon = { Icon(Icons.Outlined.Quiz, contentDescription = null) },
-                            onClick = {
-                                optionsExpanded = false
-                                onSeePrompts()
-                            }
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(if (checkpointPresent) "Update learning checkpoint" else "Set learning checkpoint") },
-                        leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onSetCheckpoint()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Make cards from this stretch") },
-                        leadingIcon = { Icon(Icons.Outlined.NoteAdd, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onMakeCards()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Explain what you learned") },
-                        leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onExplainBack()
-                        }
-                    )
-                    MenuSectionLabel("Notes")
-                    DropdownMenuItem(
-                        text = {
-                            if (lumenCapturing) {
-                                Text("Capturing…")
-                            } else {
-                                Text("New Lumen card")
-                            }
-                        },
-                        leadingIcon = {
-                            if (lumenCapturing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(Icons.Outlined.NoteAdd, contentDescription = null)
-                            }
-                        },
-                        onClick = {
-                            optionsExpanded = false
-                            onCaptureLumen()
-                        },
-                        enabled = !lumenCapturing
-                    )
-                    DropdownMenuItem(
-                        text = { Text("View Lumen cards") },
-                        leadingIcon = { Icon(Icons.Outlined.Style, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onOpenLumen()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
-                        leadingIcon = {
-                            Icon(
-                                if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                                contentDescription = null
+                    // The few things done many times a sitting come first; everything else
+                    // is one tap further, behind "More…". It used to be one list of about
+                    // twenty items, where finding "Make cards" meant scrolling past chunks,
+                    // highlights and a sleep timer every time.
+                    if (!showMore) {
+                        if (hasChapters) {
+                            DropdownMenuItem(
+                                text = { Text("Chapters") },
+                                leadingIcon = { Icon(Icons.Filled.List, contentDescription = null) },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onToc()
+                                }
                             )
-                        },
-                        onClick = {
-                            optionsExpanded = false
-                            onBookmark()
                         }
-                    )
-                    MenuSectionLabel(if (activePagemark != null) "This chunk" else "Chunks")
-                    if (activePagemark != null) {
                         DropdownMenuItem(
-                            text = {
-                                ChunkMenuText(
-                                    label = "Finish chunk",
-                                    hint = "Marks the end where you are. The next chunk " +
-                                        "starts here; this one comes back in a few days."
-                                )
-                            },
-                            leadingIcon = { Icon(Icons.Outlined.StopCircle, contentDescription = null) },
+                            text = { Text("Search this book") },
+                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                             onClick = {
                                 optionsExpanded = false
-                                onClosePagemark()
+                                onSearchBook()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Make cards from this stretch") },
+                            leadingIcon = { Icon(Icons.Outlined.NoteAdd, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onMakeCards()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Explain what you learned") },
+                            leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onExplainBack()
                             }
                         )
                         DropdownMenuItem(
                             text = {
-                                ChunkMenuText(
-                                    label = "Suspend chunk",
-                                    hint = "Pause it without rating it or scheduling anything."
-                                )
+                                if (lumenCapturing) {
+                                    Text("Capturing…")
+                                } else {
+                                    Text("New note")
+                                }
                             },
-                            leadingIcon = { Icon(Icons.Outlined.PauseCircle, contentDescription = null) },
+                            leadingIcon = {
+                                if (lumenCapturing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(Icons.Outlined.NoteAdd, contentDescription = null)
+                                }
+                            },
                             onClick = {
                                 optionsExpanded = false
-                                onSuspendPagemark()
+                                onCaptureLumen()
+                            },
+                            enabled = !lumenCapturing
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (bookmarkPresent) "Remove bookmark" else "Bookmark this position") },
+                            leadingIcon = {
+                                Icon(
+                                    if (bookmarkPresent) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                optionsExpanded = false
+                                onBookmark()
                             }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Appearance (Aa)") },
+                            leadingIcon = { Icon(Icons.Filled.FormatSize, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onSettings()
+                            }
+                        )
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        DropdownMenuItem(
+                            text = { Text("More…") },
+                            // Stays open: this swaps the list, it does not leave the menu.
+                            onClick = { showMore = true }
                         )
                     } else {
                         DropdownMenuItem(
-                            text = {
-                                ChunkMenuText(
-                                    label = "Start a chunk here",
-                                    hint = "Read part of the book now and re-read it in a few " +
-                                        "days. You start once \u2014 after that you only finish."
-                                )
-                            },
-                            leadingIcon = { Icon(Icons.Outlined.PlayCircle, contentDescription = null) },
-                            onClick = {
-                                optionsExpanded = false
-                                onStartPagemark()
-                            }
+                            text = { Text("‹ Back") },
+                            onClick = { showMore = false }
                         )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Reading queue") },
-                        leadingIcon = { Icon(Icons.Outlined.PlaylistPlay, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onOpenPagemarks()
-                        }
-                    )
-                    // Shown for both formats, unlike the mark-making items
-                    // below: an EPUB reader marks by drag-selection, and this
-                    // list is the only way to see what they marked. Those
-                    // highlights were stored with nothing able to read them.
-                    MenuSectionLabel("Highlights")
-                    DropdownMenuItem(
-                        text = { Text("View highlights") },
-                        leadingIcon = { Icon(Icons.Outlined.Highlight, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onOpenHighlights()
-                        }
-                    )
-                    if (isTextBook) {
-                        if (pendingHighlightStart) {
+                        if (hasGoTo) MenuSectionLabel("Navigate")
+                        if (hasGoTo) {
                             DropdownMenuItem(
-                                text = { Text("End highlight here") },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Highlight, contentDescription = null)
-                                },
+                                text = { Text("Go to position") },
+                                leadingIcon = { Icon(Icons.Outlined.FindInPage, contentDescription = null) },
                                 onClick = {
                                     optionsExpanded = false
-                                    onEndHighlight()
+                                    onGoTo()
+                                }
+                            )
+                        }
+                        MenuSectionLabel("Study")
+                        if (promptsPending > 0) {
+                            DropdownMenuItem(
+                                text = { Text("See this chapter's questions ($promptsPending)") },
+                                leadingIcon = { Icon(Icons.Outlined.Quiz, contentDescription = null) },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onSeePrompts()
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(if (checkpointPresent) "Update learning checkpoint" else "Set learning checkpoint") },
+                            leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onSetCheckpoint()
+                            }
+                        )
+                        MenuSectionLabel("Notes")
+                        DropdownMenuItem(
+                            text = { Text("Slip box") },
+                            leadingIcon = { Icon(Icons.Outlined.Style, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onOpenLumen()
+                            }
+                        )
+                        MenuSectionLabel(if (activePagemark != null) "This chunk" else "Chunks")
+                        if (activePagemark != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    ChunkMenuText(
+                                        label = "Finish chunk",
+                                        hint = "Marks the end where you are. The next chunk " +
+                                            "starts here; this one comes back in a few days."
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.StopCircle, contentDescription = null) },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onClosePagemark()
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Cancel highlight") },
+                                text = {
+                                    ChunkMenuText(
+                                        label = "Suspend chunk",
+                                        hint = "Pause it without rating it or scheduling anything."
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.PauseCircle, contentDescription = null) },
                                 onClick = {
                                     optionsExpanded = false
-                                    onClearHighlight()
+                                    onSuspendPagemark()
                                 }
                             )
                         } else {
                             DropdownMenuItem(
-                                text = { Text("Start highlight here") },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Highlight, contentDescription = null)
+                                text = {
+                                    ChunkMenuText(
+                                        label = "Start a chunk here",
+                                        hint = "Read part of the book now and re-read it in a few " +
+                                            "days. You start once \u2014 after that you only finish."
+                                    )
                                 },
+                                leadingIcon = { Icon(Icons.Outlined.PlayCircle, contentDescription = null) },
                                 onClick = {
                                     optionsExpanded = false
-                                    onStartHighlight()
+                                    onStartPagemark()
                                 }
                             )
                         }
-                    }
-                    MenuSectionLabel("Display")
-                    DropdownMenuItem(
-                        text = { Text("Reading statistics") },
-                        leadingIcon = { Icon(Icons.Outlined.BarChart, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onStats()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Appearance (Aa)") },
-                        leadingIcon = { Icon(Icons.Filled.FormatSize, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onSettings()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Sleep timer") },
-                        leadingIcon = { Icon(Icons.Outlined.NightsStay, contentDescription = null) },
-                        onClick = {
-                            optionsExpanded = false
-                            onSleepTimer()
-                        }
-                    )
-                    if (onCopyTranscript != null || onShareTranscript != null || isTextBook) {
-                        MenuSectionLabel("Transcript")
-                    }
-                    if (onCopyTranscript != null) {
                         DropdownMenuItem(
-                            text = { Text("Copy transcript") },
-                            onClick = { optionsExpanded = false; onCopyTranscript() }
-                        )
-                    }
-                    if (onShareTranscript != null) {
-                        DropdownMenuItem(
-                            text = { Text("Share transcript") },
-                            onClick = { optionsExpanded = false; onShareTranscript() }
-                        )
-                    }
-                    if (isTextBook) {
-                        DropdownMenuItem(
-                            text = { Text("Tidy the text with your AI") },
-                            leadingIcon = {
-                                Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
-                            },
+                            text = { Text("Reading queue") },
+                            leadingIcon = { Icon(Icons.Outlined.PlaylistPlay, contentDescription = null) },
                             onClick = {
                                 optionsExpanded = false
-                                onEnhance()
-                            },
+                                onOpenPagemarks()
+                            }
                         )
+                        // Shown for both formats, unlike the mark-making items
+                        // below: an EPUB reader marks by drag-selection, and this
+                        // list is the only way to see what they marked. Those
+                        // highlights were stored with nothing able to read them.
+                        MenuSectionLabel("Highlights")
+                        DropdownMenuItem(
+                            text = { Text("View highlights") },
+                            leadingIcon = { Icon(Icons.Outlined.Highlight, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onOpenHighlights()
+                            }
+                        )
+                        if (isTextBook) {
+                            if (pendingHighlightStart) {
+                                DropdownMenuItem(
+                                    text = { Text("End highlight here") },
+                                    leadingIcon = {
+                                        Icon(Icons.Outlined.Highlight, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        optionsExpanded = false
+                                        onEndHighlight()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Cancel highlight") },
+                                    onClick = {
+                                        optionsExpanded = false
+                                        onClearHighlight()
+                                    }
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text("Start highlight here") },
+                                    leadingIcon = {
+                                        Icon(Icons.Outlined.Highlight, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        optionsExpanded = false
+                                        onStartHighlight()
+                                    }
+                                )
+                            }
+                        }
+                        MenuSectionLabel("Display")
+                        DropdownMenuItem(
+                            text = { Text("Reading statistics") },
+                            leadingIcon = { Icon(Icons.Outlined.BarChart, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onStats()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Sleep timer") },
+                            leadingIcon = { Icon(Icons.Outlined.NightsStay, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onSleepTimer()
+                            }
+                        )
+                        if (onCopyTranscript != null || onShareTranscript != null || isTextBook) {
+                            MenuSectionLabel("Transcript")
+                        }
+                        if (onCopyTranscript != null) {
+                            DropdownMenuItem(
+                                text = { Text("Copy transcript") },
+                                onClick = { optionsExpanded = false; onCopyTranscript() }
+                            )
+                        }
+                        if (onShareTranscript != null) {
+                            DropdownMenuItem(
+                                text = { Text("Share transcript") },
+                                onClick = { optionsExpanded = false; onShareTranscript() }
+                            )
+                        }
+                        if (isTextBook) {
+                            DropdownMenuItem(
+                                text = { Text("Tidy the text with your AI") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                                },
+                                onClick = {
+                                    optionsExpanded = false
+                                    onEnhance()
+                                },
+                            )
+                        }
                     }
                 }
             }

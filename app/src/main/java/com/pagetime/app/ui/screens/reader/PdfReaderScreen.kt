@@ -578,6 +578,7 @@ fun PdfReaderScreen(
             onCopy = { vm.copyFlashcardPrompt(context) },
             onShare = { vm.shareFlashcardPrompt(context) },
             onPaste = { vm.pasteFlashcardReply(context) },
+            onSharedReply = vm::reviewFlashcardReply,
             onToggle = vm::toggleFlashcard,
             onAdd = vm::addChosenFlashcards,
             onDismiss = vm::dismissFlashcardPreview,
@@ -1044,11 +1045,14 @@ private fun FlashcardPromptDialog(
     onCopy: () -> Unit,
     onShare: () -> Unit,
     onPaste: () -> Unit,
+    onSharedReply: (String) -> Unit,
     onToggle: (Int) -> Unit,
     onAdd: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val reviewing = state.review.isNotEmpty()
+    // A reply shared straight from the AI app is read the same way as a pasted one.
+    if (!reviewing) com.pagetime.app.ui.components.SharedReplyEffect(onSharedReply)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (reviewing) "Pick the cards to keep" else "Cards from your AI app") },
@@ -1061,7 +1065,7 @@ private fun FlashcardPromptDialog(
                     Text(
                         "1. Copy the prompt (or share it straight to your AI app).\n" +
                             "2. Send it there.\n" +
-                            "3. Copy the AI's whole reply and come back.",
+                            "3. Share the AI's reply to PageTime, or copy it and paste it here.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

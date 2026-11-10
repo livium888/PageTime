@@ -61,6 +61,19 @@ class BookImportViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Makes a book from text shared into the app. Markdown becomes formatted text. */
+    fun onSharedText(text: String) {
+        if (_state.value is State.Importing) return
+        _state.value = State.Importing
+        viewModelScope.launch {
+            container.libraryRepository.importPastedText(title = "", pasted = text)
+                .onSuccess { _state.value = State.Done(it) }
+                .onFailure { error ->
+                    _state.value = State.Failed(error.message ?: "Could not import the shared text")
+                }
+        }
+    }
+
     /** Clears the handled state after the UI has reacted (navigation or snackbar). */
     fun consume() {
         _state.value = State.Idle

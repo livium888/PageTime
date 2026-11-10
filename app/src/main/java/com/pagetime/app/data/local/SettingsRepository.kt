@@ -582,6 +582,24 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[bookmarkScrollKey(bookId)] = fraction.coerceIn(0f, 1f) }
     }
 
+    /**
+     * The explanation waiting for the reader's AI app to mark it, as stored
+     * text, or null. One per book: a reader marks one explanation at a time.
+     */
+    suspend fun pendingExplanation(bookId: String): String? =
+        context.dataStore.data.first()[pendingExplanationKey(bookId)]
+
+    /** Stores the pending explanation, or forgets it when [encoded] is null. */
+    suspend fun savePendingExplanation(bookId: String, encoded: String?) {
+        context.dataStore.edit {
+            if (encoded == null) it.remove(pendingExplanationKey(bookId))
+            else it[pendingExplanationKey(bookId)] = encoded
+        }
+    }
+
+    private fun pendingExplanationKey(bookId: String) =
+        stringPreferencesKey("pending_explanation_$bookId")
+
     /** Where this book's next batch of cards starts; null until the book has been opened once. */
     suspend fun spanMarker(bookId: String): SpanMarker? =
         SpanMarker.decode(context.dataStore.data.first()[spanMarkerKey(bookId)])

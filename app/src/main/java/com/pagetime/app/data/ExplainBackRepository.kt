@@ -83,8 +83,52 @@ class ExplainBackRepository(
         internal val chapterTitle: String?,
         internal val conceptLabel: String,
         internal val keyPoints: List<String>,
-        internal val userExplanation: String,
-    )
+        val userExplanation: String,
+    ) {
+        /**
+         * Stored while the reader is away in their AI app. Android may close
+         * PageTime in the meantime, and what would be lost is the one thing in
+         * this flow the reader typed themselves.
+         */
+        fun encode(): String = org.json.JSONObject()
+            .put("prompt", prompt)
+            .put("bookId", bookId)
+            .put("chapterIndex", chapterIndex)
+            .put("chapterTitle", chapterTitle ?: org.json.JSONObject.NULL)
+            .put("conceptLabel", conceptLabel)
+            .put("keyPoints", org.json.JSONArray(keyPoints))
+            .put("userExplanation", userExplanation)
+            .toString()
+
+        /** Whether this was written for the screen now open. */
+        fun isFor(bookId: String, chapterIndex: Int): Boolean =
+            this.bookId == bookId && this.chapterIndex == chapterIndex
+
+        val concept: String get() = conceptLabel
+
+        companion object {
+            /** Null for a missing or unreadable value: nothing pending, never a crash. */
+            fun decode(raw: String?): PendingExplanation? {
+                if (raw.isNullOrBlank()) return null
+                return try {
+                    val obj = org.json.JSONObject(raw)
+                    val points = obj.optJSONArray("keyPoints")
+                    val pending = PendingExplanation(
+                        prompt = obj.getString("prompt"),
+                        bookId = obj.getString("bookId"),
+                        chapterIndex = obj.getInt("chapterIndex"),
+                        chapterTitle = if (obj.isNull("chapterTitle")) null else obj.optString("chapterTitle"),
+                        conceptLabel = obj.getString("conceptLabel"),
+                        keyPoints = (0 until (points?.length() ?: 0)).map { points!!.optString(it) },
+                        userExplanation = obj.getString("userExplanation"),
+                    )
+                    pending.takeIf { it.prompt.isNotBlank() && it.userExplanation.isNotBlank() }
+                } catch (_: org.json.JSONException) {
+                    null
+                }
+            }
+        }
+    }
 
     /** Builds the marking prompt. Nothing is stored until a reply is recorded. */
     suspend fun prepareExplanation(

@@ -30,6 +30,9 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_OPEN_READER = "open_reader"
+
+        /** Set on a share intent once its text has gone to the inbox. */
+        private const val EXTRA_SHARED_TEXT_HANDLED = "com.pagetime.app.shared_text_handled"
         /** Optional: which book a blocked-app bounce should open. Null = last book. */
         const val EXTRA_OPEN_READER_BOOK_ID = "open_reader_book_id"
     }
@@ -134,7 +137,7 @@ class MainActivity : FragmentActivity() {
         }
         // A book handed over from outside the app: "Open with PageTime" from a
         // file manager/browser (ACTION_VIEW) or a share-sheet file (ACTION_SEND
-        // carrying a content stream). Raw shared text without a stream is ignored.
+        // carrying a content stream). Raw shared text is handled further down.
         val uri = when (intent?.action) {
             Intent.ACTION_VIEW -> intent.data
             Intent.ACTION_SEND ->
@@ -151,6 +154,14 @@ class MainActivity : FragmentActivity() {
             val fetcher = YouTubeTranscriptFetcher()
             if (fetcher.isYouTubeUrl(text)) {
                 importViewModel.onYouTubeUrl(text)
+            } else if (!intent.getBooleanExtra(EXTRA_SHARED_TEXT_HANDLED, false)) {
+                // Any other shared text: an article to read, or the reply from
+                // the reader's AI app. Only they know which, so it waits in the
+                // inbox and the UI asks. Marked on the intent because a rotation
+                // hands this same intent to onCreate again, and asking twice
+                // about one share would import it twice.
+                intent.putExtra(EXTRA_SHARED_TEXT_HANDLED, true)
+                (application as? PageTimeApp)?.container?.sharedTextInbox?.offer(text)
             }
         }
     }

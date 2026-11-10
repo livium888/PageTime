@@ -26,6 +26,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import com.pagetime.app.PageTimeApp
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -133,6 +135,53 @@ fun PageTimeAppUi(
                 importViewModel.consume()
             }
         }
+    }
+
+    // Text shared in from another app. Only the reader knows whether it is
+    // something to read or the reply to a prompt they just took to their AI
+    // app, so they are asked — and the reply option is only offered while a
+    // dialog is actually waiting for one.
+    val sharedInbox = (LocalContext.current.applicationContext as PageTimeApp).container.sharedTextInbox
+    val sharedText by sharedInbox.arrived.collectAsStateWithLifecycle()
+    val waitingForReply by sharedInbox.waiting.collectAsStateWithLifecycle()
+    sharedText?.let { text ->
+        val words = remember(text) { text.trim().split(Regex("\\s+")).count { it.isNotEmpty() } }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = sharedInbox::clearArrived,
+            title = { androidx.compose.material3.Text("Text shared to PageTime") },
+            text = {
+                androidx.compose.material3.Text(
+                    "$words word${if (words == 1) "" else "s"}: \u201c" +
+                        text.trim().take(140).replace('\n', ' ') +
+                        (if (text.trim().length > 140) "…" else "") + "\u201d"
+                )
+            },
+            confirmButton = {
+                if (waitingForReply > 0) {
+                    androidx.compose.material3.TextButton(onClick = sharedInbox::useArrivedAsReply) {
+                        androidx.compose.material3.Text("Use as the AI's reply")
+                    }
+                } else {
+                    androidx.compose.material3.TextButton(onClick = {
+                        sharedInbox.clearArrived()
+                        importViewModel.onSharedText(text)
+                    }) { androidx.compose.material3.Text("Add to library") }
+                }
+            },
+            dismissButton = {
+                androidx.compose.foundation.layout.Row {
+                    if (waitingForReply > 0) {
+                        androidx.compose.material3.TextButton(onClick = {
+                            sharedInbox.clearArrived()
+                            importViewModel.onSharedText(text)
+                        }) { androidx.compose.material3.Text("Add to library") }
+                    }
+                    androidx.compose.material3.TextButton(onClick = sharedInbox::clearArrived) {
+                        androidx.compose.material3.Text("Cancel")
+                    }
+                }
+            },
+        )
     }
 
     Scaffold(

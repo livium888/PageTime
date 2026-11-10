@@ -1,6 +1,5 @@
 package com.pagetime.app.data
 
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -14,8 +13,6 @@ import org.junit.Test
 class LumenPromptTemplateTest {
 
     private val passage = "A passage the reader captured while reading a book about something."
-
-    private fun ok(text: String) = Result.success(LlmResult(text, LlmProviderKind.OFFLINE))
 
     @Test
     fun `render fills both placeholders`() {
@@ -52,7 +49,7 @@ class LumenPromptTemplateTest {
 
     @Test
     fun `the built-in prompt fits the budget it is measured against`() {
-        val budget = LlmTokenBudget.inputBudget(LumenLocalDraft.REPLY_TOKENS)
+        val budget = LlmTokenBudget.inputBudget(384)
 
         assertTrue(
             "Built-in prompt costs ${LumenAiPrompts.worstCaseTokens(LumenAiPrompts.DEFAULT_CARD_TEMPLATE)}" +
@@ -61,48 +58,6 @@ class LumenPromptTemplateTest {
         )
     }
 
-    @Test
-    fun `the first attempt uses the reader's template`() = runTest {
-        val prompts = mutableListOf<String>()
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
-            prompts += request.prompt
-            ok(
-                """{"front":"A claim worth keeping","back":"Because it explains why the idea holds. """ +
-                    """Without that reason the claim is only an assertion."}"""
-            )
-        }
-
-        LumenLocalDraft.generate(
-            call = call,
-            passage = passage,
-            bookTitle = "Sapiens",
-            template = "MY OWN PROMPT about {{passage}}",
-        )
-
-        assertTrue(prompts.single().startsWith("MY OWN PROMPT about"))
-    }
-
-    @Test
-    fun `the retry falls back to the built-in prompt`() = runTest {
-        // A tailored prompt that produces nothing usable must not also cost the
-        // reader their second chance, so the retry ignores it.
-        val prompts = mutableListOf<String>()
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
-            prompts += request.prompt
-            ok("not a card at all")
-        }
-
-        LumenLocalDraft.generate(
-            call = call,
-            passage = passage,
-            bookTitle = "Sapiens",
-            template = "MY OWN PROMPT about {{passage}}",
-        )
-
-        assertEquals(2, prompts.size)
-        assertTrue(prompts[0].startsWith("MY OWN PROMPT"))
-        assertTrue("The retry is the built-in strict prompt", prompts[1].contains("Reply with ONLY this"))
-    }
 }
 
 /**

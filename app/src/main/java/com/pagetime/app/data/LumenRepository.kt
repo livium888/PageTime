@@ -1,7 +1,5 @@
 package com.pagetime.app.data
 
-import android.content.Context
-import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LumenCardDao
 import com.pagetime.app.data.local.LumenCardEntity
@@ -62,14 +60,8 @@ enum class LumenRating(val value: Int, val label: String) {
  */
 class LumenRepository(
     private val dao: LumenCardDao,
-    private val geminiClient: GeminiLearningClient,
-    private val aiUsageRepository: AiUsageRepository? = null,
     private val bookDao: com.pagetime.app.data.local.BookDao? = null,
     private val settingsRepository: SettingsRepository? = null,
-    private val localLlmProvider: LlmProvider? = null,
-    private val debugLog: (String) -> Unit = {},
-    private val modelStore: () -> LumenModelStore = { throw UnsupportedOperationException("modelStore not provided") },
-    private val captureDiagContext: () -> Context = { throw UnsupportedOperationException("captureDiagContext not provided") },
     /**
      * Told whenever a card's text changes, so its vector can be rebuilt.
      *
@@ -90,7 +82,6 @@ class LumenRepository(
      */
     private val schedulers: CardScheduler = CardScheduler.DEFAULT,
 ) {
-    fun diagContext(): Context = captureDiagContext()
     fun observeAll(): Flow<List<LumenCardEntity>> = dao.observeAll()
 
     fun observeBox(box: Int): Flow<List<LumenCardEntity>> = dao.observeBox(box)
@@ -1210,158 +1201,6 @@ object LumenCapture {
                 .trim()
         if (cleaned.length <= maxLength) return cleaned
         return cleaned.take(maxLength - 1).trimEnd() + "…"
-    }
-}
-
-/**
- * Pure driver for the on-device model's capture attempts. Tries the full
- * prompt once, then one short retry when the reply was unusable (unparseable
- * or a verbatim copy of the passage). A small model's first attempt is
- * sometimes a dud — a second, stricter chance is cheap and lands a real card
- * instead of the raw-passage draft. Android-free for unit tests.
- */
-object LumenLocalDraft {
-    /** Tokens reserved for the reply; the rest of the budget belongs to the prompt. */
-    const val REPLY_TOKENS = 384
-
-    /** Why a reply from the on-device model could not be used, in the reader's words. */
-    enum class Rejection(val explanation: String) {
-        NO_REPLY("the model didn't answer"),
-        UNPARSEABLE("the model's reply wasn't a usable card"),
-        PASSAGE_ECHO("the model copied the passage instead of writing its own card"),
-        SELF_REFERENCE("the model wrote about the passage instead of stating an idea"),
-    }
-
-    data class Outcome(
-        val card: Pair<String, String>?,
-        val rejection: Rejection?,
-        val attempts: Int,
-        /**
-         * What was still thin about the back of the card being returned, after
-         * the retry had its chance. Null when the note holds up.
-         */
-        val backProblem: LumenCapture.BackProblem? = null,
-        /**
-         * The card already in the box that this one repeats, after the retry
-         * had its chance at a different idea. Null when the idea is new.
-         */
-        val repeatOf: String? = null,
-    )
-
-    private data class Attempt(val card: Pair<String, String>?, val rejection: Rejection?)
-
-    suspend fun generate(
-        call: suspend (LlmRequest) -> Result<LlmResult>,
-        passage: String,
-        bookTitle: String,
-        debugLog: (String) -> Unit = {},
-        onPromptBuilt: (String) -> Unit = {},
-        onExchange: (Int, String, String?) -> Unit = { _, _, _ -> },
-        template: String = LumenAiPrompts.DEFAULT_CARD_TEMPLATE,
-        alreadyFiled: List<String> = emptyList(),
-    ): Outcome {
-        var attemptNo = 0
-        suspend fun attempt(prompt: String): Attempt {
-            // Reported from here so the diagnostic records the prompt actually
-            // sent, including the stricter retry below.
-            attemptNo++
-            onPromptBuilt(prompt)
-            val raw =
-                runCatching { call(LlmRequest(prompt, maxOutputTokens = REPLY_TOKENS)) }
-                    .getOrNull()
-                    ?.getOrNull()
-                    ?.text
-            // Recorded before anything judges it, so a reply the parser threw
-            // away is still visible. A discarded reply is the interesting one:
-            // it is the only evidence of what the model actually did.
-            onExchange(attemptNo, prompt, raw)
-            if (raw == null) return Attempt(null, Rejection.NO_REPLY)
-            val parsed =
-                LumenCapture.parseDraft(raw)
-                    ?: run {
-                        debugLog("discarded local draft (unparseable): ${raw.take(240)}")
-                        return Attempt(null, Rejection.UNPARSEABLE)
-                    }
-            if (LumenCapture.isPassageEcho(parsed.first, passage)) {
-                debugLog("discarded local draft (passage echo): ${raw.take(240)}")
-                return Attempt(null, Rejection.PASSAGE_ECHO)
-            }
-            // The front is the card's whole identity, so a front that points at
-            // the source is not a card at all — and unlike a thin back, there
-            // is no version of it worth keeping.
-            if (LumenCapture.mentionsSource(parsed.first)) {
-                debugLog("discarded local draft (writes about the passage): ${raw.take(240)}")
-                return Attempt(null, Rejection.SELF_REFERENCE)
-            }
-            return Attempt(parsed, null)
-        }
-
-        val first = attempt(LumenAiPrompts.cardDraft(passage, bookTitle, template))
-        val firstFlaw = first.card?.let { flawIn(it, alreadyFiled) }
-        if (first.card != null && firstFlaw == null) {
-            return Outcome(first.card, null, attempts = 1)
-        }
-
-        // One stricter retry. This was disabled while every request reloaded the
-        // 521 MB model, where a second load could exhaust the phone. The model
-        // is resident now, so a retry costs one more inference and no reload —
-        // and a small model's first answer is often a dud worth re-asking.
-        // Deliberately the built-in prompt, not the reader's: when a tailored
-        // template produces nothing usable, the retry is the way back to a card.
-        // A repeated idea is the exception that needs its own ask: the strict
-        // prompt would name the same idea again, so the retry says which one to
-        // avoid.
-        if (firstFlaw != null) {
-            debugLog(
-                "re-asking (${firstFlaw.reason}) after \"${first.card?.first}\""
-            )
-        }
-        val second =
-            attempt(
-                firstFlaw?.repeatOf
-                    ?.let { LumenAiPrompts.cardDraftDifferent(passage, bookTitle, it) }
-                    ?: LumenAiPrompts.cardDraftStrict(passage, bookTitle)
-            )
-        val secondFlaw = second.card?.let { flawIn(it, alreadyFiled) }
-
-        // The retry may only improve things. A first card with a thin back is
-        // still a card, and handing back the plain-passage draft instead — or a
-        // second answer that is no better — would make re-asking a gamble.
-        // When the re-ask was for a repeated idea, the second card has to be a
-        // different idea from the first as well as from the box. Without this
-        // the model can reword its own answer, and the reworded runner-up
-        // replaces the better card it was derived from.
-        val secondIsGenuinelyNew =
-            firstFlaw?.repeatOf == null || first.card == null || second.card == null ||
-                LumenCapture.repeatOf(second.card.first, listOf(first.card.first)) == null
-        val keepSecond =
-            second.card != null && (first.card == null || secondFlaw == null) &&
-                secondIsGenuinelyNew
-        val card = if (keepSecond) second.card else first.card
-        val flaw = if (keepSecond) secondFlaw else firstFlaw
-        return Outcome(
-            card = card,
-            rejection = if (card == null) second.rejection ?: first.rejection else null,
-            attempts = 2,
-            backProblem = flaw?.backProblem,
-            repeatOf = flaw?.repeatOf,
-        )
-    }
-
-    /** Everything wrong with a parsed card at once, or null when nothing is. */
-    private data class Flaw(
-        val backProblem: LumenCapture.BackProblem?,
-        val repeatOf: String?,
-    ) {
-        /** Short name for the capture log. */
-        val reason: String
-            get() = backProblem?.name ?: "REPEAT"
-    }
-
-    private fun flawIn(card: Pair<String, String>, alreadyFiled: List<String>): Flaw? {
-        val back = LumenCapture.backProblem(card.first, card.second)
-        val repeat = LumenCapture.repeatOf(card.first, alreadyFiled)
-        return if (back == null && repeat == null) null else Flaw(back, repeat)
     }
 }
 

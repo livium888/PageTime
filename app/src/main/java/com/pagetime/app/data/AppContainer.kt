@@ -2,7 +2,6 @@ package com.pagetime.app.data
 
 import android.content.Context
 import android.os.PowerManager
-import android.util.Log
 import androidx.room.Room
 import com.pagetime.app.blocker.AndroidAppClassifier
 import com.pagetime.app.blocker.BlockController
@@ -16,7 +15,6 @@ import com.pagetime.app.data.library.PdfToEpub
 import com.pagetime.app.data.local.AppDatabase
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.youtube.YouTubeSearchApi
-import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.learning.LearningContextExtractor
 import com.pagetime.app.data.embed.BookIndexer
 import com.pagetime.app.data.embed.BookSearcher
@@ -100,11 +98,9 @@ class AppContainer(context: Context) {
     private val learningGenerationDao = database.learningGenerationDao()
     private val conceptDao = database.conceptDao()
     private val conceptRelationshipDao = database.conceptRelationshipDao()
-    private val aiUsageDao = database.aiUsageDao()
     private val explanationDao = database.explanationDao()
 
     val settingsRepository = SettingsRepository(appContext)
-    val aiUsageRepository = AiUsageRepository(aiUsageDao)
     val readiumEngine = ReadiumEngine(appContext)
     val gutenbergApi = GutenbergApi()
     /** The catalogues Discover offers, as a list rather than a switch. */
@@ -181,7 +177,6 @@ class AppContainer(context: Context) {
         pdfToEpub = pdfToEpub,
         settingsRepository = settingsRepository,
         context = appContext,
-        aiUsageRepository = aiUsageRepository
     )
 
     /** Curated reading lists, and books the reader wants but has not got. */
@@ -207,18 +202,16 @@ class AppContainer(context: Context) {
 
     val balanceManager = BalanceManager(settingsRepository, usageRepository)
 
-    val geminiLearningClient = GeminiLearningClient(settingsRepository)
     val learningContextExtractor = LearningContextExtractor(appContext, epubParser)
 
-    /** Optional on-device LLM: weights downloaded on demand, never bundled. */
-    val lumenModelStore =
-        LumenModelStore(
-            directory = File(appContext.filesDir, "lumen-model"),
-            downloader = OkHttpLumenModelDownloader(),
-            remoteInfoFetcher = HfModelRemoteInfoFetcher::fetch,
-            urlProvider = { settingsRepository.lumenModelUrl() ?: LumenModelStore.MODEL_URL },
-        )
-    val localLlmProvider = MediaPipeLlmProvider(appContext, lumenModelStore)
+    init {
+        // The on-device language model is gone. Phones that downloaded it still
+        // hold about half a gigabyte of weights nothing will ever load.
+        scope.launch(Dispatchers.IO) {
+            runCatching { File(appContext.filesDir, "lumen-model").deleteRecursively() }
+        }
+        settingsRepository.forgetRetiredAiSettings()
+    }
 
     /** Tags books Fiction/Poetry/Science/etc. when the reader asks — see the class doc. */
     val bookGenreClassifier = BookGenreClassifier(bookDao = bookDao)
@@ -243,7 +236,7 @@ class AppContainer(context: Context) {
     val embeddingModelStore =
         EmbeddingModelStore(
             directory = File(appContext.filesDir, "embedding-model"),
-            downloader = OkHttpLumenModelDownloader(),
+            downloader = OkHttpModelDownloader(),
             source = { EmbeddingModelStore.DEFAULT_SOURCE },
         )
 
@@ -282,14 +275,8 @@ class AppContainer(context: Context) {
 
     val lumenRepository = LumenRepository(
         dao = database.lumenCardDao(),
-        geminiClient = geminiLearningClient,
-        aiUsageRepository = aiUsageRepository,
         bookDao = bookDao,
         settingsRepository = settingsRepository,
-        localLlmProvider = localLlmProvider,
-        debugLog = { message -> Log.d("LumenDraft", message) },
-        modelStore = { lumenModelStore },
-        captureDiagContext = { appContext },
         // Fire and forget, on the container's own scope rather than a screen's:
         // a card saved and then navigated away from still gets its vector, and
         // a save never waits on 22 MB of ONNX.

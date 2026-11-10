@@ -4,15 +4,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The capture prompt must fit the on-device model's token budget. Overflowing
- * it does not raise an error: MediaPipe aborts the process from native code,
- * which is why the crash never produced a Java crash log. These tests pin the
- * invariant so a longer prompt or a wider capture window fails here instead of
- * on a reader's phone.
+ * The capture prompt must fit the size a capture prompt is kept to
+ * ([LlmTokenBudget]). These tests pin the invariant so a longer prompt or a
+ * wider capture window fails here instead of on a reader's phone.
  */
 class LumenPromptBudgetTest {
 
-    /** Reply budget requested by the capture driver in [LumenLocalDraft]. */
+    /** Reply tokens reserved for a capture; the rest of the budget is the prompt. */
     private val replyTokens = 384
 
     private fun assertFitsBudget(prompt: String, label: String) {

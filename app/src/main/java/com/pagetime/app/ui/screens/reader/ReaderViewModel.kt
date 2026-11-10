@@ -14,7 +14,6 @@ import com.pagetime.app.data.local.LearningCheckpoint
 import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.ConceptMap
-import com.pagetime.app.data.CaptureDiagnostic
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.LumenConnections
 import com.pagetime.app.data.LumenDraft
@@ -28,7 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import com.pagetime.app.data.LumenDraftSource
 import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
 import com.pagetime.app.data.learning.SpanPoint
@@ -188,21 +186,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     @Volatile
     private var locatorRestoreComplete = false
 
-    /**
-     * Whether a cloud rewrite can be offered at all. Read once, off the main
-     * thread, because the key lives in DataStore.
-     */
-    private val _geminiAvailable = MutableStateFlow(false)
-    val geminiAvailable: StateFlow<Boolean> = _geminiAvailable.asStateFlow()
-
     init {
         loadBook()
-        // Off the main thread: the key lives in DataStore, and the dialog only
-        // needs the answer by the time a card exists to rewrite.
-        viewModelScope.launch {
-            _geminiAvailable.value =
-                runCatching { container.geminiLearningClient.hasKey() }.getOrDefault(false)
-        }
     }
 
     fun retry() {
@@ -831,9 +816,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _answerError = MutableStateFlow<String?>(null)
     val answerError = _answerError.asStateFlow()
 
-    private val _captureDiagnostic = MutableStateFlow<CaptureDiagnostic.Record?>(null)
-    val captureDiagnostic = _captureDiagnostic.asStateFlow()
-
 
 
     /** Where the freshly captured card could continue the line (box 1). */
@@ -981,24 +963,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     box = 1
                 )
                 _lumenDraft.value = draft
-                _captureDiagnostic.value = CaptureDiagnostic.Record.successful(
-                    modelState = CaptureDiagnostic.ModelState.generating,
-                    captureKind = "LumenCard",
-                    usedAi = draft.usedAi,
-                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 Log.e("LumenCapture", "Lumen capture failed", error)
                 _error.value = "Couldn't create a Lumen card here. Try again."
-                _captureDiagnostic.value = CaptureDiagnostic.Record.failed(
-                    modelState = CaptureDiagnostic.ModelState.fallbackNoModel,
-                    captureKind = "LumenCard",
-                    reason = error.message ?: "unknown error",
-                )
             } finally {
                 _lumenCapturing.value = false
-                _captureDiagnostic.value = null
             }
         }
     }
@@ -1176,36 +1147,6 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         _lumenFileSuggestions.value = emptyList()
         _lumenBoxCards.value = emptyList()
         pendingLumenContext = null
-    }
-
-    /** Returns the last on-device capture diagnostic log, newest first. */
-    /**
-     * The capture log a reader copies, newest activity first, followed by the
-     * last capture's verbatim prompt and reply.
-     *
-     * The rolling lines say a capture happened and how big it was. They cannot
-     * say whether the model was given the passage — which is the only question
-     * worth asking when a card comes back with nothing to do with the book —
-     * so the exchange itself goes on the end.
-     */
-    fun lastCaptureLog(): List<String> {
-        val context = container.lumenRepository.diagContext()
-        val rolling = CaptureDiagnostic.recentLog(context)
-        val exchange = CaptureDiagnostic.lastExchange(context)
-        if (exchange.isEmpty()) return rolling
-        return rolling + listOf("", "===== LAST EXCHANGE (verbatim) =====") + exchange
-    }
-
-    /** Copies the last capture log to the device clipboard. */
-    fun copyCaptureLogToClipboard(context: android.content.Context) {
-        val log = lastCaptureLog().joinToString("\n")
-        if (log.isBlank()) return
-        try {
-            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("PageTime capture log", log))
-        } catch (t: Throwable) {
-            Log.e("ReaderViewModel", "Failed to copy capture log", t)
-        }
     }
 
     // region Card span (manual flashcards, docs/decisions/0002)

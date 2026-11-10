@@ -1,6 +1,5 @@
 package com.pagetime.app.data
 
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -20,8 +19,6 @@ class LumenRepeatTest {
     private val twoSentences =
         "Shared stories let people who have never met act as one group. " +
             "That is why a myth can hold a nation together where kinship cannot."
-
-    private fun ok(text: String) = Result.success(LlmResult(text, LlmProviderKind.OFFLINE))
 
     @Test
     fun `the same claim word for word is a repeat`() {
@@ -44,77 +41,6 @@ class LumenRepeatTest {
     @Test
     fun `an empty box repeats nothing`() {
         assertNull(LumenCapture.repeatOf("Fiction lets strangers cooperate", emptyList()))
-    }
-
-    @Test
-    fun `a repeat is re-asked and a genuinely new idea wins`() = runTest {
-        val prompts = mutableListOf<String>()
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { request ->
-            prompts += request.prompt
-            if (prompts.size == 1) {
-                ok("""{"front":"Fiction lets strangers cooperate","back":"$twoSentences"}""")
-            } else {
-                ok("""{"front":"Myths outlive the people who tell them","back":"$twoSentences"}""")
-            }
-        }
-
-        val outcome =
-            LumenLocalDraft.generate(
-                call = call,
-                passage = "A passage about shared stories.",
-                bookTitle = "Sapiens",
-                alreadyFiled = filed,
-            )
-
-        assertEquals("Myths outlive the people who tell them", outcome.card!!.first)
-        assertEquals(2, outcome.attempts)
-        assertNull(outcome.repeatOf)
-        assertTrue(
-            "The retry must name the idea to avoid, or it returns the same one",
-            prompts[1].contains("Fiction lets strangers cooperate")
-        )
-    }
-
-    @Test
-    fun `a second repeat never loses the first card`() = runTest {
-        // A passage can genuinely hold one idea. Saying so beats manufacturing
-        // a worse second card, and beats silently filing the duplicate.
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            ok("""{"front":"Fiction lets strangers cooperate","back":"$twoSentences"}""")
-        }
-
-        val outcome =
-            LumenLocalDraft.generate(
-                call = call,
-                passage = "A passage about shared stories.",
-                bookTitle = "Sapiens",
-                alreadyFiled = filed,
-            )
-
-        assertEquals("Fiction lets strangers cooperate", outcome.card!!.first)
-        assertEquals("Fiction lets strangers cooperate", outcome.repeatOf)
-        assertNull("The note itself is fine; only the idea repeats", outcome.backProblem)
-    }
-
-    @Test
-    fun `a fresh idea needs no retry`() = runTest {
-        var calls = 0
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            calls++
-            ok("""{"front":"Myths outlive the people who tell them","back":"$twoSentences"}""")
-        }
-
-        val outcome =
-            LumenLocalDraft.generate(
-                call = call,
-                passage = "A passage about shared stories.",
-                bookTitle = "Sapiens",
-                alreadyFiled = filed,
-            )
-
-        assertEquals(1, calls)
-        assertEquals(1, outcome.attempts)
-        assertNull(outcome.repeatOf)
     }
 
     @Test

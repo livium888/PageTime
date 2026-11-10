@@ -5,14 +5,10 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
-import com.pagetime.app.data.LlmProviderKind
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.review.ReviewReminderWorker
-import com.pagetime.app.data.LumenModelStatus
 import com.pagetime.app.data.learning.ChapterPromptText
-import com.pagetime.app.data.learning.GenerationMode
-import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.embed.EmbeddingSelfTest
@@ -28,14 +24,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
-/** Live bytes of an in-flight model download, plus its current speed. */
-data class LumenDownloadStats(
-    val downloadedBytes: Long,
-    val totalBytes: Long,
-    val rateBytesPerSec: Long,
-    val sampledAtMs: Long,
-)
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -92,33 +80,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val aiSettings = container.settingsRepository.aiSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.data.local.AiSettings())
 
-    val llmProvider = container.settingsRepository.settings
-        .map { it.llmProvider }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LlmProviderKind.GEMINI)
-
     val helpEnabled = container.settingsRepository.settings
         .map { it.helpEnabled }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
-
-    val lumenModelStatus =
-        container.lumenModelStore.status
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LumenModelStatus.NotDownloaded)
-
-    /**
-     * Why the on-device model is switched off, or null when it is healthy.
-     *
-     * Shown on the AI & models screen. A model that stops being consulted
-     * without saying so is what made every capture after the first look broken
-     * while nothing in the app admitted it.
-     */
-    val offlineAiProblem: StateFlow<String?> = container.localLlmProvider.offlineProblem
-
-    /**
-     * Clears a recorded offline failure so the next capture tries the on-device
-     * model again, rather than making the reader re-download the weights to get
-     * it back.
-     */
-    fun retryOfflineAi() = container.localLlmProvider.retryOfflineAi()
 
     val embeddingModelStatus =
         container.embeddingModelStore.status
@@ -247,34 +211,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /**
-     * Live download progress with a rolling speed estimate, derived from the
-     * store's progress emissions. Speeds are measured between consecutive
-     * updates (~512 KB apart), so a stalled connection visibly drops to 0.
-     */
-    val downloadStats: StateFlow<LumenDownloadStats?> =
-        container.lumenModelStore.status
-            .runningFold<LumenModelStatus, LumenDownloadStats?>(null) { previous, status ->
-                val downloading = status as? LumenModelStatus.Downloading ?: return@runningFold null
-                val now = SystemClock.elapsedRealtime()
-                val rate =
-                    previous
-                        ?.takeIf { it.totalBytes == downloading.totalBytes && it.sampledAtMs > 0 }
-                        ?.let { last ->
-                            val deltaMs = (now - last.sampledAtMs).coerceAtLeast(1L)
-                            val deltaBytes = downloading.downloadedBytes - last.downloadedBytes
-                            if (deltaBytes > 0) deltaBytes * 1000L / deltaMs else 0L
-                        }
-                        ?: 0L
-                LumenDownloadStats(
-                    downloadedBytes = downloading.downloadedBytes,
-                    totalBytes = downloading.totalBytes,
-                    rateBytesPerSec = rate,
-                    sampledAtMs = now,
-                )
-            }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
     fun setRatio(value: Double) {
         viewModelScope.launch { container.balanceManager.setRatio(value) }
     }
@@ -299,10 +235,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setAiAnalysisLevel(level: com.pagetime.app.data.local.AiAnalysisLevel) {
         viewModelScope.launch { container.settingsRepository.setAiAnalysisLevel(level) }
-    }
-
-    fun setGenerationMode(mode: GenerationMode) {
-        viewModelScope.launch { container.settingsRepository.setGenerationMode(mode) }
     }
 
     /**
@@ -340,8 +272,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 _chapterPrompt.value = stored
                 _chapterPromptIsCustom.value = true
             }
-            container.settingsRepository.lumenModelUrl()?.let { _lumenModelUrl.value = it }
-            _lumenCloudRescue.value = container.settingsRepository.lumenCloudRescue()
             _reviewReminders.value = container.settingsRepository.reviewReminders()
             _captureChars.value = container.settingsRepository.lumenCaptureChars()
         }
@@ -391,25 +321,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { container.settingsRepository.setHelpEnabled(value) }
     }
 
-    fun setLlmProvider(provider: LlmProviderKind) {
-        viewModelScope.launch { container.settingsRepository.setLlmProvider(provider) }
-    }
-
-    /**
-     * Whether a capture the on-device model could not deliver may be retried
-     * against Gemini. Only ever reached after a real offline failure, and only
-     * when a key is configured.
-     */
-    private val _lumenCloudRescue = MutableStateFlow(true)
-    val lumenCloudRescue: StateFlow<Boolean> = _lumenCloudRescue.asStateFlow()
-
-    fun setLumenCloudRescue(value: Boolean) {
-        viewModelScope.launch {
-            container.settingsRepository.setLumenCloudRescue(value)
-            _lumenCloudRescue.value = value
-        }
-    }
-
     /**
      * Whether the app may tell the reader when a sitting is worth having.
      *
@@ -438,35 +349,5 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 ReviewReminderWorker.cancel(context)
             }
         }
-    }
-
-    fun downloadOfflineModel() {
-        viewModelScope.launch { container.lumenModelStore.download() }
-    }
-
-    /** The model URL in force, built-in when the reader has not set one. */
-    private val _lumenModelUrl = MutableStateFlow(LumenModelStore.MODEL_URL)
-    val lumenModelUrl: StateFlow<String> = _lumenModelUrl.asStateFlow()
-
-    /**
-     * Points the downloader at a different model, or back at the built-in one
-     * when [url] is blank. The installed file is deleted first: the store
-     * decides whether it is current by comparing sizes, and leaving a model
-     * of the old size in place would let a switch look like it did nothing.
-     */
-    fun setLumenModelUrl(url: String?) {
-        viewModelScope.launch {
-            container.settingsRepository.setLumenModelUrl(url)
-            _lumenModelUrl.value = url?.takeIf { it.isNotBlank() } ?: LumenModelStore.MODEL_URL
-            container.lumenModelStore.deleteModel()
-        }
-    }
-
-    fun checkForModelUpdate() {
-        viewModelScope.launch { container.lumenModelStore.checkForUpdate() }
-    }
-
-    fun deleteOfflineModel() {
-        viewModelScope.launch { container.lumenModelStore.deleteModel() }
     }
 }

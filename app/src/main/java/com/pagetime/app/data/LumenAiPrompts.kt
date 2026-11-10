@@ -36,11 +36,10 @@ package com.pagetime.app.data
  */
 object LumenAiPrompts {
     /**
-     * Longest passage a capture prompt may carry. The on-device runtime spends
-     * one token budget on input and output together, so an unbounded passage
-     * pushes the input past that budget — where MediaPipe aborts the process
-     * instead of returning an error. Keeping the passage bounded keeps every
-     * normal capture inside the budget with room for the reply.
+     * Longest passage a capture prompt may carry. Input and output share one
+     * token budget (see [LlmTokenBudget]), so an unbounded passage leaves no
+     * room for the reply. Keeping the passage bounded keeps every normal
+     * capture inside the budget.
      *
      * Sized to leave real headroom rather than to spend the budget: at 3,072
      * tokens a capture has about 9,400 characters of input, and this cap plus

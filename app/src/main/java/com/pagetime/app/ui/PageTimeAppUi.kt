@@ -59,8 +59,7 @@ import com.pagetime.app.ui.screens.settings.PermissionsScreen
 import com.pagetime.app.ui.screens.settings.SchedulingScreen
 import com.pagetime.app.ui.screens.settings.SettingsScreen
 import com.pagetime.app.ui.screens.settings.UsageAuditScreen
-import com.pagetime.app.ui.screens.settings.AiModelsScreen
-import com.pagetime.app.ui.screens.settings.AiUsageScreen
+import com.pagetime.app.ui.screens.settings.PromptsAndSearchScreen
 import com.pagetime.app.ui.screens.reader.ExplainBackScreen
 import com.pagetime.app.ui.screens.reader.ExplainBackViewModel
 import com.pagetime.app.ui.screens.reader.ExplainBackViewModelFactory
@@ -336,8 +335,7 @@ fun PageTimeAppUi(
                     onManageSiteRules = { navController.navigate("site_rules") },
                     onPermissions = { navController.navigate("permissions") },
                     onUsageAudit = { navController.navigate("usage_audit") },
-                    onAiUsage = { navController.navigate("ai_usage") },
-                    onAiModels = { navController.navigate("ai_models") },
+                    onPrompts = { navController.navigate("prompts") },
                     onScheduling = { navController.navigate("scheduling") }
                 )
             }
@@ -356,14 +354,8 @@ fun PageTimeAppUi(
                     onPermissions = { navController.navigate("permissions") }
                 )
             }
-            composable("ai_models") {
-                AiModelsScreen(
-                    onBack = { navController.popBackStack() },
-                    onAiUsage = { navController.navigate("ai_usage") }
-                )
-            }
-            composable("ai_usage") {
-                AiUsageScreen(onBack = { navController.popBackStack() })
+            composable("prompts") {
+                PromptsAndSearchScreen(onBack = { navController.popBackStack() })
             }
             // The highlights list is reached from the reader's Options menu, so
             // it sits beside the reader rather than under a bottom tab: a

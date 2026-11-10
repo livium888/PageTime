@@ -9,6 +9,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.em
 import com.pagetime.app.data.TextHighlightSpans
 import com.pagetime.app.data.learning.ConceptHighlightMatcher
 import com.pagetime.app.data.library.MarkdownText
@@ -122,9 +124,15 @@ fun rememberAnnotatedPageWithHighlights(
     pendingSpan: Pair<Int, Int>? = null,
     /** Headings, bold and italic from pasted markdown, as whole-book offsets. */
     styleSpans: List<MarkdownText.StyleSpan> = emptyList(),
+    /** How much larger than body text a heading is drawn. See [headingScaleFor]. */
+    headingScale: Float = 1f,
 ): AnnotatedString {
-    val formatting = remember(pageText, pageStartOffset, pageEndOffset, styleSpans) {
-        formattingLayer(pageText, MarkdownText.pageSpans(styleSpans, pageStartOffset, pageEndOffset))
+    val formatting = remember(pageText, pageStartOffset, pageEndOffset, styleSpans, headingScale) {
+        formattingLayer(
+            pageText,
+            MarkdownText.pageSpans(styleSpans, pageStartOffset, pageEndOffset),
+            headingScale,
+        )
     }
     val ranges = remember(pageText, pageStartOffset, pageEndOffset, highlights) {
         TextHighlightSpans.txtPageRanges(highlights, pageStartOffset, pageEndOffset)
@@ -157,25 +165,40 @@ fun rememberAnnotatedPageWithHighlights(
 /**
  * The weight and slant for [spans], given page-relative.
  *
- * A heading is drawn bold at the body size, not larger. Bold letters are wider
- * than regular ones, so pagination measures the page WITH these styles (see
- * the measuring function in the text reader): measured as plain text and drawn
- * bold, a page wraps onto more lines than were measured and loses its last
- * ones off the screen.
+ * A heading is drawn bold and [headingScale] times the body size. Bold and
+ * larger letters are wider, so pagination measures the page WITH these styles
+ * (see the measuring function in the text reader): measured as plain text and
+ * drawn styled, a page wraps onto more lines than were measured and loses its
+ * last ones off the screen. The same [headingScale] must be passed to both.
  */
 internal fun formattingLayer(
     text: String,
     spans: List<MarkdownText.StyleSpan>,
+    headingScale: Float = 1f,
 ): List<AnnotatedString.Range<SpanStyle>> = spans.mapNotNull { span ->
     val start = span.start.coerceIn(0, text.length)
     val end = span.end.coerceIn(start, text.length)
     if (end <= start) return@mapNotNull null
     val style = when (span.kind) {
-        MarkdownText.Kind.HEADING, MarkdownText.Kind.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
+        MarkdownText.Kind.HEADING -> SpanStyle(
+            fontWeight = FontWeight.Bold,
+            fontSize = if (headingScale > 1f) headingScale.em else TextUnit.Unspecified,
+        )
+        MarkdownText.Kind.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
         MarkdownText.Kind.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
     }
     AnnotatedString.Range(style, start, end)
 }
+
+/**
+ * How much larger than body text a heading may be at this line spacing.
+ *
+ * Lines are a fixed height (the body size times the reader's line spacing), so
+ * a heading taller than a line would run into the line above it. This keeps
+ * the heading inside its line: 1.3 times at the default spacing, less when the
+ * reader has chosen tight lines, and no larger at all below about 1.15.
+ */
+internal fun headingScaleFor(lineHeight: Float): Float = (lineHeight / 1.15f).coerceIn(1f, 1.3f)
 
 /**
  * One background layer over [text], for [ranges] given page-relative.

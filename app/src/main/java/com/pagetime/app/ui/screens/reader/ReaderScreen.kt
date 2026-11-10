@@ -626,7 +626,7 @@ fun ReaderScreen(
                         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, book?.title ?: "Transcript")
-                            putExtra(Intent.EXTRA_TEXT, textContent!!)
+                            putExtra(Intent.EXTRA_TEXT, textContent.orEmpty())
                         }, "Share transcript"))
                     }
                 } else null,

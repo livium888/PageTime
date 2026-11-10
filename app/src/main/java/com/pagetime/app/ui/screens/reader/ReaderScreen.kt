@@ -475,6 +475,7 @@ fun ReaderScreen(
                 initialLocatorReady = initialLocatorReady,
                 initialLocatorJson = initialLocatorJson,
                 settings = settings,
+                onPageAnchor = vm::onPageAnchor,
                 onLocatorChanged = { locator ->
                     currentLocator = locator
                     vm.onLocatorChanged(locator)
@@ -1563,6 +1564,7 @@ private fun ReadiumNavigatorHost(
     initialLocatorJson: String?,
     settings: ReaderSettings,
     onLocatorChanged: (Locator) -> Unit,
+    onPageAnchor: (Locator, String?) -> Unit,
     onTapZone: (TapZone) -> Unit,
     onNavigatorChanged: (EpubNavigatorFragment?) -> Unit,
     /** Whether the volume keys should page this book. */
@@ -1582,6 +1584,7 @@ private fun ReadiumNavigatorHost(
     val currentOnCapture by rememberUpdatedState(onCaptureSelection)
 
     val currentOnLocator by rememberUpdatedState(onLocatorChanged)
+    val currentOnPageAnchor by rememberUpdatedState(onPageAnchor)
     val currentOnTapZone by rememberUpdatedState(onTapZone)
 
     var container by remember { mutableStateOf<FrameLayout?>(null) }
@@ -1854,6 +1857,11 @@ private fun ReadiumNavigatorHost(
             var firstLocator = true
             nav.currentLocator.collect {
                 currentOnLocator(it)
+                // What the page opens with, for cutting a card span exactly.
+                // Asked of the page itself; if it cannot say, the span falls
+                // back to the position estimate it always used.
+                val opening = runCatching { nav.firstVisibleElementLocator()?.text?.highlight }.getOrNull()
+                currentOnPageAnchor(it, opening)
                 if (firstLocator) {
                     firstLocator = false
                     onRestoreComplete()

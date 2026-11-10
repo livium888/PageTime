@@ -29,6 +29,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
+import com.pagetime.app.data.learning.ReadingSpan
 import com.pagetime.app.data.learning.SpanPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -1184,6 +1185,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 chapterIndex = index,
                 fraction = (locator.locations?.progression?.toFloat() ?: 0f).coerceIn(0f, 1f),
                 chapterTitle = publication.readingOrder.getOrNull(index)?.title,
+                // Only the words seen on THIS page: an anchor left over from an
+                // earlier page would cut the span at that page instead.
+                anchor = pageAnchor?.takeIf { it.first === locator }?.second,
             )
         }
         val full = _bookText.value?.text?.takeIf { it.isNotEmpty() } ?: return null
@@ -1387,6 +1391,21 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * Persists the exact locator (debounced) so re-opening resumes the precise spot,
      * and derives overall book progress for the HUD.
      */
+    /** The opening words of the first thing visible on an EPUB page, with the page they belong to. */
+    @Volatile
+    private var pageAnchor: Pair<org.readium.r2.shared.publication.Locator, String>? = null
+
+    /**
+     * The reader reports what the page at [locator] opens with.
+     *
+     * Kept so a card span can be cut at those words rather than at an estimate
+     * of where the page falls in the chapter. See [SpanPoint.anchor].
+     */
+    fun onPageAnchor(locator: org.readium.r2.shared.publication.Locator, text: String?) {
+        val words = text?.trim()?.take(ReadingSpan.ANCHOR_CHARS * 2)?.takeIf { it.isNotEmpty() }
+        pageAnchor = words?.let { locator to it }
+    }
+
     fun onLocatorChanged(locator: org.readium.r2.shared.publication.Locator) {
         latestLocator = locator
         if (!locatorRestoreComplete) return

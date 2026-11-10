@@ -2,6 +2,7 @@ package com.pagetime.app.data.learning
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -277,4 +278,56 @@ class ReadingSpanTest {
         val handedOver = SpanPoint(2, 0.5f, snapped = true)
         assertEquals(handedOver, SpanPoint.fromJson(handedOver.toJson()))
     }
+
+    // region EPUB anchors: cut at the words the page opens with
+
+    private val anchored = (1..40).joinToString("\n\n") { "Paragraph number $it opens here and then carries on for a while longer." }
+
+    @Test
+    fun `an anchor puts the cut on the paragraph the page really opens with`() {
+        val target = anchored.indexOf("Paragraph number 20 opens")
+        // The fraction is a page out: it points at paragraph 23.
+        val estimate = anchored.indexOf("Paragraph number 23 opens")
+        assertEquals(target, ReadingSpan.anchorPosition(anchored, "Paragraph number 20 opens here and then", estimate))
+
+        val end = SpanPoint(0, estimate.toFloat() / anchored.length, anchor = "Paragraph number 20 opens here and then")
+        val slice = ReadingSpan.slice({ anchored }, 1, SpanPoint(0, 0f), end)
+        assertTrue(slice.text.endsWith("Paragraph number 20 opens here and then carries on for a while longer."))
+    }
+
+    @Test
+    fun `an anchor matches whatever the whitespace`() {
+        val position = ReadingSpan.anchorPosition(anchored, "  Paragraph   number 7\nopens here\tand then carries", 0)
+        assertEquals(anchored.indexOf("Paragraph number 7 opens"), position)
+    }
+
+    @Test
+    fun `a short or missing or absent anchor falls back to the fraction`() {
+        assertNull(ReadingSpan.anchorPosition(anchored, null, 100))
+        assertNull(ReadingSpan.anchorPosition(anchored, "Paragraph", 100))
+        assertNull(ReadingSpan.anchorPosition(anchored, "These words are nowhere in the chapter at all", 100))
+    }
+
+    @Test
+    fun `of repeated words the nearest to the estimate wins`() {
+        val text = (1..10).joinToString("\n\n") { "The same sentence again and again and again." }
+        val third = text.indexOf("The same", text.indexOf("The same", 1) + 1)
+        assertEquals(third, ReadingSpan.anchorPosition(text, "The same sentence again and again", third + 5))
+    }
+
+    @Test
+    fun `a match far from the estimate is not believed`() {
+        // One element holding the whole chapter reports the chapter's opening
+        // words on every page.
+        val long = "The chapter opens with these particular words. " + "Filler sentence here. ".repeat(600)
+        assertNull(ReadingSpan.anchorPosition(long, "The chapter opens with these particular words.", long.length - 50))
+    }
+
+    @Test
+    fun `an anchor survives being saved`() {
+        val point = SpanPoint(3, 0.4f, anchor = "The opening words of the page")
+        assertEquals(point, SpanPoint.fromJson(point.toJson()))
+    }
+
+    // endregion
 }

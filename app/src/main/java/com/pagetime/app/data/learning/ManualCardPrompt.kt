@@ -26,38 +26,61 @@ package com.pagetime.app.data.learning
 object ManualCardPrompt {
 
     /**
-     * How many cards to ask for: about one idea per 150 words, never fewer
-     * than three or more than twenty. A reply much longer than that is where a
-     * chat model starts to repeat itself or run out of room.
+     * The most cards to ask for, from the length of what was read and how many
+     * the reader wants. See [CardDensity].
      */
-    fun cardTarget(words: Int): Int = (words / WORDS_PER_CARD).coerceIn(MIN_CARDS, MAX_CARDS)
+    fun cardTarget(words: Int, density: CardDensity = CardDensity.DEFAULT): Int =
+        density.target(words)
 
     fun build(
         bookTitle: String,
         chapterLabel: String,
         span: String,
         template: String? = null,
+        density: CardDensity = CardDensity.DEFAULT,
     ): String {
-        val target = cardTarget(ReadingSpan.words(span))
+        val target = cardTarget(ReadingSpan.words(span), density)
         val instructions = ChapterPromptText.build(
             bookTitle = bookTitle,
             chapterTitle = chapterLabel,
             passages = listOf(span.trim()),
             perPassage = target,
-            // The reader chose this span, so omitting is the wrong default.
             insist = true,
             template = template,
+            howManyText = howMany(target),
         )
         return instructions.trimEnd() + "\n\n" + REPLY_FORMAT
     }
 
+    /**
+     * Quality before quantity, in words a model will follow.
+     *
+     * The wording for hand-picked passages elsewhere says "write at least one
+     * for every passage and do not skip a thin one", which is right for a
+     * paragraph a person underlined and wrong for a stretch of several pages:
+     * it asks for filler. Here the reader chose a stretch, not each idea in
+     * it, so choosing the ideas is the model's job — and doing that well means
+     * leaving most of what was read without a card.
+     */
+    internal fun howMany(target: Int): String =
+        """
+            HOW MANY CARDS
+
+            Write AT MOST $target cards, and fewer is better. Write a card only
+            for something the reader would still want to know in a year: the
+            ideas the author's argument depends on, definitions that later
+            ideas build on, causes and consequences that explain why things
+            happened. Leave out examples, anecdotes, names, dates and numbers
+            unless the point depends on them.
+
+            If only two ideas deserve a card, return two. Never add cards to
+            reach the maximum. A reader who has to untick weak cards has been
+            given more work, not more value.
+        """.trimIndent()
+
     /** What the reader sees explaining the reply, for the paste step. */
     const val REPLY_HINT =
         "Copy the model's whole reply, code block and all. Extra text around it is fine."
-
-    private const val WORDS_PER_CARD = 150
-    private const val MIN_CARDS = 3
-    private const val MAX_CARDS = 20
 
     /**
      * Appended after everything else, because instructions placed last are the

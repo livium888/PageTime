@@ -75,6 +75,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.RadioButton
 import androidx.compose.ui.semantics.Role
+import com.pagetime.app.data.learning.CardDensity
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
@@ -1214,6 +1215,56 @@ private const val MAX_READING_RATE = 3.0
 /** A typed number as it reads back: 90, or 1.5 when it is not whole. */
 private fun typedNumberLabel(value: Double): String =
     if (value % 1.0 == 0.0) value.toLong().toString() else "%.1f".format(value)
+
+/**
+ * How many cards to ask an AI for.
+ *
+ * Fewer is the better answer for most reading, so the default is the middle
+ * option and the first one is "only the best". Whatever is chosen is a ceiling:
+ * the prompt tells the AI to return fewer when fewer deserve a card.
+ */
+@Composable
+internal fun CardDensityCard(density: CardDensity, onSelect: (CardDensity) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("How many cards", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "The most cards your AI is asked to write from what you read. It is told " +
+                    "to write fewer when fewer deserve a card, and a card you already have " +
+                    "is left out when you paste the reply.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            CardDensity.entries.forEach { option ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = density == option,
+                            onClick = { onSelect(option) },
+                            role = Role.RadioButton,
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = density == option, onClick = { onSelect(option) })
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            option.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /** Tokens a capture's reply may take; the rest of the budget belongs to the prompt. */
 private const val CAPTURE_REPLY_TOKENS = 384

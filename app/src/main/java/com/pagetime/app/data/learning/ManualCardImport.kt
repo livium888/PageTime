@@ -34,9 +34,17 @@ object ManualCardImport {
         val foundAnything: Boolean get() = accepted.isNotEmpty() || leftOut.isNotEmpty()
     }
 
-    fun review(reply: String, spanText: String): Review {
+    /**
+     * [existingPrompts] are the questions the reader already has cards for in
+     * this book; a card that repeats one is left out and says so.
+     */
+    fun review(
+        reply: String,
+        spanText: String,
+        existingPrompts: List<String> = emptyList(),
+    ): Review {
         val parsed = PastedCards.parse(reply)
-        val verdict = PromptSifter().sift(parsed.prompts, listOf(spanText))
+        val verdict = PromptSifter(existingPrompts).sift(parsed.prompts, listOf(spanText))
         return Review(
             accepted = verdict.accepted,
             leftOut = verdict.rejected,

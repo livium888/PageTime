@@ -71,6 +71,10 @@ fun PromptsAndSearchScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SectionHeader("Prompts for your AI app")
+            CardDensityCard(
+                density = viewModel.cardDensity.collectAsStateWithLifecycle().value,
+                onSelect = viewModel::setCardDensity,
+            )
             CapturePromptCard(
                 prompt = lumenPrompt,
                 isCustom = lumenPromptIsCustom,

@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.learning.CardDensity
 import com.pagetime.app.data.learning.ManualCardImport
 import com.pagetime.app.data.learning.ManualCardPrompt
 import com.pagetime.app.data.learning.PromptRejection
@@ -57,6 +58,8 @@ class ManualCardsViewModel(
         /** The sheet found no marker and set one at this page. */
         val markerJustSet: Boolean = false,
         val slice: ReadingSpan.Slice? = null,
+        /** How many cards the reader wants asked for; see [CardDensity]. */
+        val density: CardDensity = CardDensity.DEFAULT,
         val fromLabel: String? = null,
         val toLabel: String? = null,
         val endAdjust: Int = 0,
@@ -71,7 +74,7 @@ class ManualCardsViewModel(
         val problems: List<String> = emptyList(),
         val added: Int = 0,
     ) {
-        val cardsAsked: Int get() = ManualCardPrompt.cardTarget(slice?.words ?: 0)
+        val cardsAsked: Int get() = ManualCardPrompt.cardTarget(slice?.words ?: 0, density)
         val chosen: Int get() = review.count { it.keep }
     }
 
@@ -123,11 +126,13 @@ class ManualCardsViewModel(
         val end = pending ?: hereEnd ?: return
         val adjust = if (pending != null) m.pendingAdjust else _state.value.endAdjust
         val slice = extractor.readingSpan(b, m.start, end, adjust)
+        val density = runCatching { settings.cardDensity() }.getOrDefault(CardDensity.DEFAULT)
         _state.update {
             it.copy(
                 step = Step.SPAN,
                 busy = false,
                 slice = slice,
+                density = density,
                 fromLabel = m.start.chapterTitle,
                 toLabel = end.chapterTitle,
                 endAdjust = adjust,
@@ -185,6 +190,7 @@ class ManualCardsViewModel(
             chapterLabel = label,
             span = slice!!.text,
             template = runCatching { settings.chapterPromptTemplate() }.getOrNull(),
+            density = _state.value.density,
         )
     }
 
@@ -254,7 +260,8 @@ class ManualCardsViewModel(
             }
             val adjust = if (m.pendingEnd != null) m.pendingAdjust else _state.value.endAdjust
             val slice = extractor.readingSpan(b, m.start, end, adjust)
-            val review = ManualCardImport.review(reply, slice.text)
+            val existing = runCatching { cardDao.promptsForBook(b.id) }.getOrDefault(emptyList())
+            val review = ManualCardImport.review(reply, slice.text, existing)
             when {
                 !review.sawJson -> _state.update {
                     it.copy(

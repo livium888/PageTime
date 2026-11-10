@@ -327,8 +327,9 @@ internal object ChapterPromptText {
         passages: List<String>,
         perPassage: Int = ChapterTopics.PROMPTS_PER_PASSAGE,
         insist: Boolean = false,
+        howManyText: String? = null,
     ): String {
-        val how = howMany(perPassage, insist)
+        val how = howManyText ?: howMany(perPassage, insist)
         val placed = template.contains(HOW_MANY_TOKEN)
         val body = template
             .replace(BOOK_TOKEN, bookTitle)
@@ -361,6 +362,11 @@ internal object ChapterPromptText {
         insist: Boolean = false,
         /** The reader's own instructions, or null for the shipped ones. */
         template: String? = null,
+        /**
+         * Replaces the built-in how-many paragraph, for a caller that knows
+         * better than the generic wording what it wants (see [ManualCardPrompt]).
+         */
+        howManyText: String? = null,
     ): String = render(
         template = template?.takeIf { it.isNotBlank() } ?: DEFAULT_TEMPLATE,
         bookTitle = bookTitle,
@@ -368,6 +374,7 @@ internal object ChapterPromptText {
         passages = passages,
         perPassage = perPassage,
         insist = insist,
+        howManyText = howManyText,
     )
 
     /**

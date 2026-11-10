@@ -59,6 +59,8 @@ import com.pagetime.app.data.local.LearningCardEntity
 @Composable
 fun FlashcardsScreen(
     onOpenReview: () -> Unit = {},
+    /** Opens the slip box: the notes written while reading, with their links and boxes. */
+    onOpenSlipBox: () -> Unit = {},
     onOpenBook: (String) -> Unit = {},
     /** Jumps straight into the most overdue concept, in whichever book it lives in — see [DueConceptEntry]. */
     onExplainConcept: (bookId: String, chapterIndex: Int, chapterTitle: String, bookTitle: String) -> Unit = { _, _, _, _ -> },
@@ -93,7 +95,7 @@ fun FlashcardsScreen(
             // number doesn't misrepresent anything, it just answers "how
             // much is there today" before asking which one to start with.
             TodaysPractice(
-                cardsDue = state.due,
+                cardsDue = state.dueTotal,
                 conceptsDue = state.dueConceptCount,
                 onReview = onOpenReview,
                 onExplainConcept = {
@@ -102,6 +104,7 @@ fun FlashcardsScreen(
                     }
                 },
             )
+            SlipBoxRow(count = state.slipCount, due = state.slipsDue, onOpen = onOpenSlipBox)
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -226,6 +229,45 @@ private fun TodaysPractice(
                     Button(onClick = onExplainConcept) { Text("Concepts ($conceptsDue)") }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The way into the slip box from Recall.
+ *
+ * Notes and questions are different things and stay different: a question is
+ * asked of you, a note is something you wrote to think with, with a place in a
+ * box, links to other notes and a trail of where you met the idea again. What
+ * they share is the schedule, so they share this tab and one review sitting.
+ * The notes are opened here rather than listed among the questions, so a note
+ * is never mistaken for a card with a question on it.
+ */
+@Composable
+private fun SlipBoxRow(count: Int, due: Int, onOpen: () -> Unit) {
+    Card(
+        onClick = onOpen,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Slip box", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when {
+                        count == 0 -> "Notes you write while reading, linked together"
+                        due > 0 -> "$count note${if (count == 1) "" else "s"} · $due due, reviewed with your cards"
+                        else -> "$count note${if (count == 1) "" else "s"}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text("Open", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }

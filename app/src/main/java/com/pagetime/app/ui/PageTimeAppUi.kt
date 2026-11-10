@@ -75,10 +75,10 @@ private data class BottomTab(
 
 private val tabs = listOf(
     BottomTab("library", "Library", Icons.Outlined.MenuBook, Icons.Filled.MenuBook),
-    BottomTab("lumen", "Lumen", Icons.Outlined.Style, Icons.Filled.Style),
-    // Distinct from Lumen on purpose. A Lumen card is a note the reader wrote
-    // to think with; a flashcard is a question generated from a passage to be
-    // answered from memory. Conflating them has confused a reader already.
+    // One tab for everything that comes back on a schedule. Notes (the slip
+    // box) are opened from inside it rather than listed among the questions:
+    // a note is something the reader wrote to think with, a question is asked
+    // of them from memory, and mixing them in one list has confused a reader.
     BottomTab("flashcards", "Recall", Icons.Outlined.Quiz, Icons.Filled.Quiz),
     BottomTab("search", "Discover", Icons.Outlined.Search, Icons.Filled.Search),
     BottomTab("settings", "Settings", Icons.Outlined.Settings, Icons.Filled.Settings)
@@ -97,7 +97,7 @@ fun PageTimeAppUi(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val showBottomBar =
-        currentRoute in setOf("library", "lumen", "flashcards", "search", "settings")
+        currentRoute in setOf("library", "flashcards", "search", "settings")
     val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -311,6 +311,7 @@ fun PageTimeAppUi(
             composable("flashcards") {
                 FlashcardsScreen(
                     onOpenReview = { navController.navigate("review") },
+                    onOpenSlipBox = { navController.navigate("lumen") },
                     onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
                     onExplainConcept = { bookId, chapterIndex, chapterTitle, bookTitle ->
                         val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")

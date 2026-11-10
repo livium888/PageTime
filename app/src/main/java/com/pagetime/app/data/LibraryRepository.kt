@@ -14,7 +14,6 @@ import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
-import com.pagetime.app.data.learning.GeminiLearningClient
 import com.pagetime.app.data.library.MarkdownText
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +31,6 @@ class LibraryRepository(
     private val pdfToEpub: PdfToEpub,
     private val settingsRepository: SettingsRepository,
     private val context: Context,
-    private val aiUsageRepository: AiUsageRepository? = null
 ) {
 
     fun observeBooks(): Flow<List<BookEntity>> = bookDao.observeAll()

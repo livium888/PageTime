@@ -40,25 +40,38 @@ This is a native **Kotlin + Jetpack Compose** Android app.
    authenticator apps). Two emergency unlocks per week open one app for 5
    minutes. See `docs/decisions/0001-daily-reading-lock.md`.
 
-## Explain Back learning
+## Your own AI app
 
-PageTime can use Gemini to evaluate source-grounded explanations and build concept-map relationships automatically. The reader tracks progress locally and only starts an automatic analysis checkpoint after the configured amount of active reading and meaningful forward progress. The default **Light** setting targets roughly five checkpoints per hour; **Balanced**, **Frequent**, and **Intensive** settings let the reader request analysis more often. Checkpoints use the current window plus limited preceding context rather than the whole book. **Each chapter is analyzed once and the result is cached**: card and concept-map generation is keyed to the chapter (not to reading progress), so the first checkpoint in a chapter sends its text to Gemini, every later checkpoint in that chapter is served from the local database, and a 30-chapter book costs roughly 30 requests in total — not one per checkpoint. The default is **AI-assisted**, where Gemini returns 3–5 high-quality multiple-choice questions per chapter (each with plausible domain-specific distractors) plus meaningful concept-map relationships. The on-device generator (MCQ-only, Wozniak's rules) is the fallback when Gemini is unavailable. Cards are pre-generated on chapter transitions so the first checkpoint in a new chapter is instant. **On-device first** mode inverts that: everything is built locally and Gemini is only contacted when the local pass produces nothing. Either way, Gemini only decides *content* — scheduling, deduplication, ordering, and when cards appear all stay on the device. Source context stays hidden until after the reader answers and can then be expanded or opened at the original location.
+PageTime never talks to an AI service. There is no key to enter, no provider to
+choose and no model to download for writing. Wherever an AI is useful, the app
+prepares the prompt, you copy it (or share it) to whichever AI app you use, and
+you bring the reply back by pasting it or sharing it to PageTime. Whatever comes
+back is read and **checked before anything is stored**.
 
-Open **Settings → AI & models → Cloud key** in the app to enter the key manually. It is stored in Android encrypted preferences and is never shown again after saving. The app calls Gemini's `models.list` endpoint, follows pagination, filters to models that support `generateContent`, and shows those models in the picker. The selected model is saved locally and used for Explain Back evaluations. **Settings → AI & models → AI usage & statistics** shows today/all-time request counts, success and failure counts, estimated input tokens, cards, concepts, and relationships. Only request metadata is stored; book text and API keys are not stored in the usage table.
+- **Cards from a stretch of a book** — *Options → Make cards from this stretch*
+  copies what you read since you last made cards, with the card-writing
+  instructions. Every pasted card must quote the text that was sent word for
+  word, or it is left out and the reason is shown. PDFs work the same way from
+  the page text.
+- **Explain what you learned** — you write the explanation, take the marking
+  prompt to your AI app, and paste its marks back. Your explanation is saved
+  while you are away, so it survives the app being closed.
+- **Word meaning and plain English** — from the text-selection menu.
+- **Capture a card** — the card starts as the passage itself; *Draft with your
+  AI* asks for a better-worded one.
+- **Concept map** — built on the phone from the text, with *Ask your AI* for a
+  richer one whose every quote is checked.
+- **Tidy a transcript** — one prompt, and a reply much shorter than the original
+  is refused so a summary cannot replace the text.
+- **Sort the library by genre** — one prompt for every untagged book.
 
-For GitHub Actions/private builds, `GEMINI_API_KEY` can still be supplied as a repository secret and is used only as a build-time fallback. Without a Gemini key, PageTime remains usable for reading and local concept maps; Gemini is optional and adds explanation feedback.
+Text shared from any app can be added to the library as a book (markdown is shown
+as formatting) or used as the AI's reply. See
+`docs/decisions/0002-manual-flashcards-via-your-llm.md`.
 
-For a public release, move the Gemini request behind a small authenticated server because any API key packaged in an Android APK can be extracted. The manually entered key is encrypted at rest, but the app still sends it directly to Google's API from the device.
-
-## Offline AI (no cloud key)
-
-Lumen card capture — the AI draft shown when you capture a card while reading — can run without any API key. **Settings → AI & models → Provider** picks where those requests go:
-
-- **Offline model** — runs on this device, never sends book text anywhere. Works when a model is installed; without one, capture falls back to the plain on-device draft.
-- **Gemini** (default) — uses the configured Google Gemini API key, matching earlier behavior.
-- **Ask every time** — prefers Gemini when a key is configured, otherwise uses the local model.
-
-The offline model is **Qwen 2.5 0.5B Instruct (q8)**, an open Apache-2.0 model served by the litert-community Hugging Face org and executed on-device through Google's MediaPipe `tasks-genai` runtime. It is a single ~521 MB `.task` file downloaded once over Wi-Fi from **Settings → AI & models → On-device model** and never bundled into the APK, so the app itself stays small until you opt in. When Settings opens, the app compares the installed file's size and ETag against a cheap HEAD request to the model host; if the model changed, **Settings → AI & models → On-device model** shows *Update available* with a one-tap update — never automatic. Updates download to a temporary file and only replace the installed model after the size check passes, so a failed update leaves the working model untouched. Both providers share the same capture prompt and output contract, so switching providers does not change card quality expectations. Capture is always best-effort: if the selected provider fails or is unconfigured, the card is still drafted from the raw passage so reading is never blocked.
+The prompts live under **Settings → Your AI app → Prompts & search** and can be
+reworded. The only model on the phone is a small search model that finds related
+notes; it writes nothing.
 
 ## Incremental reading (chunks)
 
@@ -268,10 +281,8 @@ added:
 - **Protection** — blocked apps, usage history, and permissions.
 - **Learning** — the slip-box help switch that explains Link, Connect, and File behind.
 - **Notifications** — whether the app may tell you a sitting is worth having.
-- **AI & models** — its own screen, holding the provider choice, both on-device
-  weights files, the Gemini key, the analysis level, the generation mode and the
-  capture prompt. These used to sit under *Slip box*, which is not where anyone
-  looking for an API key would ever open.
+- **Your AI app** — its own screen: the prompts you take to your AI app, how much
+  of a page a capture carries, and the search model that finds related notes.
 - **Support** — installed build and crash diagnostics.
 
 The reader's overflow menu is grouped the same way — Navigate, Study, Notes,
@@ -310,7 +321,7 @@ PageTime needs three special permissions, all configured from
    launch PageTime reconciles this audit trail against its balance ledger and
    retroactively charges any blocked-app time the live ticker missed.
 
-Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB, PDF or plain-text file. Create a Gemini API key from Google AI Studio and add it under **Settings → AI & models → Cloud key** if you want explanation feedback, or switch **Settings → AI & models → Provider** to *Offline model* to draft Lumen cards entirely on-device without a key.
+Then pick which apps to block in **Settings → Manage blocked apps**. To add a personal book, open **Library** and tap **+** (or **Import from phone** when the library is empty), then choose an EPUB, PDF or plain-text file. For cards, explanation marking and the rest, see *Your own AI app* above: there is no key to create.
 
 ## Honest limitations
 

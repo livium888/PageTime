@@ -14,8 +14,6 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.pagetime.app.data.LlmProviderKind
-import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.SchedulingPolicy
 import com.pagetime.app.data.review.Steps
@@ -107,8 +105,6 @@ data class Settings(
     val appAllowlistSetupGraceUntil: Long = 0,
     /** Whether the slip box shows newcomer help / confirmations before card actions. */
     val helpEnabled: Boolean = true,
-    /** Provider used for optional AI-assisted learning features. */
-    val llmProvider: LlmProviderKind = LlmProviderKind.GEMINI
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
@@ -256,7 +252,6 @@ class SettingsRepository(private val context: Context) {
         val LAST_EXTERNAL_READING_CHECK_AT = longPreferencesKey("last_external_reading_check_at")
         val TOTAL_READING = longPreferencesKey("total_reading_seconds")
         val AI_ANALYSIS_LEVEL = stringPreferencesKey("ai_analysis_level")
-        val GENERATION_MODE = stringPreferencesKey("generation_mode")
         val QUICK_DISABLE_UNTIL = longPreferencesKey("quick_disable_until")
         val HARD_LOCK_UNTIL = longPreferencesKey("hard_lock_until")
         val EMERGENCY_PACKAGE = stringPreferencesKey("emergency_unlock_package")
@@ -280,11 +275,8 @@ class SettingsRepository(private val context: Context) {
         val ALLOWED_APPS = stringSetPreferencesKey("allowed_apps")
         val APP_ALLOWLIST_SETUP_GRACE_UNTIL = longPreferencesKey("app_allowlist_setup_grace_until")
         val METHOD_HELP_ENABLED = booleanPreferencesKey("method_help_enabled")
-        val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
         val CHAPTER_PROMPT = stringPreferencesKey("chapter_prompt_template")
-        val LUMEN_MODEL_URL = stringPreferencesKey("lumen_model_url")
-        val LUMEN_CLOUD_RESCUE = booleanPreferencesKey("lumen_cloud_rescue")
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
 
         val REVIEW_REMINDERS = booleanPreferencesKey("review_reminders_enabled")
@@ -354,29 +346,21 @@ class SettingsRepository(private val context: Context) {
         const val GEMINI_MODEL = "gemini_model"
     }
 
-    fun geminiApiKey(): String? = securePreferences
-        .getString(SecureKeys.GEMINI_API_KEY, null)
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
-
-    fun setGeminiApiKey(value: String) {
-        securePreferences.edit().putString(SecureKeys.GEMINI_API_KEY, value.trim()).apply()
-    }
-
-    fun clearGeminiApiKey() {
-        securePreferences.edit().remove(SecureKeys.GEMINI_API_KEY).apply()
-    }
-
-    fun geminiModel(): String = securePreferences
-        .getString(SecureKeys.GEMINI_MODEL, "gemini-2.5-flash")
-        ?.removePrefix("models/")
-        ?.takeIf { it.isNotBlank() }
-        ?: "gemini-2.5-flash"
-
-    fun setGeminiModel(value: String) {
-        securePreferences.edit()
-            .putString(SecureKeys.GEMINI_MODEL, value.removePrefix("models/").trim())
-            .apply()
+    /**
+     * Erases what the removed AI features left behind: the Gemini API key the
+     * reader typed in, and the model they picked.
+     *
+     * The key is a secret that opens an account the reader pays for, so it is
+     * not left sitting in encrypted storage for a feature that no longer
+     * exists. Safe to call every launch; once gone there is nothing to remove.
+     */
+    fun forgetRetiredAiSettings() {
+        runCatching {
+            securePreferences.edit()
+                .remove(SecureKeys.GEMINI_API_KEY)
+                .remove(SecureKeys.GEMINI_MODEL)
+                .apply()
+        }
     }
 
     /** The book to resume on re-entry; null until the user has read something. */
@@ -656,7 +640,6 @@ class SettingsRepository(private val context: Context) {
             allowedApps = p[Keys.ALLOWED_APPS] ?: emptySet(),
             appAllowlistSetupGraceUntil = p[Keys.APP_ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
             helpEnabled = p[Keys.METHOD_HELP_ENABLED] ?: true,
-            llmProvider = LlmProviderKind.fromKey(p[Keys.LLM_PROVIDER])
         )
     }
 
@@ -684,44 +667,6 @@ class SettingsRepository(private val context: Context) {
             if (value.isNullOrBlank()) prefs.remove(Keys.CHAPTER_PROMPT)
             else prefs[Keys.CHAPTER_PROMPT] = value
         }
-    }
-
-    /**
-     * Where the offline model is downloaded from, or null for the built-in one.
-     *
-     * Settable because the one fact that cannot be checked from a build server
-     * is whether a given URL serves the file it claims to, and pinning a
-     * guess into the app would make every correction cost a release.
-     */
-    suspend fun lumenModelUrl(): String? =
-        context.dataStore.data.first()[Keys.LUMEN_MODEL_URL]?.takeIf { it.isNotBlank() }
-
-    suspend fun setLumenModelUrl(value: String?) {
-        context.dataStore.edit { prefs ->
-            if (value.isNullOrBlank()) prefs.remove(Keys.LUMEN_MODEL_URL)
-            else prefs[Keys.LUMEN_MODEL_URL] = value.trim()
-        }
-    }
-
-    /**
-     * Whether a capture that the on-device model could not deliver may be
-     * retried against Gemini.
-     *
-     * Only reached after the offline model has actually failed — missing,
-     * unloadable, or having returned something unusable. A card the model
-     * produced is never silently replaced by a cloud one, however thin it is;
-     * that is the reader's tap on "Rewrite with Gemini", because it spends
-     * their quota and they should be the one spending it.
-     *
-     * Defaults to on, and only ever fires when a key is configured — which is
-     * itself a deliberate act. A reader who chose offline for privacy rather
-     * than for cost can turn it off and the passage never leaves the phone.
-     */
-    suspend fun lumenCloudRescue(): Boolean =
-        context.dataStore.data.first()[Keys.LUMEN_CLOUD_RESCUE] ?: true
-
-    suspend fun setLumenCloudRescue(value: Boolean) {
-        context.dataStore.edit { it[Keys.LUMEN_CLOUD_RESCUE] = value }
     }
 
     /**
@@ -893,29 +838,8 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.METHOD_HELP_ENABLED] = value }
     }
 
-    suspend fun setLlmProvider(provider: LlmProviderKind) {
-        context.dataStore.edit { it[Keys.LLM_PROVIDER] = provider.key }
-    }
-
-    suspend fun llmProvider(): LlmProviderKind =
-        context.dataStore.data.first()[Keys.LLM_PROVIDER]
-            ?.let(LlmProviderKind::fromKey)
-            ?: LlmProviderKind.GEMINI
-
     val aiSettings: Flow<AiSettings> = context.dataStore.data.map { p ->
-        AiSettings(
-            analysisLevel = AiAnalysisLevel.fromKey(p[Keys.AI_ANALYSIS_LEVEL]),
-            generationMode = GenerationMode.fromKey(p[Keys.GENERATION_MODE])
-        )
-    }
-
-    suspend fun generationMode(): GenerationMode =
-        context.dataStore.data.first()[Keys.GENERATION_MODE]
-            ?.let(GenerationMode::fromKey)
-            ?: GenerationMode.GEMINI_FIRST
-
-    suspend fun setGenerationMode(mode: GenerationMode) {
-        context.dataStore.edit { it[Keys.GENERATION_MODE] = mode.key }
+        AiSettings(analysisLevel = AiAnalysisLevel.fromKey(p[Keys.AI_ANALYSIS_LEVEL]))
     }
 
     /**

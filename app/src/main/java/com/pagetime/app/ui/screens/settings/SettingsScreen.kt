@@ -72,24 +72,18 @@ import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.pagetime.app.data.LlmProviderKind
-import com.pagetime.app.data.LumenModelStatus
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.RadioButton
 import androidx.compose.ui.semantics.Role
-import com.pagetime.app.data.LumenModelStore
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.embed.EmbeddingModelStatus
 import com.pagetime.app.data.embed.EmbeddingModelStore
 import com.pagetime.app.data.learning.ChapterPromptText
-import com.pagetime.app.data.learning.GeminiModel
-import com.pagetime.app.data.learning.GenerationMode
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.local.AiAnalysisLevel
 import com.pagetime.app.ui.AppCard
 import com.pagetime.app.ui.AppSettingsRow
 import com.pagetime.app.BuildConfig
-import com.pagetime.app.data.LumenLocalDraft
 import com.pagetime.app.data.LlmTokenBudget
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.ui.SectionHeader
@@ -105,8 +99,7 @@ fun SettingsScreen(
     onManageSiteRules: () -> Unit,
     onPermissions: () -> Unit,
     onUsageAudit: () -> Unit,
-    onAiUsage: () -> Unit,
-    onAiModels: () -> Unit,
+    onPrompts: () -> Unit,
     onScheduling: () -> Unit,
     viewModel: SettingsViewModel = viewModel()
 ) {
@@ -402,17 +395,12 @@ fun SettingsScreen(
                 onClick = onScheduling
             )
 
-            SectionHeader("AI & models")
+            SectionHeader("Your AI app")
             AppSettingsRow(
                 icon = Icons.Outlined.AutoAwesome,
-                label = "Models & prompts",
-                subtitle = "The provider, the on-device model, and the capture prompt",
-                onClick = onAiModels
-            )
-            AppSettingsRow(
-                icon = Icons.Outlined.History,
-                label = "AI usage & statistics",
-                onClick = onAiUsage
+                label = "Prompts & search",
+                subtitle = "The prompts you take to your AI app, and finding related notes",
+                onClick = onPrompts
             )
 
             SectionHeader("Support")
@@ -428,10 +416,10 @@ fun SettingsScreen(
  * without reading the APK.
  */
 /**
- * Lets the reader tailor the prompt the offline model is given for a capture.
- * The passage is still trimmed and the prompt still measured before it reaches
- * the model, so a hand-written prompt can produce a poor card but cannot push
- * the request past the budget that used to kill the process.
+ * Lets the reader tailor the prompt PageTime hands to their own AI app when
+ * they capture a card. The passage is still trimmed and the prompt still
+ * measured, so a hand-written prompt can produce a poor card but cannot make
+ * every capture too large to send.
  */
 @Composable
 internal fun CapturePromptCard(
@@ -444,7 +432,7 @@ internal fun CapturePromptCard(
     var expanded by remember { mutableStateOf(false) }
     val problem = LumenAiPrompts.templateProblem(draft)
     val tokens = remember(draft) { LumenAiPrompts.worstCaseTokens(draft) }
-    val budget = LlmTokenBudget.inputBudget(LumenLocalDraft.REPLY_TOKENS)
+    val budget = LlmTokenBudget.inputBudget(CAPTURE_REPLY_TOKENS)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -463,7 +451,7 @@ internal fun CapturePromptCard(
             }
             if (expanded) {
                 Text(
-                    "What the offline model is asked for when you capture a card. " +
+                    "What your AI app is asked for when you capture a card. " +
                         "${LumenAiPrompts.PASSAGE_TOKEN} is replaced with the passage you " +
                         "are reading and ${LumenAiPrompts.BOOK_TOKEN} with the book's title.",
                     style = MaterialTheme.typography.bodySmall,
@@ -484,10 +472,10 @@ internal fun CapturePromptCard(
                     when {
                         problem != null -> problem
                         tokens > budget ->
-                            "About $tokens tokens on a full page, over the $budget the model " +
-                                "can read. Long captures will fall back to a plain draft."
+                            "About $tokens tokens on a full page, over the $budget a capture " +
+                                "prompt is kept to. Long captures will be trimmed."
                         else ->
-                            "About $tokens tokens on a full page, of $budget the model can read."
+                            "About $tokens tokens on a full page, of the $budget a capture prompt is kept to."
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color =
@@ -573,7 +561,7 @@ internal fun ChapterPromptCard(
             }
             if (expanded) {
                 Text(
-                    "What the model is asked for when it writes a chapter's or a PDF " +
+                    "What your AI app is asked for when it writes cards from a stretch of a book or a PDF " +
                         "page's cards. ${ChapterPromptText.PASSAGES_TOKEN} is replaced " +
                         "with the chosen passages, numbered from zero; " +
                         "${ChapterPromptText.BOOK_TOKEN} with the book's title and " +
@@ -705,61 +693,11 @@ private fun CrashDiagnosticsCard(crashLogText: String?) {
     }
 }
 
-@Composable
-internal fun LlmProviderSettingsCard(
-    provider: LlmProviderKind,
-    onSelect: (LlmProviderKind) -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("AI provider", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Choose where optional AI requests run. Offline mode is ready for a " +
-                    "downloaded local model and will never send book text to Gemini " +
-                    "automatically.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                LlmProviderKind.entries.forEach { option ->
-                    FilterChip(
-                        selected = option == provider,
-                        onClick = { onSelect(option) },
-                        label = { Text(option.label) },
-                    )
-                }
-            }
-            Text(
-                provider.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            if (provider == LlmProviderKind.OFFLINE) {
-                Text(
-                    "Capture will draft cards with the downloaded model below. Without " +
-                        "one, capture falls back to the plain on-device draft.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
 /**
  * The retrieval model, and the button that proves it works.
  *
- * Separate from the language model on purpose. They are different files with
- * different jobs — one writes cards, one finds which cards are alike — and a
- * reader can want either without the other. Deleting one must not disturb the
- * other, and a reader whose phone cannot load the 554 MB language model can
- * still have working search from a 22 MB one.
+ * This is the only model left on the phone. It finds which cards are alike;
+ * it writes nothing, and the reader's own AI app does all the writing.
  *
  * The self-test earns its place in the UI rather than living in a test suite.
  * Everything under it is already unit-tested, but only against fixtures: the
@@ -905,144 +843,6 @@ internal fun EmbeddingModelSettingsCard(
     }
 }
 
-@Composable
-internal fun OfflineModelSettingsCard(
-    status: LumenModelStatus,
-    offlineProblem: String?,
-    onRetryOfflineAi: () -> Unit,
-    downloadStats: LumenDownloadStats?,
-    modelUrl: String,
-    onSetModelUrl: (String?) -> Unit,
-    cloudRescue: Boolean,
-    onSetCloudRescue: (Boolean) -> Unit,
-    onDownload: () -> Unit,
-    onCheckForUpdate: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Offline model", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "${LumenModelStore.MODEL_LABEL} — Google's Gemma model built for this " +
-                    "runtime, running entirely on this device. Book text and prompts never " +
-                    "leave the phone. Download once over Wi-Fi (~${LumenModelStore.MODEL_SIZE_MB} MB); " +
-                    "the app itself stays small either way.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // The installed model can be present, intact and switched off at the
-            // same time. Saying so here is the whole point: without it the reader
-            // sees "Installed" and still gets plain drafts, with nothing in the
-            // app explaining the difference.
-            if (offlineProblem != null) {
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                Text(
-                    "Offline AI is switched off",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Text(
-                    "$offlineProblem. The app switched the model off on purpose: a " +
-                        "failure inside the native runtime takes the whole app down with " +
-                        "it, so captures fall back to the plain on-device draft instead. " +
-                        "Close other apps and try again — this is usually memory.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(onClick = onRetryOfflineAi, modifier = Modifier.fillMaxWidth()) {
-                    Text("Try offline AI again")
-                }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-            }
-            when (status) {
-                is LumenModelStatus.NotDownloaded -> {
-                    Text(
-                        "Not downloaded — ${LumenModelStore.MODEL_SIZE_MB} MB",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
-                        Text("Download model")
-                    }
-                }
-                is LumenModelStatus.UpdateAvailable -> {
-                    Text(
-                        "A newer version of the offline model is available " +
-                            "(~${(status.remoteBytes / 1_048_576).toInt()} MB). Update keeps " +
-                            "capture quality current; the installed model keeps working " +
-                            "until the new one finishes verifying.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
-                        Text("Update model")
-                    }
-                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-                        Text("Delete model")
-                    }
-                }
-                is LumenModelStatus.Downloading -> {
-                    LinearProgressIndicator(
-                        progress = { status.fraction },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        buildString {
-                            append("Downloading… ")
-                            append(formatModelMb(status.downloadedBytes))
-                            append(" of ")
-                            append(formatModelMb(status.totalBytes))
-                            downloadStats?.let { stats ->
-                                if (stats.rateBytesPerSec > 0) {
-                                    append(" — ")
-                                    append(formatModelMb(stats.rateBytesPerSec))
-                                    append("/s")
-                                }
-                            }
-                            append(" — keep the app open")
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                is LumenModelStatus.Ready -> {
-                    Text(
-                        "Installed — ${(status.bytes / 1_048_576).toInt()} MB. Capture now drafts " +
-                            "cards on-device when Offline model is selected.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    TextButton(
-                        onClick = onCheckForUpdate,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Check for updates")
-                    }
-                    OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-                        Text("Delete model")
-                    }
-                }
-                is LumenModelStatus.Failed -> {
-                    Text(
-                        status.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
-                        Text("Retry download")
-                    }
-                }
-            }
-
-            HorizontalDivider(Modifier.padding(vertical = 4.dp))
-            CloudRescueToggle(enabled = cloudRescue, onChange = onSetCloudRescue)
-
-            HorizontalDivider(Modifier.padding(vertical = 4.dp))
-            ModelSourcePicker(modelUrl = modelUrl, onSetModelUrl = onSetModelUrl)
-        }
-    }
-}
-
 /**
  * How much text a capture hands the model.
  *
@@ -1071,8 +871,8 @@ internal fun CaptureSizeCard(captureChars: Int, onSelect: (Int) -> Unit) {
         ) {
             Text("How much a card reads", style = MaterialTheme.typography.titleMedium)
             Text(
-                "The text handed to the model when you capture. Less text means fewer " +
-                    "ideas competing, which is what the offline model struggles to choose " +
+                "The text carried to your AI app when you capture. Less text means fewer " +
+                    "ideas competing, which is what an AI app can struggle to choose " +
                     "between. More text means more context and more to get lost in.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1115,43 +915,6 @@ private val CAPTURE_SIZES: List<Pair<Int, String>> = listOf(
 )
 
 /**
- * What happens when the on-device model cannot draft a card at all.
- *
- * Deliberately narrow, and the wording says so: this is not "use Gemini when
- * the card is weak". A card the offline model produced is kept whatever its
- * quality, because replacing it would spend the reader's quota on their behalf
- * — that is what the "Rewrite with Gemini" button on the card is for. This
- * fires only when there was no card: no model installed, too little free
- * memory to load it, or a reply that could not be used.
- */
-@Composable
-private fun CloudRescueToggle(enabled: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text("Finish failed captures with Gemini", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (enabled) {
-                    "When the offline model can't draft a card, the passage goes to " +
-                        "Gemini instead of falling back to a plain first-sentence card. " +
-                        "Needs a Gemini key, and the card says when it happened."
-                } else {
-                    "Off — a capture the offline model can't do becomes a plain draft " +
-                        "from the passage, and nothing leaves the phone."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Switch(checked = enabled, onCheckedChange = onChange)
-    }
-}
-
-/**
  * Credits time spent in a chosen app (Kindle, etc.) as reading, on trust.
  *
  * PageTime's own reader can tell a page turning from a phone merely left on
@@ -1191,96 +954,6 @@ private fun ExternalReadingToggle(enabled: Boolean, onChange: (Boolean) -> Unit)
     }
 }
 
-/**
- * Which weights to download.
- *
- * The built-in model can paraphrase a passage but not reliably state the idea
- * behind it. Parameters are the lever left, so a larger model is offered — and
- * the address is editable rather than fixed, because whether a given URL
- * serves the file it claims to is the one thing that cannot be checked from a
- * build server. A wrong address costs a visible download error: the size is
- * taken from the server's own headers and the file is structurally checked
- * before the runtime ever opens it.
- */
-@Composable
-private fun ModelSourcePicker(
-    modelUrl: String,
-    onSetModelUrl: (String?) -> Unit,
-) {
-    var draft by rememberSaveable(modelUrl) { mutableStateOf(modelUrl) }
-    val isBuiltIn = modelUrl == LumenModelStore.MODEL_URL
-
-    Text("Which model", style = MaterialTheme.typography.titleSmall)
-    Text(
-        if (isBuiltIn) {
-            "Using the built-in ${LumenModelStore.MODEL_LABEL}."
-        } else {
-            "Using a model you chose. Switching deletes the installed weights, " +
-                "so the new one downloads fresh."
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Text(
-        "A bigger model needs roughly 1.7x its file size in FREE memory to load — " +
-            "so a 1.6 GB download wants about 2.7 GB free, which this phone does " +
-            "not reliably have. Check the free figure in the capture log before " +
-            "spending the download: under it, the model is refused and capture " +
-            "falls back to the plain draft.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Text(
-        "Any MediaPipe .task bundle works here — paste a direct download link. " +
-            "A wrong address fails visibly: the size is taken from the server and " +
-            "the file is structurally checked before the runtime opens it.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    OutlinedTextField(
-        value = draft,
-        onValueChange = { draft = it },
-        label = { Text("Model download URL") },
-        singleLine = false,
-        modifier = Modifier.fillMaxWidth(),
-        textStyle = MaterialTheme.typography.bodySmall,
-    )
-    // Both addresses came from Hugging Face's own file listing rather than
-    // from memory, which is the difference between these buttons and the one
-    // that used to sit here promising a Qwen download that 404'd.
-    OutlinedButton(
-        onClick = { draft = LumenModelStore.ALT_Q4_EKV4096_URL },
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(LumenModelStore.ALT_Q4_EKV4096_LABEL)
-    }
-    OutlinedButton(
-        onClick = { draft = LumenModelStore.ALT_Q8_EKV4096_URL },
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(LumenModelStore.ALT_Q8_EKV4096_LABEL)
-    }
-    Button(
-        onClick = { onSetModelUrl(draft.trim().takeIf { it.isNotBlank() }) },
-        enabled = draft.trim().isNotBlank() && draft.trim() != modelUrl,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text("Use this model")
-    }
-    if (!isBuiltIn) {
-        OutlinedButton(
-            onClick = { onSetModelUrl(null) },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Back to the built-in model")
-        }
-    }
-}
-
-/** "12.4 MB" / "3.2 MB" — live byte counts, not a percentage. */
-private fun formatModelMb(bytes: Long): String =
-    "%.1f".format(bytes / 1_048_576.0)
-
 @Composable
 internal fun AiAnalysisSettingsCard(
     level: AiAnalysisLevel,
@@ -1288,9 +961,9 @@ internal fun AiAnalysisSettingsCard(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Automatic AI analysis", style = MaterialTheme.typography.titleMedium)
+            Text("Reading analysis", style = MaterialTheme.typography.titleMedium)
             Text(
-                "The reader keeps tracking progress locally. Each chapter is analyzed once — cards and the concept map are generated and cached, so later checkpoints never re-send the same text.",
+                "While you read, PageTime builds a concept map of each chapter on your phone, from the text itself. Nothing is sent anywhere. This sets how often it looks.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1313,160 +986,6 @@ internal fun AiAnalysisSettingsCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary
             )
-        }
-    }
-}
-
-@Composable
-internal fun GenerationModeSettingsCard(
-    mode: GenerationMode,
-    onSelect: (GenerationMode) -> Unit
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("How cards & concepts are built", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "AI-assisted prefers Gemini for richer cards and concepts. On-device first keeps everything local and only uses Gemini when the local pass comes up empty. Either way each chapter is processed once and cached.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                GenerationMode.entries.forEach { option ->
-                    FilterChip(
-                        selected = option == mode,
-                        onClick = { onSelect(option) },
-                        label = { Text(option.label) }
-                    )
-                }
-            }
-            Text(
-                mode.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
-internal fun GeminiSettingsCard(
-    keyInput: String,
-    onKeyInputChange: (String) -> Unit,
-    hasUserKey: Boolean,
-    models: List<GeminiModel>,
-    selectedModel: String,
-    modelMenuExpanded: Boolean,
-    onModelMenuExpandedChange: (Boolean) -> Unit,
-    onSelectModel: (GeminiModel) -> Unit,
-    status: GeminiSettingsStatus,
-    onSaveKey: () -> Unit,
-    onTestSavedKey: () -> Unit,
-    onClearKey: () -> Unit,
-    onRefresh: () -> Unit
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Key, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Explain Back with Gemini", style = MaterialTheme.typography.titleMedium)
-            }
-            Text(
-                "Add your Gemini API key for concept explanations and feedback. It is stored only on this device.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall
-            )
-            OutlinedTextField(
-                value = keyInput,
-                onValueChange = onKeyInputChange,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text(if (hasUserKey) "Replace saved API key" else "Gemini API key") },
-                placeholder = { Text("AIza...") },
-                visualTransformation = PasswordVisualTransformation(),
-                supportingText = {
-                    if (hasUserKey) Text("A key is saved securely; it is never displayed.")
-                }
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = if (hasUserKey && keyInput.isBlank()) onTestSavedKey else onSaveKey,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(if (hasUserKey && keyInput.isBlank()) "Test saved key" else "Save & test")
-                }
-                if (hasUserKey) {
-                    OutlinedButton(onClick = onClearKey, modifier = Modifier.weight(1f)) {
-                        Text("Clear key")
-                    }
-                }
-            }
-            if (models.isNotEmpty()) {
-                Text("Model", style = MaterialTheme.typography.labelLarge)
-                Box {
-                    OutlinedButton(
-                        onClick = { onModelMenuExpandedChange(true) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            models.firstOrNull { it.id == selectedModel }?.displayName ?: selectedModel,
-                            maxLines = 1
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = modelMenuExpanded,
-                        onDismissRequest = { onModelMenuExpandedChange(false) },
-                        modifier = Modifier.heightIn(max = 420.dp)
-                    ) {
-                        models.forEach { model ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(model.displayName)
-                                        if (model.description.isNotBlank()) {
-                                            Text(
-                                                model.description,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 2
-                                            )
-                                        }
-                                    }
-                                },
-                                onClick = { onSelectModel(model) }
-                            )
-                        }
-                    }
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    when (status) {
-                        GeminiSettingsStatus.Idle -> "Not tested"
-                        GeminiSettingsStatus.Loading -> "Testing connection..."
-                        is GeminiSettingsStatus.Ready -> status.message
-                        is GeminiSettingsStatus.Error -> status.message
-                    },
-                    color = when (status) {
-                        is GeminiSettingsStatus.Error -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "Refresh Gemini models")
-                }
-            }
         }
     }
 }
@@ -1695,3 +1214,6 @@ private const val MAX_READING_RATE = 3.0
 /** A typed number as it reads back: 90, or 1.5 when it is not whole. */
 private fun typedNumberLabel(value: Double): String =
     if (value % 1.0 == 0.0) value.toLong().toString() else "%.1f".format(value)
+
+/** Tokens a capture's reply may take; the rest of the budget belongs to the prompt. */
+private const val CAPTURE_REPLY_TOKENS = 384

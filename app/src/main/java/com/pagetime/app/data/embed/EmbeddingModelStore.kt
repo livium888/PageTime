@@ -1,6 +1,6 @@
 package com.pagetime.app.data.embed
 
-import com.pagetime.app.data.LumenModelDownloader
+import com.pagetime.app.data.ModelDownloader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +35,7 @@ sealed interface EmbeddingModelStatus {
  */
 class EmbeddingModelStore(
     private val directory: File,
-    private val downloader: LumenModelDownloader,
+    private val downloader: ModelDownloader,
     private val source: suspend () -> EmbeddingModelSource,
 ) {
     private val mutex = Mutex()

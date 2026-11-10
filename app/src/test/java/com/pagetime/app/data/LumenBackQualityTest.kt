@@ -1,6 +1,5 @@
 package com.pagetime.app.data
 
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -18,8 +17,6 @@ class LumenBackQualityTest {
     private val twoSentences =
         "Shared stories let people who have never met act as one group. " +
             "That is why a myth can hold a nation together where kinship cannot."
-
-    private fun ok(text: String) = Result.success(LlmResult(text, LlmProviderKind.OFFLINE))
 
     @Test
     fun `a two sentence explanation holds up`() {
@@ -66,43 +63,4 @@ class LumenBackQualityTest {
         assertTrue(LumenCapture.sentenceCount("Dr. Smith argued this for years.") >= 2)
     }
 
-    @Test
-    fun `a thin back is re-asked and the better answer wins`() = runTest {
-        var calls = 0
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            calls++
-            if (calls == 1) {
-                ok("""{"front":"$front","back":"Shared stories bind people together somehow."}""")
-            } else {
-                ok("""{"front":"$front","back":"$twoSentences"}""")
-            }
-        }
-
-        val outcome = LumenLocalDraft.generate(call, "A passage about cooperation.", "Sapiens")
-
-        assertEquals(twoSentences, outcome.card!!.second)
-        assertEquals(2, outcome.attempts)
-        assertNull("The kept card's note holds up", outcome.backProblem)
-    }
-
-    @Test
-    fun `a retry that is no better never loses the first card`() = runTest {
-        // Re-asking must be free of downside, or it becomes a gamble on a card
-        // the reader already had.
-        val firstBack = "Shared stories bind large groups of strangers together."
-        var calls = 0
-        val call: suspend (LlmRequest) -> Result<LlmResult> = { _ ->
-            calls++
-            if (calls == 1) {
-                ok("""{"front":"$front","back":"$firstBack"}""")
-            } else {
-                ok("""not a card at all""")
-            }
-        }
-
-        val outcome = LumenLocalDraft.generate(call, "A passage about cooperation.", "Sapiens")
-
-        assertEquals(firstBack, outcome.card!!.second)
-        assertEquals(LumenCapture.BackProblem.SINGLE_SENTENCE, outcome.backProblem)
-    }
 }

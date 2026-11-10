@@ -40,9 +40,21 @@ data class FlashcardsUiState(
     val loading: Boolean = true,
     /** ID of the card currently being edited, or null. */
     val editingCardId: String? = null,
+    /** Notes in the slip box, which are reviewed in the same sitting as the cards. */
+    val slipCount: Int = 0,
+    /** How many of those notes are due now. */
+    val slipsDue: Int = 0,
 ) {
     val total: Int get() = counts[FlashcardFilter.ALL] ?: 0
     val due: Int get() = counts[FlashcardFilter.DUE] ?: 0
+
+    /**
+     * Everything the review sitting will ask: due cards and due notes.
+     *
+     * The sitting has always included notes; the headline number did not, so it
+     * promised fewer questions than the reader then got.
+     */
+    val dueTotal: Int get() = due + slipsDue
 }
 
 class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
@@ -51,6 +63,7 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     private val cardDao = container.database.learningCardDao()
     private val reviewLog = container.database.learningReviewLogDao()
     private val bookDao = container.database.bookDao()
+    private val lumenDao = container.database.lumenCardDao()
     private val generator = container.chapterQuestions
     private val explainBackRepository = container.explainBackRepository
 
@@ -93,8 +106,14 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
             )
         },
         _editingCardId,
-    ) { current, editingCardId ->
-        current.copy(editingCardId = editingCardId)
+        lumenDao.observeAll(),
+    ) { current, editingCardId, slips ->
+        val now = System.currentTimeMillis()
+        current.copy(
+            editingCardId = editingCardId,
+            slipCount = slips.size,
+            slipsDue = slips.count { it.dueAt != null && it.dueAt <= now },
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FlashcardsUiState())
 
     fun setFilter(filter: FlashcardFilter) {

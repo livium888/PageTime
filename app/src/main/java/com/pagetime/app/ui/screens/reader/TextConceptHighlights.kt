@@ -54,7 +54,11 @@ fun rememberAnnotatedPage(
         Color(0xFF5279BE) // soft blue
     }
 
-    val highlightWeight = if (level == "active") FontWeight.SemiBold else FontWeight.Normal
+    // Never a heavier weight, even in "active" mode. Pages are measured before
+    // concept hints are known, so anything that makes letters wider would wrap
+    // lines the measurement did not expect and push the end of a page off the
+    // screen. Colour and background carry the emphasis instead.
+    val highlightWeight = FontWeight.Normal
 
     return buildAnnotatedString {
         var cursor = 0
@@ -153,11 +157,13 @@ fun rememberAnnotatedPageWithHighlights(
 /**
  * The weight and slant for [spans], given page-relative.
  *
- * A heading is drawn bold at the body size, not larger. Pages are measured
- * from the plain text before any of this is applied, so a span that changed
- * the height of a line would push the end of the page off the screen.
+ * A heading is drawn bold at the body size, not larger. Bold letters are wider
+ * than regular ones, so pagination measures the page WITH these styles (see
+ * the measuring function in the text reader): measured as plain text and drawn
+ * bold, a page wraps onto more lines than were measured and loses its last
+ * ones off the screen.
  */
-private fun formattingLayer(
+internal fun formattingLayer(
     text: String,
     spans: List<MarkdownText.StyleSpan>,
 ): List<AnnotatedString.Range<SpanStyle>> = spans.mapNotNull { span ->

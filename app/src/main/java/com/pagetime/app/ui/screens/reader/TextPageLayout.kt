@@ -55,6 +55,31 @@ object TextPageLayout {
         measureHeightPx: (String) -> Int,
         maxWindowChars: Int = DEFAULT_MAX_WINDOW_CHARS,
         onProgress: (suspend (fraction: Float) -> Unit)? = null
+    ): List<TextPage> = paginateMeasuredAt(
+        content = content,
+        maxHeightPx = maxHeightPx,
+        measureHeightPx = { text, _ -> measureHeightPx(text) },
+        maxWindowChars = maxWindowChars,
+        onProgress = onProgress,
+    )
+
+    /**
+     * Like [paginateMeasured], but the measuring function is also told where in
+     * [content] the text it is measuring begins.
+     *
+     * That is what lets a caller measure the page with the formatting it will
+     * be drawn with. Bold and italic ranges belong to characters of the whole
+     * book, and bold letters are wider, so a page measured as plain text and
+     * drawn with bold in it wraps onto more lines than were measured and its
+     * last lines fall off the screen. [startOffset] is the offset in [content]
+     * of the first character of the text passed to [measureHeightPx].
+     */
+    suspend fun paginateMeasuredAt(
+        content: String,
+        maxHeightPx: Int,
+        measureHeightPx: (text: String, startOffset: Int) -> Int,
+        maxWindowChars: Int = DEFAULT_MAX_WINDOW_CHARS,
+        onProgress: (suspend (fraction: Float) -> Unit)? = null
     ): List<TextPage> {
         if (content.isEmpty()) return listOf(TextPage(0, 0, 0, ""))
         require(maxHeightPx > 0) { "Page height must be positive" }
@@ -72,12 +97,12 @@ object TextPageLayout {
             // Binary search the largest end offset whose rendered page fits.
             var lo = start + 1            // one character is assumed to fit
             var hi = windowEnd            // the window, may overflow
-            if (measureHeightPx(trimmed(content, start, windowEnd)) <= maxHeightPx) {
+            if (measureHeightPx(trimmed(content, start, windowEnd), start) <= maxHeightPx) {
                 lo = windowEnd
             } else {
                 while (hi - lo > 1) {
                     val mid = (lo + hi) / 2
-                    if (measureHeightPx(trimmed(content, start, mid)) <= maxHeightPx) {
+                    if (measureHeightPx(trimmed(content, start, mid), start) <= maxHeightPx) {
                         lo = mid
                     } else {
                         hi = mid
@@ -110,7 +135,7 @@ object TextPageLayout {
         start: Int,
         rawEnd: Int,
         maxHeightPx: Int,
-        measureHeightPx: (String) -> Int
+        measureHeightPx: (String, Int) -> Int
     ): Int {
         if (rawEnd >= content.length) return content.length
         val windowStart = (rawEnd - 220).coerceAtLeast(start + 1)
@@ -125,7 +150,7 @@ object TextPageLayout {
             .filter { it > start }
             .sortedDescending()
         for (candidate in candidates) {
-            if (measureHeightPx(trimmed(content, start, candidate)) <= maxHeightPx) {
+            if (measureHeightPx(trimmed(content, start, candidate), start) <= maxHeightPx) {
                 return candidate
             }
         }

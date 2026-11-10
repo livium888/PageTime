@@ -9,6 +9,7 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.FsrsCardCodec
 import com.pagetime.app.data.library.PdfTextCleaner
 import com.pagetime.app.data.library.PdfTextExtractor
+import com.pagetime.app.data.learning.CardDensity
 import com.pagetime.app.data.learning.ManualCardImport
 import com.pagetime.app.data.learning.ManualCardPrompt
 import com.pagetime.app.data.learning.RawPrompt
@@ -315,6 +316,7 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
                 chapterLabel = "Page ${pageIndex + 1}",
                 span = text,
                 template = runCatching { settingsRepository.chapterPromptTemplate() }.getOrNull(),
+                density = runCatching { settingsRepository.cardDensity() }.getOrDefault(CardDensity.DEFAULT),
             )
             _flashcardState.value = FlashcardUiState(
                 prompt = prompt,
@@ -373,20 +375,28 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun reviewFlashcardReply(reply: String) {
         val state = _flashcardState.value
         val source = state.sourceText ?: return
-        val review = ManualCardImport.review(reply, source)
-        _flashcardState.value = when {
-            !review.sawJson -> state.copy(
-                error = "That doesn't look like the cards. Copy the AI's whole reply (the code block) and try again.",
-            )
-            !review.foundAnything -> state.copy(
-                error = "No cards in that reply." + (review.problems.firstOrNull()?.let { " $it" } ?: ""),
-            )
-            else -> state.copy(
-                review = review.accepted.map { PdfReviewCard(it, keep = true) },
-                leftOut = review.leftOut.size,
-                error = null,
-                notice = null,
-            )
+        val bookId = currentBookId
+        viewModelScope.launch {
+            // Cards already made for this book, so a question the reader has is
+            // left out instead of arriving as a second, identical card.
+            val existing = bookId?.let { runCatching { learningCardDao.promptsForBook(it) }.getOrNull() }
+                .orEmpty()
+            val review = ManualCardImport.review(reply, source, existing)
+            _flashcardState.value = when {
+                !review.sawJson -> state.copy(
+                    error = "That doesn't look like the cards. Copy the AI's whole reply (the code block) and try again.",
+                )
+                !review.foundAnything -> state.copy(
+                    error = "No cards in that reply." + (review.problems.firstOrNull()?.let { " $it" } ?: ""),
+                )
+                else -> state.copy(
+                    review = review.accepted.map { PdfReviewCard(it, keep = true) },
+                    leftOut = review.leftOut.size,
+                    leftOutReasons = review.leftOut.map { it.second.reason }.distinct().take(3),
+                    error = null,
+                    notice = null,
+                )
+            }
         }
     }
 
@@ -566,6 +576,8 @@ data class FlashcardUiState(
     val notice: String? = null,
     val review: List<PdfReviewCard> = emptyList(),
     val leftOut: Int = 0,
+    /** Why cards were left out, most distinct first, so the reader is told what the checks refused. */
+    val leftOutReasons: List<String> = emptyList(),
 )
 
 /**

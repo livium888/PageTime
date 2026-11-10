@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import com.pagetime.app.data.LumenCapture
+import com.pagetime.app.data.learning.CardDensity
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -278,6 +279,7 @@ class SettingsRepository(private val context: Context) {
         val LUMEN_PROMPT = stringPreferencesKey("lumen_prompt_template")
         val CHAPTER_PROMPT = stringPreferencesKey("chapter_prompt_template")
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
+        val CARD_DENSITY = stringPreferencesKey("card_density")
 
         val REVIEW_REMINDERS = booleanPreferencesKey("review_reminders_enabled")
         val REVIEW_REMINDERS_SNOOZED_UNTIL = longPreferencesKey("review_reminders_snoozed_until")
@@ -822,6 +824,14 @@ class SettingsRepository(private val context: Context) {
     suspend fun lumenCaptureChars(): Int =
         context.dataStore.data.first()[Keys.LUMEN_CAPTURE_CHARS]
             ?: LumenCapture.PASSAGE_TARGET_CHARS
+
+    /** How many cards to ask an AI for from a stretch of reading. See [CardDensity]. */
+    suspend fun cardDensity(): CardDensity =
+        CardDensity.fromKey(context.dataStore.data.first()[Keys.CARD_DENSITY])
+
+    suspend fun setCardDensity(value: CardDensity) {
+        context.dataStore.edit { it[Keys.CARD_DENSITY] = value.key }
+    }
 
     suspend fun setLumenCaptureChars(value: Int) {
         context.dataStore.edit { it[Keys.LUMEN_CAPTURE_CHARS] = value }

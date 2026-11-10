@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.learning.CardDensity
 import com.pagetime.app.data.LumenAiPrompts
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.review.ReviewReminderWorker
@@ -107,6 +108,16 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val embeddingIndexing: StateFlow<Boolean> = _embeddingIndexing.asStateFlow()
 
     /** How much text a capture hands the model. See SettingsRepository. */
+    private val _cardDensity = MutableStateFlow(CardDensity.DEFAULT)
+    val cardDensity: StateFlow<CardDensity> = _cardDensity.asStateFlow()
+
+    fun setCardDensity(value: CardDensity) {
+        viewModelScope.launch {
+            container.settingsRepository.setCardDensity(value)
+            _cardDensity.value = value
+        }
+    }
+
     private val _captureChars = MutableStateFlow(LumenCapture.PASSAGE_TARGET_CHARS)
     val captureChars: StateFlow<Int> = _captureChars.asStateFlow()
 
@@ -274,6 +285,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             }
             _reviewReminders.value = container.settingsRepository.reviewReminders()
             _captureChars.value = container.settingsRepository.lumenCaptureChars()
+            _cardDensity.value = container.settingsRepository.cardDensity()
         }
     }
 

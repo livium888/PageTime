@@ -42,6 +42,8 @@ enum class PromptRejection(val reason: String) {
     DUPLICATE("repeats a prompt already accepted"),
     ASKS_FOR_A_SET("asks for a list or a set, which cannot be graded honestly"),
     NEAR_DUPLICATE("is a rewording of a prompt already accepted"),
+    ALREADY_HAVE("is a question you already have a card for"),
+    ALREADY_HAVE_SIMILAR("is a rewording of a card you already have"),
     CLOZE_NOT_IN_PASSAGE("its cloze sentence is not in the passage"),
     CLOZE_MALFORMED("has no deletion in it, or deletes the whole sentence"),
     NO_EXPLANATION("has no explanation of why the answer is the answer"),
@@ -412,10 +414,22 @@ object ChapterPromptRules {
  * the density genuinely does make the cards worse unless something is done
  * about it. This is the something.
  */
-class PromptSifter {
+class PromptSifter(
+    /**
+     * Questions the reader already has cards for.
+     *
+     * A model shown a stretch of a book you made cards from last week will
+     * happily ask last week's question again, and the reader would meet it as
+     * two cards that are the same work. Cloze markup is removed from both sides
+     * first, so a hidden word does not make the same question look different.
+     */
+    existing: List<String> = emptyList(),
+) {
 
     private val seen = HashSet<String>()
     private val acceptedTokens = mutableListOf<Set<String>>()
+    private val haveKeys = existing.map { ChapterPromptRules.exactKey(ClozeText.filled(it)) }.toHashSet()
+    private val haveTokens = existing.map { ChapterPromptRules.tokens(ClozeText.filled(it)) }
 
     fun sift(raws: List<RawPrompt>, passages: List<String>): PromptVerdict {
         val accepted = mutableListOf<RawPrompt>()
@@ -425,6 +439,16 @@ class PromptSifter {
             val failure = ChapterPromptRules.check(raw, passages)
             if (failure != null) {
                 rejected += raw to failure
+                continue
+            }
+            val asked = ClozeText.filled(raw.prompt)
+            if (ChapterPromptRules.exactKey(asked) in haveKeys) {
+                rejected += raw to PromptRejection.ALREADY_HAVE
+                continue
+            }
+            val askedTokens = ChapterPromptRules.tokens(asked)
+            if (haveTokens.any { jaccard(askedTokens, it) >= ChapterPromptRules.NEAR_DUPLICATE_SIMILARITY }) {
+                rejected += raw to PromptRejection.ALREADY_HAVE_SIMILAR
                 continue
             }
             // Two passages about one idea produce one question twice, and the

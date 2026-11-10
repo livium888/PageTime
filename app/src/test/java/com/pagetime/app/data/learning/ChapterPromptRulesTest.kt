@@ -576,4 +576,55 @@ class ChapterPromptRulesTest {
         assertEquals(0f, ChapterPromptRules.liftedFrom("anything at all here", ""), 0.0001f)
         assertEquals(0f, ChapterPromptRules.liftedFrom("", blockadePassage), 0.0001f)
     }
+
+    // --- Cards the reader already has ---
+
+    @Test
+    fun `a question the reader already has a card for is left out and says so`() {
+        val verdict = PromptSifter(existing = listOf("Why did the Continental System fail?")).sift(
+            listOf(raw("Why did the Continental System fail?", "smuggling paid better")),
+            passages,
+        )
+        assertTrue(verdict.accepted.isEmpty())
+        assertEquals(PromptRejection.ALREADY_HAVE, verdict.rejected.single().second)
+    }
+
+    @Test
+    fun `a rewording of an existing card is left out`() {
+        val verdict = PromptSifter(existing = listOf("What year did Napoleon invade Russia?")).sift(
+            listOf(raw("In what year did Napoleon invade Russia?", "1812")),
+            passages,
+        )
+        assertEquals(PromptRejection.ALREADY_HAVE_SIMILAR, verdict.rejected.single().second)
+    }
+
+    @Test
+    fun `a different question about the same passage is kept`() {
+        val verdict = PromptSifter(existing = listOf("Why did the Continental System fail?")).sift(
+            listOf(raw("What did the Continental System close to British goods?", "European ports")),
+            passages,
+        )
+        assertEquals(1, verdict.accepted.size)
+    }
+
+    @Test
+    fun `hidden words in an existing cloze card do not hide that it is the same question`() {
+        val verdict = PromptSifter(
+            existing = listOf("Why did Napoleon close {{c1::European}} ports to British goods?"),
+        ).sift(
+            listOf(raw("Why did Napoleon close European ports to British goods?", "to bankrupt Britain")),
+            passages,
+        )
+        assertTrue(verdict.accepted.isEmpty())
+        assertEquals(PromptRejection.ALREADY_HAVE, verdict.rejected.single().second)
+    }
+
+    @Test
+    fun `with no existing cards nothing is left out for that reason`() {
+        val verdict = PromptSifter(existing = emptyList()).sift(
+            listOf(raw("Why did the Continental System fail?", "smuggling paid better")),
+            passages,
+        )
+        assertEquals(1, verdict.accepted.size)
+    }
 }

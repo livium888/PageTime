@@ -54,15 +54,47 @@ class ManualCardPromptTest {
     fun `how many cards to ask for scales with the length and stays within bounds`() {
         assertEquals(3, ManualCardPrompt.cardTarget(0))
         assertEquals(3, ManualCardPrompt.cardTarget(300))
-        assertEquals(10, ManualCardPrompt.cardTarget(1500))
-        assertEquals(20, ManualCardPrompt.cardTarget(10_000))
+        assertEquals(5, ManualCardPrompt.cardTarget(1500))
+        assertEquals(12, ManualCardPrompt.cardTarget(10_000))
+    }
+
+    @Test
+    fun `the density setting changes how many cards are asked for`() {
+        assertEquals(3, ManualCardPrompt.cardTarget(1500, CardDensity.FEW))
+        assertEquals(5, ManualCardPrompt.cardTarget(1500, CardDensity.NORMAL))
+        assertEquals(10, ManualCardPrompt.cardTarget(1500, CardDensity.MANY))
+        assertEquals(8, ManualCardPrompt.cardTarget(100_000, CardDensity.FEW))
+        assertEquals(20, ManualCardPrompt.cardTarget(100_000, CardDensity.MANY))
+    }
+
+    @Test
+    fun `fewer is better and the do-not-skip instruction is gone`() {
+        val prompt = ManualCardPrompt.build("B", "C", "word ".repeat(1500))
+        assertTrue(prompt.contains("fewer is better"))
+        assertTrue(prompt.contains("Never add cards to"))
+        assertFalse("must not tell the model never to skip", prompt.contains("Do not skip a passage"))
+        assertFalse(prompt.contains("AT LEAST ONE"))
+    }
+
+    @Test
+    fun `the chosen density reaches the prompt`() {
+        val text = "word ".repeat(1500)
+        assertTrue(ManualCardPrompt.build("B", "C", text, density = CardDensity.FEW).contains("AT MOST 3"))
+        assertTrue(ManualCardPrompt.build("B", "C", text, density = CardDensity.MANY).contains("AT MOST 10"))
+    }
+
+    @Test
+    fun `an unknown stored density falls back to balanced`() {
+        assertEquals(CardDensity.NORMAL, CardDensity.fromKey(null))
+        assertEquals(CardDensity.NORMAL, CardDensity.fromKey("nonsense"))
+        CardDensity.entries.forEach { assertEquals(it, CardDensity.fromKey(it.key)) }
     }
 
     @Test
     fun `the requested ceiling appears in the instructions`() {
         val long = "word ".repeat(1500)
         val prompt = ManualCardPrompt.build("B", "C", long)
-        assertTrue(prompt.contains("up to 10"))
+        assertTrue(prompt.contains("AT MOST 5"))
     }
 
     /** The reply format must itself be something the parser accepts. */

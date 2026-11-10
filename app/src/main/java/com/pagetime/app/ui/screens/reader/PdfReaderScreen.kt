@@ -1092,7 +1092,7 @@ private fun FlashcardPromptDialog(
                     if (state.leftOut > 0) {
                         Text(
                             "${state.leftOut} card${if (state.leftOut == 1) "" else "s"} left out: " +
-                                "the quote wasn't in the text you sent.",
+                                state.leftOutReasons.joinToString("; ").ifBlank { "they failed a check" } + ".",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

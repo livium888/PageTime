@@ -59,6 +59,13 @@ interface LearningCardDao {
     suspend fun get(id: String): LearningCardEntity?
 
     /**
+     * Every question this book already has a card for, rejected ones included:
+     * a question the reader threw away should not be offered back either.
+     */
+    @Query("SELECT prompt FROM learning_cards WHERE bookId = :bookId")
+    suspend fun promptsForBook(bookId: String): List<String>
+
+    /**
      * Every card, for moving existing reviews onto a new schedule.
      *
      * Not observable and not paginated: it is read once by an action the reader

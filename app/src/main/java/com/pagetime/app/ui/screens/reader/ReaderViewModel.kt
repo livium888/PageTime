@@ -90,18 +90,23 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private val _book = MutableStateFlow<BookEntity?>(null)
     val book = _book.asStateFlow()
 
-    private val _textContent = MutableStateFlow<String?>(null)
-    val textContent = _textContent.asStateFlow()
-
     /**
-     * Headings, bold and italic for the text book on screen, from pasted
-     * markdown. Reloaded whenever the text changes, because the ranges are
-     * offsets into one exact text and are dropped when it is replaced.
+     * A text book's words and the formatting that goes with them, always one
+     * value.
+     *
+     * The formatting is ranges of characters in these exact words, and it
+     * changes how wide the words are, so pages cannot be laid out from one
+     * without the other. Held as a pair so the reader can never see new text
+     * with old (or not yet loaded) formatting: it was once two flows, and the
+     * pages were laid out from plain text and then drawn with bold in it.
      */
-    val textStyles: StateFlow<List<com.pagetime.app.data.library.MarkdownText.StyleSpan>> =
-        combine(_book, _textContent) { book, text ->
-            if (book == null || text == null) emptyList() else repo.textStyles(book, text)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    data class TextBook(
+        val text: String,
+        val spans: List<com.pagetime.app.data.library.MarkdownText.StyleSpan>,
+    )
+
+    private val _bookText = MutableStateFlow<TextBook?>(null)
+    val bookText = _bookText.asStateFlow()
 
     private val _initialTextFraction = MutableStateFlow(0f)
     val initialTextFraction = _initialTextFraction.asStateFlow()
@@ -192,7 +197,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     fun retry() {
         _error.value = null
-        _textContent.value = null
+        _bookText.value = null
         _initialTextFraction.value = 0f
         _initialTextOffset.value = 0
         _publication.value = null
@@ -248,11 +253,15 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 _initialTextOffset.value = savedOffset
                 txtRestoreComplete = false
                 withContext(Dispatchers.IO) {
-                    _textContent.value = runCatching { File(loaded.localPath).readText() }.getOrNull()
-                        ?: run {
-                            _error.value = "Cannot read this book's file."
-                            null
-                        }
+                    val text = runCatching { File(loaded.localPath).readText() }.getOrNull()
+                    _bookText.value = if (text == null) {
+                        _error.value = "Cannot read this book's file."
+                        null
+                    } else {
+                        // Before the text is published, so the pages are never
+                        // laid out from the words alone.
+                        TextBook(text, repo.textStyles(loaded, text))
+                    }
                 }
                 txtRestoreComplete = latestTxtFraction <= 0f
             }
@@ -657,14 +666,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     /** Starts a plain-text highlight at the current page's start. */
     fun startHighlightHere() {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         if (text.isEmpty()) return
         _pendingTxtHighlightStart.value = latestTxtPageOffset.coerceIn(0, text.length)
     }
 
     /** Ends the pending plain-text highlight at the current page's end. */
     fun endHighlightHere() {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         val start = _pendingTxtHighlightStart.value ?: return
         _pendingTxtHighlightStart.value = null
         val end = latestTxtPageEndOffset.coerceIn(start + 1, text.length)
@@ -693,14 +702,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     /** Grabs the sentence containing [textOffset], a whole-book character offset. */
     fun grabSentenceAt(textOffset: Int) {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         val span = Sentences.spanAt(text, textOffset) ?: return
         _sentenceGrab.value = SentenceGrab(span.start, span.end, span.start)
     }
 
     /** Pulls the next sentence into the grab. */
     fun extendSentenceGrab() {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         val grab = _sentenceGrab.value ?: return
         val next = Sentences.next(text, Sentences.Span(grab.start, grab.end)) ?: return
         _sentenceGrab.value = SentenceGrab(
@@ -713,7 +722,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     /** Pulls the previous sentence into the grab. */
     fun extendSentenceGrabBack() {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         val grab = _sentenceGrab.value ?: return
         val previous = Sentences.previous(text, Sentences.Span(grab.start, grab.end)) ?: return
         _sentenceGrab.value = SentenceGrab(
@@ -732,7 +741,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * but the thought is one sentence longer than its punctuation suggests.
      */
     fun grabWholeParagraph() {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         val grab = _sentenceGrab.value ?: return
         val paragraph = Sentences.paragraphAt(text, grab.start) ?: return
         if (paragraph.start == grab.start && paragraph.end == grab.end) return
@@ -768,7 +777,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * than one page.
      */
     fun saveSentenceGrab() {
-        val text = _textContent.value ?: return
+        val text = _bookText.value?.text ?: return
         val grab = _sentenceGrab.value ?: return
         _sentenceGrab.value = null
         viewModelScope.launch {
@@ -914,7 +923,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     // back whole paragraphs. A reformatted transcript has
                     // paragraphs too, and one behaviour for both beats two.
                     passage = LumenCapture.paragraphPassage(
-                        _textContent.value.orEmpty(),
+                        _bookText.value?.text.orEmpty(),
                         latestTxtOffset(),
                         captureChars,
                     )
@@ -1177,7 +1186,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 chapterTitle = publication.readingOrder.getOrNull(index)?.title,
             )
         }
-        val full = _textContent.value?.takeIf { it.isNotEmpty() } ?: return null
+        val full = _bookText.value?.text?.takeIf { it.isNotEmpty() } ?: return null
         val offset = (
             if (forStart) latestTxtOffset()
             else latestTxtPageEndOffset.takeIf { it > 0 } ?: latestTxtOffset()
@@ -1228,7 +1237,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     }
 
     private fun latestTxtOffset(): Int {
-        val contentLength = _textContent.value?.length ?: 0
+        val contentLength = _bookText.value?.text?.length ?: 0
         if (contentLength == 0) return 0
         // The exact page-start offset when known, else the fraction estimate.
         return if (latestTxtPageOffset > 0) latestTxtPageOffset
@@ -1292,17 +1301,19 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     fun submitFormatReply(reply: String) {
         val pending = _pendingFormat.value ?: return
         viewModelScope.launch {
-            repo.applyFormattedTranscript(pending, reply)
-                .onSuccess { formatted ->
-                    _pendingFormat.value = null
-                    _formatError.value = null
-                    _textContent.value = formatted
-                    _initialTextFraction.value = 0f
-                    _initialTextOffset.value = 0
-                }
-                .onFailure { t ->
-                    _formatError.value = t.message ?: "That reply couldn't be used. Try again."
-                }
+            val result = repo.applyFormattedTranscript(pending, reply)
+            val formatted = result.getOrNull()
+            val book = _book.value
+            if (formatted != null && book != null) {
+                _pendingFormat.value = null
+                _formatError.value = null
+                _bookText.value = TextBook(formatted, repo.textStyles(book, formatted))
+                _initialTextFraction.value = 0f
+                _initialTextOffset.value = 0
+            } else {
+                _formatError.value =
+                    result.exceptionOrNull()?.message ?: "That reply couldn't be used. Try again."
+            }
         }
     }
 

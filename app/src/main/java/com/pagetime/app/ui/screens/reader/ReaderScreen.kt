@@ -127,7 +127,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.AnnotatedString
+import com.pagetime.app.data.library.MarkdownText
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -184,6 +188,9 @@ private const val NAVIGATOR_TAG = "readium_navigator"
  * above the word.
  */
 private val PageVerticalPadding = 24.dp
+
+/** Slack kept below a page's measured height, so rounding can never hide a last line. */
+private val PAGE_FIT_MARGIN = 4.dp
 
 /** Item ids for the actions added to the text-selection menu. */
 private const val MENU_EXPLAIN = 1
@@ -257,7 +264,8 @@ fun ReaderScreen(
         viewModel(key = "make-cards-$bookId", factory = ManualCardsViewModelFactory(app, bookId))
 
     val book by vm.book.collectAsStateWithLifecycle()
-    val textContent by vm.textContent.collectAsStateWithLifecycle()
+    val bookText by vm.bookText.collectAsStateWithLifecycle()
+    val textContent = bookText?.text
     val initialTextFraction by vm.initialTextFraction.collectAsStateWithLifecycle()
     val initialTextOffset by vm.initialTextOffset.collectAsStateWithLifecycle()
     val sessionSeconds by vm.sessionSeconds.collectAsStateWithLifecycle()
@@ -503,7 +511,7 @@ fun ReaderScreen(
             // — figures and all — through the branch above.
             book?.isReflowedText == true && textContent != null -> TextReaderHost(
                 content = textContent!!,
-                styleSpans = vm.textStyles.collectAsStateWithLifecycle().value,
+                styleSpans = bookText?.spans.orEmpty(),
                 initialFraction = initialTextFraction,
                 initialOffset = initialTextOffset,
                 settings = settings,
@@ -1150,9 +1158,12 @@ private fun TextReaderHost(
     // the font, the device, or the system text scale re-flows the full text
     // with nothing clipped and no missing pages.
     val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    val screenW = configuration.screenWidthDp.dp
-    val screenH = configuration.screenHeightDp.dp
+    // The size of the area the pages are actually drawn in, reported by the
+    // layout itself. It used to be worked out from the screen's size minus a
+    // fixed amount, which is only right if nothing else (a status bar, a
+    // display cutout) takes any of that space — and every pixel it got wrong
+    // was a pixel of text clipped off the bottom of every page.
+    var area by remember { mutableStateOf<IntSize?>(null) }
     val textMeasurer = rememberTextMeasurer()
     val baseStyle = MaterialTheme.typography.bodyLarge
     // Where the text actually starts inside the page box, in pixels. The tap
@@ -1172,15 +1183,22 @@ private fun TextReaderHost(
         settings.fontFamily,
         settings.marginDp,
         settings.alignment,
-        screenW,
-        screenH,
+        area,
+        styleSpans,
         density
     ) {
+        // Nothing to lay out until the layout has said how big the page is.
+        val size = area ?: return@LaunchedEffect
         val widthPx = with(density) {
-            (screenW - (settings.marginDp.dp * 2)).coerceAtLeast(48.dp).roundToPx()
+            (size.width - (settings.marginDp.dp * 2).roundToPx()).coerceAtLeast(48.dp.roundToPx())
         }
+        // A few pixels short of the true height on purpose: the measurement and
+        // the drawing are the same arithmetic, but rounding a fractional line
+        // height either way must never be the difference between the last line
+        // being shown and not.
         val heightPx = with(density) {
-            (screenH - 48.dp).coerceAtLeast(96.dp).roundToPx()
+            (size.height - (PageVerticalPadding * 2).roundToPx() - PAGE_FIT_MARGIN.roundToPx())
+                .coerceAtLeast(96.dp.roundToPx())
         }
         // The SAME style the page is drawn with. Measuring with anything else
         // decides page boundaries for a layout that never happens.
@@ -1203,12 +1221,27 @@ private fun TextReaderHost(
         }
         layoutProgress = 0f
         pagesState = runCatching {
-            TextPageLayout.paginateMeasured(
+            TextPageLayout.paginateMeasuredAt(
                 content = content,
                 maxHeightPx = heightPx,
-                measureHeightPx = { snippet ->
+                // Measured with the formatting the page will be drawn with.
+                // Bold and italic change how wide the words are, so measuring
+                // the plain text and drawing the styled text gives pages that
+                // do not fit the screen they were laid out for.
+                measureHeightPx = { snippet, startOffset ->
+                    val styled = if (styleSpans.isEmpty()) {
+                        AnnotatedString(snippet)
+                    } else {
+                        AnnotatedString(
+                            text = snippet,
+                            spanStyles = formattingLayer(
+                                snippet,
+                                MarkdownText.pageSpans(styleSpans, startOffset, startOffset + snippet.length),
+                            ),
+                        )
+                    }
                     textMeasurer.measure(
-                        text = snippet,
+                        text = styled,
                         style = renderStyle,
                         constraints = Constraints(maxWidth = widthPx)
                     ).size.height
@@ -1229,7 +1262,10 @@ private fun TextReaderHost(
     val pages = pagesState
     if (pages == null) {
         Box(
-            modifier = Modifier.fillMaxSize().background(palette.background),
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { if (it != area) area = it }
+                .background(palette.background),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1339,7 +1375,11 @@ private fun TextReaderHost(
 
     HorizontalPager(
         state = pagerState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // Rotating the phone or changing the window changes the page size,
+            // which re-lays-out the book from the new size.
+            .onSizeChanged { if (it != area) area = it },
         userScrollEnabled = true
     ) { pageIndex ->
         val pageCount = pages.size.coerceAtLeast(1)
@@ -1367,6 +1407,13 @@ private fun TextReaderHost(
         }
         // Per page, so a long-press can be turned into a character offset.
         var textLayout by remember(pageIndex) { mutableStateOf<TextLayoutResult?>(null) }
+        // The last line of defence. Pages are laid out so that every one fits;
+        // if one ever does not (a font that measures differently from how it
+        // draws, say) it becomes scrollable rather than losing its last lines.
+        // Once set it stays set for that page: a scrolling page is given room
+        // for all of its text, so it would report "fits" and flip straight back.
+        var pageScrolls by remember(pageIndex, pages) { mutableStateOf(false) }
+        val pageScroll = rememberScrollState()
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1443,7 +1490,11 @@ private fun TextReaderHost(
                 text = annotatedText,
                 style = readerTextStyle(MaterialTheme.typography.bodyLarge, settings),
                 color = palette.text,
-                onTextLayout = { textLayout = it }
+                modifier = if (pageScrolls) Modifier.verticalScroll(pageScroll) else Modifier,
+                onTextLayout = {
+                    textLayout = it
+                    if (it.didOverflowHeight) pageScrolls = true
+                }
             )
             // Inside the padded content box, so the arrows sit against the words
             // in the same coordinates the text was laid out in.

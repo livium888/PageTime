@@ -166,4 +166,78 @@ class TextPageMeasuredLayoutTest {
 
         assertEquals(1f, lastProgress)
     }
+
+    // --- Formatting changes how wide the words are ---
+
+    /**
+     * A measurer that knows some characters are bold, and that bold letters are
+     * half as wide again. [bold] is in offsets of the whole book, like the
+     * ranges a real book carries, so it is told where its text starts.
+     */
+    private fun styledMeasure(bold: List<IntRange>): (String, Int) -> Int = { text, startOffset ->
+        var lineWidth = 0.0
+        var lines = 1
+        text.forEachIndexed { i, ch ->
+            if (ch == '\n') {
+                lines++
+                lineWidth = 0.0
+            } else {
+                val w = if (bold.any { (startOffset + i) in it }) 1.5 else 1.0
+                if (lineWidth + w > CHARS_PER_LINE) {
+                    lines++
+                    lineWidth = w
+                } else {
+                    lineWidth += w
+                }
+            }
+        }
+        lines * LINE_HEIGHT_PX
+    }
+
+    @Test
+    fun `pages measured with their bold in them still fit when drawn with it`() = runTest {
+        val content = ("A plain sentence, then some words that will be drawn in bold, then more. ")
+            .repeat(300)
+        // Every other 400 characters is bold, so most pages contain some.
+        val bold = (0 until content.length step 800).map { it until minOf(it + 400, content.length) }
+        val measure = styledMeasure(bold)
+        val maxHeight = 6 * LINE_HEIGHT_PX
+
+        val pages = TextPageLayout.paginateMeasuredAt(content, maxHeight, measure)
+
+        pages.forEach { page ->
+            assertTrue(
+                "page ${page.index} drawn at ${measure(page.text, page.startOffset)} > $maxHeight",
+                measure(page.text, page.startOffset) <= maxHeight
+            )
+        }
+    }
+
+    @Test
+    fun `measuring plain text and drawing bold overflows, which is what this fixes`() = runTest {
+        val content = ("A plain sentence, then some words that will be drawn in bold, then more. ")
+            .repeat(300)
+        val bold = (0 until content.length step 800).map { it until minOf(it + 400, content.length) }
+        val drawn = styledMeasure(bold)
+        val maxHeight = 6 * LINE_HEIGHT_PX
+
+        // Pages decided from the plain text, as the reader used to.
+        val plainPages = TextPageLayout.paginateMeasured(content, maxHeight, ::fakeMeasure)
+
+        val overflowing = plainPages.dropLast(1).count { drawn(it.text, it.startOffset) > maxHeight }
+        assertTrue("expected bold to overflow some plain-measured pages", overflowing > 0)
+    }
+
+    @Test
+    fun `formatting never costs a character`() = runTest {
+        val content = (0 until 80).joinToString("\n\n") { "Paragraph $it with some bold words in it." }
+        val bold = (0 until content.length step 100).map { it until minOf(it + 30, content.length) }
+
+        val pages = TextPageLayout.paginateMeasuredAt(content, 5 * LINE_HEIGHT_PX, styledMeasure(bold))
+
+        assertEquals(
+            content.filterNot(Char::isWhitespace),
+            pages.joinToString(separator = "") { it.text }.filterNot(Char::isWhitespace)
+        )
+    }
 }

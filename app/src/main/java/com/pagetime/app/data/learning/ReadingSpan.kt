@@ -30,6 +30,14 @@ data class SpanPoint(
      * both.
      */
     val snapped: Boolean = false,
+    /**
+     * The opening words of the first thing visible on the page (EPUB only).
+     *
+     * The fraction says roughly where the page begins; these words say exactly.
+     * When they can be found in the chapter near where the fraction points,
+     * the cut is made at them, and the fraction is only the fallback.
+     */
+    val anchor: String? = null,
 ) {
     /**
      * Orders points within one book. Within a chapter, exact offsets compare
@@ -49,6 +57,7 @@ data class SpanPoint(
             textOffset?.let { put("o", it) }
             chapterTitle?.let { put("t", it) }
             if (snapped) put("s", true)
+            anchor?.let { put("a", it) }
         }
 
     companion object {
@@ -58,6 +67,7 @@ data class SpanPoint(
             textOffset = if (obj.has("o")) obj.optInt("o") else null,
             chapterTitle = obj.optString("t").takeIf { it.isNotBlank() },
             snapped = obj.optBoolean("s", false),
+            anchor = obj.optString("a").takeIf { it.isNotBlank() },
         )
     }
 }
@@ -167,10 +177,10 @@ object ReadingSpan {
                 index != first -> 0
                 // A boundary handed over by the previous span: start exactly there.
                 start.snapped -> positionIn(raw, start.fraction)
-                else -> paragraphStart(raw, positionIn(raw, start.fraction))
+                else -> paragraphStart(raw, positionOf(raw, start))
             }
             val to = if (index == last) {
-                adjustEnd(raw, paragraphEnd(raw, positionIn(raw, end.fraction)), from, endAdjust)
+                adjustEnd(raw, paragraphEnd(raw, positionOf(raw, end)), from, endAdjust)
             } else {
                 raw.length
             }
@@ -236,6 +246,65 @@ object ReadingSpan {
 
     private fun positionIn(raw: String, fraction: Float): Int =
         (raw.length * fraction.coerceIn(0f, 1f)).toInt().coerceIn(0, raw.length)
+
+    /** Where [point] is in [raw]: at its anchor words when they can be found, else by fraction. */
+    private fun positionOf(raw: String, point: SpanPoint): Int {
+        val estimate = positionIn(raw, point.fraction)
+        return anchorPosition(raw, point.anchor, estimate) ?: estimate
+    }
+
+    /** How much of the visible text is kept as an anchor. */
+    const val ANCHOR_CHARS = 80
+
+    /** Fewer characters than this could match anywhere, so they are not trusted. */
+    private const val ANCHOR_MIN_CHARS = 24
+
+    /**
+     * How far from the fraction's estimate an anchor match may be.
+     *
+     * The first visible element can begin on an earlier page, so the match is
+     * allowed to sit a few pages before the estimate. Further than that it is
+     * something else: a repeated phrase, or one element holding the whole
+     * chapter, whose opening words are the chapter's and not the page's.
+     */
+    private const val ANCHOR_REACH = 4_000
+
+    /**
+     * Finds [anchor] in [raw], ignoring differences in whitespace, and returns
+     * the match nearest [estimate]; null when there is no match worth trusting.
+     */
+    internal fun anchorPosition(raw: String, anchor: String?, estimate: Int): Int? {
+        val needle = anchor?.let(::collapse)?.take(ANCHOR_CHARS)?.trim() ?: return null
+        if (needle.length < ANCHOR_MIN_CHARS) return null
+        // The chapter with every run of whitespace as one space, and for each
+        // character of that where it came from, so a match maps back to [raw].
+        val flat = StringBuilder(raw.length)
+        val origin = IntArray(raw.length)
+        var inSpace = true
+        for (i in raw.indices) {
+            val c = raw[i]
+            if (c.isWhitespace()) {
+                if (!inSpace) { origin[flat.length] = i; flat.append(' ') }
+                inSpace = true
+            } else {
+                origin[flat.length] = i
+                flat.append(c)
+                inSpace = false
+            }
+        }
+        var best: Int? = null
+        var at = flat.indexOf(needle)
+        while (at >= 0) {
+            val position = origin[at]
+            if (best == null || kotlin.math.abs(position - estimate) < kotlin.math.abs(best - estimate)) {
+                best = position
+            }
+            at = flat.indexOf(needle, at + 1)
+        }
+        return best?.takeIf { kotlin.math.abs(it - estimate) <= ANCHOR_REACH }
+    }
+
+    private fun collapse(text: String): String = text.trim().replace(Regex("\\s+"), " ")
 
     /** The start of the paragraph containing [index]. */
     internal fun paragraphStart(raw: String, index: Int): Int {

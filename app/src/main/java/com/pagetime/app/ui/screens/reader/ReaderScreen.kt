@@ -347,6 +347,17 @@ fun ReaderScreen(
     var activeConceptId by remember { mutableStateOf<String?>(null) }
     var sleepDeadline by remember { mutableStateOf<Long?>(null) }
     var txtGoRequest by remember { mutableStateOf<Pair<Float, Long>?>(null) }
+    var txtOffsetRequest by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    // A text book's headings, as its chapter list. Pasted markdown and tidied
+    // transcripts carry headings; without this they had no way to move around
+    // except page by page.
+    val textHeadings = remember(bookText) {
+        val book = bookText ?: return@remember emptyList<Pair<String, Int>>()
+        book.spans
+            .filter { it.kind == MarkdownText.Kind.HEADING && it.end <= book.text.length }
+            .map { book.text.substring(it.start, it.end).trim() to it.start }
+            .filter { it.first.isNotEmpty() }
+    }
     var progressMode by remember { mutableStateOf(ProgressIndicatorMode.PERCENT) }
     var sleepRemainingMs by remember { mutableStateOf<Long?>(null) }
     // While the Kobo-style edge gesture is dragging, this preview overrides the
@@ -464,6 +475,7 @@ fun ReaderScreen(
                 initialLocatorReady = initialLocatorReady,
                 initialLocatorJson = initialLocatorJson,
                 settings = settings,
+                onPageAnchor = vm::onPageAnchor,
                 onLocatorChanged = { locator ->
                     currentLocator = locator
                     vm.onLocatorChanged(locator)
@@ -520,6 +532,7 @@ fun ReaderScreen(
                 conceptLevel = settings.conceptHints,
                 activeConceptId = activeConceptId,
                 goRequest = txtGoRequest,
+                goOffsetRequest = txtOffsetRequest,
                 highlights = highlights,
                 sentenceGrab = sentenceGrab,
                 onGrabSentence = vm::grabSentenceAt,
@@ -595,7 +608,7 @@ fun ReaderScreen(
         ) {
             ReaderTopBar(
                 title = book?.title ?: "Reading",
-                hasChapters = tocEntries != null,
+                hasChapters = tocEntries != null || textHeadings.isNotEmpty(),
                 hasGoTo = book?.isReflowedText == true && textContent != null,
                 balanceSeconds = balanceSeconds,
                 bookmarkPresent = bookmarkPresent,
@@ -948,6 +961,17 @@ fun ReaderScreen(
         )
     }
 
+    if (showToc && tocEntries == null && textHeadings.isNotEmpty()) {
+        TextHeadingsSheet(
+            headings = textHeadings,
+            onSelect = { offset ->
+                txtOffsetRequest = offset to SystemClock.elapsedRealtime()
+                showToc = false
+            },
+            onDismiss = { showToc = false }
+        )
+    }
+
     if (showToc && tocEntries != null) {
         TocSheet(
             entries = tocEntries,
@@ -1136,6 +1160,8 @@ private fun TextReaderHost(
     conceptLevel: String,
     activeConceptId: String?,
     goRequest: Pair<Float, Long>?,
+    /** Jump to the page holding this character offset (offset, request time). */
+    goOffsetRequest: Pair<Int, Long>? = null,
     highlights: List<TextHighlightEntity>,
     /** The sentence being grabbed, in whole-book offsets, or null. */
     sentenceGrab: SentenceGrab?,
@@ -1237,6 +1263,7 @@ private fun TextReaderHost(
                             spanStyles = formattingLayer(
                                 snippet,
                                 MarkdownText.pageSpans(styleSpans, startOffset, startOffset + snippet.length),
+                                headingScaleFor(settings.lineHeight),
                             ),
                         )
                     }
@@ -1348,6 +1375,19 @@ private fun TextReaderHost(
             }
         }
         onDispose { ReaderPageTurns.unregister() }
+    }
+
+    // A jump to an exact place in the text, from the Chapters list. By offset,
+    // not by fraction: a fraction picks a page by its number out of the page
+    // count, which is only where the text is if every page holds the same
+    // amount, and a heading must land on the page that actually contains it.
+    LaunchedEffect(goOffsetRequest) {
+        val (offset, _) = goOffsetRequest ?: return@LaunchedEffect
+        if (pages.isNotEmpty()) {
+            val page = TextPageLayout.pageForOffset(pages, offset)
+            lastFraction = TextPageLayout.fractionForPage(page, pages.size)
+            pagerState.scrollToPage(page)
+        }
     }
 
     // Kindle-style "Go to position": jump straight to the page matching a fraction.
@@ -1485,6 +1525,7 @@ private fun TextReaderHost(
                 activeConceptId = activeConceptId,
                 pendingSpan = sentenceGrab?.let { it.start to it.end },
                 styleSpans = styleSpans,
+                headingScale = headingScaleFor(settings.lineHeight),
             )
             Text(
                 text = annotatedText,
@@ -1523,6 +1564,7 @@ private fun ReadiumNavigatorHost(
     initialLocatorJson: String?,
     settings: ReaderSettings,
     onLocatorChanged: (Locator) -> Unit,
+    onPageAnchor: (Locator, String?) -> Unit,
     onTapZone: (TapZone) -> Unit,
     onNavigatorChanged: (EpubNavigatorFragment?) -> Unit,
     /** Whether the volume keys should page this book. */
@@ -1542,6 +1584,7 @@ private fun ReadiumNavigatorHost(
     val currentOnCapture by rememberUpdatedState(onCaptureSelection)
 
     val currentOnLocator by rememberUpdatedState(onLocatorChanged)
+    val currentOnPageAnchor by rememberUpdatedState(onPageAnchor)
     val currentOnTapZone by rememberUpdatedState(onTapZone)
 
     var container by remember { mutableStateOf<FrameLayout?>(null) }
@@ -1814,6 +1857,11 @@ private fun ReadiumNavigatorHost(
             var firstLocator = true
             nav.currentLocator.collect {
                 currentOnLocator(it)
+                // What the page opens with, for cutting a card span exactly.
+                // Asked of the page itself; if it cannot say, the span falls
+                // back to the position estimate it always used.
+                val opening = runCatching { nav.firstVisibleElementLocator()?.text?.highlight }.getOrNull()
+                currentOnPageAnchor(it, opening)
                 if (firstLocator) {
                     firstLocator = false
                     onRestoreComplete()
@@ -2591,6 +2639,37 @@ private fun IdleGate(onContinue: () -> Unit) {
 }
 
 
+
+/** A text book's headings as a chapter list; choosing one jumps to its page. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TextHeadingsSheet(
+    headings: List<Pair<String, Int>>,
+    onSelect: (offset: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 480.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            itemsIndexed(headings, key = { i, _ -> i }) { _, (title, offset) ->
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(offset) }
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                )
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

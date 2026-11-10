@@ -44,6 +44,13 @@ fun AskYourAiDialog(
     var notice by remember(prompt) { mutableStateOf<String?>(null) }
     var localError by remember(prompt) { mutableStateOf<String?>(null) }
 
+    // A reply shared straight from the AI app arrives the same way a pasted one does.
+    SharedReplyEffect { reply ->
+        notice = null
+        localError = null
+        onReply(reply)
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -52,7 +59,7 @@ fun AskYourAiDialog(
                 Text(
                     "1. Copy the prompt, or share it straight to your AI app.\n" +
                         "2. Send it there.\n" +
-                        "3. Copy the AI's whole reply and come back.",
+                        "3. Share the AI's reply to PageTime, or copy it and paste it here.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -97,6 +97,7 @@ class ExplainBackViewModel(
                 _concepts.value = concepts
                 _needsConceptGeneration.value = concepts.isEmpty()
                 _explanationHistory.value = repository.observeExplanations(bookId).first()
+                restorePendingMarking()
             } catch (throwable: Throwable) {
                 if (throwable is kotlinx.coroutines.CancellationException) throw throwable
                 _error.value = throwable.message ?: "Could not load learning concepts"
@@ -187,7 +188,7 @@ class ExplainBackViewModel(
                 if (context.recentText.isBlank()) {
                     error("There is no readable text available for this chapter yet")
                 }
-                _pendingMarking.value = repository.prepareExplanation(
+                val pending = repository.prepareExplanation(
                     bookId = bookId,
                     chapterIndex = chapterIndex,
                     chapterTitle = chapterTitle,
@@ -196,6 +197,10 @@ class ExplainBackViewModel(
                     userExplanation = text,
                     sourceText = context.recentText
                 )
+                // Saved before the dialog opens: the reader is about to leave
+                // for their AI app, and Android may close this one meanwhile.
+                runCatching { container.settingsRepository.savePendingExplanation(bookId, pending.encode()) }
+                _pendingMarking.value = pending
             } catch (throwable: Throwable) {
                 if (throwable is kotlinx.coroutines.CancellationException) throw throwable
                 _messages.value += ChatMessage(
@@ -215,6 +220,7 @@ class ExplainBackViewModel(
         viewModelScope.launch {
             try {
                 val evaluation = repository.recordExplanation(pending, reply)
+                runCatching { container.settingsRepository.savePendingExplanation(bookId, null) }
                 _pendingMarking.value = null
                 _markingError.value = null
                 evaluationsForConcept += 1
@@ -255,6 +261,31 @@ class ExplainBackViewModel(
     fun dismissMarking() {
         _pendingMarking.value = null
         _markingError.value = null
+        viewModelScope.launch {
+            runCatching { container.settingsRepository.savePendingExplanation(bookId, null) }
+        }
+    }
+
+    /**
+     * Reopens a marking that was waiting when the app was last closed.
+     *
+     * Only when nothing is already in progress on this screen, and only for
+     * the chapter it was written in. The explanation goes back into the chat
+     * so the reader sees what is being marked.
+     */
+    private suspend fun restorePendingMarking() {
+        if (_pendingMarking.value != null || _messages.value.isNotEmpty()) return
+        val stored = runCatching {
+            ExplainBackRepository.PendingExplanation.decode(
+                container.settingsRepository.pendingExplanation(bookId)
+            )
+        }.getOrNull() ?: return
+        if (!stored.isFor(bookId, chapterIndex)) return
+        val index = _concepts.value.indexOf(stored.concept)
+        if (index < 0) return
+        _currentConceptIndex.value = index
+        _messages.value += ChatMessage(text = stored.userExplanation, isUser = true)
+        _pendingMarking.value = stored
     }
 
     fun deleteHistory(id: String) {

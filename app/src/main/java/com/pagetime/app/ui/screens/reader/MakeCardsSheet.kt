@@ -61,6 +61,11 @@ fun MakeCardsSheet(
     val context = LocalContext.current
     var confirmStartHere by remember { mutableStateOf(false) }
 
+    // A reply shared straight from the AI app is read the same way as a pasted one.
+    if (state.step == ManualCardsViewModel.Step.SPAN) {
+        com.pagetime.app.ui.components.SharedReplyEffect(vm::reviewReply)
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),

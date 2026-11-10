@@ -301,6 +301,9 @@ class AppContainer(context: Context) {
 
     val glossRepository = GlossRepository()
 
+    /** Text shared into the app from elsewhere, until the reader says what it is. */
+    val sharedTextInbox = SharedTextInbox()
+
     val conceptMapRepository = ConceptMapRepository(
         database = database,
         conceptDao = conceptDao,

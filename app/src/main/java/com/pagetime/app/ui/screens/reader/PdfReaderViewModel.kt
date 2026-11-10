@@ -355,17 +355,24 @@ class PdfReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Reads the AI's reply from the clipboard and shows the cards for ticking. */
     fun pasteFlashcardReply(context: android.content.Context) {
-        val state = _flashcardState.value
-        val source = state.sourceText ?: return
         val clip = context.getSystemService(android.content.ClipboardManager::class.java)
         val reply = clip?.primaryClip
             ?.takeIf { it.itemCount > 0 }
             ?.getItemAt(0)?.coerceToText(context)?.toString()
             .orEmpty()
         if (reply.isBlank()) {
-            _flashcardState.value = state.copy(error = "The clipboard is empty. Copy the AI's reply first.")
+            _flashcardState.value = _flashcardState.value.copy(
+                error = "The clipboard is empty. Copy the AI's reply first.",
+            )
             return
         }
+        reviewFlashcardReply(reply)
+    }
+
+    /** Reads an AI reply, pasted or shared into the app, and shows its cards for ticking. */
+    fun reviewFlashcardReply(reply: String) {
+        val state = _flashcardState.value
+        val source = state.sourceText ?: return
         val review = ManualCardImport.review(reply, source)
         _flashcardState.value = when {
             !review.sawJson -> state.copy(

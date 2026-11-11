@@ -90,6 +90,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     private var bookWordCount: Int? = null
 
+    /** [bookWordCount] for the page footer's "time left in book". */
+    private val _bookWords = MutableStateFlow<Int?>(null)
+    val bookWords = _bookWords.asStateFlow()
+
     private val _book = MutableStateFlow<BookEntity?>(null)
     val book = _book.asStateFlow()
 
@@ -225,6 +229,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 // sitting after the first has it instantly from the cache.
                 viewModelScope.launch(Dispatchers.IO) {
                     bookWordCount = runCatching { bookWordCounter.wordCount(book) }.getOrNull()
+                    _bookWords.value = bookWordCount
                 }
             }
             if (loaded == null) {

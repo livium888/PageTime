@@ -52,6 +52,7 @@ private val FONT_OPTIONS = listOf(
 
 private val LINE_SPACING_OPTIONS = listOf(
     "Tight" to 1.2f,
+    "Book" to com.pagetime.app.data.local.DEFAULT_LINE_HEIGHT,
     "Cozy" to 1.5f,
     "Relaxed" to 1.8f,
     "Airy" to 2.1f

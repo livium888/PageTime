@@ -211,6 +211,7 @@ class AppContainer(context: Context) {
             runCatching { File(appContext.filesDir, "lumen-model").deleteRecursively() }
         }
         settingsRepository.forgetRetiredAiSettings()
+        scope.launch { runCatching { settingsRepository.applyBookSpacingOnce() } }
     }
 
     /** Tags books Fiction/Poetry/Science/etc. when the reader asks — see the class doc. */

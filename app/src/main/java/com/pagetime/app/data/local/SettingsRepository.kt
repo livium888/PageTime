@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import com.pagetime.app.data.LumenCapture
 import com.pagetime.app.data.learning.CardDensity
+import com.pagetime.app.data.learning.CardNudge
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -280,6 +281,8 @@ class SettingsRepository(private val context: Context) {
         val CHAPTER_PROMPT = stringPreferencesKey("chapter_prompt_template")
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
         val CARD_DENSITY = stringPreferencesKey("card_density")
+        val CARD_NUDGE_ENABLED = booleanPreferencesKey("card_nudge_enabled")
+        val CARD_NUDGE_EVERY = intPreferencesKey("card_nudge_every_words")
 
         val REVIEW_REMINDERS = booleanPreferencesKey("review_reminders_enabled")
         val REVIEW_REMINDERS_SNOOZED_UNTIL = longPreferencesKey("review_reminders_snoozed_until")
@@ -495,6 +498,9 @@ class SettingsRepository(private val context: Context) {
 
     private fun spanMarkerKey(bookId: String) =
         stringPreferencesKey("card_span_marker_$bookId")
+
+    private fun cardNudgeLaterKey(bookId: String) =
+        intPreferencesKey("card_nudge_later_$bookId")
 
     private fun pendingLocatorKey(bookId: String) =
         stringPreferencesKey("pending_reader_locator_$bookId")
@@ -831,6 +837,30 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setCardDensity(value: CardDensity) {
         context.dataStore.edit { it[Keys.CARD_DENSITY] = value.key }
+    }
+
+    /** Whether the reader is offered cards after reading a while. On unless turned off. See [CardNudge]. */
+    suspend fun cardNudgeEnabled(): Boolean =
+        context.dataStore.data.first()[Keys.CARD_NUDGE_ENABLED] ?: true
+
+    suspend fun setCardNudgeEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.CARD_NUDGE_ENABLED] = value }
+    }
+
+    /** Words read between offers of cards. */
+    suspend fun cardNudgeEvery(): Int =
+        CardNudge.everyOrDefault(context.dataStore.data.first()[Keys.CARD_NUDGE_EVERY])
+
+    suspend fun setCardNudgeEvery(words: Int) {
+        context.dataStore.edit { it[Keys.CARD_NUDGE_EVERY] = CardNudge.everyOrDefault(words) }
+    }
+
+    /** The word count at which the reader last put off making cards for this book; zero if never. */
+    suspend fun cardNudgeLater(bookId: String): Int =
+        context.dataStore.data.first()[cardNudgeLaterKey(bookId)] ?: 0
+
+    suspend fun setCardNudgeLater(bookId: String, words: Int) {
+        context.dataStore.edit { it[cardNudgeLaterKey(bookId)] = words }
     }
 
     suspend fun setLumenCaptureChars(value: Int) {

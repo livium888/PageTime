@@ -111,6 +111,26 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _cardDensity = MutableStateFlow(CardDensity.DEFAULT)
     val cardDensity: StateFlow<CardDensity> = _cardDensity.asStateFlow()
 
+    private val _cardNudgeEnabled = MutableStateFlow(true)
+    val cardNudgeEnabled: StateFlow<Boolean> = _cardNudgeEnabled.asStateFlow()
+
+    private val _cardNudgeEvery = MutableStateFlow(com.pagetime.app.data.learning.CardNudge.DEFAULT_EVERY)
+    val cardNudgeEvery: StateFlow<Int> = _cardNudgeEvery.asStateFlow()
+
+    fun setCardNudgeEnabled(value: Boolean) {
+        viewModelScope.launch {
+            container.settingsRepository.setCardNudgeEnabled(value)
+            _cardNudgeEnabled.value = value
+        }
+    }
+
+    fun setCardNudgeEvery(words: Int) {
+        viewModelScope.launch {
+            container.settingsRepository.setCardNudgeEvery(words)
+            _cardNudgeEvery.value = container.settingsRepository.cardNudgeEvery()
+        }
+    }
+
     fun setCardDensity(value: CardDensity) {
         viewModelScope.launch {
             container.settingsRepository.setCardDensity(value)
@@ -286,6 +306,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             _reviewReminders.value = container.settingsRepository.reviewReminders()
             _captureChars.value = container.settingsRepository.lumenCaptureChars()
             _cardDensity.value = container.settingsRepository.cardDensity()
+            _cardNudgeEnabled.value = container.settingsRepository.cardNudgeEnabled()
+            _cardNudgeEvery.value = container.settingsRepository.cardNudgeEvery()
         }
     }
 

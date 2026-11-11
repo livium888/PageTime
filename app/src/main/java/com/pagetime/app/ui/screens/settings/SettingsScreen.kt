@@ -1266,5 +1266,59 @@ internal fun CardDensityCard(density: CardDensity, onSelect: (CardDensity) -> Un
     }
 }
 
+/** Whether and how often the reader is offered cards while reading. See CardNudge. */
+@Composable
+internal fun CardNudgeCard(
+    enabled: Boolean,
+    every: Int,
+    onEnabled: (Boolean) -> Unit,
+    onEvery: (Int) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Suggest cards while reading", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "After you have read a while, a bar at the foot of the page offers to make " +
+                            "cards. It waits for a new paragraph, heading or chapter, and goes away " +
+                            "if you read on. Later keeps counting and asks again.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(checked = enabled, onCheckedChange = onEnabled)
+            }
+            if (enabled) {
+                com.pagetime.app.data.learning.CardNudge.EVERY_CHOICES.forEach { words ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = every == words,
+                                onClick = { onEvery(words) },
+                                role = Role.RadioButton,
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = every == words, onClick = { onEvery(words) })
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Every ${"%,d".format(java.util.Locale.US, words)} words " +
+                                "(about ${words / 250} minutes)",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Tokens a capture's reply may take; the rest of the budget belongs to the prompt. */
 private const val CAPTURE_REPLY_TOKENS = 384

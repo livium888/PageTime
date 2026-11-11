@@ -75,6 +75,12 @@ fun PromptsAndSearchScreen(
                 density = viewModel.cardDensity.collectAsStateWithLifecycle().value,
                 onSelect = viewModel::setCardDensity,
             )
+            CardNudgeCard(
+                enabled = viewModel.cardNudgeEnabled.collectAsStateWithLifecycle().value,
+                every = viewModel.cardNudgeEvery.collectAsStateWithLifecycle().value,
+                onEnabled = viewModel::setCardNudgeEnabled,
+                onEvery = viewModel::setCardNudgeEvery,
+            )
             CapturePromptCard(
                 prompt = lumenPrompt,
                 isCustom = lumenPromptIsCustom,

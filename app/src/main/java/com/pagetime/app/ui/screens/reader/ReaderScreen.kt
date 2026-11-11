@@ -462,17 +462,17 @@ fun ReaderScreen(
     // setting is saved.
     val window = (context as? Activity)?.window
 
-    // Reading takes the whole screen. The status and navigation bars come back
-    // with the controls and go when they go, and are restored on the way out.
+    // Reading takes the whole screen, and keeps it while the controls are
+    // showing too. The app's own layout is padded by the system bars, so
+    // bringing them back with the controls made the whole reader smaller and
+    // every line on the page moved; a swipe from the edge still shows them,
+    // over the page and not beside it. Re-applied whenever the controls toggle
+    // in case a dialog or another app brought the bars back.
     DisposableEffect(window, controlsVisible) {
         if (window != null) {
             val bars = WindowInsetsControllerCompat(window, window.decorView)
-            if (controlsVisible) {
-                bars.show(WindowInsetsCompat.Type.systemBars())
-            } else {
-                bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                bars.hide(WindowInsetsCompat.Type.systemBars())
-            }
+            bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(WindowInsetsCompat.Type.systemBars())
         }
         onDispose { }
     }
@@ -637,8 +637,8 @@ fun ReaderScreen(
         }
         }
 
-        // The time, where the status bar would be. The system bars are hidden
-        // while reading and come back with the controls.
+        // The time, where the status bar would be; the controls' own bar
+        // covers this strip while they are showing.
         if (!controlsVisible) {
             ReaderClock(
                 color = palette.secondary,

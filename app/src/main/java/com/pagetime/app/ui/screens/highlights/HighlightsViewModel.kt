@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
+import com.pagetime.app.data.learning.ChunkCard
+import com.pagetime.app.data.learning.ClozeBuilder
+import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.TextHighlightEntity
 import com.pagetime.app.data.local.isReadiumBook
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,6 +99,44 @@ class HighlightsViewModel(
         viewModelScope.launch {
             repo.aimAt(highlight)
             onOpened()
+        }
+    }
+
+    /** Ids of highlights a card has been made from in this visit, to say so on the row. */
+    private val _carded = MutableStateFlow<Set<String>>(emptySet())
+    val carded: StateFlow<Set<String>> = _carded.asStateFlow()
+
+    /**
+     * Makes a fill-in-the-blank card from [highlight], hiding the [chosen] words.
+     *
+     * The card is due now, like any card the reader writes themselves, and
+     * points back at the highlight's place in the book.
+     */
+    fun makeCard(highlight: TextHighlightEntity, chosen: Set<Int>) {
+        val cloze = ClozeBuilder.build(ClozeBuilder.words(highlight.quote), chosen) ?: return
+        viewModelScope.launch {
+            val length = if (highlight.kind == "epub") null else repo.textLength(bookId)
+            val fraction = when {
+                highlight.kind == "epub" -> epubProgression(highlight.startLocatorJson)
+                length != null && length > 0 && highlight.startOffset >= 0 ->
+                    highlight.startOffset.toFloat() / length
+                else -> null
+            } ?: 0f
+            val card = ChunkCard.create(
+                id = java.util.UUID.randomUUID().toString(),
+                bookId = bookId,
+                chapterIndex = 0,
+                chapterTitle = null,
+                prompt = cloze,
+                answer = ClozeBuilder.answer(cloze),
+                sourceLocator = highlight.startLocatorJson,
+                sourceFraction = fraction,
+                sourceQuote = highlight.quote,
+                now = System.currentTimeMillis(),
+                cardType = LearningCardEntity.TYPE_CLOZE,
+            ) ?: return@launch
+            runCatching { container.database.learningCardDao().upsert(card) }
+                .onSuccess { _carded.value = _carded.value + highlight.id }
         }
     }
 

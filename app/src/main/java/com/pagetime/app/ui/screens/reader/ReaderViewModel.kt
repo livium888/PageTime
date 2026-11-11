@@ -29,6 +29,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
+import com.pagetime.app.data.learning.CardDensity
+import com.pagetime.app.data.learning.CardNudge
 import com.pagetime.app.data.learning.ReadingSpan
 import com.pagetime.app.data.learning.SpanPoint
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -508,6 +510,18 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // that stopped the drip and left the counter stuck at two minutes.
         onProgressChanged(fraction)
         updateScrollProgress(fraction)
+        _bookText.value?.let { shown ->
+            onPageTurnedForCardOffer(
+                atBreak = CardNudge.pageStartsAtBreak(
+                    text = shown.text,
+                    pageStart = pageStartOffset,
+                    pageEnd = pageEndOffset,
+                    headingStarts = shown.spans
+                        .filter { it.kind == com.pagetime.app.data.library.MarkdownText.Kind.HEADING }
+                        .map { it.start },
+                ),
+            )
+        }
         persistenceScope.launch {
             settingsRepository.saveTextOffset(bookId, pageStartOffset)
         }
@@ -1159,6 +1173,119 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pendingLumenContext = null
     }
 
+    // region Card suggestion (see CardNudge)
+
+    /** The suggestion on screen now, as a bar at the foot of the page. */
+    private val _cardOffer = MutableStateFlow<CardNudge.Offer?>(null)
+    val cardOffer = _cardOffer.asStateFlow()
+
+    /**
+     * A suggestion that is owed but still waiting for a break in the text.
+     *
+     * Also what the reader is asked about if they close the book before a
+     * break comes: it is the one case where nothing has been shown yet.
+     */
+    private val _cardOfferOwed = MutableStateFlow<CardNudge.Offer?>(null)
+    val cardOfferOwed = _cardOfferOwed.asStateFlow()
+
+    private var nudgeTurnsWaited = 0
+    private var nudgeTurnsShown = 0
+    private var nudgeCountJob: Job? = null
+    private var nudgeCountedAt = 0L
+    private var nudgeLastChapter: Int? = null
+
+    /**
+     * The reader turned to a new page. [atBreak] says whether it starts
+     * between two thoughts, which is when an owed suggestion may appear.
+     */
+    private fun onPageTurnedForCardOffer(atBreak: Boolean) {
+        if (_cardOffer.value != null) {
+            // Reading on past the bar is an answer.
+            nudgeTurnsShown++
+            if (nudgeTurnsShown >= CardNudge.LINGER_TURNS) cardOfferLater()
+            return
+        }
+        val owed = _cardOfferOwed.value
+        if (owed != null) {
+            if (CardNudge.showNow(atBreak, nudgeTurnsWaited)) {
+                nudgeTurnsShown = 0
+                nudgeTurnsWaited = 0
+                _cardOfferOwed.value = null
+                _cardOffer.value = owed
+                return
+            }
+            nudgeTurnsWaited++
+        }
+        recountForCardOffer()
+    }
+
+    /**
+     * Counts the words since the last cards and decides whether a suggestion
+     * is owed. Waits for the page to settle, so flicking through pages counts
+     * once; an EPUB is read from its file to count, so it is counted at most
+     * every [EPUB_COUNT_GAP_MS].
+     */
+    private fun recountForCardOffer() {
+        nudgeCountJob?.cancel()
+        nudgeCountJob = viewModelScope.launch {
+            delay(1_200)
+            val b = _book.value ?: return@launch
+            val text = _bookText.value?.text
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (b.isReadiumBook && nudgeCountedAt != 0L && now - nudgeCountedAt < EPUB_COUNT_GAP_MS) return@launch
+            runCatching {
+                if (!settingsRepository.cardNudgeEnabled()) {
+                    _cardOfferOwed.value = null
+                    return@launch
+                }
+                val marker = settingsRepository.spanMarker(bookId) ?: return@launch
+                // A prompt is already out with the reader's AI; the reply comes first.
+                if (marker.pendingEnd != null) {
+                    _cardOfferOwed.value = null
+                    return@launch
+                }
+                val end = currentSpanPoint(forStart = false) ?: return@launch
+                val words = if (!b.isReadiumBook && text != null) {
+                    withContext(Dispatchers.Default) { ReadingSpan.slicePlain(text, marker.start, end).words }
+                } else {
+                    container.learningContextExtractor.readingSpan(b, marker.start, end).words
+                }
+                nudgeCountedAt = now
+                val due = CardNudge.due(
+                    words = words,
+                    laterAt = settingsRepository.cardNudgeLater(bookId),
+                    every = settingsRepository.cardNudgeEvery(),
+                )
+                if (_cardOffer.value != null) return@launch
+                if (due) {
+                    val density = runCatching { settingsRepository.cardDensity() }.getOrDefault(CardDensity.DEFAULT)
+                    _cardOfferOwed.value = CardNudge.offer(words, density)
+                } else {
+                    _cardOfferOwed.value = null
+                    nudgeTurnsWaited = 0
+                }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        }
+    }
+
+    /**
+     * "Later", or the reader read on, or they took the offer. The count carries
+     * on; the next suggestion comes after the same number of words again. If
+     * cards are made the stretch starts over and this no longer applies.
+     */
+    fun cardOfferLater() {
+        val answered = _cardOffer.value ?: _cardOfferOwed.value ?: return
+        _cardOffer.value = null
+        _cardOfferOwed.value = null
+        nudgeTurnsWaited = 0
+        nudgeTurnsShown = 0
+        persistenceScope.launch {
+            runCatching { settingsRepository.setCardNudgeLater(bookId, answered.words) }
+        }
+    }
+
+    // endregion
+
     // region Card span (manual flashcards, docs/decisions/0002)
 
     /** Whether this open of the book has already made sure a start marker exists. */
@@ -1430,6 +1557,10 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
 
         if (index != null) onChapterPosition(index, fraction)
+        if (index != null) {
+            onPageTurnedForCardOffer(atBreak = CardNudge.chapterBreak(nudgeLastChapter, index, fraction))
+            nudgeLastChapter = index
+        }
 
         // Debounce: coalesce bursts of locator updates into one write.
         locatorSaveJob?.cancel()
@@ -1788,3 +1919,6 @@ class ReaderViewModelFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
         ReaderViewModel(app, bookId) as T
 }
+
+/** An EPUB is read from its file to count words, so it is counted no more often than this. */
+private const val EPUB_COUNT_GAP_MS = 15_000L

@@ -135,7 +135,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.pagetime.app.data.learning.CardNudge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -328,6 +330,29 @@ fun ReaderScreen(
     var showBookSearch by remember { mutableStateOf(false) }
     var showPromptList by remember { mutableStateOf(false) }
     var showMakeCards by remember { mutableStateOf(false) }
+    val cardOffer by vm.cardOffer.collectAsStateWithLifecycle()
+    val cardOfferOwed by vm.cardOfferOwed.collectAsStateWithLifecycle()
+    var showCardOfferOnExit by remember { mutableStateOf(false) }
+    val openMakeCards: () -> Unit = {
+        book?.let { b ->
+            // The sheet reads the position once, as it opens, so the
+            // span does not move while the reader looks at its edges.
+            cardsVm.open(
+                b,
+                startHere = vm.currentSpanPoint(forStart = true),
+                endHere = vm.currentSpanPoint(forStart = false),
+            )
+            showMakeCards = true
+        }
+    }
+    // Closing the book with a suggestion owed that never found a break to
+    // appear at: ask once on the way out. Declining it closes the book.
+    val closeBook: () -> Unit = {
+        if (cardOfferOwed != null && !showMakeCards) showCardOfferOnExit = true else onBack()
+    }
+    BackHandler(enabled = cardOfferOwed != null && !showMakeCards && !showCardOfferOnExit) {
+        showCardOfferOnExit = true
+    }
     var showMapMoment by remember { mutableStateOf(false) }
     // Show the chrome briefly on entry so the reader's options are discoverable;
     // it fades away automatically and can be recalled with a center tap.
@@ -615,7 +640,7 @@ fun ReaderScreen(
                 checkpointPresent = checkpointPresent,
                 sleepRemainingSeconds = sleepRemainingMs?.let { (it / 1000).toInt().coerceAtLeast(0) },
                 palette = palette,
-                onBack = onBack,
+                onBack = closeBook,
                 onToc = { showToc = true },
                 onGoTo = { showGoTo = true },
                 onSearchBook = {
@@ -644,18 +669,7 @@ fun ReaderScreen(
                     }
                 } else null,
                 onSetCheckpoint = vm::setLearningCheckpoint,
-                onMakeCards = {
-                    book?.let { b ->
-                        // The sheet reads the position once, as it opens, so the
-                        // span does not move while the reader looks at its edges.
-                        cardsVm.open(
-                            b,
-                            startHere = vm.currentSpanPoint(forStart = true),
-                            endHere = vm.currentSpanPoint(forStart = false),
-                        )
-                        showMakeCards = true
-                    }
-                },
+                onMakeCards = openMakeCards,
                 // This is an explicit reader action, so it must work mid-chapter;
                 // the chapter-completion prompt is reserved for automatic reminders.
                 onExplainBack = {
@@ -833,6 +847,26 @@ fun ReaderScreen(
 
     
 
+        // The suggestion to make cards: a bar the reader can read past, never a
+        // dialog. See CardNudge for when it appears.
+        AnimatedVisibility(
+            visible = cardOffer != null && !showMakeCards,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            cardOffer?.let { offer ->
+                CardOfferBar(
+                    offer = offer,
+                    onMakeCards = {
+                        vm.cardOfferLater()
+                        openMakeCards()
+                    },
+                    onLater = vm::cardOfferLater,
+                )
+            }
+        }
+
         // Last child of the reading surface, so it covers the page and the
         // floating controls alike — the whole window warms and dims together
         // rather than the text sitting in a bright frame.
@@ -883,6 +917,38 @@ fun ReaderScreen(
             },
             onDismiss = { showChapterReviewPrompt = false }
         )
+    }
+
+    if (showCardOfferOnExit) {
+        val offer = cardOfferOwed
+        if (offer == null) {
+            showCardOfferOnExit = false
+        } else {
+            AlertDialog(
+                onDismissRequest = { showCardOfferOnExit = false },
+                title = { Text("Make cards before you go?") },
+                text = {
+                    Text(
+                        "You have read ${"%,d".format(java.util.Locale.US, offer.words)} words since your last cards. " +
+                            "That is worth about ${offer.cards} ${if (offer.cards == 1) "card" else "cards"}."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showCardOfferOnExit = false
+                        vm.cardOfferLater()
+                        openMakeCards()
+                    }) { Text("Make cards") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showCardOfferOnExit = false
+                        vm.cardOfferLater()
+                        onBack()
+                    }) { Text("Not now") }
+                },
+            )
+        }
     }
 
     if (showMakeCards) {
@@ -2639,6 +2705,39 @@ private fun IdleGate(onContinue: () -> Unit) {
 }
 
 
+
+/** The suggestion to make cards, at the foot of the page. It never blocks the text above it. */
+@Composable
+private fun CardOfferBar(
+    offer: CardNudge.Offer,
+    onMakeCards: () -> Unit,
+    onLater: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
+            Text(offer.headline, style = MaterialTheme.typography.bodyMedium)
+            offer.detail?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onLater) { Text("Later") }
+                TextButton(onClick = onMakeCards) { Text("Make cards") }
+            }
+        }
+    }
+}
 
 /** A text book's headings as a chapter list; choosing one jumps to its page. */
 @OptIn(ExperimentalMaterial3Api::class)

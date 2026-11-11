@@ -285,6 +285,8 @@ class SettingsRepository(private val context: Context) {
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
         val CARD_DENSITY = stringPreferencesKey("card_density")
         val CARD_NUDGE_ENABLED = booleanPreferencesKey("card_nudge_enabled")
+        val AI_APP_PACKAGE = stringPreferencesKey("ai_app_package")
+        val AI_APP_CLASS = stringPreferencesKey("ai_app_class")
         val CARD_NUDGE_EVERY = intPreferencesKey("card_nudge_every_words")
 
         val REVIEW_REMINDERS = booleanPreferencesKey("review_reminders_enabled")
@@ -858,6 +860,28 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setCardDensity(value: CardDensity) {
         context.dataStore.edit { it[Keys.CARD_DENSITY] = value.key }
+    }
+
+    /** The app the reader last sent a prompt to (package, activity class); null until they have. */
+    suspend fun aiApp(): Pair<String, String>? {
+        val p = context.dataStore.data.first()
+        val pkg = p[Keys.AI_APP_PACKAGE]?.takeIf { it.isNotBlank() } ?: return null
+        val cls = p[Keys.AI_APP_CLASS]?.takeIf { it.isNotBlank() } ?: return null
+        return pkg to cls
+    }
+
+    suspend fun setAiApp(packageName: String, className: String) {
+        context.dataStore.edit {
+            it[Keys.AI_APP_PACKAGE] = packageName
+            it[Keys.AI_APP_CLASS] = className
+        }
+    }
+
+    suspend fun forgetAiApp() {
+        context.dataStore.edit {
+            it.remove(Keys.AI_APP_PACKAGE)
+            it.remove(Keys.AI_APP_CLASS)
+        }
     }
 
     /** Whether the reader is offered cards after reading a while. On unless turned off. See [CardNudge]. */

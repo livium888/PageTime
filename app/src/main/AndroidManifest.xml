@@ -144,6 +144,11 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+        <!-- Told by the share sheet which app the reader sent a prompt to. -->
+        <receiver
+            android:name=".data.AiAppChosenReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

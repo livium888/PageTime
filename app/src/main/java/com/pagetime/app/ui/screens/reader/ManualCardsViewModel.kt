@@ -1,6 +1,10 @@
 package com.pagetime.app.ui.screens.reader
 
 import android.app.Application
+import android.app.PendingIntent
+import android.content.ComponentName
+import com.pagetime.app.data.AiAppChosenReceiver
+import com.pagetime.app.data.learning.CopiedReply
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -73,6 +77,8 @@ class ManualCardsViewModel(
         val leftOut: List<Pair<RawPrompt, PromptRejection>> = emptyList(),
         val problems: List<String> = emptyList(),
         val added: Int = 0,
+        /** The name of the app prompts were last sent to, for a one-tap button; null if none yet. */
+        val aiAppLabel: String? = null,
     ) {
         val cardsAsked: Int get() = ManualCardPrompt.cardTarget(slice?.words ?: 0, density)
         val chosen: Int get() = review.count { it.keep }
@@ -127,8 +133,10 @@ class ManualCardsViewModel(
         val adjust = if (pending != null) m.pendingAdjust else _state.value.endAdjust
         val slice = extractor.readingSpan(b, m.start, end, adjust)
         val density = runCatching { settings.cardDensity() }.getOrDefault(CardDensity.DEFAULT)
+        val aiAppLabel = aiAppLabel()
         _state.update {
             it.copy(
+                aiAppLabel = aiAppLabel,
                 step = Step.SPAN,
                 busy = false,
                 slice = slice,
@@ -213,25 +221,103 @@ class ManualCardsViewModel(
         }
     }
 
+    /** The remembered AI app's name, or null if there is none or it has been uninstalled. */
+    private suspend fun aiAppLabel(): String? {
+        val (pkg, _) = runCatching { settings.aiApp() }.getOrNull() ?: return null
+        val pm = getApplication<Application>().packageManager
+        return runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun sendIntent(prompt: String) = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, prompt)
+    }
+
+    /**
+     * Opens the share sheet, and remembers the app that is picked from it so
+     * the next prompt can go there with one tap. See [AiAppChosenReceiver].
+     */
     fun sharePrompt(context: Context) {
         viewModelScope.launch {
             val prompt = buildPrompt() ?: return@launch
             rememberCopied()
             runCatching {
+                val app = getApplication<Application>()
+                val chosen = PendingIntent.getBroadcast(
+                    app,
+                    0,
+                    Intent(app, AiAppChosenReceiver::class.java),
+                    // Mutable, because the system adds the chosen app to it.
+                    PendingIntent.FLAG_UPDATE_CURRENT or
+                        (if (android.os.Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0),
+                )
                 context.startActivity(
-                    Intent.createChooser(
-                        Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, prompt)
-                        },
-                        "Send to your LLM app",
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    Intent.createChooser(sendIntent(prompt), "Send to your AI app", chosen.intentSender)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }.onFailure {
                 _state.update { s -> s.copy(error = "Couldn't open the share sheet. Use Copy instead.") }
             }
-            recompute(notice = "When it replies, copy the reply and come back here.")
+            recompute(notice = SENT_NOTICE)
         }
+    }
+
+    /** Sends the prompt straight to the app used last time; the share sheet if that fails. */
+    fun sendToAiApp(context: Context) {
+        viewModelScope.launch {
+            val target = runCatching { settings.aiApp() }.getOrNull()
+            if (target == null) {
+                sharePrompt(context)
+                return@launch
+            }
+            val prompt = buildPrompt() ?: return@launch
+            rememberCopied()
+            val opened = runCatching {
+                context.startActivity(
+                    sendIntent(prompt)
+                        .setComponent(ComponentName(target.first, target.second))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }.isSuccess
+            if (!opened) {
+                // Uninstalled, or it no longer takes shared text. Ask again.
+                runCatching { settings.forgetAiApp() }
+                sharePrompt(context)
+                return@launch
+            }
+            recompute(notice = SENT_NOTICE)
+        }
+    }
+
+    /** The reader wants a different app from now on. */
+    fun chooseAnotherAiApp(context: Context) {
+        viewModelScope.launch {
+            runCatching { settings.forgetAiApp() }
+            sharePrompt(context)
+        }
+    }
+
+    private var triedClip: String? = null
+
+    /**
+     * Called when the reader comes back to the sheet while a reply is awaited:
+     * if they copied the reply, read it without being asked. Silent when the
+     * clipboard holds anything else.
+     */
+    fun pickUpCopiedReply(context: Context) {
+        val s = _state.value
+        if (s.step != Step.SPAN || !s.awaitingReply || s.busy) return
+        val clip = context.getSystemService(ClipboardManager::class.java) ?: return
+        // The description says whether it is text without reading the text.
+        if (clip.primaryClipDescription?.hasMimeType("text/*") != true) return
+        val text = runCatching {
+            clip.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+        }.getOrNull().orEmpty()
+        if (!CopiedReply.worthReading(text, s.slice?.text.orEmpty(), triedClip)) return
+        triedClip = text
+        reviewReply(text, quiet = true)
     }
 
     fun pasteReply(context: Context) {
@@ -244,8 +330,9 @@ class ManualCardsViewModel(
     }
 
     /** Public so a test or a future text box can feed a reply in directly. */
-    fun reviewReply(reply: String) {
+    fun reviewReply(reply: String, quiet: Boolean = false) {
         if (reply.isBlank()) {
+            if (quiet) return
             _state.update { it.copy(error = "The clipboard is empty. Copy the model's reply first.") }
             return
         }
@@ -263,6 +350,8 @@ class ManualCardsViewModel(
             val existing = runCatching { cardDao.promptsForBook(b.id) }.getOrDefault(emptyList())
             val review = ManualCardImport.review(reply, slice.text, existing)
             when {
+                // Picked up unasked and it was not the cards: say nothing.
+                quiet && (!review.sawJson || !review.foundAnything) -> _state.update { it.copy(busy = false) }
                 !review.sawJson -> _state.update {
                     it.copy(
                         busy = false,
@@ -344,6 +433,7 @@ class ManualCardsViewModel(
 
     private companion object {
         const val MAX_NUDGE = 20
+        const val SENT_NOTICE = "When it replies, copy the reply and come back. It will be picked up here."
     }
 }
 

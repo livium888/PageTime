@@ -31,6 +31,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +62,19 @@ fun HighlightsScreen(
         factory = HighlightsViewModelFactory(app, bookId)
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val carded by vm.carded.collectAsStateWithLifecycle()
+    var cardFrom by remember { mutableStateOf<com.pagetime.app.data.local.TextHighlightEntity?>(null) }
+
+    cardFrom?.let { highlight ->
+        ClozeFromHighlightSheet(
+            quote = highlight.quote,
+            onSave = { chosen ->
+                vm.makeCard(highlight, chosen)
+                cardFrom = null
+            },
+            onDismiss = { cardFrom = null },
+        )
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -112,7 +128,9 @@ fun HighlightsScreen(
                         onOpen = {
                             vm.open(row.highlight) { onOpenBook(row.highlight.bookId) }
                         },
-                        onDelete = { vm.delete(row.highlight) }
+                        onDelete = { vm.delete(row.highlight) },
+                        carded = row.highlight.id in carded,
+                        onMakeCard = { cardFrom = row.highlight },
                     )
                 }
             }
@@ -159,7 +177,9 @@ private fun EmptyHighlights(isTextBook: Boolean, modifier: Modifier = Modifier) 
 private fun HighlightCard(
     row: HighlightRow,
     onOpen: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    carded: Boolean,
+    onMakeCard: () -> Unit,
 ) {
     val highlight = row.highlight
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -185,6 +205,7 @@ private fun HighlightCard(
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onOpen) { Text("Open in book") }
+                TextButton(onClick = onMakeCard) { Text(if (carded) "Card added · another" else "Make a card") }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onDelete) {
                     Icon(

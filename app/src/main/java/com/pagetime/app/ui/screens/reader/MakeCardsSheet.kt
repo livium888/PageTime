@@ -70,6 +70,13 @@ fun MakeCardsSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
+        // Back from the AI app with the reply copied: read it without being
+        // asked. The clipboard can only be read once this window has focus.
+        val focused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+        androidx.compose.runtime.LaunchedEffect(focused, state.awaitingReply, state.step) {
+            if (focused && state.awaitingReply) vm.pickUpCopiedReply(context)
+        }
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -85,6 +92,8 @@ fun MakeCardsSheet(
                     state = state,
                     onCopy = vm::copyPrompt,
                     onShare = { vm.sharePrompt(context) },
+                    onSend = { vm.sendToAiApp(context) },
+                    onAnotherApp = { vm.chooseAnotherAiApp(context) },
                     onPaste = { vm.pasteReply(context) },
                     onNudge = vm::nudgeEnd,
                     onStartHere = { confirmStartHere = true },
@@ -137,6 +146,8 @@ private fun SpanStep(
     state: ManualCardsViewModel.UiState,
     onCopy: () -> Unit,
     onShare: () -> Unit,
+    onSend: () -> Unit,
+    onAnotherApp: () -> Unit,
     onPaste: () -> Unit,
     onNudge: (Int) -> Unit,
     onStartHere: () -> Unit,
@@ -157,8 +168,8 @@ private fun SpanStep(
     }
 
     Text(
-        "Copy what you read with a ready-made prompt, paste it into your LLM app, then bring " +
-            "its reply back here.",
+        "Send what you read to your AI app with a ready-made prompt. Copy its reply and come " +
+            "back: the cards are picked up here.",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -211,11 +222,23 @@ private fun SpanStep(
             Text("Start over with a different stretch")
         }
     } else {
-        Button(onClick = onCopy, enabled = canSend, modifier = Modifier.fillMaxWidth()) {
-            Text("Copy prompt and text")
-        }
-        OutlinedButton(onClick = onShare, enabled = canSend, modifier = Modifier.fillMaxWidth()) {
-            Text("Share to an app…")
+        val app = state.aiAppLabel
+        if (app != null) {
+            // The app used last time, one tap away.
+            Button(onClick = onSend, enabled = canSend, modifier = Modifier.fillMaxWidth()) {
+                Text("Send to $app")
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = onAnotherApp, enabled = canSend) { Text("Another app…") }
+                TextButton(onClick = onCopy, enabled = canSend) { Text("Copy instead") }
+            }
+        } else {
+            Button(onClick = onShare, enabled = canSend, modifier = Modifier.fillMaxWidth()) {
+                Text("Send to your AI app…")
+            }
+            OutlinedButton(onClick = onCopy, enabled = canSend, modifier = Modifier.fillMaxWidth()) {
+                Text("Copy prompt and text")
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = onStartHere, enabled = !state.busy) { Text("Start from this page") }

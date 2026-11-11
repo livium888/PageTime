@@ -110,9 +110,12 @@ data class Settings(
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
+/** Line spacing of a printed book: close enough to read as a block, open enough not to crowd. */
+const val DEFAULT_LINE_HEIGHT = 1.35f
+
 data class ReaderSettings(
     val fontSizeSp: Float = 18f,
-    val lineHeight: Float = 1.5f,
+    val lineHeight: Float = DEFAULT_LINE_HEIGHT,
     /** "serif", "sans", "literata", or "mono" */
     val fontFamily: String = "serif",
     /**
@@ -312,6 +315,7 @@ class SettingsRepository(private val context: Context) {
 
         val FONT_SIZE = floatPreferencesKey("reader_font_size")
         val LINE_HEIGHT = floatPreferencesKey("reader_line_height")
+        val BOOK_SPACING_APPLIED = booleanPreferencesKey("reader_book_spacing_applied")
         val FONT_FAMILY = stringPreferencesKey("reader_font_family")
         val THEME = stringPreferencesKey("reader_theme")
         val MARGIN = floatPreferencesKey("reader_margin")
@@ -365,6 +369,23 @@ class SettingsRepository(private val context: Context) {
                 .remove(SecureKeys.GEMINI_API_KEY)
                 .remove(SecureKeys.GEMINI_MODEL)
                 .apply()
+        }
+    }
+
+    /**
+     * Moves the reader to book line spacing, once.
+     *
+     * The page was redrawn to read like a printed book, and the looser spacings
+     * this app used to default to are most of what made it look unlike one.
+     * Done a single time so that a reader who then picks a looser spacing in
+     * Appearance keeps it.
+     */
+    suspend fun applyBookSpacingOnce() {
+        context.dataStore.edit { p ->
+            if (p[Keys.BOOK_SPACING_APPLIED] == true) return@edit
+            p[Keys.BOOK_SPACING_APPLIED] = true
+            val current = p[Keys.LINE_HEIGHT]
+            if (current == null || current > DEFAULT_LINE_HEIGHT) p[Keys.LINE_HEIGHT] = DEFAULT_LINE_HEIGHT
         }
     }
 
@@ -899,7 +920,7 @@ class SettingsRepository(private val context: Context) {
     val readerSettings: Flow<ReaderSettings> = context.dataStore.data.map { p ->
         ReaderSettings(
             fontSizeSp = p[Keys.FONT_SIZE] ?: 18f,
-            lineHeight = p[Keys.LINE_HEIGHT] ?: 1.5f,
+            lineHeight = p[Keys.LINE_HEIGHT] ?: DEFAULT_LINE_HEIGHT,
             fontFamily = p[Keys.FONT_FAMILY] ?: "serif",
             theme = p[Keys.THEME] ?: defaultReaderTheme(),
             marginDp = p[Keys.MARGIN] ?: 20f,

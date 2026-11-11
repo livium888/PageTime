@@ -86,7 +86,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -140,6 +139,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import com.pagetime.app.data.learning.CardNudge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.produceState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
@@ -169,6 +177,7 @@ import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.epub.EpubPreferences
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
+import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.navigator.preferences.FontFamily as ReadiumFontFamily
 import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.navigator.preferences.TextAlign as ReadiumTextAlign
@@ -189,7 +198,13 @@ private const val NAVIGATOR_TAG = "readium_navigator"
  * not. Two literals that have to agree is how a tap starts selecting the line
  * above the word.
  */
-private val PageVerticalPadding = 24.dp
+private val PageVerticalPadding = 10.dp
+
+/** The strip above the page that holds the clock. */
+private val ReaderHeaderHeight = 28.dp
+
+/** The one line under the page: time left and how far in. */
+private val ReaderFooterHeight = 36.dp
 
 /** Slack kept below a page's measured height, so rounding can never hide a last line. */
 private val PAGE_FIT_MARGIN = 4.dp
@@ -271,6 +286,7 @@ fun ReaderScreen(
     val initialTextFraction by vm.initialTextFraction.collectAsStateWithLifecycle()
     val initialTextOffset by vm.initialTextOffset.collectAsStateWithLifecycle()
     val sessionSeconds by vm.sessionSeconds.collectAsStateWithLifecycle()
+    val bookWords by vm.bookWords.collectAsStateWithLifecycle()
     val creditedSeconds by vm.creditedSeconds.collectAsStateWithLifecycle()
     val balanceSeconds by vm.balanceSeconds.collectAsStateWithLifecycle()
     val readerError by vm.error.collectAsStateWithLifecycle()
@@ -445,6 +461,28 @@ fun ReaderScreen(
     // transient preview value so dragging dims the screen in real time before the
     // setting is saved.
     val window = (context as? Activity)?.window
+
+    // Reading takes the whole screen. The status and navigation bars come back
+    // with the controls and go when they go, and are restored on the way out.
+    DisposableEffect(window, controlsVisible) {
+        if (window != null) {
+            val bars = WindowInsetsControllerCompat(window, window.decorView)
+            if (controlsVisible) {
+                bars.show(WindowInsetsCompat.Type.systemBars())
+            } else {
+                bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                bars.hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose { }
+    }
+    DisposableEffect(window) {
+        onDispose {
+            if (window != null) {
+                WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
     DisposableEffect(window, settings.brightness, previewBrightness) {
         if (window == null) {
             onDispose { }
@@ -487,6 +525,14 @@ fun ReaderScreen(
             .fillMaxSize()
             .background(palette.background)
     ) {
+        // The page sits between a thin header (the clock) and a one-line
+        // footer, and nothing floats over it: what is laid out is what is seen.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
+                .padding(top = ReaderHeaderHeight, bottom = ReaderFooterHeight)
+        ) {
         when {
             book == null -> CenteredMessage(
                 icon = { Icon(Icons.Outlined.MenuBook, null, tint = palette.text, modifier = Modifier.size(48.dp)) },
@@ -588,6 +634,20 @@ fun ReaderScreen(
                     CircularProgressIndicator()
                 }
             }
+        }
+        }
+
+        // The time, where the status bar would be. The system bars are hidden
+        // while reading and come back with the controls.
+        if (!controlsVisible) {
+            ReaderClock(
+                color = palette.secondary,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
+                    .height(ReaderHeaderHeight)
+                    .padding(start = settings.marginDp.dp),
+            )
         }
 
         if (publication != null) {
@@ -788,23 +848,19 @@ fun ReaderScreen(
                     }
                 }
             }
-            // Deliberately outside the chrome's own show/hide: this is the one
-            // piece of reading chrome that reports something ongoing (session
-            // time, counted time, whether the anti-cheat guard is currently
-            // crediting) rather than something to act on — hiding it after a
-            // few idle seconds like the tap-to-toggle bars makes it useless
-            // for watching that state change in real time.
+            // One quiet line, always there: how much is left and how far in.
+            // Session and counted time are in Reading stats, in the menu; the
+            // guard speaks here only when it has stopped counting.
             ReaderBottomBar(
                 palette = palette,
-                sessionSeconds = sessionSeconds,
-                creditedSeconds = creditedSeconds,
                 progress = progress,
                 guardState = guardState,
-                chapterLabel = chapterLabel,
-                pageLabel = textPageLabel,
-                chapterCount = publication?.readingOrder?.size,
-                mode = progressMode,
-                onModeToggle = {
+                timeLeft = ReadingTimeLeft.label(bookWords, progress),
+                placeLabel = chapterLabel?.let { "Chapter $it" } ?: textPageLabel,
+                showPlace = progressMode == ProgressIndicatorMode.TIME_LEFT,
+                expanded = controlsVisible,
+                horizontalPadding = settings.marginDp.dp,
+                onToggle = {
                     progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
                         ProgressIndicatorMode.TIME_LEFT
                     } else {
@@ -1952,6 +2008,11 @@ private fun ReadiumNavigatorHost(
 /** Maps the app's reader settings onto Readium EPUB preferences. */
 @OptIn(ExperimentalReadiumApi::class)
 private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPreferences(
+    // The page takes the app's own colours rather than Readium's themes, so
+    // the header and footer strips are the same colour as the page between
+    // them instead of two bands around it.
+    backgroundColor = ReadiumColor(android.graphics.Color.parseColor(paletteFor(s.theme).bgHex)),
+    textColor = ReadiumColor(android.graphics.Color.parseColor(paletteFor(s.theme).textHex)),
         // Readium's font size is a multiplier where 1.0 = 100%, not a percentage.
         fontSize = s.fontSizeSp / 16.0,
         lineHeight = s.lineHeight.toDouble(),
@@ -2384,99 +2445,67 @@ private fun ReaderTopBar(
 @Composable
 private fun ReaderBottomBar(
     palette: ReaderPalette,
-    sessionSeconds: Long,
-    creditedSeconds: Long,
     progress: Float,
     guardState: ReadingGuard.State,
-    chapterLabel: String?,
-    pageLabel: String?,
-    chapterCount: Int?,
-    mode: ProgressIndicatorMode,
-    onModeToggle: () -> Unit
+    /** "1 hr 37 mins left in book", when the book's length is known. */
+    timeLeft: String?,
+    /** "Chapter 14 of 26" or "Page 3 of 90". */
+    placeLabel: String?,
+    /** The reader tapped the line to see the place instead of the time left. */
+    showPlace: Boolean,
+    /** The controls are showing, so the line makes room for the navigation bar. */
+    expanded: Boolean,
+    horizontalPadding: androidx.compose.ui.unit.Dp,
+    onToggle: () -> Unit,
 ) {
     val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
-    val status = when {
+    // Said only when counting has stopped; while it runs there is nothing to report.
+    val paused = when {
         guardState.tooFast -> "Paused · too fast"
         guardState.showIdleGate -> "Paused · idle"
-        guardState.crediting -> "Earning"
-        else -> "Paused"
+        else -> null
     }
-    val statusColor = when {
-        guardState.tooFast -> MaterialTheme.colorScheme.error
-        guardState.crediting -> MaterialTheme.colorScheme.primary
-        else -> palette.secondary
+    val left = paused ?: (if (showPlace) placeLabel else timeLeft) ?: placeLabel ?: ""
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(palette.background)
+            .then(if (expanded) Modifier.navigationBarsPadding() else Modifier)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onToggle,
+            )
+            .height(ReaderFooterHeight)
+            .padding(horizontal = horizontalPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            left,
+            color = if (guardState.tooFast) MaterialTheme.colorScheme.error else palette.secondary,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text("$percent%", color = palette.secondary, style = MaterialTheme.typography.bodySmall)
     }
-    val indicatorText = when (mode) {
-        ProgressIndicatorMode.PERCENT -> "$percent%"
-        ProgressIndicatorMode.TIME_LEFT ->
-            estimatedTimeLeft(progress, creditedSeconds) ?: "$percent%"
-    }
-    Surface(color = palette.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-        ) {
-            // Tapping anywhere on the bar cycles the indicator between
-            // percentage and estimated time left, like Kindle.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onModeToggle)
-            ) {
-                Column {
-                    LinearProgressIndicator(
-                        progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    // Kindle-style chapter markers along the progress line.
-                    if (chapterCount != null && chapterCount > 1) {
-                        Spacer(Modifier.height(3.dp))
-                        Row(Modifier.fillMaxWidth().height(5.dp)) {
-                            repeat(chapterCount.coerceAtMost(60)) {
-                                Box(
-                                    Modifier
-                                        .weight(1f)
-                                        .padding(horizontal = 1.dp)
-                                        .fillMaxHeight()
-                                        .background(palette.text.copy(alpha = 0.22f))
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    when {
-                        chapterLabel != null -> "Chapter $chapterLabel"
-                        pageLabel != null -> pageLabel
-                        else -> "Reading"
-                    },
-                    color = palette.secondary,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(
-                    onClick = onModeToggle,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                ) {
-                    Text(
-                        indicatorText,
-                        color = palette.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-            Spacer(Modifier.height(2.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Session ${formatClock(sessionSeconds)}", color = palette.secondary, style = MaterialTheme.typography.bodySmall)
-                Text(status, color = statusColor, style = MaterialTheme.typography.bodySmall)
-                Text("Counted ${formatClock(creditedSeconds)}", color = palette.secondary, style = MaterialTheme.typography.bodySmall)
-            }
+}
+
+/** The time of day at the head of the page, since the status bar is hidden while reading. */
+@Composable
+private fun ReaderClock(color: Color, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val time by produceState(initialValue = "", context) {
+        val format = android.text.format.DateFormat.getTimeFormat(context)
+        while (true) {
+            val now = System.currentTimeMillis()
+            value = format.format(java.util.Date(now))
+            delay(60_000L - now % 60_000L + 50L)
         }
+    }
+    Box(modifier, contentAlignment = Alignment.CenterStart) {
+        Text(time, color = color, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -2716,7 +2745,8 @@ private fun CardOfferBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
+            // Above the footer line, which stays readable under it.
+            .padding(bottom = ReaderFooterHeight)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         shape = RoundedCornerShape(16.dp),
         tonalElevation = 6.dp,
@@ -2833,17 +2863,6 @@ private fun formatTimerSeconds(totalSeconds: Int): String {
 }
 
 /** Kindle-style "time left in book" derived from the user's own reading pace. */
-private fun estimatedTimeLeft(progress: Float, creditedSeconds: Long): String? {
-    if (creditedSeconds < 60L || progress <= 0.01f || progress >= 0.995f) return null
-    val speed = progress / creditedSeconds.toFloat().coerceAtLeast(1f)
-    val remainingSeconds = ((1f - progress) / speed).toLong()
-    return when {
-        remainingSeconds < 60L -> "~${remainingSeconds}s left"
-        remainingSeconds < 3600L -> "~${remainingSeconds / 60}m left"
-        else -> "~${remainingSeconds / 3600}h ${(remainingSeconds % 3600) / 60}m left"
-    }
-}
-
 /**
  * Kobo-style left-edge gesture: a vertical drag on the edge of the book dims or
  * brightens the screen immediately, and the choice is saved on release. Only the
@@ -3424,5 +3443,17 @@ private fun ReviewPermissionRequest(
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
         if (already) onAnswered(true) else launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
+/** This sitting's pace carried to the end of the book, for Reading stats. */
+private fun estimatedTimeLeft(progress: Float, creditedSeconds: Long): String? {
+    if (creditedSeconds < 60L || progress <= 0.01f || progress >= 0.995f) return null
+    val speed = progress / creditedSeconds.toFloat().coerceAtLeast(1f)
+    val remainingSeconds = ((1f - progress) / speed).toLong()
+    return when {
+        remainingSeconds < 60L -> "~${remainingSeconds}s left"
+        remainingSeconds < 3600L -> "~${remainingSeconds / 60}m left"
+        else -> "~${remainingSeconds / 3600}h ${(remainingSeconds % 3600) / 60}m left"
     }
 }

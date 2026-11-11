@@ -858,7 +858,6 @@ fun ReaderScreen(
                 timeLeft = ReadingTimeLeft.label(bookWords, progress),
                 placeLabel = chapterLabel?.let { "Chapter $it" } ?: textPageLabel,
                 showPlace = progressMode == ProgressIndicatorMode.TIME_LEFT,
-                expanded = controlsVisible,
                 horizontalPadding = settings.marginDp.dp,
                 onToggle = {
                     progressMode = if (progressMode == ProgressIndicatorMode.PERCENT) {
@@ -1959,7 +1958,13 @@ private fun ReadiumNavigatorHost(
                 initialPreferences = readiumPreferences(settings),
                 listener = null,
                 configuration = EpubNavigatorFragment.Configuration(
-                    selectionActionModeCallback = selectionActions
+                    selectionActionModeCallback = selectionActions,
+                    // The page keeps its shape when the controls and the
+                    // system bars appear. Left on, Readium pads the page by
+                    // the bars' height and every line on it moves; the page
+                    // is already kept clear of the camera cut-out by the
+                    // reading surface around it.
+                    shouldApplyInsetsPadding = false,
                 )
             )
             fm.commitNow {
@@ -2043,6 +2048,11 @@ private fun readiumPreferences(s: ReaderSettings): EpubPreferences = EpubPrefere
     // breaking words. It only takes effect with publisherStyles off, which is
     // already the case above.
     hyphens = s.alignment == "justify",
+    // Paragraphs set apart by a gap and not by an indent, as a reading app
+    // sets them: on a narrow column the gap is the clearer signal and the
+    // indent only costs width.
+    paragraphSpacing = 0.7,
+    paragraphIndent = 0.0,
     scroll = false
 )
 
@@ -2453,8 +2463,6 @@ private fun ReaderBottomBar(
     placeLabel: String?,
     /** The reader tapped the line to see the place instead of the time left. */
     showPlace: Boolean,
-    /** The controls are showing, so the line makes room for the navigation bar. */
-    expanded: Boolean,
     horizontalPadding: androidx.compose.ui.unit.Dp,
     onToggle: () -> Unit,
 ) {
@@ -2470,7 +2478,6 @@ private fun ReaderBottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(palette.background)
-            .then(if (expanded) Modifier.navigationBarsPadding() else Modifier)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

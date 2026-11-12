@@ -78,6 +78,66 @@ object ReaderPicks {
         return (mostRead.filter { it in askable } + askable).distinct()
     }
 
+    /** What the catalogue says about one work, for the page a pick opens. */
+    data class About(
+        val description: String?,
+        val subjects: List<String>,
+        val coverUrl: String?,
+    ) {
+        val isEmpty: Boolean get() = description == null && subjects.isEmpty() && coverUrl == null
+    }
+
+    private const val SUBJECTS_SHOWN = 6
+
+    /**
+     * Reads a work record. The description is sometimes a plain string and
+     * sometimes an object holding one, and often ends in the catalogue's own
+     * housekeeping (a rule, "Also contained in", source links), which is cut.
+     */
+    fun parseAbout(json: String): About? = runCatching {
+        val work = JSONObject(json)
+        val raw = when (val d = work.opt("description")) {
+            is String -> d
+            is JSONObject -> d.optString("value")
+            else -> ""
+        }
+        val subjects = work.optJSONArray("subjects")?.let { array ->
+            (0 until array.length()).map { array.optString(it).trim() }
+                .filter { it.isNotEmpty() && it.length <= 40 }
+                .distinctBy { it.lowercase() }
+                .take(SUBJECTS_SHOWN)
+        }.orEmpty()
+        val cover = work.optJSONArray("covers")?.let { array ->
+            (0 until array.length()).map { array.optInt(it, -1) }.firstOrNull { it > 0 }
+        }
+        About(
+            description = cleanDescription(raw),
+            subjects = subjects,
+            coverUrl = cover?.let { "https://covers.openlibrary.org/b/id/$it-M.jpg" },
+        )
+    }.getOrNull()
+
+    internal fun cleanDescription(raw: String): String? {
+        var text = raw.replace("\r\n", "\n")
+        // Everything after a rule is the catalogue talking about editions.
+        Regex("\n\\s*-{4,}").find(text)?.let { text = text.substring(0, it.range.first) }
+        text = text.lines()
+            // Link definitions: "[1]: https://…"
+            .filterNot { it.trim().matches(Regex("\\[\\d+]:\\s*\\S+.*")) }
+            .joinToString("\n")
+            // "([source][1])" and bare "[1]" markers
+            .replace(Regex("\\(?\\[[^\\]]*]\\[\\d+]\\)?"), "")
+            .replace(Regex("\\[(\\d+)]"), "")
+            // "[text](url)" keeps its text
+            .replace(Regex("\\[([^\\]]+)]\\([^)]*\\)"), "$1")
+            .replace(Regex("[*_]{1,2}([^*_]+)[*_]{1,2}"), "$1")
+            // A removed marker leaves its space behind, before the full stop.
+            .replace(Regex(" +([.,;:])"), "$1")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+        return text.takeIf { it.isNotEmpty() }
+    }
+
     /** On the card shown when a book is finished. */
     const val SHOWN_WHEN_FINISHED = 2
 

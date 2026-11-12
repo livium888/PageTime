@@ -907,6 +907,14 @@ fun ReaderScreen(
         // The end of the book: what readers of this genre rate highly. Once
         // per book, and it waits its turn behind the card suggestion.
         val nextBooks by vm.nextBooks.collectAsStateWithLifecycle()
+        var aboutPick by remember { mutableStateOf<com.pagetime.app.data.recommend.ReaderPicks.Pick?>(null) }
+        aboutPick?.let { pick ->
+            com.pagetime.app.ui.screens.discover.PickDetailSheet(
+                pick = pick,
+                onFind = null,
+                onDismiss = { aboutPick = null },
+            )
+        }
         AnimatedVisibility(
             visible = nextBooks != null && cardOffer == null && !showMakeCards,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -916,6 +924,7 @@ fun ReaderScreen(
             nextBooks?.let { next ->
                 NextBooksCard(
                     next = next,
+                    onAbout = { aboutPick = it },
                     onSeeMore = {
                         com.pagetime.app.data.recommend.ReaderPicks.Handoff.ask(next.genre)
                         vm.dismissNextBooks()
@@ -2770,6 +2779,7 @@ private fun IdleGate(onContinue: () -> Unit) {
 @Composable
 private fun NextBooksCard(
     next: ReaderViewModel.NextBooks,
+    onAbout: (com.pagetime.app.data.recommend.ReaderPicks.Pick) -> Unit,
     onSeeMore: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2793,7 +2803,12 @@ private fun NextBooksCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             next.picks.forEach { pick ->
-                Column(Modifier.padding(top = 4.dp, end = 8.dp)) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onAbout(pick) }
+                        .padding(top = 4.dp, end = 8.dp)
+                ) {
                     Text(pick.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         listOf(pick.byLine, pick.ratingLine).filter { it.isNotBlank() }.joinToString(" · "),

@@ -85,4 +85,34 @@ class ReaderPicksTest {
         assertEquals(BookGenre.POETRY, ReaderPicks.Handoff.take())
         assertNull(ReaderPicks.Handoff.take())
     }
+
+    @Test
+    fun `a work's description, subjects and cover are read`() {
+        val about = ReaderPicks.parseAbout(
+            """{"description": {"type": "/type/text", "value": "A desert planet and the family sent to rule it."},
+                "subjects": ["Science fiction", "science fiction", "Deserts", ""],
+                "covers": [-1, 12345]}"""
+        )!!
+        assertEquals("A desert planet and the family sent to rule it.", about.description)
+        assertEquals(listOf("Science fiction", "Deserts"), about.subjects)
+        assertEquals("https://covers.openlibrary.org/b/id/12345-M.jpg", about.coverUrl)
+    }
+
+    @Test
+    fun `a plain-string description is read, and a missing one is not invented`() {
+        assertEquals("Short and plain.", ReaderPicks.parseAbout("""{"description": "Short and plain."}""")!!.description)
+        val bare = ReaderPicks.parseAbout("""{"title": "Nothing else"}""")!!
+        assertNull(bare.description)
+        assertTrue(bare.isEmpty)
+        assertNull(ReaderPicks.parseAbout("<html>busy</html>"))
+    }
+
+    @Test
+    fun `the catalogue's housekeeping is cut from a description`() {
+        val raw = "A **great** war begins ([source][1]).\n\nSee [the author](https://example.org/a).\n\n" +
+            "----------\nAlso contained in:\n - [Collected Works](https://openlibrary.org/works/OL1W)\n\n" +
+            "  [1]: https://example.org/source"
+        assertEquals("A great war begins.\n\nSee the author.", ReaderPicks.cleanDescription(raw))
+        assertNull(ReaderPicks.cleanDescription("   "))
+    }
 }

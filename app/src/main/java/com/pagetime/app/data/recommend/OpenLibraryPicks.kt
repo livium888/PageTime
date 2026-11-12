@@ -25,6 +25,17 @@ class OpenLibraryPicks(
         if (asField.isNotEmpty()) asField else fetch(subject)
     }
 
+    /** What the catalogue says about one work; null when it could not be asked. */
+    suspend fun about(workKey: String): ReaderPicks.About? = withContext(Dispatchers.IO) {
+        val key = workKey.trim().trim('/')
+        if (!key.matches(Regex("works/OL\\d+W"))) return@withContext null
+        val body = runCatching {
+            client.newCall(Request.Builder().url("https://openlibrary.org/$key.json").get().build())
+                .execute().use { response -> if (response.isSuccessful) response.body?.string() else null }
+        }.getOrNull() ?: return@withContext null
+        ReaderPicks.parseAbout(body)
+    }
+
     private fun fetch(query: String): List<ReaderPicks.Pick>? {
         val url = "https://openlibrary.org/search.json".toHttpUrlOrNull()
             ?.newBuilder()

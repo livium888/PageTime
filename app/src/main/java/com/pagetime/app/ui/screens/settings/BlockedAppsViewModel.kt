@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.blocker.AppAllowlist
 import com.pagetime.app.blocker.AppMode
+import com.pagetime.app.blocker.AppRules
+import com.pagetime.app.blocker.AppRulesDraft
 import com.pagetime.app.domain.GateState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,6 +137,49 @@ class BlockedAppsViewModel(app: Application) : AndroidViewModel(app) {
                 container.balanceManager.removeAllowedApp(app.packageName)
                 _refusal.value = null
             }
+        }
+    }
+
+    /**
+     * Applies an edited set of rules, the only way this screen changes anything.
+     *
+     * Every step goes through the same checks as before, so a draft cannot
+     * carry a loosening past the lock; whatever is refused is said in
+     * [refusal], and the rest still applies. The allowed list is filled before
+     * the allowlist is switched on, so there is never a moment with everything
+     * blocked and nothing chosen.
+     */
+    fun save(saved: AppRules, draft: AppRules) {
+        viewModelScope.launch {
+            val change = AppRulesDraft.diff(saved, draft)
+            val labels = _packageLabels.value
+            val refused = mutableListOf<String>()
+            val manager = container.balanceManager
+
+            change.block.forEach { repo.setBlocked(it, labels[it] ?: it, true) }
+            if (change.unblock.isNotEmpty()) {
+                val state = gate.value
+                val locked = hardLockUntil.value > System.currentTimeMillis()
+                if (state.canRemoveBlockedApps && !locked) {
+                    change.unblock.forEach { repo.setBlocked(it, labels[it] ?: it, false) }
+                } else {
+                    refused += "Apps stay blocked until today's reading is done."
+                }
+            }
+            change.disallow.forEach { manager.removeAllowedApp(it) }
+
+            if (change.leavesAllowlist && !manager.setAppMode(AppMode.BLOCKLIST)) {
+                refused += "Switching back to blocking only some apps waits until today's reading is done."
+            }
+            val notAdded = change.allow.filterNot { manager.addAllowedApp(it) }
+            if (notAdded.isNotEmpty()) {
+                refused += "Couldn't allow " + notAdded.joinToString(", ") { labels[it] ?: it } +
+                    ": at most ${AppAllowlist.MAX_APPS} apps, and once the allowlist is on, adding " +
+                    "one waits for today's reading."
+            }
+            if (change.entersAllowlist) manager.setAppMode(AppMode.ALLOWLIST)
+
+            _refusal.value = refused.takeIf { it.isNotEmpty() }?.joinToString(" ")
         }
     }
 

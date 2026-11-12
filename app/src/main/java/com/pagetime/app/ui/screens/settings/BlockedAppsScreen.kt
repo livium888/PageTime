@@ -42,6 +42,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import com.pagetime.app.blocker.AppAllowlist
 import com.pagetime.app.blocker.AppMode
+import com.pagetime.app.blocker.AppRules
+import com.pagetime.app.blocker.AppRulesDraft
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,20 +88,79 @@ fun BlockedAppsScreen(
     // someone earn the right to block something would be perverse — so the
     // freeze is asymmetric and applies only to switching an app OFF.
     val canUnblock = gate.canRemoveBlockedApps && !hardLockActive
-
-    val allowlist = appMode == AppMode.ALLOWLIST
     val inSetupWindow = AppAllowlist.inSetupWindow(setupGraceUntil, now)
+
+    // NOTHING ON THIS SCREEN TAKES EFFECT UNTIL "SAVE CHANGES". See AppRulesDraft.
+    //
+    // The draft is null until the reader touches something, so the screen
+    // always starts from the saved rules however late they load.
+    val saved = AppRules(appMode, blockedPackages, allowedApps)
+    var draft by remember { mutableStateOf<AppRules?>(null) }
+    val shown = draft ?: saved
+    val change = AppRulesDraft.diff(saved, shown)
+    val dirty = !change.isEmpty
+    fun edit(update: (AppRules) -> AppRules) { draft = update(shown) }
+
+    var confirmSave by remember { mutableStateOf(false) }
+    var confirmLeave by remember { mutableStateOf(false) }
+    val labels = remember(installed) { installed.associate { it.packageName to it.label } }
+    val leave: () -> Unit = { if (dirty) confirmLeave = true else onBack() }
+    BackHandler(enabled = dirty) { confirmLeave = true }
+
+    val allowlist = shown.mode == AppMode.ALLOWLIST
+    // Leaving the allowlist that is in force is loosening; going back to the
+    // blocklist in a draft that started there is just changing one's mind.
+    val canChooseBlocklist = saved.mode == AppMode.BLOCKLIST ||
+        (!hardLockActive && AppAllowlist.canLeave(inSetupWindow, gate.canSwitchToBlocklist))
+    val roomToAllow = shown.allowed.size < AppAllowlist.MAX_APPS
     val canAddAllowed = !hardLockActive && AppAllowlist.canAdd(
-        allowedCount = allowedApps.size,
+        mode = saved.mode,
+        allowedCount = shown.allowed.size,
         inSetupWindow = inSetupWindow,
         canLoosen = gate.canAddAllowedApp,
     )
-    // Chosen apps first, so the five are visible without scrolling; then the
-    // rest alphabetically, as loaded.
+    // Chosen apps first, so they are visible without scrolling; then the rest
+    // alphabetically, as loaded. Ordered by the SAVED choice so a row does not
+    // jump away under the finger that just switched it.
     val listed = if (allowlist) {
-        installed.sortedByDescending { it.packageName in allowedApps }
+        installed.sortedByDescending { it.packageName in saved.allowed }
     } else {
         installed
+    }
+
+    if (confirmSave) {
+        AlertDialog(
+            onDismissRequest = { confirmSave = false },
+            title = { Text("Save these changes?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppRulesDraft.summary(change, shown, { labels[it] ?: it }).forEach { Text(it) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSave = false
+                    viewModel.save(saved, shown)
+                    draft = null
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { confirmSave = false }) { Text("Go back") } },
+        )
+    }
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Leave without saving?") },
+            text = { Text("Your changes on this screen have not been saved. Nothing has been blocked or allowed yet.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLeave = false
+                    draft = null
+                    onBack()
+                }) { Text("Discard changes") }
+            },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Keep editing") } },
+        )
     }
 
     Scaffold(
@@ -101,11 +168,32 @@ fun BlockedAppsScreen(
             TopAppBar(
                 title = { Text(if (allowlist) "Allowed apps" else "Blocked apps") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = leave) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
+        },
+        bottomBar = {
+            if (dirty) {
+                Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (change.count == 1) "1 change not saved" else "${change.count} changes not saved",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { draft = null }) { Text("Discard") }
+                        Button(onClick = { confirmSave = true }) { Text("Save changes") }
+                    }
+                }
+            }
         }
     ) { padding ->
         // Everything — intro, override controls, and the app list — lives inside one
@@ -119,16 +207,31 @@ fun BlockedAppsScreen(
         ) {
             item {
                 AppModeChooser(
-                    mode = appMode,
-                    canLeaveAllowlist = gate.canSwitchToBlocklist && !hardLockActive,
-                    onChoose = viewModel::setAppMode,
+                    mode = shown.mode,
+                    canChooseBlocklist = canChooseBlocklist,
+                    onChoose = { mode -> edit { it.copy(mode = mode) } },
                 )
+            }
+            if (saved.mode != shown.mode) {
+                item {
+                    Text(
+                        if (allowlist) {
+                            "You are only looking. Nothing is blocked until you press Save changes. " +
+                                "Choose the apps you need first."
+                        } else {
+                            "Not switched yet. Press Save changes to go back to blocking only chosen apps."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp)
+                    )
+                }
             }
             item {
                 Text(
                     when {
                         allowlist ->
-                            "Everything is blocked until today's reading is done, except calls, " +
+                            "In this mode everything is blocked until today's reading is done, except calls, " +
                                 "messages, your home screen, Settings, the clock, your keyboard, " +
                                 "authenticator apps, and up to ${AppAllowlist.MAX_APPS} apps you choose."
                         gate.enabled ->
@@ -148,7 +251,10 @@ fun BlockedAppsScreen(
             if (allowlist) {
                 item {
                     AllowlistStatus(
-                        chosen = allowedApps.size,
+                        chosen = shown.allowed.size,
+                        // Before the switch is saved the list is only being
+                        // prepared, and choosing for it is free.
+                        preparing = saved.mode != AppMode.ALLOWLIST,
                         inSetupWindow = inSetupWindow,
                         setupRemainingMillis = (setupGraceUntil - now).coerceAtLeast(0L),
                         canAdd = canAddAllowed,
@@ -176,17 +282,23 @@ fun BlockedAppsScreen(
                 BlockingStatsCard(stats = blockedStats)
             }
             items(listed, key = { it.packageName }) { app ->
+                val pkg = app.packageName
                 if (allowlist) {
+                    val allowed = pkg in shown.allowed
                     AllowlistRow(
                         label = app.label,
-                        essential = AppAllowlist.isEssential(app.packageName, essentials),
-                        allowed = app.packageName in allowedApps,
-                        canAdd = canAddAllowed,
-                        onChange = { viewModel.setAllowed(app, it) },
+                        essential = AppAllowlist.isEssential(pkg, essentials),
+                        allowed = allowed,
+                        // Putting back an app that was allowed before this
+                        // edit began only undoes the edit.
+                        canAdd = canAddAllowed || (roomToAllow && pkg in saved.allowed && !hardLockActive),
+                        onChange = { on ->
+                            edit { it.copy(allowed = if (on) it.allowed + pkg else it.allowed - pkg) }
+                        },
                     )
                     HorizontalDivider()
                 } else {
-                    val blocked = app.packageName in blockedPackages
+                    val blocked = pkg in shown.blocked
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -201,11 +313,19 @@ fun BlockedAppsScreen(
                         )
                         Switch(
                             checked = blocked,
-                            onCheckedChange = { viewModel.toggle(app, it) },
-                            // Blocking something is always allowed. Unblocking it
-                            // waits for today's reading, and a hard lock refuses both
-                            // directions of escape for as long as it is running.
-                            enabled = if (blocked) canUnblock else !hardLockActive
+                            onCheckedChange = { on ->
+                                edit { it.copy(blocked = if (on) it.blocked + pkg else it.blocked - pkg) }
+                            },
+                            // Blocking something is always allowed. Unblocking
+                            // an app whose block is already saved waits for
+                            // today's reading; one switched on in this edit and
+                            // not yet saved can be switched straight off again.
+                            // A hard lock refuses every change while it runs.
+                            enabled = when {
+                                hardLockActive -> false
+                                blocked && pkg in saved.blocked -> canUnblock
+                                else -> true
+                            }
                         )
                     }
                     HorizontalDivider()
@@ -334,7 +454,7 @@ private fun BlockOverrideControls(
 @Composable
 private fun AppModeChooser(
     mode: AppMode,
-    canLeaveAllowlist: Boolean,
+    canChooseBlocklist: Boolean,
     onChoose: (AppMode) -> Unit,
 ) {
     Row(
@@ -346,7 +466,7 @@ private fun AppModeChooser(
         FilterChip(
             selected = mode == AppMode.BLOCKLIST,
             onClick = { onChoose(AppMode.BLOCKLIST) },
-            enabled = mode == AppMode.BLOCKLIST || canLeaveAllowlist,
+            enabled = mode == AppMode.BLOCKLIST || canChooseBlocklist,
             label = { Text("Block chosen apps") }
         )
         FilterChip(
@@ -361,6 +481,7 @@ private fun AppModeChooser(
 @Composable
 private fun AllowlistStatus(
     chosen: Int,
+    preparing: Boolean,
     inSetupWindow: Boolean,
     setupRemainingMillis: Long,
     canAdd: Boolean,
@@ -384,6 +505,8 @@ private fun AllowlistStatus(
                 when {
                     chosen >= AppAllowlist.MAX_APPS ->
                         "That's the limit. Remove one to choose another."
+                    preparing ->
+                        "Choose the apps you need. They only take effect when you save."
                     inSetupWindow ->
                         "Free setup: ${formatRemaining(setupRemainingMillis)} left to choose your apps."
                     canAdd ->

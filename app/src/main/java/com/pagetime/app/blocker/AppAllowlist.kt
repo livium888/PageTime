@@ -3,11 +3,14 @@ package com.pagetime.app.blocker
 /**
  * The rules of app allowlist mode, kept free of Android so they can be tested.
  *
- * FIVE, AND NO MORE
+ * TEN, AND NO MORE
  *
  * An allowlist that can grow without limit drifts back into being "everything
- * except the two apps I don't care about". Five forces a choice — the apps
+ * except the two apps I don't care about". A limit forces a choice — the apps
  * genuinely needed day to day — and everything else waits for today's reading.
+ * It was five, which a bank, a messenger, mail, maps and a work app use up
+ * before anything else is considered; a limit people cannot live inside is one
+ * they leave, so it is ten.
  *
  * ESSENTIALS DO NOT COUNT AGAINST THE FIVE
  *
@@ -30,7 +33,7 @@ package com.pagetime.app.blocker
 object AppAllowlist {
 
     /** The most apps the reader may allow, beyond the essentials. */
-    const val MAX_APPS = 5
+    const val MAX_APPS = 10
 
     /**
      * Free setup time after entering allowlist mode, the same idea and length
@@ -61,6 +64,28 @@ object AppAllowlist {
      */
     fun canAdd(allowedCount: Int, inSetupWindow: Boolean, canLoosen: Boolean): Boolean =
         allowedCount < MAX_APPS && (inSetupWindow || canLoosen)
+
+    /**
+     * Whether an app may be added to the allowed list while [mode] is in force.
+     *
+     * Under the blocklist the allowed list does nothing yet, so choosing apps
+     * for it loosens nothing and needs only room. That is what lets the list be
+     * prepared BEFORE the switch, instead of in a hurry after everything has
+     * already been blocked.
+     */
+    fun canAdd(mode: AppMode, allowedCount: Int, inSetupWindow: Boolean, canLoosen: Boolean): Boolean =
+        if (mode == AppMode.ALLOWLIST) canAdd(allowedCount, inSetupWindow, canLoosen)
+        else allowedCount < MAX_APPS
+
+    /**
+     * Whether the allowlist may be left for the blocklist.
+     *
+     * Once today's reading is done, like any loosening. Also during the setup
+     * window that opens on entering: for that half hour leaving only undoes
+     * what was just done, and without it a switch made by mistake could not be
+     * taken back.
+     */
+    fun canLeave(inSetupWindow: Boolean, canLoosen: Boolean): Boolean = inSetupWindow || canLoosen
 
     /** Essentials never consume one of the five, and are never blocked. */
     fun isEssential(packageName: String, essentials: Set<String>): Boolean =

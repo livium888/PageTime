@@ -241,11 +241,11 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     private var readerPicksJob: kotlinx.coroutines.Job? = null
 
     /** Opens on the genre the reader has most of; any genre if nothing is classified. */
-    fun openReaderPicks() {
+    fun openReaderPicks(first: com.pagetime.app.data.BookGenre? = null) {
         viewModelScope.launch {
             val books = runCatching { container.database.bookDao().getAll() }.getOrDefault(emptyList())
             val mostRead = com.pagetime.app.data.BookGenreSummary.summarize(books).map { it.genre }
-            val genres = com.pagetime.app.data.recommend.ReaderPicks.genresInOrder(mostRead)
+            val genres = com.pagetime.app.data.recommend.ReaderPicks.genresInOrder(listOfNotNull(first) + mostRead)
             _readerPicks.value = ReaderPicksState(genres = genres)
             genres.firstOrNull()?.let(::loadReaderPicks)
         }

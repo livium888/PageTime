@@ -405,6 +405,7 @@ fun PageTimeAppUi(
                         onOpenConcepts = { conceptBookId -> navController.navigate("concepts/$conceptBookId") },
                         onOpenLumenCards = { navController.navigate("lumen") },
                         onOpenReview = { navController.navigate("review") },
+                        onSeeMorePicks = { navController.navigate("search") { launchSingleTop = true } },
                         onExplainBack = { bookId, chapterIndex, chapterTitle, bookTitle, locatorJson, textOffset ->
                             val encodedTitle = URLEncoder.encode(chapterTitle, "UTF-8")
                             val encodedBookTitle = URLEncoder.encode(bookTitle, "UTF-8")

@@ -78,6 +78,33 @@ object ReaderPicks {
         return (mostRead.filter { it in askable } + askable).distinct()
     }
 
+    /** On the card shown when a book is finished. */
+    const val SHOWN_WHEN_FINISHED = 2
+
+    /** Far enough through an EPUB to call it finished; the last pages are often notes and credits. */
+    const val FINISHED_AT = 0.985f
+
+    /**
+     * The genre to recommend from when a book is finished: the book's own, or
+     * failing that the one the reader has most of. Null when neither is known,
+     * and then nothing is recommended rather than guessed.
+     */
+    fun genreAfterFinishing(bookGenre: String?, mostRead: List<BookGenre>): BookGenre? {
+        val own = bookGenre?.let { name -> BookGenre.entries.firstOrNull { it.name == name } }
+        return (listOfNotNull(own) + mostRead).firstOrNull { subjectFor(it) != null }
+    }
+
+    /**
+     * Handed from the finished-book card to Discover: the genre "See more"
+     * should open on. Taken once.
+     */
+    object Handoff {
+        @Volatile
+        private var genre: BookGenre? = null
+        fun ask(for_: BookGenre) { genre = for_ }
+        fun take(): BookGenre? = genre.also { genre = null }
+    }
+
     /** The works in a search reply that carry a rating. Empty for anything unreadable. */
     fun parse(json: String): List<Pick> = runCatching {
         val docs = JSONObject(json).optJSONArray("docs") ?: return emptyList()

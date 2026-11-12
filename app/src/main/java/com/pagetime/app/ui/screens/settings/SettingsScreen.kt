@@ -50,6 +50,9 @@ import androidx.core.content.ContextCompat
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.clickable
@@ -138,13 +141,21 @@ fun SettingsScreen(
     val cardDensity by viewModel.cardDensity.collectAsStateWithLifecycle()
     val suggestCards by viewModel.cardNudgeEnabled.collectAsStateWithLifecycle()
     val suggestEvery by viewModel.cardNudgeEvery.collectAsStateWithLifecycle()
+    val appsSummary by viewModel.appsSummary.collectAsStateWithLifecycle()
+    val sitesSummary by viewModel.sitesSummary.collectAsStateWithLifecycle()
+    val permissionsSummary = if (hasUsageAccessPermission(settingsContext) &&
+        isAccessibilityServiceEnabled(settingsContext)
+    ) "All granted" else "Needs attention"
 
     // ONE SAVE FOR THE WHOLE PAGE. See SettingsDraft.
     //
     // The draft is null until something is touched, so the page always starts
     // from what is stored, however late it loads.
     val saved = SettingsDraft(
-        lockOn = gate.switchedOn,
+        // "On" means staying on. While the 24-hour switch-off is running the
+        // stored switch is still on, but showing it as on would offer "turn
+        // off" for something already on its way off.
+        lockOn = gate.enabled && !gate.windingDown,
         targetSeconds = gate.target,
         otherAppsCount = externalReadingEnabled,
         otherAppsCapSeconds = externalReadingDailyCapSeconds,
@@ -294,7 +305,17 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Settings") }) },
+        // A plain line, not an app bar: the bar spent a fifth of the screen on
+        // one word, and this page is a list to be scanned.
+        topBar = {
+            Text(
+                "Settings",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(start = 20.dp, top = 12.dp, bottom = 4.dp),
+            )
+        },
         bottomBar = {
             if (dirty) {
                 Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
@@ -321,8 +342,8 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // What happened, which nothing on this page changes: read-only.
             SectionHeader("Today")
@@ -330,16 +351,13 @@ fun SettingsScreen(
                 if (gate.enabled) {
                     SettingsLine(
                         label = "Read today",
-                        value = BlockScreenText.span(gate.target - gate.secondsToUnlock) +
-                            " of " + BlockScreenText.span(gate.target),
-                        sub = if (gate.targetMet) "Done. Your phone is open until 4am."
-                        else "${BlockScreenText.span(gate.secondsToUnlock)} more to open your phone until 4am.",
+                        value = "${(gate.target - gate.secondsToUnlock) / 60} of ${SettingsDraft.minutes(gate.target)}",
                     )
                 } else {
-                    SettingsLine(label = "Browsing balance", value = formatMinutes(balanceSeconds))
+                    SettingsLine(label = "Browsing balance", value = SettingsDraft.minutes(balanceSeconds))
                 }
-                SettingsLine(label = "Read in the last 24 hours", value = BlockScreenText.span(readInLastDay))
-                SettingsLine(label = "Total reading", value = formatMinutes(totalReadingSeconds))
+                SettingsLine(label = "Last 24 hours", value = SettingsDraft.minutes(readInLastDay))
+                SettingsLine(label = "All time", value = SettingsDraft.minutes(totalReadingSeconds))
                 if (emergencyThisWeek > 0) {
                     SettingsLine(label = "Emergency unlocks this week", value = "$emergencyThisWeek")
                 }
@@ -349,11 +367,9 @@ fun SettingsScreen(
             SettingsGroup {
                 SettingsLine(
                     label = SettingsDraft.DAILY_LOCK,
-                    sub = when {
-                        gate.windingDown && shown.lockOn == saved.lockOn ->
-                            "Switching off in ${BlockScreenText.span(gate.secondsUntilDisabled)}. Until then it still applies."
-                        else -> "Only your allowed apps open until you have read your target."
-                    },
+                    sub = if (gate.windingDown && shown.lockOn == saved.lockOn) {
+                        "Switching off in ${BlockScreenText.span(gate.secondsUntilDisabled)}. Still applies until then."
+                    } else null,
                     was = SettingsDraft.onOff(saved.lockOn).takeIf { saved.lockOn != shown.lockOn },
                     checked = shown.lockOn,
                     onToggle = { on -> edit { it.copy(lockOn = on) } },
@@ -374,12 +390,12 @@ fun SettingsScreen(
                 }
                 SettingsLine(
                     label = "Apps",
-                    sub = "Blocked or allowed apps. Saved on its own screen.",
+                    value = appsSummary,
                     onClick = onManageBlockedApps,
                 )
                 SettingsLine(
                     label = "Websites",
-                    sub = "Sites blocked or allowed, in every browser",
+                    value = sitesSummary,
                     onClick = onManageSiteRules,
                 )
             }
@@ -388,7 +404,6 @@ fun SettingsScreen(
             SettingsGroup {
                 SettingsLine(
                     label = "Count reading in other apps",
-                    sub = "Kindle and the like, at half rate. PageTime cannot check a page is turning there.",
                     was = SettingsDraft.onOff(saved.otherAppsCount).takeIf { saved.otherAppsCount != shown.otherAppsCount },
                     checked = shown.otherAppsCount,
                     onToggle = { on -> edit { it.copy(otherAppsCount = on) } },
@@ -409,7 +424,6 @@ fun SettingsScreen(
             SettingsGroup {
                 SettingsLine(
                     label = "Review reminders",
-                    sub = "A notification when a review sitting is worth having",
                     was = SettingsDraft.onOff(saved.reviewReminders).takeIf { saved.reviewReminders != shown.reviewReminders },
                     checked = shown.reviewReminders,
                     onToggle = { on -> edit { it.copy(reviewReminders = on) } },
@@ -435,17 +449,16 @@ fun SettingsScreen(
                         onClick = { editing = "every" },
                     )
                 }
-                SettingsLine(label = "Review scheduling", sub = "Learning steps, intervals and retention", onClick = onScheduling)
-                SettingsLine(label = "Prompts for your AI app", sub = "The wording sent with what you read", onClick = onPrompts)
+                SettingsLine(label = "Review scheduling", onClick = onScheduling)
+                SettingsLine(label = "Prompts for your AI app", onClick = onPrompts)
             }
 
             SectionHeader("Setup and help")
             SettingsGroup {
-                SettingsLine(label = "Permissions", sub = "What the lock needs switched on to work", onClick = onPermissions)
-                SettingsLine(label = "Usage history", sub = "What was blocked and when", onClick = onUsageAudit)
+                SettingsLine(label = "Permissions", value = permissionsSummary, onClick = onPermissions)
+                SettingsLine(label = "Usage history", onClick = onUsageAudit)
                 SettingsLine(
                     label = "Explain slip-box actions",
-                    sub = "A short explanation before Link, Connect or File behind runs",
                     was = SettingsDraft.onOff(saved.slipBoxHelp).takeIf { saved.slipBoxHelp != shown.slipBoxHelp },
                     checked = shown.slipBoxHelp,
                     onToggle = { on -> edit { it.copy(slipBoxHelp = on) } },
@@ -462,7 +475,7 @@ fun SettingsScreen(
 /** One group of rows on the Settings page, drawn as a single surface with dividers between rows. */
 @Composable
 private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth()) { Column(content = content) }
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Column(content = content) }
 }
 
 /**
@@ -488,32 +501,43 @@ private fun SettingsLine(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (tap != null) Modifier.clickable(onClick = tap) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            // Every row the same height, switch or not, so the list reads as
+            // one column of names and one column of values.
+            .heightIn(min = 46.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             sub?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             was?.let {
-                Text("was $it · not saved yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                Text("was $it · not saved", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
             }
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(10.dp))
         when {
-            checked != null && onToggle != null -> Switch(checked = checked, onCheckedChange = onToggle)
+            checked != null && onToggle != null ->
+                // The stock switch is taller than a row of text; drawn smaller
+                // it sits in the row instead of setting the row's height.
+                Switch(
+                    checked = checked,
+                    onCheckedChange = onToggle,
+                    modifier = Modifier.scale(0.72f).height(28.dp),
+                )
             else -> {
                 value?.let {
                     Text(
                         it,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
                         color = if (was != null) MaterialTheme.colorScheme.tertiary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (onClick != null) {
-                    Text("  \u203a", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(" \u203a", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

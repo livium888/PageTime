@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
@@ -64,6 +65,25 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val gate = container.balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
+
+    /** "6 allowed" or "3 blocked": what the Apps row says without being opened. */
+    val appsSummary = combine(
+        container.settingsRepository.settings,
+        container.blockedAppRepository.observeEnabled(),
+    ) { settings, blocked ->
+        if (settings.appMode == com.pagetime.app.blocker.AppMode.ALLOWLIST) "${settings.allowedApps.size} allowed"
+        else "${blocked.size} blocked"
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    /** The same for the Websites row. */
+    val sitesSummary = combine(
+        container.settingsRepository.settings,
+        container.blockedSiteRepository.observeEnabled(),
+        container.allowedSiteRepository.observeEnabled(),
+    ) { settings, blocked, allowed ->
+        if (settings.siteMode == com.pagetime.app.blocker.SiteMode.ALLOWLIST) "${allowed.size} allowed"
+        else "${blocked.size} blocked"
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 
     val externalReadingEnabled = container.balanceManager.externalReadingEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)

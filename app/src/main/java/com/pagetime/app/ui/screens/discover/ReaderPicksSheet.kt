@@ -20,6 +20,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -51,6 +55,19 @@ fun ReaderPicksSheet(
     onFind: (ReaderPicks.Pick) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // The book the reader tapped, opened over this list.
+    var about by remember { mutableStateOf<ReaderPicks.Pick?>(null) }
+    about?.let { pick ->
+        PickDetailSheet(
+            pick = pick,
+            onFind = {
+                about = null
+                onFind(pick)
+            },
+            onDismiss = { about = null },
+        )
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -99,7 +116,7 @@ fun ReaderPicksSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 else -> state.picks.forEach { pick ->
-                    Card(Modifier.fillMaxWidth()) {
+                    Card(onClick = { about = pick }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 2.dp)) {
                             Text(pick.title, style = MaterialTheme.typography.titleMedium)
                             if (pick.byLine.isNotBlank()) {
@@ -111,6 +128,7 @@ fun ReaderPicksSheet(
                             }
                             Text(pick.ratingLine, style = MaterialTheme.typography.bodyMedium)
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { about = pick }) { Text("About this book") }
                                 TextButton(onClick = { onFind(pick) }) { Text("Look for a free copy") }
                             }
                         }

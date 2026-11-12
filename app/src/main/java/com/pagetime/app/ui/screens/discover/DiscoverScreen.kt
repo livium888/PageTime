@@ -80,6 +80,20 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val categoryShelves by viewModel.categoryShelves.collectAsStateWithLifecycle()
     val searchingAll by viewModel.searchingAll.collectAsStateWithLifecycle()
 
+    val readerPicks by viewModel.readerPicks.collectAsStateWithLifecycle()
+    var showReaderPicks by remember { mutableStateOf(false) }
+    if (showReaderPicks) {
+        ReaderPicksSheet(
+            state = readerPicks,
+            onGenre = viewModel::loadReaderPicks,
+            onFind = { pick ->
+                showReaderPicks = false
+                viewModel.lookForFreeCopy(pick)
+            },
+            onDismiss = { showReaderPicks = false },
+        )
+    }
+
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     // Show download errors as a snackbar so the user knows why a download failed.
     LaunchedEffect(error) {
@@ -131,6 +145,13 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
                 )
             }
+            TextButton(
+                onClick = {
+                    viewModel.openReaderPicks()
+                    showReaderPicks = true
+                },
+                modifier = Modifier.padding(horizontal = 8.dp),
+            ) { Text("What readers rate highly \u203a") }
             // Source selector
             Row(
                 modifier = Modifier

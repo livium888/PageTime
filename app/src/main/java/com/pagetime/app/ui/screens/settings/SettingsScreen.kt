@@ -50,6 +50,10 @@ import androidx.core.content.ContextCompat
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.AlertDialog
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -130,8 +134,187 @@ fun SettingsScreen(
                 ?.take(4_000)
     }
 
+    val reviewReminders by viewModel.reviewReminders.collectAsStateWithLifecycle()
+    val cardDensity by viewModel.cardDensity.collectAsStateWithLifecycle()
+    val suggestCards by viewModel.cardNudgeEnabled.collectAsStateWithLifecycle()
+    val suggestEvery by viewModel.cardNudgeEvery.collectAsStateWithLifecycle()
+
+    // ONE SAVE FOR THE WHOLE PAGE. See SettingsDraft.
+    //
+    // The draft is null until something is touched, so the page always starts
+    // from what is stored, however late it loads.
+    val saved = SettingsDraft(
+        lockOn = gate.switchedOn,
+        targetSeconds = gate.target,
+        otherAppsCount = externalReadingEnabled,
+        otherAppsCapSeconds = externalReadingDailyCapSeconds,
+        readingRate = ratio,
+        reviewReminders = reviewReminders,
+        cardDensity = cardDensity,
+        suggestCards = suggestCards,
+        suggestEveryWords = suggestEvery,
+        slipBoxHelp = helpEnabled,
+    )
+    var draft by remember { mutableStateOf<SettingsDraft?>(null) }
+    val shown = draft ?: saved
+    val changes = SettingsDraft.changes(saved, shown)
+    val dirty = changes.isNotEmpty()
+    fun edit(update: (SettingsDraft) -> SettingsDraft) { draft = update(shown) }
+
+    var confirmSave by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<String?>(null) }
+    BackHandler(enabled = dirty) { confirmSave = true }
+
+    // Reminders need the notification permission on Android 13 and later, and a
+    // switch that turns on without it is one the reader never hears from. So
+    // turning them on is saved only once the grant comes back.
+    val remindersPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> viewModel.setReviewReminders(granted) }
+
+    fun applyChanges(from: SettingsDraft, to: SettingsDraft) {
+        if (from.targetSeconds != to.targetSeconds) viewModel.setDailyTargetSeconds(to.targetSeconds)
+        if (from.otherAppsCount != to.otherAppsCount) viewModel.setExternalReadingEnabled(to.otherAppsCount)
+        if (from.otherAppsCapSeconds != to.otherAppsCapSeconds) viewModel.setExternalReadingDailyCap(to.otherAppsCapSeconds)
+        if (from.readingRate != to.readingRate) viewModel.setRatio(to.readingRate)
+        if (from.cardDensity != to.cardDensity) viewModel.setCardDensity(to.cardDensity)
+        if (from.suggestCards != to.suggestCards) viewModel.setCardNudgeEnabled(to.suggestCards)
+        if (from.suggestEveryWords != to.suggestEveryWords) viewModel.setCardNudgeEvery(to.suggestEveryWords)
+        if (from.slipBoxHelp != to.slipBoxHelp) viewModel.setHelpEnabled(to.slipBoxHelp)
+        if (from.reviewReminders != to.reviewReminders) {
+            val needsAsking = to.reviewReminders &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(settingsContext, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            if (needsAsking) remindersPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else viewModel.setReviewReminders(to.reviewReminders)
+        }
+        // Last, so the target the lock starts with is the one just saved.
+        if (from.lockOn != to.lockOn) viewModel.setGateSwitchedOn(to.lockOn)
+    }
+
+    if (confirmSave) {
+        AlertDialog(
+            onDismissRequest = { confirmSave = false },
+            title = { Text("Save these changes?") },
+            text = {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    changes.forEach { change ->
+                        Column {
+                            Text(change.setting, style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                "${change.from}  \u2192  ${change.to}",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            change.consequence?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSave = false
+                    applyChanges(saved, shown)
+                    draft = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        confirmSave = false
+                        draft = null
+                    }) { Text("Discard") }
+                    TextButton(onClick = { confirmSave = false }) { Text("Keep editing") }
+                }
+            },
+        )
+    }
+
+    val targetBounds = GateState.targetBounds(gate.target, gate.canLoosenTheRules)
+    when (editing) {
+        SettingsDraft.DAILY_TARGET -> NumberDialog(
+            title = "Daily reading target",
+            help = "Minutes of reading each day, counted from 4am, before the rest of your phone opens." +
+                if (gate.canLoosenTheRules) "" else " Lowering it waits until today's reading is done.",
+            unit = "minutes",
+            initial = shown.targetSeconds / 60.0,
+            min = targetBounds.first / 60.0,
+            max = targetBounds.last / 60.0,
+            decimal = false,
+            onSet = { v -> edit { it.copy(targetSeconds = (v * 60).roundToLong()) } },
+            onDismiss = { editing = null },
+        )
+        "cap" -> NumberDialog(
+            title = "Other apps, most per day",
+            help = "The most minutes a day that reading in other apps can count, already at half rate.",
+            unit = "minutes",
+            initial = shown.otherAppsCapSeconds / 60.0,
+            min = 0.0,
+            max = MAX_EXTERNAL_READING_DAILY_CAP_SECONDS / 60.0,
+            decimal = false,
+            onSet = { v -> edit { it.copy(otherAppsCapSeconds = (v * 60).roundToLong()) } },
+            onDismiss = { editing = null },
+        )
+        "rate" -> NumberDialog(
+            title = "Browsing earned per minute read",
+            help = "One minute of reading earns this many minutes of browsing.",
+            unit = "minutes",
+            initial = shown.readingRate,
+            min = MIN_READING_RATE,
+            max = MAX_READING_RATE,
+            decimal = true,
+            onSet = { v -> edit { it.copy(readingRate = v) } },
+            onDismiss = { editing = null },
+        )
+        "density" -> ChoiceDialog(
+            title = "How many cards",
+            options = CardDensity.entries.map { Triple(it.key, it.label, it.description) },
+            selected = shown.cardDensity.key,
+            onPick = { key -> edit { it.copy(cardDensity = CardDensity.fromKey(key)) } },
+            onDismiss = { editing = null },
+        )
+        "every" -> ChoiceDialog(
+            title = "Suggest cards",
+            options = com.pagetime.app.data.learning.CardNudge.EVERY_CHOICES.map {
+                Triple(it.toString(), SettingsDraft.words(it), "About ${it / 250} minutes of reading")
+            },
+            selected = shown.suggestEveryWords.toString(),
+            onPick = { key -> edit { it.copy(suggestEveryWords = key.toIntOrNull() ?: it.suggestEveryWords) } },
+            onDismiss = { editing = null },
+        )
+    }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Settings") }) }
+        topBar = { TopAppBar(title = { Text("Settings") }) },
+        bottomBar = {
+            if (dirty) {
+                Surface(tonalElevation = 6.dp, shadowElevation = 6.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (changes.size == 1) "1 change not saved" else "${changes.size} changes not saved",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { draft = null }) { Text("Discard") }
+                        Button(onClick = { confirmSave = true }) { Text("Save changes") }
+                    }
+                }
+            }
+        }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -139,305 +322,134 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            AppCard {
-                Text("Your time", style = MaterialTheme.typography.titleLarge)
-
+            // What happened, which nothing on this page changes: read-only.
+            SectionHeader("Today")
+            SettingsGroup {
                 if (gate.enabled) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Read today", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            BlockScreenText.span(gate.target - gate.secondsToUnlock) +
-                                " of " + BlockScreenText.span(gate.target),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { gate.progress },
-                        modifier = Modifier.fillMaxWidth()
+                    SettingsLine(
+                        label = "Read today",
+                        value = BlockScreenText.span(gate.target - gate.secondsToUnlock) +
+                            " of " + BlockScreenText.span(gate.target),
+                        sub = if (gate.targetMet) "Done. Your phone is open until 4am."
+                        else "${BlockScreenText.span(gate.secondsToUnlock)} more to open your phone until 4am.",
                     )
-                    Text(
-                        if (gate.targetMet) {
-                            "Done for today. Your phone is open until 4am."
-                        } else {
-                            "Read ${BlockScreenText.span(gate.secondsToUnlock)} more to unlock " +
-                                "your phone until 4am."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                } else {
+                    SettingsLine(label = "Browsing balance", value = formatMinutes(balanceSeconds))
                 }
-
-                // Shown whichever rule is in force: what was actually read.
-                // Not the same question as today's reading above — that one
-                // says what is left, this says what happened.
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Read in the last 24 hours", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        BlockScreenText.span(readInLastDay),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Total reading", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(formatMinutes(totalReadingSeconds), style = MaterialTheme.typography.titleMedium)
-                }
+                SettingsLine(label = "Read in the last 24 hours", value = BlockScreenText.span(readInLastDay))
+                SettingsLine(label = "Total reading", value = formatMinutes(totalReadingSeconds))
                 if (emergencyThisWeek > 0) {
-                    // The number, not a judgement about it. It is the only way
-                    // to notice that the gate is set wrong for your life.
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(
-                            "Emergency unlocks this week",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text("$emergencyThisWeek", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // The target is always visible, whether or not the lock is on,
-                // so the reader can set their terms before switching it on.
-                Text("Daily reading", style = MaterialTheme.typography.titleMedium)
-
-                // The bounds are the lock's, not the screen's: before today's
-                // reading is done the target may only go up. Typing is the one
-                // instrument that holds that honestly — a slider can only refuse
-                // by springing back, which reads as broken.
-                val targetBounds =
-                    GateState.targetBounds(gate.target, gate.canLoosenTheRules)
-                TypedSettingField(
-                    title = "Daily reading target",
-                    help = "Minutes of reading each day, counted from 4am, before the rest " +
-                        "of your phone opens.",
-                    current = BlockScreenText.span(gate.target),
-                    inputLabel = "Minutes of reading",
-                    inputHint = "e.g. 20",
-                    allowDecimal = false,
-                    enabled = GateState.hasTravel(targetBounds),
-                    enabledNote =
-                        "Already at the ceiling — ${BlockScreenText.span(targetBounds.last)} " +
-                            "a day. Lowering it waits until today's reading is done.",
-                    minAllowed = targetBounds.first / 60.0,
-                    maxAllowed = targetBounds.last / 60.0,
-                    unit = "minutes",
-                    fenceNote = if (gate.canLoosenTheRules) null else TARGET_FENCE_NOTE,
-                    describe = { BlockScreenText.span((it * 60).roundToLong()) },
-                    onCommit = { viewModel.setDailyTargetSeconds((it * 60).roundToLong()) },
-                )
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                // Reading inside PageTime is verified. This counts on trust — foreground time in
-                // a chosen app looks the same whether a page is turning or the
-                // phone is just sitting there — so it stays off unless asked
-                // for, nothing is trusted until named on its own screen, and
-                // the daily cap bounds what trusting it wrong can cost.
-                ExternalReadingToggle(
-                    enabled = externalReadingEnabled,
-                    onChange = { viewModel.setExternalReadingEnabled(it) },
-                )
-
-                if (externalReadingEnabled) {
-                    Spacer(Modifier.height(8.dp))
-                    AppSettingsRow(
-                        icon = Icons.Outlined.Block,
-                        label = "Choose which apps (Kindle, etc.)",
-                        onClick = onManageExternalReadingApps
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    TypedSettingField(
-                        title = "Daily credit cap",
-                        help = "The most these apps combined can bank per day, already at half rate. " +
-                            "Set to 0 to stop them from earning anything without turning the toggle off.",
-                        current = "$externalReadingDailyCapSeconds seconds/day",
-                        inputLabel = "Seconds per day",
-                        inputHint = "e.g. 3600",
-                        allowDecimal = false,
-                        minAllowed = 0.0,
-                        maxAllowed = MAX_EXTERNAL_READING_DAILY_CAP_SECONDS,
-                        unit = "seconds",
-                        describe = { "${it.roundToLong()} sec/day" },
-                        onCommit = { viewModel.setExternalReadingDailyCap(it.roundToLong()) },
-                    )
-                }
-
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Daily reading lock", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Until you have read ${BlockScreenText.span(gate.target)} today, " +
-                                "only your allowed apps open. Then everything opens until 4am. " +
-                                "Turning this off takes 24 hours.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    // Asked first, in both directions: on locks the phone
-                    // today, and off starts a day-long wait. Neither should
-                    // follow from a thumb brushing a switch.
-                    var confirmLock by remember { mutableStateOf<Boolean?>(null) }
-                    Switch(
-                        checked = gate.switchedOn,
-                        onCheckedChange = { confirmLock = it }
-                    )
-                    confirmLock?.let { turnOn ->
-                        AlertDialog(
-                            onDismissRequest = { confirmLock = null },
-                            title = { Text(if (turnOn) "Turn the daily reading lock on?" else "Switch the lock off?") },
-                            text = {
-                                Text(
-                                    if (turnOn) {
-                                        "Until you have read ${BlockScreenText.span(gate.target)} each day, only " +
-                                            "your allowed apps will open. Check your apps list first. " +
-                                            "Turning the lock off again takes 24 hours."
-                                    } else {
-                                        "It will switch off 24 hours from now. Until then the lock still " +
-                                            "applies, and you can turn it back on at any time."
-                                    }
-                                )
-                            },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    viewModel.setGateSwitchedOn(turnOn)
-                                    confirmLock = null
-                                }) { Text(if (turnOn) "Turn on" else "Start switching off") }
-                            },
-                            dismissButton = { TextButton(onClick = { confirmLock = null }) { Text("Cancel") } },
-                        )
-                    }
-                }
-
-                if (gate.windingDown) {
-                    Text(
-                        "Switching off in " + BlockScreenText.span(gate.secondsUntilDisabled) +
-                            ". Until then the lock still applies. Turn it back on any time.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                if (!gate.enabled) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Browse balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            formatMinutes(balanceSeconds),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    TypedSettingField(
-                        title = "Reading rate",
-                        help = "1 minute of reading earns ${"%.1f".format(ratio)} minutes of " +
-                            "browsing.",
-                        current = "${"%.1f".format(ratio)} min of browsing per minute read",
-                        inputLabel = "Minutes of browsing",
-                        inputHint = "e.g. 1.5",
-                        allowDecimal = true,
-                        minAllowed = MIN_READING_RATE,
-                        maxAllowed = MAX_READING_RATE,
-                        unit = "min per min",
-                        describe = { "×${"%.1f".format(it)}" },
-                        onCommit = { viewModel.setRatio(it) },
-                    )
+                    SettingsLine(label = "Emergency unlocks this week", value = "$emergencyThisWeek")
                 }
             }
 
-            // WHAT THE LOCK COVERS, THEN WHAT YOU LEARN, THEN HOW TO GET HELP
-            //
-            // The rows used to follow the order they were built in: protection,
-            // a slip-box help switch, notifications, scheduling, AI, support.
-            // They are grouped by what the reader came to do.
-            SectionHeader("What the lock covers")
-            AppSettingsRow(
-                icon = Icons.Outlined.Block,
-                label = "Apps",
-                subtitle = "Which apps are blocked, or the only ones allowed. Nothing changes until you save.",
-                onClick = onManageBlockedApps
-            )
-            // Its own row rather than a section inside apps: the two lists
-            // answer different questions, and a site rule holds whether or not
-            // there is time on the clock.
-            AppSettingsRow(
-                icon = Icons.Outlined.Language,
-                label = "Websites",
-                subtitle = "Sites blocked or allowed, in every browser",
-                onClick = onManageSiteRules
-            )
-
-            SectionHeader("Cards and review")
-            ReviewRemindersCard(
-                enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
-                onChange = viewModel::setReviewReminders,
-            )
-            AppSettingsRow(
-                icon = Icons.Outlined.Schedule,
-                label = "Review scheduling",
-                subtitle = "Learning steps, intervals and retention",
-                onClick = onScheduling
-            )
-            AppSettingsRow(
-                icon = Icons.Outlined.AutoAwesome,
-                label = "Cards and your AI app",
-                subtitle = "How many cards, when to suggest them, and the prompts you send",
-                onClick = onPrompts
-            )
-
-            SectionHeader("Setup and help")
-            AppSettingsRow(
-                icon = Icons.Outlined.AccessibilityNew,
-                label = "Permissions",
-                subtitle = "What PageTime needs switched on for the lock to work",
-                onClick = onPermissions
-            )
-            AppSettingsRow(
-                icon = Icons.Outlined.History,
-                label = "Usage history",
-                subtitle = "What was blocked and when",
-                onClick = onUsageAudit
-            )
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Explain slip-box actions", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            if (helpEnabled) {
-                                "Before Link, Connect, or File behind runs, you'll get a short\n" +
-                                    "explanation and a confirmation. Leave this on while you learn\n" +
-                                    "the Zettelkasten method."
-                            } else {
-                                "Help is off — Link, Connect, and File behind run immediately\n" +
-                                    "with no explanation."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Switch(
-                        checked = helpEnabled,
-                        onCheckedChange = { viewModel.setHelpEnabled(it) }
+            SectionHeader("Reading lock")
+            SettingsGroup {
+                SettingsLine(
+                    label = SettingsDraft.DAILY_LOCK,
+                    sub = when {
+                        gate.windingDown && shown.lockOn == saved.lockOn ->
+                            "Switching off in ${BlockScreenText.span(gate.secondsUntilDisabled)}. Until then it still applies."
+                        else -> "Only your allowed apps open until you have read your target."
+                    },
+                    was = SettingsDraft.onOff(saved.lockOn).takeIf { saved.lockOn != shown.lockOn },
+                    checked = shown.lockOn,
+                    onToggle = { on -> edit { it.copy(lockOn = on) } },
+                )
+                SettingsLine(
+                    label = SettingsDraft.DAILY_TARGET,
+                    value = SettingsDraft.minutes(shown.targetSeconds),
+                    was = SettingsDraft.minutes(saved.targetSeconds).takeIf { saved.targetSeconds != shown.targetSeconds },
+                    onClick = { editing = SettingsDraft.DAILY_TARGET },
+                )
+                if (!gate.enabled) {
+                    SettingsLine(
+                        label = "Browsing earned per minute read",
+                        value = SettingsDraft.rate(shown.readingRate),
+                        was = SettingsDraft.rate(saved.readingRate).takeIf { saved.readingRate != shown.readingRate },
+                        onClick = { editing = "rate" },
                     )
                 }
+                SettingsLine(
+                    label = "Apps",
+                    sub = "Blocked or allowed apps. Saved on its own screen.",
+                    onClick = onManageBlockedApps,
+                )
+                SettingsLine(
+                    label = "Websites",
+                    sub = "Sites blocked or allowed, in every browser",
+                    onClick = onManageSiteRules,
+                )
+            }
+
+            SectionHeader("Reading in other apps")
+            SettingsGroup {
+                SettingsLine(
+                    label = "Count reading in other apps",
+                    sub = "Kindle and the like, at half rate. PageTime cannot check a page is turning there.",
+                    was = SettingsDraft.onOff(saved.otherAppsCount).takeIf { saved.otherAppsCount != shown.otherAppsCount },
+                    checked = shown.otherAppsCount,
+                    onToggle = { on -> edit { it.copy(otherAppsCount = on) } },
+                )
+                if (shown.otherAppsCount) {
+                    SettingsLine(
+                        label = "Most per day",
+                        value = SettingsDraft.minutes(shown.otherAppsCapSeconds),
+                        was = SettingsDraft.minutes(saved.otherAppsCapSeconds)
+                            .takeIf { saved.otherAppsCapSeconds != shown.otherAppsCapSeconds },
+                        onClick = { editing = "cap" },
+                    )
+                    SettingsLine(label = "Which apps", onClick = onManageExternalReadingApps)
+                }
+            }
+
+            SectionHeader("Cards and review")
+            SettingsGroup {
+                SettingsLine(
+                    label = "Review reminders",
+                    sub = "A notification when a review sitting is worth having",
+                    was = SettingsDraft.onOff(saved.reviewReminders).takeIf { saved.reviewReminders != shown.reviewReminders },
+                    checked = shown.reviewReminders,
+                    onToggle = { on -> edit { it.copy(reviewReminders = on) } },
+                )
+                SettingsLine(
+                    label = "How many cards",
+                    value = shown.cardDensity.label,
+                    was = saved.cardDensity.label.takeIf { saved.cardDensity != shown.cardDensity },
+                    onClick = { editing = "density" },
+                )
+                SettingsLine(
+                    label = "Suggest cards while reading",
+                    was = SettingsDraft.onOff(saved.suggestCards).takeIf { saved.suggestCards != shown.suggestCards },
+                    checked = shown.suggestCards,
+                    onToggle = { on -> edit { it.copy(suggestCards = on) } },
+                )
+                if (shown.suggestCards) {
+                    SettingsLine(
+                        label = "How often",
+                        value = SettingsDraft.words(shown.suggestEveryWords),
+                        was = SettingsDraft.words(saved.suggestEveryWords)
+                            .takeIf { saved.suggestEveryWords != shown.suggestEveryWords },
+                        onClick = { editing = "every" },
+                    )
+                }
+                SettingsLine(label = "Review scheduling", sub = "Learning steps, intervals and retention", onClick = onScheduling)
+                SettingsLine(label = "Prompts for your AI app", sub = "The wording sent with what you read", onClick = onPrompts)
+            }
+
+            SectionHeader("Setup and help")
+            SettingsGroup {
+                SettingsLine(label = "Permissions", sub = "What the lock needs switched on to work", onClick = onPermissions)
+                SettingsLine(label = "Usage history", sub = "What was blocked and when", onClick = onUsageAudit)
+                SettingsLine(
+                    label = "Explain slip-box actions",
+                    sub = "A short explanation before Link, Connect or File behind runs",
+                    was = SettingsDraft.onOff(saved.slipBoxHelp).takeIf { saved.slipBoxHelp != shown.slipBoxHelp },
+                    checked = shown.slipBoxHelp,
+                    onToggle = { on -> edit { it.copy(slipBoxHelp = on) } },
+                )
             }
 
             SectionHeader("About")
@@ -445,6 +457,168 @@ fun SettingsScreen(
             CrashDiagnosticsCard(crashLogText = crashLogText)
         }
     }
+}
+
+/** One group of rows on the Settings page, drawn as a single surface with dividers between rows. */
+@Composable
+private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
+    Card(Modifier.fillMaxWidth()) { Column(content = content) }
+}
+
+/**
+ * One row of the Settings page: a name on the left and its value on the right.
+ *
+ * Three shapes from the same row, so every setting lines up: read-only (a
+ * value and nothing to tap), a value that opens an editor ([onClick]), and a
+ * switch ([checked] with [onToggle]). An edited row says what it [was] in the
+ * accent colour, so the reader can see what they have touched before saving.
+ */
+@Composable
+private fun SettingsLine(
+    label: String,
+    value: String? = null,
+    sub: String? = null,
+    was: String? = null,
+    checked: Boolean? = null,
+    onToggle: ((Boolean) -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    val tap: (() -> Unit)? = onClick ?: if (checked != null && onToggle != null) ({ onToggle(!checked) }) else null
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (tap != null) Modifier.clickable(onClick = tap) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            sub?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            was?.let {
+                Text("was $it · not saved yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        when {
+            checked != null && onToggle != null -> Switch(checked = checked, onCheckedChange = onToggle)
+            else -> {
+                value?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (was != null) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (onClick != null) {
+                    Text("  \u203a", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+}
+
+/** Types a number for the draft. Refuses what is outside [min]..[max] and says what the range is. */
+@Composable
+private fun NumberDialog(
+    title: String,
+    help: String,
+    unit: String,
+    initial: Double,
+    min: Double,
+    max: Double,
+    decimal: Boolean,
+    onSet: (Double) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    fun show(v: Double) = if (decimal) "%.1f".format(java.util.Locale.US, v) else v.roundToLong().toString()
+    var text by remember { mutableStateOf(show(initial)) }
+    val typed = text.toDoubleOrNull()
+    val valid = typed != null && typed >= min && typed <= max
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(help, style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { new -> text = new.filter { it.isDigit() || (decimal && it == '.') } },
+                    label = { Text(unit.replaceFirstChar { it.uppercase() }) },
+                    singleLine = true,
+                    isError = !valid,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.Number
+                    ),
+                )
+                Text(
+                    "Between ${show(min)} and ${show(max)} $unit.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (valid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = valid,
+                onClick = {
+                    typed?.let(onSet)
+                    onDismiss()
+                },
+            ) { Text("Set") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Picks one of a few named options for the draft. Each option is (key, name, what it means). */
+@Composable
+private fun ChoiceDialog(
+    title: String,
+    options: List<Triple<String, String, String>>,
+    selected: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                options.forEach { (key, name, meaning) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = key == selected,
+                                onClick = {
+                                    onPick(key)
+                                    onDismiss()
+                                },
+                                role = Role.RadioButton,
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = key == selected, onClick = null)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                meaning,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /**

@@ -69,7 +69,11 @@ jobs:
           [ -n "$VERSION" ] || VERSION=unknown
           echo "name=pagetime-${VERSION}-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+      # A convenience copy on the run page. If GitHub's artifact service is
+      # down, the release below is still published: that is the download
+      # people actually use, and it must not wait on this.
       - name: Upload signed APK
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build-name.outputs.name }}

@@ -3053,7 +3053,7 @@ private fun ReadingStatsSheet(
             )
             Spacer(Modifier.height(12.dp))
             StatRow("This session", formatClock(sessionSeconds))
-            StatRow("Time earned", formatClock(creditedSeconds))
+            StatRow("Time counted", formatClock(creditedSeconds))
             StatRow("Book progress", "${(progress.coerceIn(0f, 1f) * 100).toInt()}%")
             estimatedTimeLeft(progress, creditedSeconds)?.let {
                 StatRow("Estimated time left", it)

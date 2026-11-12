@@ -68,9 +68,9 @@ class AppAllowlistTest {
 
     @Test
     fun `the limit is five`() {
-        assertEquals(5, AppAllowlist.MAX_APPS)
-        assertTrue(AppAllowlist.canAdd(4, inSetupWindow = true, canLoosen = false))
-        assertFalse(AppAllowlist.canAdd(5, inSetupWindow = true, canLoosen = true))
+        assertEquals(10, AppAllowlist.MAX_APPS)
+        assertTrue(AppAllowlist.canAdd(9, inSetupWindow = true, canLoosen = false))
+        assertFalse(AppAllowlist.canAdd(10, inSetupWindow = true, canLoosen = true))
     }
 
     @Test
@@ -96,5 +96,22 @@ class AppAllowlistTest {
         assertFalse(AppMode.entersAllowlist(AppMode.ALLOWLIST, AppMode.BLOCKLIST))
         assertEquals(AppMode.BLOCKLIST, AppMode.fromKey(null))
         assertEquals(AppMode.ALLOWLIST, AppMode.fromKey("allowlist"))
+    }
+
+    @Test
+    fun `the allowed list can be prepared freely before the switch, and only then`() {
+        // Under the blocklist it does nothing yet, so only room matters.
+        assertTrue(AppAllowlist.canAdd(AppMode.BLOCKLIST, 0, inSetupWindow = false, canLoosen = false))
+        assertFalse(AppAllowlist.canAdd(AppMode.BLOCKLIST, AppAllowlist.MAX_APPS, inSetupWindow = false, canLoosen = true))
+        // Once it is in force, adding is loosening again.
+        assertFalse(AppAllowlist.canAdd(AppMode.ALLOWLIST, 0, inSetupWindow = false, canLoosen = false))
+        assertTrue(AppAllowlist.canAdd(AppMode.ALLOWLIST, 0, inSetupWindow = true, canLoosen = false))
+    }
+
+    @Test
+    fun `a switch made by mistake can be taken back within the setup window`() {
+        assertTrue(AppAllowlist.canLeave(inSetupWindow = true, canLoosen = false))
+        assertTrue(AppAllowlist.canLeave(inSetupWindow = false, canLoosen = true))
+        assertFalse(AppAllowlist.canLeave(inSetupWindow = false, canLoosen = false))
     }
 }

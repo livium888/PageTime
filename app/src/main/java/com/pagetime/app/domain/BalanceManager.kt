@@ -169,8 +169,13 @@ class BalanceManager(
     suspend fun setAppMode(mode: AppMode): Boolean = mutex.withLock {
         val settings = repository.settings.first()
         val state = stateOf(settings, System.currentTimeMillis())
+        val now = System.currentTimeMillis()
         val leaving = settings.appMode == AppMode.ALLOWLIST && mode == AppMode.BLOCKLIST
-        if (leaving && !state.canSwitchToBlocklist) return@withLock false
+        val mayLeave = AppAllowlist.canLeave(
+            inSetupWindow = AppAllowlist.inSetupWindow(settings.appAllowlistSetupGraceUntil, now),
+            canLoosen = state.canSwitchToBlocklist,
+        )
+        if (leaving && !mayLeave) return@withLock false
         repository.setAppMode(mode)
         true
     }
@@ -188,6 +193,7 @@ class BalanceManager(
         if (packageName in settings.allowedApps) return@withLock true
         val state = stateOf(settings, now)
         val permitted = AppAllowlist.canAdd(
+            mode = settings.appMode,
             allowedCount = settings.allowedApps.size,
             inSetupWindow = AppAllowlist.inSetupWindow(settings.appAllowlistSetupGraceUntil, now),
             canLoosen = state.canAddAllowedApp,

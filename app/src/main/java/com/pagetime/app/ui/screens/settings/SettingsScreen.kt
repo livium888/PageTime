@@ -49,6 +49,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -284,10 +285,39 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    // Asked first, in both directions: on locks the phone
+                    // today, and off starts a day-long wait. Neither should
+                    // follow from a thumb brushing a switch.
+                    var confirmLock by remember { mutableStateOf<Boolean?>(null) }
                     Switch(
                         checked = gate.switchedOn,
-                        onCheckedChange = { viewModel.setGateSwitchedOn(it) }
+                        onCheckedChange = { confirmLock = it }
                     )
+                    confirmLock?.let { turnOn ->
+                        AlertDialog(
+                            onDismissRequest = { confirmLock = null },
+                            title = { Text(if (turnOn) "Turn the daily reading lock on?" else "Switch the lock off?") },
+                            text = {
+                                Text(
+                                    if (turnOn) {
+                                        "Until you have read ${BlockScreenText.span(gate.target)} each day, only " +
+                                            "your allowed apps will open. Check your apps list first. " +
+                                            "Turning the lock off again takes 24 hours."
+                                    } else {
+                                        "It will switch off 24 hours from now. Until then the lock still " +
+                                            "applies, and you can turn it back on at any time."
+                                    }
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    viewModel.setGateSwitchedOn(turnOn)
+                                    confirmLock = null
+                                }) { Text(if (turnOn) "Turn on" else "Start switching off") }
+                            },
+                            dismissButton = { TextButton(onClick = { confirmLock = null }) { Text("Cancel") } },
+                        )
+                    }
                 }
 
                 if (gate.windingDown) {
@@ -326,31 +356,59 @@ fun SettingsScreen(
                 }
             }
 
-            SectionHeader("Protection")
+            // WHAT THE LOCK COVERS, THEN WHAT YOU LEARN, THEN HOW TO GET HELP
+            //
+            // The rows used to follow the order they were built in: protection,
+            // a slip-box help switch, notifications, scheduling, AI, support.
+            // They are grouped by what the reader came to do.
+            SectionHeader("What the lock covers")
             AppSettingsRow(
                 icon = Icons.Outlined.Block,
-                label = "Manage blocked apps",
+                label = "Apps",
+                subtitle = "Which apps are blocked, or the only ones allowed. Nothing changes until you save.",
                 onClick = onManageBlockedApps
             )
-            // Its own row rather than a section inside blocked apps: the two
-            // lists answer different questions, and a site rule holds whether
-            // or not there is time on the clock.
+            // Its own row rather than a section inside apps: the two lists
+            // answer different questions, and a site rule holds whether or not
+            // there is time on the clock.
             AppSettingsRow(
                 icon = Icons.Outlined.Language,
-                label = "Website rules",
+                label = "Websites",
+                subtitle = "Sites blocked or allowed, in every browser",
                 onClick = onManageSiteRules
+            )
+
+            SectionHeader("Cards and review")
+            ReviewRemindersCard(
+                enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
+                onChange = viewModel::setReviewReminders,
+            )
+            AppSettingsRow(
+                icon = Icons.Outlined.Schedule,
+                label = "Review scheduling",
+                subtitle = "Learning steps, intervals and retention",
+                onClick = onScheduling
+            )
+            AppSettingsRow(
+                icon = Icons.Outlined.AutoAwesome,
+                label = "Cards and your AI app",
+                subtitle = "How many cards, when to suggest them, and the prompts you send",
+                onClick = onPrompts
+            )
+
+            SectionHeader("Setup and help")
+            AppSettingsRow(
+                icon = Icons.Outlined.AccessibilityNew,
+                label = "Permissions",
+                subtitle = "What PageTime needs switched on for the lock to work",
+                onClick = onPermissions
             )
             AppSettingsRow(
                 icon = Icons.Outlined.History,
-                label = "Usage history & protection",
+                label = "Usage history",
+                subtitle = "What was blocked and when",
                 onClick = onUsageAudit
             )
-            AppSettingsRow(
-                icon = Icons.Outlined.AccessibilityNew,
-                label = "Permissions & setup",
-                onClick = onPermissions
-            )
-            SectionHeader("Learning")
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -382,29 +440,7 @@ fun SettingsScreen(
                 }
             }
 
-            SectionHeader("Notifications")
-            ReviewRemindersCard(
-                enabled = viewModel.reviewReminders.collectAsStateWithLifecycle().value,
-                onChange = viewModel::setReviewReminders,
-            )
-
-            SectionHeader("Review scheduling")
-            AppSettingsRow(
-                icon = Icons.Outlined.Schedule,
-                label = "Scheduling",
-                subtitle = "Learning steps, intervals and retention",
-                onClick = onScheduling
-            )
-
-            SectionHeader("Your AI app")
-            AppSettingsRow(
-                icon = Icons.Outlined.AutoAwesome,
-                label = "Prompts & search",
-                subtitle = "The prompts you take to your AI app, and finding related notes",
-                onClick = onPrompts
-            )
-
-            SectionHeader("Support")
+            SectionHeader("About")
             AppVersionCard()
             CrashDiagnosticsCard(crashLogText = crashLogText)
         }

@@ -522,6 +522,17 @@ class SettingsRepository(private val context: Context) {
     private fun spanMarkerKey(bookId: String) =
         stringPreferencesKey("card_span_marker_$bookId")
 
+    private fun nextBookOfferedKey(bookId: String) =
+        booleanPreferencesKey("next_book_offered_$bookId")
+
+    /** Whether the reader has already been shown what to read next for this book. */
+    suspend fun nextBookOffered(bookId: String): Boolean =
+        context.dataStore.data.first()[nextBookOfferedKey(bookId)] == true
+
+    suspend fun setNextBookOffered(bookId: String) {
+        context.dataStore.edit { it[nextBookOfferedKey(bookId)] = true }
+    }
+
     private fun cardNudgeLaterKey(bookId: String) =
         intPreferencesKey("card_nudge_later_$bookId")
 

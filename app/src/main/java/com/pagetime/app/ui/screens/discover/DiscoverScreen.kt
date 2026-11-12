@@ -82,6 +82,13 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
 
     val readerPicks by viewModel.readerPicks.collectAsStateWithLifecycle()
     var showReaderPicks by remember { mutableStateOf(false) }
+    // Arriving from "See more" on a finished book: open on that book's genre.
+    LaunchedEffect(Unit) {
+        com.pagetime.app.data.recommend.ReaderPicks.Handoff.take()?.let { genre ->
+            viewModel.openReaderPicks(genre)
+            showReaderPicks = true
+        }
+    }
     if (showReaderPicks) {
         ReaderPicksSheet(
             state = readerPicks,
@@ -147,7 +154,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
             }
             TextButton(
                 onClick = {
-                    viewModel.openReaderPicks()
+                    viewModel.openReaderPicks(null)
                     showReaderPicks = true
                 },
                 modifier = Modifier.padding(horizontal = 8.dp),

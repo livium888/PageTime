@@ -270,7 +270,9 @@ fun ReaderScreen(
     onOpenLumenCards: (String) -> Unit = {},
     onOpenPagemarks: () -> Unit = {},
     onOpenHighlights: (String) -> Unit = {},
-    onOpenReview: () -> Unit = {}
+    onOpenReview: () -> Unit = {},
+    /** "See more" on the finished-book card: opens Discover's reader picks. */
+    onSeeMorePicks: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
@@ -901,6 +903,28 @@ fun ReaderScreen(
         }
 
     
+
+        // The end of the book: what readers of this genre rate highly. Once
+        // per book, and it waits its turn behind the card suggestion.
+        val nextBooks by vm.nextBooks.collectAsStateWithLifecycle()
+        AnimatedVisibility(
+            visible = nextBooks != null && cardOffer == null && !showMakeCards,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            nextBooks?.let { next ->
+                NextBooksCard(
+                    next = next,
+                    onSeeMore = {
+                        com.pagetime.app.data.recommend.ReaderPicks.Handoff.ask(next.genre)
+                        vm.dismissNextBooks()
+                        onSeeMorePicks()
+                    },
+                    onDismiss = vm::dismissNextBooks,
+                )
+            }
+        }
 
         // The suggestion to make cards: a bar the reader can read past, never a
         // dialog. See CardNudge for when it appears.
@@ -2741,6 +2765,50 @@ private fun IdleGate(onContinue: () -> Unit) {
 }
 
 
+
+/** On the last page: two books readers of this genre rate highly, and the way to more. */
+@Composable
+private fun NextBooksCard(
+    next: ReaderViewModel.NextBooks,
+    onSeeMore: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = ReaderFooterHeight)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Column(
+            Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Finished. What next?", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Readers of ${next.genre.label.lowercase()} rate these highly",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            next.picks.forEach { pick ->
+                Column(Modifier.padding(top = 4.dp, end = 8.dp)) {
+                    Text(pick.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        listOf(pick.byLine, pick.ratingLine).filter { it.isNotBlank() }.joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("Close") }
+                TextButton(onClick = onSeeMore) { Text("See more") }
+            }
+        }
+    }
+}
 
 /** The suggestion to make cards, at the foot of the page. It never blocks the text above it. */
 @Composable

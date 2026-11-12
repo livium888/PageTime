@@ -29,6 +29,10 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import com.pagetime.app.data.learning.ChunkCard
 import com.pagetime.app.data.learning.PromptSurfacing
+import com.pagetime.app.data.BookGenre
+import com.pagetime.app.data.BookGenreSummary
+import com.pagetime.app.data.recommend.OpenLibraryPicks
+import com.pagetime.app.data.recommend.ReaderPicks
 import com.pagetime.app.data.learning.CardDensity
 import com.pagetime.app.data.learning.CardNudge
 import com.pagetime.app.data.learning.ReadingSpan
@@ -515,6 +519,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // that stopped the drip and left the counter stuck at two minutes.
         onProgressChanged(fraction)
         updateScrollProgress(fraction)
+        if (pageCount > 1 && pageIndex == pageCount - 1) offerNextBooks()
         _bookText.value?.let { shown ->
             onPageTurnedForCardOffer(
                 atBreak = CardNudge.pageStartsAtBreak(
@@ -1178,6 +1183,51 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pendingLumenContext = null
     }
 
+    // region What to read next, on finishing a book
+
+    data class NextBooks(val genre: BookGenre, val picks: List<ReaderPicks.Pick>)
+
+    /** Shown on the last page of a book, once per book. */
+    private val _nextBooks = MutableStateFlow<NextBooks?>(null)
+    val nextBooks = _nextBooks.asStateFlow()
+
+    @Volatile
+    private var nextBooksTried = false
+
+    /**
+     * The reader has reached the end. Looks up well-rated books in this book's
+     * genre and offers two. Silent when the genre is unknown, the catalogue
+     * does not answer or has nothing: an empty card on the last page of a book
+     * would be worse than none. Marked as shown only when it is.
+     */
+    private fun offerNextBooks() {
+        if (nextBooksTried) return
+        nextBooksTried = true
+        val b = _book.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (settingsRepository.nextBookOffered(bookId)) return@launch
+                val shelf = container.database.bookDao().getAll()
+                val genre = ReaderPicks.genreAfterFinishing(
+                    b.genre,
+                    BookGenreSummary.summarize(shelf).map { it.genre },
+                ) ?: return@launch
+                val subject = ReaderPicks.subjectFor(genre) ?: return@launch
+                val found = OpenLibraryPicks().forSubject(subject) ?: return@launch
+                val picks = ReaderPicks.rank(found, shelf.map { it.title }).take(ReaderPicks.SHOWN_WHEN_FINISHED)
+                if (picks.isEmpty()) return@launch
+                _nextBooks.value = NextBooks(genre, picks)
+                settingsRepository.setNextBookOffered(bookId)
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+    }
+
+    fun dismissNextBooks() {
+        _nextBooks.value = null
+    }
+
+    // endregion
+
     // region Card suggestion (see CardNudge)
 
     /** The suggestion on screen now, as a bar at the foot of the page. */
@@ -1557,6 +1607,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val size = publication?.readingOrder?.size ?: 0
         if (index != null && size > 0) {
             onProgressChanged((index + fraction) / size)
+            // The last page of the last chapter starts short of its end, so
+            // being in the final chapter and most of the way through counts.
+            if ((index + fraction) / size >= ReaderPicks.FINISHED_AT ||
+                (index == size - 1 && size > 1 && fraction >= 0.9f)
+            ) offerNextBooks()
         } else {
             onUserScrolled()
         }

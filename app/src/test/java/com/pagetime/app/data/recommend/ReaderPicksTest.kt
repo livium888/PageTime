@@ -68,4 +68,21 @@ class ReaderPicksTest {
         assertEquals("4.3 ★ from 3,000 readers", pick.ratingLine)
         assertEquals("Frank Herbert · 1965", pick.byLine)
     }
+
+    @Test
+    fun `a finished book recommends from its own genre, else the reader's most read`() {
+        assertEquals(BookGenre.HISTORY, ReaderPicks.genreAfterFinishing("HISTORY", listOf(BookGenre.SCIENCE)))
+        assertEquals(BookGenre.SCIENCE, ReaderPicks.genreAfterFinishing(null, listOf(BookGenre.SCIENCE)))
+        // "Other" cannot be asked for, so it falls through to what the reader reads.
+        assertEquals(BookGenre.SCIENCE, ReaderPicks.genreAfterFinishing("OTHER", listOf(BookGenre.SCIENCE)))
+        assertEquals(BookGenre.SCIENCE, ReaderPicks.genreAfterFinishing("not a genre", listOf(BookGenre.SCIENCE)))
+        assertNull(ReaderPicks.genreAfterFinishing(null, emptyList()))
+    }
+
+    @Test
+    fun `the genre handed to Discover is taken once`() {
+        ReaderPicks.Handoff.ask(BookGenre.POETRY)
+        assertEquals(BookGenre.POETRY, ReaderPicks.Handoff.take())
+        assertNull(ReaderPicks.Handoff.take())
+    }
 }

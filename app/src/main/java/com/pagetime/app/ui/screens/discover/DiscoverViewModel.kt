@@ -233,6 +233,50 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // region What readers rate highly
+
+    private val readerPicksSource = com.pagetime.app.data.recommend.OpenLibraryPicks()
+    private val _readerPicks = MutableStateFlow(ReaderPicksState())
+    val readerPicks = _readerPicks.asStateFlow()
+    private var readerPicksJob: kotlinx.coroutines.Job? = null
+
+    /** Opens on the genre the reader has most of; any genre if nothing is classified. */
+    fun openReaderPicks() {
+        viewModelScope.launch {
+            val books = runCatching { container.database.bookDao().getAll() }.getOrDefault(emptyList())
+            val mostRead = com.pagetime.app.data.BookGenreSummary.summarize(books).map { it.genre }
+            val genres = com.pagetime.app.data.recommend.ReaderPicks.genresInOrder(mostRead)
+            _readerPicks.value = ReaderPicksState(genres = genres)
+            genres.firstOrNull()?.let(::loadReaderPicks)
+        }
+    }
+
+    fun loadReaderPicks(genre: com.pagetime.app.data.BookGenre) {
+        val subject = com.pagetime.app.data.recommend.ReaderPicks.subjectFor(genre) ?: return
+        readerPicksJob?.cancel()
+        _readerPicks.value = _readerPicks.value.copy(
+            genre = genre, loading = true, picks = emptyList(), unreachable = false,
+        )
+        readerPicksJob = viewModelScope.launch {
+            val found = readerPicksSource.forSubject(subject)
+            val owned = runCatching { container.database.bookDao().getAll() }
+                .getOrDefault(emptyList()).map { it.title }
+            _readerPicks.value = _readerPicks.value.copy(
+                loading = false,
+                unreachable = found == null,
+                picks = com.pagetime.app.data.recommend.ReaderPicks.rank(found.orEmpty(), owned),
+            )
+        }
+    }
+
+    /** Searches every free catalogue for a recommended title. */
+    fun lookForFreeCopy(pick: com.pagetime.app.data.recommend.ReaderPicks.Pick) {
+        if (_source.value != DiscoverSource.Everywhere) onSourceChange(DiscoverSource.Everywhere)
+        onQueryChange(pick.title.substringBefore(':').trim())
+    }
+
+    // endregion
+
     fun onQueryChange(value: String) {
         _query.value = value
         queryJob?.cancel()

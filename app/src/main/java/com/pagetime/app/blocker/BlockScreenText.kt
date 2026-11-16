@@ -34,8 +34,15 @@ object BlockScreenText {
 
     fun subtitle(gate: GateState): String = when {
         !gate.enabled -> "Read a few minutes to earn time in this app."
-        gate.targetMet -> "Today's reading is done. Your phone is open until 4am."
-        else -> "Read ${span(gate.secondsToUnlock)} more to unlock your phone until 4am."
+        gate.allowanceSpent ->
+            "Today's reading is done and the ${span(gate.allowanceSeconds)} it opened has been used. " +
+                "It starts again at ${com.pagetime.app.domain.LockDay.resetLabel()}."
+        gate.targetMet && gate.metered ->
+            "Today's reading is done. ${span(gate.allowanceLeft)} of app time left today."
+        gate.targetMet -> "Today's reading is done. Your phone is open until ${com.pagetime.app.domain.LockDay.resetLabel()}."
+        gate.metered ->
+            "Read ${span(gate.secondsToUnlock)} more to open your phone for ${span(gate.allowanceSeconds)}."
+        else -> "Read ${span(gate.secondsToUnlock)} more to unlock your phone until ${com.pagetime.app.domain.LockDay.resetLabel()}."
     }
 
     /**

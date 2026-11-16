@@ -55,4 +55,26 @@ class LockDayTest {
         assertEquals(0L, LockDay.readToday(storedDay = 99, storedSeconds = 900, today = 100))
         assertEquals(0L, LockDay.readToday(storedDay = 100, storedSeconds = -5, today = 100))
     }
+
+    @Test
+    fun `the day starts at the hour the reader chose`() {
+        try {
+            LockDay.resetHour = 0
+            // At midnight a new day has begun; with the 4am reset it had not.
+            assertEquals(day("2026-03-11T12:00"), day("2026-03-11T00:30"))
+            assertEquals(at("2026-03-12T00:00"), LockDay.nextResetAt(at("2026-03-11T23:59"), london))
+            LockDay.resetHour = 99
+            assertEquals(23, LockDay.resetHour)
+        } finally {
+            LockDay.resetHour = LockDay.RESET_HOUR
+        }
+    }
+
+    @Test
+    fun `the reset hour said the way a person says it`() {
+        assertEquals("4am", LockDay.resetLabel(4))
+        assertEquals("midnight", LockDay.resetLabel(0))
+        assertEquals("noon", LockDay.resetLabel(12))
+        assertEquals("6pm", LockDay.resetLabel(18))
+    }
 }

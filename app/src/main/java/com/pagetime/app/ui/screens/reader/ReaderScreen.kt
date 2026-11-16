@@ -642,13 +642,23 @@ fun ReaderScreen(
         // The time, where the status bar would be; the controls' own bar
         // covers this strip while they are showing.
         if (!controlsVisible) {
+            val today by vm.gate.collectAsStateWithLifecycle()
             ReaderClock(
                 color = palette.secondary,
+                today = ReadingToday.label(
+                    readSeconds = today.readToday,
+                    targetSeconds = today.target,
+                    lockOn = today.enabled,
+                    notCounting = ReadingToday.notCounting(
+                        idle = !guardState.crediting && !guardState.tooFast,
+                        tooFast = guardState.tooFast,
+                    ),
+                ),
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
                     .height(ReaderHeaderHeight)
-                    .padding(start = settings.marginDp.dp),
+                    .padding(horizontal = settings.marginDp.dp),
             )
         }
 
@@ -2534,7 +2544,7 @@ private fun ReaderBottomBar(
 
 /** The time of day at the head of the page, since the status bar is hidden while reading. */
 @Composable
-private fun ReaderClock(color: Color, modifier: Modifier = Modifier) {
+private fun ReaderClock(color: Color, today: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val time by produceState(initialValue = "", context) {
         val format = android.text.format.DateFormat.getTimeFormat(context)
@@ -2545,7 +2555,14 @@ private fun ReaderClock(color: Color, modifier: Modifier = Modifier) {
         }
     }
     Box(modifier, contentAlignment = Alignment.CenterStart) {
-        Text(time, color = color, style = MaterialTheme.typography.bodySmall)
+        // The time, then how today's reading stands, on one line.
+        Text(
+            if (time.isEmpty()) today else "$time  ·  $today",
+            color = color,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

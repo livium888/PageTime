@@ -84,7 +84,29 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     // it never ran when the user exited the book.
     private val persistenceScope = container.scope
 
-    private val guard = ReadingGuard()
+    // WHAT COUNTS AS READING HERE
+    //
+    // Time with the book open and pages turning, at a pace a person can read
+    // at. The guard was built to stop a reward being farmed, and so it also
+    // paid only for pages further on than the reader had ever been: re-reading,
+    // going back, or looking ahead in the contents and returning all stopped
+    // the clock after a few minutes, silently. The rewards are gone and the
+    // only thing this time unlocks is the reader's own phone, so that rule is
+    // switched off here by giving the forward-progress allowance a day's worth
+    // from the start. Idle and implausibly fast page-turning still pause it.
+    private val guard = ReadingGuard(
+        // A dense page, or stopping to think, takes longer than a minute and a half.
+        idleTimeoutMs = 180_000L,
+        // Progress through an EPUB is measured per chapter file, so a short
+        // chapter reads as many times faster than it was read.
+        maxPlausibleWordsPerMinute = 2_500f,
+        maxBudgetSeconds = 86_400f,
+        startingBudgetSeconds = 86_400f,
+    )
+
+    /** Today's reading against the day's target, for the head of the page. */
+    val gate = balanceManager.gate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.domain.GateState.Unknown)
 
     /**
      * The book's total word count, fetched (and computed/cached if this is

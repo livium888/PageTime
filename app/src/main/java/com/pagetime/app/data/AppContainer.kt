@@ -212,6 +212,11 @@ class AppContainer(context: Context) {
         }
         settingsRepository.forgetRetiredAiSettings()
         scope.launch { runCatching { settingsRepository.applyBookSpacingOnce() } }
+        // The lock's day starts at the hour the reader chose; everything that
+        // asks what day it is reads it from LockDay.
+        scope.launch {
+            settingsRepository.settings.collect { com.pagetime.app.domain.LockDay.resetHour = it.lockResetHour }
+        }
     }
 
     /** Tags books Fiction/Poetry/Science/etc. when the reader asks — see the class doc. */

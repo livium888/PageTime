@@ -24,10 +24,31 @@ object LockDay {
     /** 04:00, so reading in bed after midnight still counts for that evening. */
     const val RESET_HOUR = 4
 
+    /**
+     * The hour the day resets at, 0 to 23. [RESET_HOUR] unless the reader has
+     * chosen another.
+     *
+     * Held here rather than passed to every caller: the day is asked for from
+     * the blocker, the reader and the settings screen, and one of them using a
+     * different hour from the others would put the same minute in two days.
+     * Set once at start-up and whenever the setting is saved.
+     */
+    @Volatile
+    var resetHour: Int = RESET_HOUR
+        set(value) { field = value.coerceIn(0, 23) }
+
+    /** "4am", "12am", "6pm": the reset hour as a person says it. */
+    fun resetLabel(hour: Int = resetHour): String = when {
+        hour == 0 -> "midnight"
+        hour == 12 -> "noon"
+        hour < 12 -> "${hour}am"
+        else -> "${hour - 12}pm"
+    }
+
     /** The lock day [epochMillis] falls in, as an epoch day. */
     fun of(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
         LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), zone)
-            .minusHours(RESET_HOUR.toLong())
+            .minusHours(resetHour.toLong())
             .toLocalDate()
             .toEpochDay()
 
@@ -39,7 +60,7 @@ object LockDay {
      */
     fun nextResetAt(nowMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
         val local = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), zone)
-        val resetToday = local.toLocalDate().atTime(LocalTime.of(RESET_HOUR, 0))
+        val resetToday = local.toLocalDate().atTime(LocalTime.of(resetHour, 0))
         val next = if (local < resetToday) resetToday else resetToday.plusDays(1)
         return next.atZone(zone).toInstant().toEpochMilli()
     }

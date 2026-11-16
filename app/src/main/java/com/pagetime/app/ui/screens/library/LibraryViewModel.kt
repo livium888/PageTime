@@ -39,6 +39,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val lastMapMoment = container.settingsRepository.lastMapMoment
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /** Today's reading against the day's target, for the one line the page says about it. */
+    val gate = container.balanceManager.gate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.domain.GateState.Unknown)
+
     val totalReadingSeconds = container.settingsRepository.settings
         .map { it.totalReadingSeconds }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)

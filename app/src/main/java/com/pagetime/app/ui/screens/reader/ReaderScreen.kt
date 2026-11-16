@@ -508,7 +508,14 @@ fun ReaderScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> vm.startReading()
+                Lifecycle.Event.ON_RESUME -> {
+                    // Coming back from another app can bring the system bars
+                    // back with it.
+                    window?.let {
+                        WindowInsetsControllerCompat(it, it.decorView).hide(WindowInsetsCompat.Type.systemBars())
+                    }
+                    vm.startReading()
+                }
                 Lifecycle.Event.ON_PAUSE -> vm.stopReading()
                 else -> Unit
             }
@@ -576,7 +583,12 @@ fun ReaderScreen(
                     }
                 },
                 onTapZone = { controlsVisible = !controlsVisible },
-                onNavigatorChanged = { navigator = it },
+                onNavigatorChanged = {
+                    navigator = it
+                    // A rebuilt reading surface finds its place again; nothing
+                    // it reports on the way is saved.
+                    if (it != null) vm.beginEpubRestore()
+                },
                 volumeKeysTurnPages = settings.volumeKeysTurnPages,
                 onRestoreComplete = {
                     vm.markEpubRestoreComplete()
@@ -2028,18 +2040,31 @@ private fun ReadiumNavigatorHost(
         onNavigatorChanged(nav)
 
         try {
-            var firstLocator = true
+            // SETTLED, NOT FIRST
+            //
+            // The first position reported is where the book was ASKED to open,
+            // before the chapter has been laid out; more follow as it loads and
+            // finds the page. Restoring used to be called finished at the
+            // first one, so the ones after it were saved as if the reader had
+            // turned to them. It is finished when the position has stopped
+            // changing for a moment.
+            var settled = false
+            var settling: kotlinx.coroutines.Job? = null
             nav.currentLocator.collect {
                 currentOnLocator(it)
+                if (!settled) {
+                    settling?.cancel()
+                    settling = launch {
+                        delay(900)
+                        settled = true
+                        onRestoreComplete()
+                    }
+                }
                 // What the page opens with, for cutting a card span exactly.
                 // Asked of the page itself; if it cannot say, the span falls
                 // back to the position estimate it always used.
                 val opening = runCatching { nav.firstVisibleElementLocator()?.text?.highlight }.getOrNull()
                 currentOnPageAnchor(it, opening)
-                if (firstLocator) {
-                    firstLocator = false
-                    onRestoreComplete()
-                }
             }
         } finally {
             runCatching {

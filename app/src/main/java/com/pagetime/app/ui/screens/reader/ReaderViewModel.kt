@@ -1652,9 +1652,31 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageAnchor = words?.let { locator to it }
     }
 
+    /** The size of one page in each chapter, learned as pages are turned. See [EpubRestorePoint]. */
+    private val pageStepByChapter = java.util.concurrent.ConcurrentHashMap<String, Double>()
+
+    /**
+     * The reading surface has been rebuilt and is finding its place again.
+     *
+     * Until it has settled, the positions it reports are stops on the way
+     * there (the top of the chapter, the layout before fonts load), and saving
+     * one of them is how a book came back pages from where it was left.
+     */
+    fun beginEpubRestore() {
+        if (_initialLocatorJson.value != null) locatorRestoreComplete = false
+    }
+
     fun onLocatorChanged(locator: org.readium.r2.shared.publication.Locator) {
+        val previous = latestLocator
         latestLocator = locator
         if (!locatorRestoreComplete) return
+        // Two positions in the same chapter give the size of a page there.
+        val now = locator.locations?.progression
+        val before = previous?.locations?.progression
+        if (now != null && before != null && previous?.href == locator.href) {
+            val chapter = locator.href.toString()
+            EpubRestorePoint.pageStep(pageStepByChapter[chapter], before, now)?.let { pageStepByChapter[chapter] = it }
+        }
         ensureSpanMarker()
 
         // Compute whole-book progress from the Readium locator and feed it to the
@@ -1698,7 +1720,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     private suspend fun saveLocator() {
         val b = _book.value ?: return
         val locator = latestLocator ?: return
-        val locatorJson = locator.toJSON().toString()
+        // Saved half a page into the page, not on its first line: the exact
+        // start of a page can reopen on the page before. See EpubRestorePoint.
+        val exact = locator.toJSON().toString()
+        val progression = locator.locations?.progression
+        val locatorJson = if (progression == null) exact else {
+            EpubRestorePoint.withProgression(
+                exact,
+                EpubRestorePoint.inside(progression, pageStepByChapter[locator.href.toString()]),
+            )
+        }
         settingsRepository.saveLocator(b.id, locatorJson)
 
         // Keep the in-memory restore locator current. The Readium navigator is

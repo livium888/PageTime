@@ -257,7 +257,17 @@ fun PageTimeAppUi(
         NavHost(
             navController = navController,
             startDestination = "library",
-            modifier = Modifier.padding(innerPadding)
+            // THE READER IS THE WHOLE WINDOW, ALWAYS
+            //
+            // Every other screen is padded by the status and navigation bars.
+            // The reader hides them, and if it took that padding too it would
+            // change size whenever they came and went: on returning from
+            // another app, on a swipe from the edge. A page laid out for one
+            // size and shown at another is laid out again, the text moves, and
+            // the place in the book is found again by arithmetic that can land
+            // a page early. So the reader never takes the padding; it keeps
+            // clear of the camera cut-out itself.
+            modifier = if (currentRoute?.startsWith("reader/") == true) Modifier else Modifier.padding(innerPadding)
         ) {
             composable("library") {
                 LibraryScreen(

@@ -1,5 +1,6 @@
 package com.pagetime.app.ui.screens.reader
 
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -76,12 +77,18 @@ fun ReaderEntryGate(
     if (satisfied) {
         content()
     } else {
-        ReviewSessionScreen(
-            vm = gateVm,
-            onBack = onBack,
-            onOpenSource = onOpenSource,
-            gateMode = true,
-            onStartReading = gateVm::requestStartReading,
-        )
+        // The reader's route is not padded by the system bars (the reader
+        // fills the window), so the review shown in its place pads itself.
+        androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier.systemBarsPadding()
+        ) {
+            ReviewSessionScreen(
+                vm = gateVm,
+                onBack = onBack,
+                onOpenSource = onOpenSource,
+                gateMode = true,
+                onStartReading = gateVm::requestStartReading,
+            )
+        }
     }
 }

@@ -33,13 +33,39 @@ class ReadingTodayTest {
     }
 
     @Test
-    fun `done once the target is reached, and it keeps counting`() {
-        assertEquals("23 of 20 min · done", ReadingToday.label(23 * 60, 20 * 60, lockOn = true))
+    fun `past the target it stops counting down and says only what was read`() {
+        assertEquals("23 min read today", ReadingToday.label(23 * 60, 20 * 60, lockOn = true))
+    }
+
+    @Test
+    fun `past the target a nearby chapter end is where it points`() {
+        assertEquals(
+            "23 min read · 4 min to the end of the chapter",
+            ReadingToday.label(23 * 60, 20 * 60, lockOn = true, chapterMinutesLeft = 4),
+        )
+        // Too far to be an invitation, and never before the target is met.
+        assertEquals("23 min read today", ReadingToday.label(23 * 60, 20 * 60, lockOn = true, chapterMinutesLeft = 40))
+        assertEquals(
+            "12 of 20 min · 8 left",
+            ReadingToday.label(12 * 60, 20 * 60, lockOn = true, chapterMinutesLeft = 4),
+        )
+    }
+
+    @Test
+    fun `the countdown can be switched off`() {
+        assertEquals("12 min read today", ReadingToday.label(12 * 60, 20 * 60, lockOn = true, showCountdown = false))
     }
 
     @Test
     fun `with the lock off there is no target to count down to`() {
         assertEquals("7 min read today", ReadingToday.label(7 * 60, 20 * 60, lockOn = false))
+    }
+
+    @Test
+    fun `minutes to read some words, rounded up`() {
+        assertEquals(1, ReadingToday.minutesFor(10))
+        assertEquals(4, ReadingToday.minutesFor(900))
+        assertNull(ReadingToday.minutesFor(0))
     }
 
     @Test

@@ -643,6 +643,8 @@ fun ReaderScreen(
         // covers this strip while they are showing.
         if (!controlsVisible) {
             val today by vm.gate.collectAsStateWithLifecycle()
+            val showCountdown by vm.showCountdown.collectAsStateWithLifecycle()
+            val chapterMinutesLeft by vm.chapterMinutesLeft.collectAsStateWithLifecycle()
             ReaderClock(
                 color = palette.secondary,
                 today = ReadingToday.label(
@@ -653,6 +655,8 @@ fun ReaderScreen(
                         idle = !guardState.crediting && !guardState.tooFast,
                         tooFast = guardState.tooFast,
                     ),
+                    showCountdown = showCountdown,
+                    chapterMinutesLeft = chapterMinutesLeft,
                 ),
                 modifier = Modifier
                     .align(Alignment.TopStart)

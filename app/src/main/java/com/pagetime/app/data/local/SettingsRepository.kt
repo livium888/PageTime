@@ -309,6 +309,8 @@ class SettingsRepository(private val context: Context) {
         val LUMEN_CAPTURE_CHARS = intPreferencesKey("lumen_capture_chars")
         val CARD_DENSITY = stringPreferencesKey("card_density")
         val CARD_NUDGE_ENABLED = booleanPreferencesKey("card_nudge_enabled")
+        val READER_SHOW_COUNTDOWN = booleanPreferencesKey("reader_show_countdown")
+        val OPEN_ON_BOOK = booleanPreferencesKey("open_on_current_book")
         val AI_APP_PACKAGE = stringPreferencesKey("ai_app_package")
         val AI_APP_CLASS = stringPreferencesKey("ai_app_class")
         val CARD_NUDGE_EVERY = intPreferencesKey("card_nudge_every_words")
@@ -922,6 +924,22 @@ class SettingsRepository(private val context: Context) {
             it.remove(Keys.AI_APP_PACKAGE)
             it.remove(Keys.AI_APP_CLASS)
         }
+    }
+
+    /** Whether the reader shows what is left to the day's target beside the clock. On unless turned off. */
+    val readerShowCountdown: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.READER_SHOW_COUNTDOWN] ?: true }
+
+    suspend fun setReaderShowCountdown(value: Boolean) {
+        context.dataStore.edit { it[Keys.READER_SHOW_COUNTDOWN] = value }
+    }
+
+    /** Whether opening the app goes straight to the book being read. On unless turned off. */
+    val openOnBook: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.OPEN_ON_BOOK] ?: true }
+
+    suspend fun setOpenOnBook(value: Boolean) {
+        context.dataStore.edit { it[Keys.OPEN_ON_BOOK] = value }
     }
 
     /** Whether the reader is offered cards after reading a while. On unless turned off. See [CardNudge]. */

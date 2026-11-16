@@ -77,6 +77,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             com.pagetime.app.data.local.DEFAULT_CARD_CREDIT_SECONDS,
         )
 
+    val openOnBook = container.settingsRepository.openOnBook
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val readerShowCountdown = container.settingsRepository.readerShowCountdown
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setOpenOnBook(value: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setOpenOnBook(value) }
+    }
+
+    fun setReaderShowCountdown(value: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setReaderShowCountdown(value) }
+    }
+
     fun setAppAllowanceSeconds(seconds: Long) {
         viewModelScope.launch { container.balanceManager.setAppAllowanceSeconds(seconds) }
     }

@@ -26,6 +26,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.platform.LocalContext
 import com.pagetime.app.PageTimeApp
 import androidx.compose.runtime.remember
@@ -101,6 +104,32 @@ fun PageTimeAppUi(
     val importViewModel: BookImportViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val importState by importViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // STRAIGHT TO THE PAGE
+    //
+    // Opening the app used to land on the library, and every choice between
+    // the icon and the first sentence is a chance to do something else. A
+    // plain launch now goes to the book being read, at the page it was left
+    // on; Back from there is the library. Once per launch (not again after a
+    // rotation), never when the launch came for something else, and only if
+    // there is a book that has been opened before.
+    var resumedBook by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val launchContainer = (LocalContext.current.applicationContext as PageTimeApp).container
+    LaunchedEffect(Unit) {
+        if (resumedBook) return@LaunchedEffect
+        resumedBook = true
+        if (openReader || openReview) return@LaunchedEffect
+        val settings = launchContainer.settingsRepository
+        val wanted = runCatching { settings.openOnBook.first() }.getOrDefault(true)
+        val last = runCatching { settings.lastReadBookId() }.getOrNull()
+        val book = last?.let { runCatching { launchContainer.database.bookDao().getById(it) }.getOrNull() }
+        // A finished book is not one to be dropped back into.
+        val unfinished = book != null && book.scrollProgress < 0.985f
+        val elsewhere = navController.currentDestination?.route != "library"
+        if (wanted && unfinished && !elsewhere && importViewModel.state.value == BookImportViewModel.State.Idle) {
+            navController.navigate("reader/${book!!.id}") { launchSingleTop = true }
+        }
+    }
 
     LaunchedEffect(openReader, openReaderBookId) {
         if (openReader) {

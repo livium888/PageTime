@@ -145,6 +145,8 @@ fun SettingsScreen(
     val appAllowance by viewModel.appAllowanceSeconds.collectAsStateWithLifecycle()
     val resetHour by viewModel.lockResetHour.collectAsStateWithLifecycle()
     val cardCredit by viewModel.cardCreditSeconds.collectAsStateWithLifecycle()
+    val openOnBook by viewModel.openOnBook.collectAsStateWithLifecycle()
+    val showCountdown by viewModel.readerShowCountdown.collectAsStateWithLifecycle()
     val sitesSummary by viewModel.sitesSummary.collectAsStateWithLifecycle()
     val permissionsSummary = if (hasUsageAccessPermission(settingsContext) &&
         isAccessibilityServiceEnabled(settingsContext)
@@ -171,6 +173,8 @@ fun SettingsScreen(
         appAllowanceSeconds = appAllowance,
         resetHour = resetHour,
         cardCreditSeconds = cardCredit,
+        openOnBook = openOnBook,
+        showCountdown = showCountdown,
     )
     var draft by remember { mutableStateOf<SettingsDraft?>(null) }
     val shown = draft ?: saved
@@ -194,6 +198,8 @@ fun SettingsScreen(
         if (from.appAllowanceSeconds != to.appAllowanceSeconds) viewModel.setAppAllowanceSeconds(to.appAllowanceSeconds)
         if (from.resetHour != to.resetHour) viewModel.setLockResetHour(to.resetHour)
         if (from.cardCreditSeconds != to.cardCreditSeconds) viewModel.setCardCreditSeconds(to.cardCreditSeconds)
+        if (from.openOnBook != to.openOnBook) viewModel.setOpenOnBook(to.openOnBook)
+        if (from.showCountdown != to.showCountdown) viewModel.setReaderShowCountdown(to.showCountdown)
         if (from.otherAppsCount != to.otherAppsCount) viewModel.setExternalReadingEnabled(to.otherAppsCount)
         if (from.otherAppsCapSeconds != to.otherAppsCapSeconds) viewModel.setExternalReadingDailyCap(to.otherAppsCapSeconds)
         if (from.readingRate != to.readingRate) viewModel.setRatio(to.readingRate)
@@ -464,6 +470,22 @@ fun SettingsScreen(
                     label = "Websites",
                     value = sitesSummary,
                     onClick = onManageSiteRules,
+                )
+            }
+
+            SectionHeader("Reading")
+            SettingsGroup {
+                SettingsLine(
+                    label = "Open the app on my book",
+                    was = SettingsDraft.onOff(saved.openOnBook).takeIf { saved.openOnBook != shown.openOnBook },
+                    checked = shown.openOnBook,
+                    onToggle = { on -> edit { it.copy(openOnBook = on) } },
+                )
+                SettingsLine(
+                    label = "Show time left to the target",
+                    was = SettingsDraft.onOff(saved.showCountdown).takeIf { saved.showCountdown != shown.showCountdown },
+                    checked = shown.showCountdown,
+                    onToggle = { on -> edit { it.copy(showCountdown = on) } },
                 )
             }
 

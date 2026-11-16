@@ -71,6 +71,12 @@ class BalanceManager(
         disableAtMillis = settings.gateDisableAt,
         nowMillis = now,
         dailyTargetSeconds = settings.dailyTargetSeconds,
+        allowanceSeconds = settings.appAllowanceSeconds,
+        usedTodaySeconds = LockDay.readToday(
+            storedDay = settings.usedTodayLockDay,
+            storedSeconds = settings.usedTodaySeconds,
+            today = LockDay.of(now),
+        ),
     )
 
     /** The gate right now, for callers that cannot wait for a flow. */
@@ -87,8 +93,58 @@ class BalanceManager(
      * also what records time spent per app in the usage ledger. On the browse
      * balance it burns the old currency, as it always did.
      */
-    suspend fun spendAccessSecond(): Long =
-        if (repository.gateEnabled()) UNMETERED else spendSecond()
+    suspend fun spendAccessSecond(): Long {
+        if (!repository.gateEnabled()) return spendSecond()
+        // Under the lock with a limit on use after reading: this second comes
+        // out of today's allowance, and what is left is what the caller gets.
+        val settings = repository.settings.first()
+        val allowance = settings.appAllowanceSeconds
+        if (allowance <= 0L) return UNMETERED
+        val used = repository.addUsedToday(1L, LockDay.of(System.currentTimeMillis()))
+        return (allowance - used).coerceAtLeast(0L)
+    }
+
+    /**
+     * Sets how long blocked apps may be used after the day's reading; zero for
+     * no limit. Returns whether it was accepted: more time is loosening, so it
+     * waits for today's reading like the target does.
+     */
+    suspend fun setAppAllowanceSeconds(seconds: Long): Boolean = mutex.withLock {
+        val settings = repository.settings.first()
+        val state = stateOf(settings, System.currentTimeMillis())
+        if (!state.canLoosenTheRules && GateState.loosensAllowance(settings.appAllowanceSeconds, seconds)) {
+            return@withLock false
+        }
+        repository.setAppAllowanceSeconds(seconds)
+        true
+    }
+
+    /**
+     * Moves the hour the lock's day starts at. Returns whether it was accepted.
+     *
+     * Moving the boundary can hand back a day that was already spent or cut one
+     * short, so it is only allowed while the rules may be loosened.
+     */
+    suspend fun setLockResetHour(hour: Int): Boolean = mutex.withLock {
+        val settings = repository.settings.first()
+        if (!stateOf(settings, System.currentTimeMillis()).canLoosenTheRules) return@withLock false
+        repository.setLockResetHour(hour)
+        LockDay.resetHour = hour
+        true
+    }
+
+    /**
+     * An answered flashcard counts as a little reading toward today's target.
+     *
+     * The reader sets how much (see Settings); nothing is added to the browse
+     * balance or to total reading time, because this is time credited toward a
+     * day's target and not minutes spent with a book.
+     */
+    suspend fun creditAnsweredCard() {
+        val seconds = repository.settings.first().cardCreditSeconds
+        if (seconds <= 0L) return
+        mutex.withLock { repository.addReadToday(seconds, LockDay.of(System.currentTimeMillis())) }
+    }
 
     /**
      * Turns the stored switch off once its cooling-off has elapsed.

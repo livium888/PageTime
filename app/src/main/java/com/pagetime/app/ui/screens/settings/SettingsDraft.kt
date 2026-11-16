@@ -27,6 +27,12 @@ data class SettingsDraft(
     val suggestCards: Boolean,
     val suggestEveryWords: Int,
     val slipBoxHelp: Boolean,
+    /** Use of blocked apps after the day's reading, in seconds; 0 = until the day resets. */
+    val appAllowanceSeconds: Long = 0,
+    /** The hour (0-23) the lock's day starts at. */
+    val resetHour: Int = 4,
+    /** Seconds of reading an answered flashcard counts as; 0 = none. */
+    val cardCreditSeconds: Long = 15,
 ) {
     /** One line of the confirmation: a setting, what it was, what it will be. */
     data class Change(
@@ -54,6 +60,13 @@ data class SettingsDraft(
             }
         }
 
+        /** "Until the day resets" for no limit, otherwise the time allowed. */
+        fun allowance(seconds: Long) = if (seconds <= 0L) "Until the day resets" else minutes(seconds)
+
+        fun hour(hour: Int) = com.pagetime.app.domain.LockDay.resetLabel(hour)
+
+        fun cardCredit(seconds: Long) = if (seconds <= 0L) "Nothing" else "$seconds sec of reading"
+
         fun rate(value: Double) = "×" + "%.1f".format(java.util.Locale.US, value)
 
         fun words(n: Int) = "Every " + "%,d".format(java.util.Locale.US, n) + " words"
@@ -75,6 +88,25 @@ data class SettingsDraft(
             }
             if (saved.targetSeconds != draft.targetSeconds) {
                 add(Change(DAILY_TARGET, minutes(saved.targetSeconds), minutes(draft.targetSeconds)))
+            }
+            if (saved.appAllowanceSeconds != draft.appAllowanceSeconds) {
+                add(
+                    Change(
+                        "After the target, apps open for",
+                        allowance(saved.appAllowanceSeconds), allowance(draft.appAllowanceSeconds),
+                        if (draft.appAllowanceSeconds > 0L) {
+                            "Once that time is used, blocked apps close again until the day resets at ${hour(draft.resetHour)}."
+                        } else null,
+                    )
+                )
+            }
+            if (saved.resetHour != draft.resetHour) {
+                add(
+                    Change(
+                        "Day resets at", hour(saved.resetHour), hour(draft.resetHour),
+                        "Reading and app time start again from zero at that hour each day.",
+                    )
+                )
             }
             if (saved.otherAppsCount != draft.otherAppsCount) {
                 add(
@@ -99,6 +131,14 @@ data class SettingsDraft(
             }
             if (saved.reviewReminders != draft.reviewReminders) {
                 add(Change("Review reminders", onOff(saved.reviewReminders), onOff(draft.reviewReminders)))
+            }
+            if (saved.cardCreditSeconds != draft.cardCreditSeconds) {
+                add(
+                    Change(
+                        "Each card answered counts as",
+                        cardCredit(saved.cardCreditSeconds), cardCredit(draft.cardCreditSeconds),
+                    )
+                )
             }
             if (saved.cardDensity != draft.cardDensity) {
                 add(Change("How many cards", saved.cardDensity.label, draft.cardDensity.label))

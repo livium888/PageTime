@@ -66,6 +66,29 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val gate = container.balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
 
+    /** What happens after the target, when the day resets, and what a card is worth. */
+    val appAllowanceSeconds = container.settingsRepository.settings.map { it.appAllowanceSeconds }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+    val lockResetHour = container.settingsRepository.settings.map { it.lockResetHour }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.domain.LockDay.RESET_HOUR)
+    val cardCreditSeconds = container.settingsRepository.settings.map { it.cardCreditSeconds }
+        .stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            com.pagetime.app.data.local.DEFAULT_CARD_CREDIT_SECONDS,
+        )
+
+    fun setAppAllowanceSeconds(seconds: Long) {
+        viewModelScope.launch { container.balanceManager.setAppAllowanceSeconds(seconds) }
+    }
+
+    fun setLockResetHour(hour: Int) {
+        viewModelScope.launch { container.balanceManager.setLockResetHour(hour) }
+    }
+
+    fun setCardCreditSeconds(seconds: Long) {
+        viewModelScope.launch { container.settingsRepository.setCardCreditSeconds(seconds) }
+    }
+
     /** "6 allowed" or "3 blocked": what the Apps row says without being opened. */
     val appsSummary = combine(
         container.settingsRepository.settings,

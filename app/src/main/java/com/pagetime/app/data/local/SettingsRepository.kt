@@ -99,6 +99,15 @@ data class Settings(
     val readTodaySeconds: Long = 0,
     /** The lock day ([com.pagetime.app.domain.LockDay.of]) [readTodaySeconds] belongs to. */
     val readTodayLockDay: Long = 0,
+    /** Use of blocked apps allowed after the day's reading, in seconds; 0 = until the day resets. */
+    val appAllowanceSeconds: Long = 0,
+    /** Seconds of that allowance used on [usedTodayLockDay]. */
+    val usedTodaySeconds: Long = 0,
+    val usedTodayLockDay: Long = 0,
+    /** The hour (0-23) the lock's day starts at. */
+    val lockResetHour: Int = com.pagetime.app.domain.LockDay.RESET_HOUR,
+    /** Seconds of reading each answered flashcard counts as toward the day's target; 0 = none. */
+    val cardCreditSeconds: Long = DEFAULT_CARD_CREDIT_SECONDS,
     /** Which direction app rules work in — see [AppMode]. */
     val appMode: AppMode = AppMode.BLOCKLIST,
     /** Apps allowed in [AppMode.ALLOWLIST], at most [AppAllowlist.MAX_APPS]. */
@@ -110,6 +119,16 @@ data class Settings(
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
+/**
+ * What answering one flashcard counts as, toward the day's reading, unless the
+ * reader sets another figure. About the time a card takes to answer with
+ * thought, so reviewing is credited as the time it is and not as a bonus.
+ */
+const val DEFAULT_CARD_CREDIT_SECONDS = 15L
+
+/** A minute a card: past this, answering cards would outpace reading. */
+const val MAX_CARD_CREDIT_SECONDS = 60L
+
 /** Line spacing of a printed book: close enough to read as a block, open enough not to crowd. */
 const val DEFAULT_LINE_HEIGHT = 1.35f
 
@@ -276,6 +295,11 @@ class SettingsRepository(private val context: Context) {
         val DAILY_TARGET = longPreferencesKey("reading_lock_daily_target_seconds")
         val READ_TODAY = longPreferencesKey("reading_lock_read_today_seconds")
         val READ_TODAY_DAY = longPreferencesKey("reading_lock_read_today_day")
+        val APP_ALLOWANCE = longPreferencesKey("reading_lock_app_allowance_seconds")
+        val USED_TODAY = longPreferencesKey("reading_lock_used_today_seconds")
+        val USED_TODAY_DAY = longPreferencesKey("reading_lock_used_today_day")
+        val LOCK_RESET_HOUR = intPreferencesKey("reading_lock_reset_hour")
+        val CARD_CREDIT = longPreferencesKey("card_review_credit_seconds")
         val APP_MODE = stringPreferencesKey("app_mode")
         val ALLOWED_APPS = stringSetPreferencesKey("allowed_apps")
         val APP_ALLOWLIST_SETUP_GRACE_UNTIL = longPreferencesKey("app_allowlist_setup_grace_until")
@@ -678,6 +702,11 @@ class SettingsRepository(private val context: Context) {
             dailyTargetSeconds = p[Keys.DAILY_TARGET] ?: GateState.DEFAULT_DAILY_TARGET_SECONDS,
             readTodaySeconds = p[Keys.READ_TODAY] ?: 0L,
             readTodayLockDay = p[Keys.READ_TODAY_DAY] ?: 0L,
+            appAllowanceSeconds = (p[Keys.APP_ALLOWANCE] ?: 0L).coerceIn(0L, GateState.MAX_ALLOWANCE_SECONDS),
+            usedTodaySeconds = p[Keys.USED_TODAY] ?: 0L,
+            usedTodayLockDay = p[Keys.USED_TODAY_DAY] ?: 0L,
+            lockResetHour = (p[Keys.LOCK_RESET_HOUR] ?: com.pagetime.app.domain.LockDay.RESET_HOUR).coerceIn(0, 23),
+            cardCreditSeconds = (p[Keys.CARD_CREDIT] ?: DEFAULT_CARD_CREDIT_SECONDS).coerceIn(0L, MAX_CARD_CREDIT_SECONDS),
             appMode = AppMode.fromKey(p[Keys.APP_MODE]),
             allowedApps = p[Keys.ALLOWED_APPS] ?: emptySet(),
             appAllowlistSetupGraceUntil = p[Keys.APP_ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
@@ -1119,6 +1148,36 @@ class SettingsRepository(private val context: Context) {
             p[Keys.READ_TODAY_DAY] = lockDay
             p[Keys.READ_TODAY] = current + delta
         }
+    }
+
+    /**
+     * Counts [delta] seconds of app use against today's allowance and returns
+     * the day's total. Same shape as [addReadToday]: another day's tally is
+     * replaced, which is the reset.
+     */
+    suspend fun addUsedToday(delta: Long, lockDay: Long): Long {
+        var total = 0L
+        context.dataStore.edit { p ->
+            val storedDay = p[Keys.USED_TODAY_DAY] ?: Long.MIN_VALUE
+            val current = if (storedDay == lockDay) (p[Keys.USED_TODAY] ?: 0L).coerceAtLeast(0L) else 0L
+            total = current + delta.coerceAtLeast(0L)
+            p[Keys.USED_TODAY_DAY] = lockDay
+            p[Keys.USED_TODAY] = total
+        }
+        return total
+    }
+
+    /** Unfenced, like the target; the fence is in the balance manager. */
+    suspend fun setAppAllowanceSeconds(seconds: Long) {
+        context.dataStore.edit { it[Keys.APP_ALLOWANCE] = seconds.coerceIn(0L, GateState.MAX_ALLOWANCE_SECONDS) }
+    }
+
+    suspend fun setLockResetHour(hour: Int) {
+        context.dataStore.edit { it[Keys.LOCK_RESET_HOUR] = hour.coerceIn(0, 23) }
+    }
+
+    suspend fun setCardCreditSeconds(seconds: Long) {
+        context.dataStore.edit { it[Keys.CARD_CREDIT] = seconds.coerceIn(0L, MAX_CARD_CREDIT_SECONDS) }
     }
 
     /**

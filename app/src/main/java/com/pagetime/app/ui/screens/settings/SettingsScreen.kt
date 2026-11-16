@@ -142,6 +142,9 @@ fun SettingsScreen(
     val suggestCards by viewModel.cardNudgeEnabled.collectAsStateWithLifecycle()
     val suggestEvery by viewModel.cardNudgeEvery.collectAsStateWithLifecycle()
     val appsSummary by viewModel.appsSummary.collectAsStateWithLifecycle()
+    val appAllowance by viewModel.appAllowanceSeconds.collectAsStateWithLifecycle()
+    val resetHour by viewModel.lockResetHour.collectAsStateWithLifecycle()
+    val cardCredit by viewModel.cardCreditSeconds.collectAsStateWithLifecycle()
     val sitesSummary by viewModel.sitesSummary.collectAsStateWithLifecycle()
     val permissionsSummary = if (hasUsageAccessPermission(settingsContext) &&
         isAccessibilityServiceEnabled(settingsContext)
@@ -165,6 +168,9 @@ fun SettingsScreen(
         suggestCards = suggestCards,
         suggestEveryWords = suggestEvery,
         slipBoxHelp = helpEnabled,
+        appAllowanceSeconds = appAllowance,
+        resetHour = resetHour,
+        cardCreditSeconds = cardCredit,
     )
     var draft by remember { mutableStateOf<SettingsDraft?>(null) }
     val shown = draft ?: saved
@@ -185,6 +191,9 @@ fun SettingsScreen(
 
     fun applyChanges(from: SettingsDraft, to: SettingsDraft) {
         if (from.targetSeconds != to.targetSeconds) viewModel.setDailyTargetSeconds(to.targetSeconds)
+        if (from.appAllowanceSeconds != to.appAllowanceSeconds) viewModel.setAppAllowanceSeconds(to.appAllowanceSeconds)
+        if (from.resetHour != to.resetHour) viewModel.setLockResetHour(to.resetHour)
+        if (from.cardCreditSeconds != to.cardCreditSeconds) viewModel.setCardCreditSeconds(to.cardCreditSeconds)
         if (from.otherAppsCount != to.otherAppsCount) viewModel.setExternalReadingEnabled(to.otherAppsCount)
         if (from.otherAppsCapSeconds != to.otherAppsCapSeconds) viewModel.setExternalReadingDailyCap(to.otherAppsCapSeconds)
         if (from.readingRate != to.readingRate) viewModel.setRatio(to.readingRate)
@@ -254,7 +263,8 @@ fun SettingsScreen(
     when (editing) {
         SettingsDraft.DAILY_TARGET -> NumberDialog(
             title = "Daily reading target",
-            help = "Minutes of reading each day, counted from 4am, before the rest of your phone opens." +
+            help = "Minutes of reading each day, counted from ${SettingsDraft.hour(saved.resetHour)}, " +
+                "before the rest of your phone opens." +
                 if (gate.canLoosenTheRules) "" else " Lowering it waits until today's reading is done.",
             unit = "minutes",
             initial = shown.targetSeconds / 60.0,
@@ -284,6 +294,41 @@ fun SettingsScreen(
             max = MAX_READING_RATE,
             decimal = true,
             onSet = { v -> edit { it.copy(readingRate = v) } },
+            onDismiss = { editing = null },
+        )
+        "allowance" -> ChoiceDialog(
+            title = "After the target, apps open for",
+            options = listOf(0L, 30L, 60L, 120L, 240L).map { m ->
+                Triple(
+                    (m * 60).toString(),
+                    SettingsDraft.allowance(m * 60),
+                    if (m == 0L) "No limit once the day's reading is done"
+                    else "Of use in blocked apps and sites, then they close until the reset",
+                )
+            },
+            selected = shown.appAllowanceSeconds.toString(),
+            onPick = { key -> edit { it.copy(appAllowanceSeconds = key.toLongOrNull() ?: it.appAllowanceSeconds) } },
+            onDismiss = { editing = null },
+        )
+        "reset" -> ChoiceDialog(
+            title = "Day resets at",
+            options = listOf(0, 2, 4, 6, 12, 18).map { h ->
+                Triple(h.toString(), SettingsDraft.hour(h), "Reading and app time start again from zero")
+            },
+            selected = shown.resetHour.toString(),
+            onPick = { key -> edit { it.copy(resetHour = key.toIntOrNull() ?: it.resetHour) } },
+            onDismiss = { editing = null },
+        )
+        "card" -> NumberDialog(
+            title = "Each card answered counts as",
+            help = "Seconds of reading credited toward today's target for every flashcard you answer in Recall. " +
+                "Zero means cards do not count.",
+            unit = "seconds",
+            initial = shown.cardCreditSeconds.toDouble(),
+            min = 0.0,
+            max = com.pagetime.app.data.local.MAX_CARD_CREDIT_SECONDS.toDouble(),
+            decimal = false,
+            onSet = { v -> edit { it.copy(cardCreditSeconds = v.roundToLong()) } },
             onDismiss = { editing = null },
         )
         "density" -> ChoiceDialog(
@@ -380,6 +425,28 @@ fun SettingsScreen(
                     was = SettingsDraft.minutes(saved.targetSeconds).takeIf { saved.targetSeconds != shown.targetSeconds },
                     onClick = { editing = SettingsDraft.DAILY_TARGET },
                 )
+                // Loosening either of these waits for today's reading, like
+                // the target; the row says so instead of opening an editor
+                // whose answer would be refused.
+                SettingsLine(
+                    label = "After the target",
+                    value = SettingsDraft.allowance(shown.appAllowanceSeconds),
+                    sub = when {
+                        gate.metered && gate.targetMet -> "${SettingsDraft.minutes(gate.allowanceLeft)} left today"
+                        !gate.canLoosenTheRules -> "More time can be set once today's reading is done"
+                        else -> null
+                    },
+                    was = SettingsDraft.allowance(saved.appAllowanceSeconds)
+                        .takeIf { saved.appAllowanceSeconds != shown.appAllowanceSeconds },
+                    onClick = { editing = "allowance" },
+                )
+                SettingsLine(
+                    label = "Day resets at",
+                    value = SettingsDraft.hour(shown.resetHour),
+                    sub = if (gate.canLoosenTheRules) null else "Can be changed once today's reading is done",
+                    was = SettingsDraft.hour(saved.resetHour).takeIf { saved.resetHour != shown.resetHour },
+                    onClick = if (gate.canLoosenTheRules) ({ editing = "reset" }) else null,
+                )
                 if (!gate.enabled) {
                     SettingsLine(
                         label = "Browsing earned per minute read",
@@ -427,6 +494,13 @@ fun SettingsScreen(
                     was = SettingsDraft.onOff(saved.reviewReminders).takeIf { saved.reviewReminders != shown.reviewReminders },
                     checked = shown.reviewReminders,
                     onToggle = { on -> edit { it.copy(reviewReminders = on) } },
+                )
+                SettingsLine(
+                    label = "Each card answered counts as",
+                    value = SettingsDraft.cardCredit(shown.cardCreditSeconds),
+                    was = SettingsDraft.cardCredit(saved.cardCreditSeconds)
+                        .takeIf { saved.cardCreditSeconds != shown.cardCreditSeconds },
+                    onClick = { editing = "card" },
                 )
                 SettingsLine(
                     label = "How many cards",

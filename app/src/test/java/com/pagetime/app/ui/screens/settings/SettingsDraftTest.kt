@@ -78,4 +78,32 @@ class SettingsDraftTest {
         assertEquals("0 min", SettingsDraft.minutes(0))
         assertEquals("×1.5", SettingsDraft.rate(1.5))
     }
+
+    @Test
+    fun `what happens after the target is spelled out`() {
+        val limited = SettingsDraft.changes(saved, saved.copy(appAllowanceSeconds = 45 * 60)).single()
+        assertEquals("Until the day resets", limited.from)
+        assertEquals("45 min", limited.to)
+        assertTrue(limited.consequence!!.contains("4am"))
+
+        val unlimited = SettingsDraft.changes(saved.copy(appAllowanceSeconds = 3_600), saved).single()
+        assertEquals("1 hr", unlimited.from)
+        assertEquals("Until the day resets", unlimited.to)
+        assertNull(unlimited.consequence)
+    }
+
+    @Test
+    fun `the reset hour and the card credit read as a person says them`() {
+        val lines = SettingsDraft.changes(saved, saved.copy(resetHour = 0, cardCreditSeconds = 0))
+            .map { "${it.setting}: ${it.from} → ${it.to}" }
+        assertEquals(
+            listOf(
+                "Day resets at: 4am → midnight",
+                "Each card answered counts as: 15 sec of reading → Nothing",
+            ),
+            lines,
+        )
+        assertEquals("6pm", SettingsDraft.hour(18))
+        assertEquals("noon", SettingsDraft.hour(12))
+    }
 }

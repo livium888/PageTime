@@ -365,6 +365,9 @@ class ReviewSessionViewModel(
         // reader's close-chunk flow, which is where the passage is fresh.
         if (current.isChunk) return
         val before = _state.value
+        // Answering a card counts as a little reading toward today's target;
+        // how much is the reader's setting, and zero turns it off.
+        container.scope.launch { runCatching { container.balanceManager.creditAnsweredCard() } }
         viewModelScope.launch {
             // The reader came back. The backoff ladder is about being ignored,
             // not about elapsed time, so answering anything resets it — and a

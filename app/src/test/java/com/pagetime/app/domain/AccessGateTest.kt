@@ -192,4 +192,44 @@ class AccessGateTest {
     fun `a target in the middle always has travel`() {
         assertTrue(GateState.hasTravel(GateState.targetBounds(TARGET, canLoosen = false)))
     }
+
+    // --- A limit on use after the reading is done ---
+
+    @Test
+    fun `with no limit set the phone stays open however long it is used`() {
+        val g = gate(read = TARGET).copy(allowanceSeconds = 0, usedTodaySeconds = 99_999)
+        assertFalse(g.metered)
+        assertTrue(g.open)
+    }
+
+    @Test
+    fun `a limit opens the phone for that long and then closes it again`() {
+        val limited = gate(read = TARGET).copy(allowanceSeconds = 1_800)
+        assertTrue(limited.copy(usedTodaySeconds = 0).open)
+        assertEquals(600L, limited.copy(usedTodaySeconds = 1_200).allowanceLeft)
+        assertTrue(limited.copy(usedTodaySeconds = 1_799).open)
+
+        val spent = limited.copy(usedTodaySeconds = 1_800)
+        assertTrue(spent.allowanceSpent)
+        assertFalse(spent.open)
+        assertFalse(spent.coversSites)
+        // The reading is still done, so the rules can still be eased.
+        assertTrue(spent.canLoosenTheRules)
+    }
+
+    @Test
+    fun `a limit means nothing until the reading is done or while the lock is off`() {
+        assertFalse(gate(read = 0).copy(allowanceSeconds = 1_800).open)
+        assertFalse(gate(read = 0).copy(allowanceSeconds = 1_800).allowanceSpent)
+        assertTrue(gate(switchedOn = false).copy(allowanceSeconds = 1_800, usedTodaySeconds = 5_000).open)
+    }
+
+    @Test
+    fun `more time after reading is the easy direction, and no limit is the most`() {
+        assertTrue(GateState.loosensAllowance(currentSeconds = 1_800, proposedSeconds = 3_600))
+        assertTrue(GateState.loosensAllowance(currentSeconds = 1_800, proposedSeconds = 0))
+        assertFalse(GateState.loosensAllowance(currentSeconds = 3_600, proposedSeconds = 1_800))
+        assertFalse(GateState.loosensAllowance(currentSeconds = 0, proposedSeconds = 1_800))
+        assertFalse(GateState.loosensAllowance(currentSeconds = 0, proposedSeconds = 0))
+    }
 }

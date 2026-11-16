@@ -51,7 +51,27 @@ data class GateState(
     val disableAtMillis: Long,
     val nowMillis: Long,
     val dailyTargetSeconds: Long = DEFAULT_DAILY_TARGET_SECONDS,
+    /**
+     * How long blocked apps and sites may be used after today's reading is
+     * done, in seconds. Zero means no limit: open until the day resets.
+     */
+    val allowanceSeconds: Long = 0,
+    /** Seconds of that allowance used so far today. */
+    val usedTodaySeconds: Long = 0,
 ) {
+
+    /** There is a limit on use after reading, rather than an open day. */
+    val metered: Boolean
+        get() = allowanceSeconds > 0L
+
+    /** What is left of today's allowance; meaningless unless [metered]. */
+    val allowanceLeft: Long
+        get() = (allowanceSeconds - usedTodaySeconds.coerceAtLeast(0L)).coerceAtLeast(0L)
+
+    /** Today's reading is done and the time it bought has been used up. */
+    val allowanceSpent: Boolean
+        get() = metered && targetMet && allowanceLeft <= 0L
+
 
     /**
      * Whether the lock is really in force.
@@ -88,7 +108,7 @@ data class GateState(
 
     /** Whether blocked apps may be opened right now. */
     val open: Boolean
-        get() = !enabled || targetMet
+        get() = !enabled || (targetMet && !allowanceSpent)
 
     /**
      * Whether today's reading also opens blocked sites.
@@ -99,7 +119,7 @@ data class GateState(
      * only ever work for someone who had also opted into the lock.
      */
     val coversSites: Boolean
-        get() = enabled && targetMet
+        get() = enabled && targetMet && !allowanceSpent
 
     /** Still to read today before the phone opens. */
     val secondsToUnlock: Long
@@ -160,6 +180,20 @@ data class GateState(
 
         /** How long turning the lock off takes to take effect. */
         const val COOLING_OFF_MILLIS = 24L * 60 * 60 * 1000
+
+        /** The most use after reading that can be set as a limit: eight hours. */
+        const val MAX_ALLOWANCE_SECONDS = 8L * 60 * 60
+
+        /**
+         * More time after reading is the easy direction, and so is no limit at
+         * all (zero), which is more than any number.
+         */
+        fun loosensAllowance(currentSeconds: Long, proposedSeconds: Long): Boolean = when {
+            currentSeconds == proposedSeconds -> false
+            proposedSeconds == 0L -> true
+            currentSeconds == 0L -> false
+            else -> proposedSeconds > currentSeconds
+        }
 
         /** A lower target is the easy direction. */
         fun loosensTarget(currentSeconds: Long, proposedSeconds: Long): Boolean =

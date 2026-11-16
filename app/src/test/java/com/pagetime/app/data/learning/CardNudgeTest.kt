@@ -45,26 +45,18 @@ class CardNudgeTest {
     }
 
     @Test
-    fun `an owed suggestion waits for a break but not for ever`() {
-        assertTrue(CardNudge.showNow(atBreak = true, turnsWaited = 0))
-        assertFalse(CardNudge.showNow(atBreak = false, turnsWaited = CardNudge.BREAK_PATIENCE - 1))
-        assertTrue(CardNudge.showNow(atBreak = false, turnsWaited = CardNudge.BREAK_PATIENCE))
+    fun `an owed suggestion waits for a chapter or section to begin, however long that takes`() {
+        assertTrue(CardNudge.showNow(atBreak = true))
+        assertFalse(CardNudge.showNow(atBreak = false))
     }
 
     @Test
-    fun `a page that opens a paragraph or holds a heading is a break`() {
-        val text = "First paragraph runs on here.\n\nSecond paragraph starts here and continues for a while."
-        val second = text.indexOf("Second")
-        assertTrue(CardNudge.pageStartsAtBreak(text, 0, 10, emptyList()))
-        assertTrue(CardNudge.pageStartsAtBreak(text, second, text.length, emptyList()))
-        // The page boundary may sit on the blank line itself.
-        assertTrue(CardNudge.pageStartsAtBreak(text, second - 2, text.length, emptyList()))
-        // Mid-paragraph is not a break.
-        val mid = text.indexOf("continues")
-        assertFalse(CardNudge.pageStartsAtBreak(text, mid, text.length, emptyList()))
-        // Unless a heading falls on the page.
-        assertTrue(CardNudge.pageStartsAtBreak(text, mid, text.length, listOf(mid + 3)))
-        assertFalse(CardNudge.pageStartsAtBreak(text, mid, text.length, listOf(2)))
+    fun `only the start of the text or a page with a heading begins a section`() {
+        assertTrue(CardNudge.pageStartsAtBreak(0, 10, emptyList()))
+        assertTrue(CardNudge.pageStartsAtBreak(400, 900, listOf(650)))
+        // A new paragraph is not a section, and a heading on another page does not count.
+        assertFalse(CardNudge.pageStartsAtBreak(400, 900, emptyList()))
+        assertFalse(CardNudge.pageStartsAtBreak(400, 900, listOf(2, 900)))
     }
 
     @Test

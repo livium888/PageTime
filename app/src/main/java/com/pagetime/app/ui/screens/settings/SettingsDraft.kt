@@ -33,6 +33,10 @@ data class SettingsDraft(
     val resetHour: Int = 4,
     /** Seconds of reading an answered flashcard counts as; 0 = none. */
     val cardCreditSeconds: Long = 15,
+    /** Opening the app goes straight to the book being read. */
+    val openOnBook: Boolean = true,
+    /** The reader shows what is left to the day's target beside the clock. */
+    val showCountdown: Boolean = true,
 ) {
     /** One line of the confirmation: a setting, what it was, what it will be. */
     data class Change(
@@ -128,6 +132,17 @@ data class SettingsDraft(
             }
             if (saved.readingRate != draft.readingRate) {
                 add(Change("Browsing earned per minute read", rate(saved.readingRate), rate(draft.readingRate)))
+            }
+            if (saved.openOnBook != draft.openOnBook) {
+                add(Change("Open the app on my book", onOff(saved.openOnBook), onOff(draft.openOnBook)))
+            }
+            if (saved.showCountdown != draft.showCountdown) {
+                add(
+                    Change(
+                        "Show time left to the target while reading",
+                        onOff(saved.showCountdown), onOff(draft.showCountdown),
+                    )
+                )
             }
             if (saved.reviewReminders != draft.reviewReminders) {
                 add(Change("Review reminders", onOff(saved.reviewReminders), onOff(draft.reviewReminders)))

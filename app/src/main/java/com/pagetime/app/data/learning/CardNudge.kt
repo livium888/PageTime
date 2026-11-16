@@ -9,9 +9,8 @@ package com.pagetime.app.data.learning
  * owed. They do not decide the moment. Making cards means leaving the book for
  * a minute or two, and an offer of that in the middle of a sentence is one the
  * reader learns to dismiss without reading; the same offer between two thoughts
- * costs nothing. So once enough has been read the suggestion waits for a page
- * that starts on a heading or a new paragraph, or a new chapter, and only if
- * none comes within a few pages does it stop waiting.
+ * costs nothing. So once enough has been read the suggestion waits for the
+ * next chapter or heading, and never appears in the middle of one.
  *
  * It is a bar at the foot of the page and not a dialog. Reading on is an
  * answer: the bar leaves by itself and that counts as "later".
@@ -33,8 +32,13 @@ object CardNudge {
     /** What the reader can choose between in Settings. */
     val EVERY_CHOICES = listOf(1_000, 1_500, 2_500)
 
-    /** Page turns a suggestion waits for a natural break before appearing anyway. */
-    const val BREAK_PATIENCE = 3
+    /**
+     * Once a suggestion waited three page turns for a break and then appeared
+     * anyway, mid-chapter. It no longer does: a page that is interrupted now
+     * and then is a page the reader half-watches for interruptions. The
+     * suggestion waits for the chapter to end, however long that is, and if
+     * the book is closed first it is asked on the way out.
+     */
 
     /** Page turns the bar stays through before reading on is taken as "later". */
     const val LINGER_TURNS = 2
@@ -76,32 +80,16 @@ object CardNudge {
         long = words >= ReadingSpan.WARN_WORDS,
     )
 
-    /** Whether an owed suggestion appears on this page. */
-    fun showNow(atBreak: Boolean, turnsWaited: Int): Boolean = atBreak || turnsWaited >= BREAK_PATIENCE
+    /** Whether an owed suggestion appears on this page: only where a chapter or section begins. */
+    fun showNow(atBreak: Boolean): Boolean = atBreak
 
     /**
-     * Whether a page of a text book starts between two thoughts: at the very
-     * start, on a heading, or on the first line of a paragraph.
+     * Whether a page of a text book begins a section: the very start, or a
+     * page with a heading on it. A text with no headings has no such page, and
+     * its suggestion is made when the book is closed.
      */
-    fun pageStartsAtBreak(text: String, pageStart: Int, pageEnd: Int, headingStarts: List<Int>): Boolean {
-        if (pageStart <= 0) return true
-        if (headingStarts.any { it in pageStart until pageEnd.coerceAtLeast(pageStart + 1) }) return true
-        // Back over whatever whitespace sits between the last page and this one:
-        // a blank line in it means the last page ended with its paragraph.
-        var i = pageStart.coerceAtMost(text.length) - 1
-        var newlines = 0
-        while (i >= 0 && text[i].isWhitespace()) {
-            if (text[i] == '\n') newlines++
-            i--
-        }
-        // The page itself may open with the blank line.
-        var j = pageStart
-        while (j < text.length && text[j].isWhitespace()) {
-            if (text[j] == '\n') newlines++
-            j++
-        }
-        return newlines >= 2
-    }
+    fun pageStartsAtBreak(pageStart: Int, pageEnd: Int, headingStarts: List<Int>): Boolean =
+        pageStart <= 0 || headingStarts.any { it in pageStart until pageEnd.coerceAtLeast(pageStart + 1) }
 
     /** Whether an EPUB page starts between two thoughts: a new chapter, or its first page. */
     fun chapterBreak(previousChapter: Int?, chapter: Int, fraction: Float): Boolean =

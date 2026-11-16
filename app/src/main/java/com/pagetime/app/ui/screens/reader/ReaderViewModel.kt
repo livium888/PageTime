@@ -104,6 +104,48 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         startingBudgetSeconds = 86_400f,
     )
 
+    val showCountdown = settingsRepository.readerShowCountdown
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /** Reading time from this page to the end of its chapter or section; null when unknown or far. */
+    private val _chapterMinutesLeft = MutableStateFlow<Int?>(null)
+    val chapterMinutesLeft = _chapterMinutesLeft.asStateFlow()
+
+    /** Words in each EPUB chapter, counted once when the reader first enters it. */
+    private val chapterWords = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+
+    private fun updateChapterEndForEpub(index: Int, fraction: Float) {
+        val known = chapterWords[index]
+        if (known != null) {
+            _chapterMinutesLeft.value = ReadingToday.minutesFor((known * (1f - fraction)).toInt())
+            return
+        }
+        _chapterMinutesLeft.value = null
+        val b = _book.value ?: return
+        viewModelScope.launch {
+            val words = runCatching {
+                com.pagetime.app.data.BookWordCount.count(container.learningContextExtractor.chapterText(b, index))
+            }.getOrDefault(0)
+            if (words > 0) {
+                chapterWords[index] = words
+                _chapterMinutesLeft.value = ReadingToday.minutesFor((words * (1f - fraction)).toInt())
+            }
+        }
+    }
+
+    /** For a text book the section ends at the next heading, or the end of the text. */
+    private fun updateChapterEndForText(shown: TextBook, pageStart: Int) {
+        val end = shown.spans
+            .filter { it.kind == com.pagetime.app.data.library.MarkdownText.Kind.HEADING && it.start > pageStart }
+            .minOfOrNull { it.start } ?: shown.text.length
+        // Further than this is over a quarter of an hour away and is not shown
+        // anyway, so a long text with no headings is not counted on every page.
+        val from = pageStart.coerceIn(0, shown.text.length)
+        _chapterMinutesLeft.value = if (end - from > 30_000) null else {
+            ReadingToday.minutesFor(ReadingSpan.words(shown.text.substring(from, end.coerceAtLeast(from))))
+        }
+    }
+
     /** Today's reading against the day's target, for the head of the page. */
     val gate = balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pagetime.app.domain.GateState.Unknown)
@@ -543,9 +585,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         updateScrollProgress(fraction)
         if (pageCount > 1 && pageIndex == pageCount - 1) offerNextBooks()
         _bookText.value?.let { shown ->
+            updateChapterEndForText(shown, pageStartOffset)
             onPageTurnedForCardOffer(
                 atBreak = CardNudge.pageStartsAtBreak(
-                    text = shown.text,
                     pageStart = pageStartOffset,
                     pageEnd = pageEndOffset,
                     headingStarts = shown.spans
@@ -1284,7 +1326,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
         val owed = _cardOfferOwed.value
         if (owed != null) {
-            if (CardNudge.showNow(atBreak, nudgeTurnsWaited)) {
+            if (CardNudge.showNow(atBreak)) {
                 nudgeTurnsShown = 0
                 nudgeTurnsWaited = 0
                 _cardOfferOwed.value = null
@@ -1640,6 +1682,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
         if (index != null) onChapterPosition(index, fraction)
         if (index != null) {
+            updateChapterEndForEpub(index, fraction)
             onPageTurnedForCardOffer(atBreak = CardNudge.chapterBreak(nudgeLastChapter, index, fraction))
             nudgeLastChapter = index
         }

@@ -44,16 +44,40 @@ object ReadingTimeLeft {
  */
 object ReadingToday {
 
-    fun label(readSeconds: Long, targetSeconds: Long, lockOn: Boolean, notCounting: String? = null): String {
+    /** A chapter end further off than this is not "nearly there" and is not mentioned. */
+    const val NEARLY_THERE_MINUTES = 15
+
+    /**
+     * @param showCountdown Whether what is left to the target is shown. Off, the
+     *   line says only what has been read: a countdown keeps the eye on the exit.
+     * @param chapterMinutesLeft Reading time to the end of the chapter, if known.
+     *   Once the target is met this takes the place of "done". The target is an
+     *   arbitrary minute to stop at and the end of a chapter is not, so the line
+     *   points at the chapter end when it is close.
+     */
+    fun label(
+        readSeconds: Long,
+        targetSeconds: Long,
+        lockOn: Boolean,
+        notCounting: String? = null,
+        showCountdown: Boolean = true,
+        chapterMinutesLeft: Int? = null,
+    ): String {
         val read = (readSeconds.coerceAtLeast(0L) / 60).toInt()
         val target = (targetSeconds / 60).toInt()
+        val met = !lockOn || target <= 0 || read >= target
         val base = when {
-            !lockOn || target <= 0 -> "$read min read today"
-            read >= target -> "$read of $target min · done"
-            else -> "$read of $target min · ${target - read} left"
+            !met && showCountdown -> "$read of $target min · ${target - read} left"
+            met && chapterMinutesLeft != null && chapterMinutesLeft in 1..NEARLY_THERE_MINUTES ->
+                "$read min read · $chapterMinutesLeft min to the end of the chapter"
+            else -> "$read min read today"
         }
         return if (notCounting != null) "$base · $notCounting" else base
     }
+
+    /** Minutes to read [words] at an ordinary pace, rounded up; null for none. */
+    fun minutesFor(words: Int): Int? =
+        if (words <= 0) null else kotlin.math.ceil(words / ReadingTimeLeft.WORDS_PER_MINUTE.toDouble()).toInt()
 
     /** Why the clock has stopped, in the reader's terms; null while it is running. */
     fun notCounting(idle: Boolean, tooFast: Boolean): String? = when {

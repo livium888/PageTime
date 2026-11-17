@@ -36,10 +36,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /** True while covers are being looked for. */
     val findingCovers = _findingCovers.asStateFlow()
 
-    /** How many books have no cover and could be given one. */
-    val coversMissing = books.map { coverFinder.missing(it).size }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
-
     /** Looks for a cover for every book without one, and says what it found. */
     fun findCovers() {
         if (_findingCovers.value) return
@@ -67,6 +63,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     val books = container.libraryRepository.observeBooks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** How many books have no cover and could be given one. */
+    val coversMissing = books.map { coverFinder.missing(it).size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val balanceSeconds = container.balanceManager.browseBalanceSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)

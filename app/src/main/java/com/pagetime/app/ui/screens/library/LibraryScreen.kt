@@ -598,9 +598,11 @@ private fun YouTubeImportDialog(
 /** A cover, or for a book without one a plain panel carrying its title, so pasted texts are still told apart. */
 @Composable
 private fun BookCover(book: BookEntity, modifier: Modifier = Modifier, titleLines: Int = 4) {
-    if (book.coverUrl != null) {
+    // Video books show the video's picture, including ones added before covers were kept.
+    val cover = com.pagetime.app.data.youtube.VideoOwnership.coverFor(book.id, book.coverUrl)
+    if (cover != null) {
         AsyncImage(
-            model = book.coverUrl,
+            model = cover,
             contentDescription = book.title,
             contentScale = ContentScale.Crop,
             modifier = modifier.clip(RoundedCornerShape(6.dp)),

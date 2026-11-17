@@ -440,7 +440,7 @@ class LibraryRepository(
                 author = result.author,
                 format = "txt",
                 localPath = destination.absolutePath,
-                coverUrl = null,
+                coverUrl = VideoOwnership.thumbnailFor(videoId),
                 addedAt = System.currentTimeMillis()
             ).also { bookDao.upsert(it) }
         }

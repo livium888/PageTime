@@ -31,8 +31,42 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _importError = MutableStateFlow<String?>(null)
     val importError = _importError.asStateFlow()
 
+    private val coverFinder = container.coverFinder
+    private val _findingCovers = MutableStateFlow(false)
+    /** True while covers are being looked for. */
+    val findingCovers = _findingCovers.asStateFlow()
+
+    /** Looks for a cover for every book without one, and says what it found. */
+    fun findCovers() {
+        if (_findingCovers.value) return
+        viewModelScope.launch {
+            _findingCovers.value = true
+            val outcome = runCatching { coverFinder.findAll(books.value) }.getOrNull()
+            _findingCovers.value = false
+            _importError.value = when {
+                outcome == null -> "Could not look for covers. Check your connection."
+                outcome.tried == 0 -> "Every book already has a cover."
+                outcome.found == 0 -> "No covers found for ${outcome.tried} book${if (outcome.tried == 1) "" else "s"}."
+                else -> "Found ${outcome.found} of ${outcome.tried} covers."
+            }
+        }
+    }
+
+    /** Looks again for one book's cover, even if it has one. */
+    fun findCover(book: BookEntity) {
+        viewModelScope.launch {
+            _importError.value = "Looking for a cover…"
+            val cover = runCatching { coverFinder.find(book, replace = true) }.getOrNull()
+            _importError.value = if (cover != null) "Cover updated." else "No better cover found."
+        }
+    }
+
     val books = container.libraryRepository.observeBooks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** How many books have no cover and could be given one. */
+    val coversMissing = books.map { coverFinder.missing(it).size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val balanceSeconds = container.balanceManager.browseBalanceSeconds
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)

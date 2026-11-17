@@ -179,6 +179,14 @@ class AppContainer(context: Context) {
         context = appContext,
     )
 
+    /** Finds covers for books already in the library. */
+    val coverFinder = com.pagetime.app.data.library.CoverFinder(
+        context = appContext,
+        bookDao = bookDao,
+        library = libraryRepository,
+        youtube = youtubeSearchApi,
+    )
+
     /** Curated reading lists, and books the reader wants but has not got. */
     val shelfRepository = com.pagetime.app.data.shelf.ShelfRepository(
         dao = database.shelfBookDao(),

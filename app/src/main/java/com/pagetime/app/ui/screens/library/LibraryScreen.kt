@@ -148,6 +148,8 @@ fun LibraryScreen(
         )
     }
     val importError by viewModel.importError.collectAsStateWithLifecycle()
+    val coversMissing by viewModel.coversMissing.collectAsStateWithLifecycle()
+    val findingCovers by viewModel.findingCovers.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val todayLine = if (gate.enabled) {
         com.pagetime.app.ui.screens.reader.ReadingToday.label(gate.readToday, gate.target, lockOn = true)
@@ -222,6 +224,18 @@ fun LibraryScreen(
                             enabled = !importing,
                             onClick = { moreMenuExpanded = false; launchYouTubeImport() }
                         )
+                        if (coversMissing > 0 || findingCovers) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (findingCovers) "Looking for covers…"
+                                        else "Find covers for $coversMissing book${if (coversMissing == 1) "" else "s"}"
+                                    )
+                                },
+                                enabled = !findingCovers,
+                                onClick = { moreMenuExpanded = false; viewModel.findCovers() }
+                            )
+                        }
                         if (untaggedCount > 0) {
                             DropdownMenuItem(
                                 text = {
@@ -333,6 +347,7 @@ fun LibraryScreen(
                     onCopy = { viewModel.copyTranscript(book) },
                     onShare = { viewModel.shareTranscript(book) },
                     onOpenPdf = { onOpenPdf(book.id) },
+                    onFindCover = { viewModel.findCover(book) },
                 )
             }
             val current = upNextBook
@@ -359,25 +374,26 @@ fun LibraryScreen(
                         modifier = Modifier.padding(horizontal = 4.dp),
                     )
                 }
-                if (shelf.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "YOUR BOOKS · ${shelf.size}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                "Hold a book for more",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                // One shelf for each kind of thing the library holds, each with a
+                // name, a colour and a tile shape of its own. A video transcript
+                // and an EPUB used to be the same tile in the same grid.
+                LibraryShelves.shelves(shelf).forEach { (kind, onShelf) ->
+                    val accent = shelfAccent(kind)
+                    item(key = "shelf-${kind.name}", span = { GridItemSpan(maxLineSpan) }) {
+                        ShelfHeader(kind = kind, count = onShelf.size, accent = accent)
+                    }
+                    if (kind == BookKind.VIDEO) {
+                        // Wide, the shape of the picture itself: two to a row.
+                        items(onShelf, key = { it.id }, span = { GridItemSpan(2) }) { book ->
+                            VideoTile(book = book, accent = accent, onOpen = { open(book) }, actions = actions)
+                        }
+                    } else {
+                        items(onShelf, key = { it.id }) { book ->
+                            BookTile(book = book, accent = accent, onOpen = { open(book) }, actions = actions)
                         }
                     }
-                    items(shelf, key = { it.id }) { book ->
-                        BookTile(book = book, onOpen = { open(book) }, actions = actions)
+                    item(key = "board-${kind.name}", span = { GridItemSpan(maxLineSpan) }) {
+                        ShelfBoard(accent)
                     }
                 }
             }
@@ -678,11 +694,68 @@ private fun CurrentBookCard(
     }
 }
 
-/** One book on the shelf: its cover and how far in. Tap to open, hold for everything else. */
+/** Each kind's colour: on its shelf's name, its board, and the badge on every tile. */
+private fun shelfAccent(kind: BookKind): androidx.compose.ui.graphics.Color = when (kind) {
+    BookKind.BOOK -> androidx.compose.ui.graphics.Color(0xFF6FD6C0)
+    BookKind.PDF -> androidx.compose.ui.graphics.Color(0xFFE5736B)
+    BookKind.VIDEO -> androidx.compose.ui.graphics.Color(0xFFE0A458)
+    BookKind.PASTED -> androidx.compose.ui.graphics.Color(0xFF8FA6FF)
+}
+
+@Composable
+private fun ShelfHeader(kind: BookKind, count: Int, accent: androidx.compose.ui.graphics.Color) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 10.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Text(
+            kind.shelfTitle.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = accent,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${kind.note} · $count",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** The edge of the shelf the covers stand on. */
+@Composable
+private fun ShelfBoard(accent: androidx.compose.ui.graphics.Color) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .background(accent.copy(alpha = 0.35f)),
+    )
+}
+
+/** The few letters that say what a tile is. */
+@Composable
+private fun KindBadge(book: BookEntity, accent: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
+    Text(
+        LibraryShelves.badge(book),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = androidx.compose.ui.graphics.Color(0xFF0B0E14),
+        modifier = modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(accent)
+            .padding(horizontal = 4.dp, vertical = 1.dp),
+    )
+}
+
+/** A video transcript: its picture at its own shape, with the title beneath. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun BookTile(
+private fun VideoTile(
     book: BookEntity,
+    accent: androidx.compose.ui.graphics.Color,
     onOpen: () -> Unit,
     actions: @Composable (BookEntity, Boolean, () -> Unit) -> Unit,
 ) {
@@ -694,7 +767,47 @@ private fun BookTile(
                 .combinedClickable(onClick = onOpen, onLongClick = { menu = true }),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            BookCover(book, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
+            Box {
+                BookCover(book, Modifier.fillMaxWidth().aspectRatio(16f / 9f), titleLines = 3)
+                KindBadge(book, accent, Modifier.align(Alignment.BottomStart).padding(4.dp))
+            }
+            LinearProgressIndicator(
+                progress = { book.scrollProgress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+            Text(
+                book.title,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (menu) actions(book, true) { menu = false }
+    }
+}
+
+/** One book on the shelf: its cover and how far in. Tap to open, hold for everything else. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun BookTile(
+    book: BookEntity,
+    accent: androidx.compose.ui.graphics.Color,
+    onOpen: () -> Unit,
+    actions: @Composable (BookEntity, Boolean, () -> Unit) -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .combinedClickable(onClick = onOpen, onLongClick = { menu = true }),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Box {
+                BookCover(book, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
+                KindBadge(book, accent, Modifier.align(Alignment.BottomStart).padding(3.dp))
+            }
             LinearProgressIndicator(
                 progress = { book.scrollProgress.coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
@@ -722,6 +835,7 @@ private fun BookActionsMenu(
     onCopy: () -> Unit,
     onShare: () -> Unit,
     onOpenPdf: () -> Unit,
+    onFindCover: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         // The title first: a cover on its own does not always say which book it is.
@@ -749,6 +863,12 @@ private fun BookActionsMenu(
         }
         if (book.format == "pdf") {
             DropdownMenuItem(text = { Text("Read the original PDF") }, onClick = { onDismiss(); onOpenPdf() })
+        }
+        if (!book.id.startsWith("paste-")) {
+            DropdownMenuItem(
+                text = { Text(if (book.coverUrl == null) "Find a cover" else "Look for a different cover") },
+                onClick = { onDismiss(); onFindCover() }
+            )
         }
         DropdownMenuItem(text = { Text("Delete book") }, onClick = { onDismiss(); onDelete() })
     }

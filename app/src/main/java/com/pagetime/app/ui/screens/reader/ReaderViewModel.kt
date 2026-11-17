@@ -84,6 +84,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     // it never ran when the user exited the book.
     private val persistenceScope = container.scope
 
+    /** For the few saves made as the app is being left. See [writeBeforeLeaving]. */
+    private val urgentWrites = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + Dispatchers.IO
+    )
+
     // WHAT COUNTS AS READING HERE
     //
     // Time with the book open and pages turning, at a pace a person can read
@@ -178,6 +183,13 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     data class TextBook(
         val text: String,
         val spans: List<com.pagetime.app.data.library.MarkdownText.StyleSpan>,
+        /**
+         * Goes up each time the book's text is replaced (tidied, pasted over).
+         * The reading surface is rebuilt when it changes, because pages laid
+         * out for the old text point at places in it that the new text does
+         * not have.
+         */
+        val version: Int = 0,
     )
 
     private val _bookText = MutableStateFlow<TextBook?>(null)
@@ -409,6 +421,30 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * narrow — the process dying while genuinely foregrounded is not the
      * failure mode anyone reported.
      */
+    /**
+     * Runs a save that should be on disk before the app leaves the screen, and
+     * waits for it, but never for long.
+     *
+     * WHY THE WAIT HAS A LIMIT
+     *
+     * This used to be a bare runBlocking on the main thread. The save goes
+     * through the settings store, which handles one write at a time, and a
+     * write ahead of it in the queue can belong to background work that is
+     * busy (indexing a book for search, building a concept map) on the app's
+     * single background thread. The main thread then sat waiting behind work
+     * that takes minutes, and the whole app stopped answering: switching away
+     * to another app and coming back found every button dead.
+     *
+     * The save now runs on its own I/O thread, which that work cannot hold up,
+     * and the main thread waits a moment for it. If it has not finished by
+     * then it carries on and finishes by itself; nothing is cancelled and
+     * nothing is written twice.
+     */
+    private fun writeBeforeLeaving(write: suspend () -> Unit) {
+        val job = urgentWrites.launch { runCatching { write() } }
+        runBlocking { kotlinx.coroutines.withTimeoutOrNull(LEAVING_WAIT_MS) { job.join() } }
+    }
+
     fun stopReading() {
         resumed = false
         tickerJob?.cancel()
@@ -472,7 +508,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             repo.addReadingSeconds(currentBook.id, seconds)
         }
         if (blocking) {
-            runBlocking { write() }
+            writeBeforeLeaving(write)
         } else {
             // persistenceScope, not viewModelScope: stopReading() runs during
             // teardown and the pending seconds must still be written after
@@ -1557,9 +1593,16 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             if (formatted != null && book != null) {
                 _pendingFormat.value = null
                 _formatError.value = null
-                _bookText.value = TextBook(formatted, repo.textStyles(book, formatted))
+                _bookText.value = TextBook(
+                    formatted,
+                    repo.textStyles(book, formatted),
+                    version = (_bookText.value?.version ?: 0) + 1,
+                )
                 _initialTextFraction.value = 0f
                 _initialTextOffset.value = 0
+                // The saved place was a position in the old text; in the new
+                // one it would be somewhere arbitrary.
+                runCatching { settingsRepository.saveTextOffset(bookId, 0) }
             } else {
                 _formatError.value =
                     result.exceptionOrNull()?.message ?: "That reply couldn't be used. Try again."
@@ -1601,7 +1644,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         txtSaveJob?.cancel()
         val write: suspend () -> Unit = { repo.updateProgress(b.id, 0, latestTxtFraction) }
         if (blocking) {
-            runBlocking { write() }
+            writeBeforeLeaving(write)
         } else {
             persistenceScope.launch { write() }
         }
@@ -1762,7 +1805,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             if (latestLocator == null) return
             locatorSaveJob?.cancel()
             if (blocking) {
-                runBlocking { saveLocator() }
+                writeBeforeLeaving { saveLocator() }
             } else {
                 persistenceScope.launch { saveLocator() }
             }
@@ -2078,3 +2121,6 @@ class ReaderViewModelFactory(
 
 /** An EPUB is read from its file to count words, so it is counted no more often than this. */
 private const val EPUB_COUNT_GAP_MS = 15_000L
+
+/** How long the main thread waits for a save as the app is left. Long enough for a normal write, short enough to go unnoticed. */
+private const val LEAVING_WAIT_MS = 700L

@@ -141,61 +141,13 @@ class YouTubeSearchApi(private val okHttpClient: OkHttpClient? = null) {
     }
 
     /**
-     * Search YouTube for popular videos in a category using curated queries.
-     * Returns shelves of results grouped by category name.
+     * One search, returning every result as YouTube ranks it. Used to fill the
+     * shelves on Discover; what is kept and in what order is decided by
+     * [ReadableVideos], not by YouTube's own ranking.
      */
-    suspend fun browseCategories(): List<CategoryShelf> = withContext(Dispatchers.IO) {
-        val categories = listOf(
-            CategoryShelf("🎙️ Podcasts & Interviews", listOf(
-                "best podcast episodes 2025",
-                "long form interview must watch",
-                "podcast conversation life changing"
-            )),
-            CategoryShelf("🔬 Science & Education", listOf(
-                "fascinating science documentary",
-                "mind blowing science explanation",
-                "educational video everyone should watch"
-            )),
-            CategoryShelf("🧠 Psychology & Philosophy", listOf(
-                "psychology of human behavior",
-                "philosophy meaning of life lecture",
-                "cognitive science decision making"
-            )),
-            CategoryShelf("💼 Business & Finance", listOf(
-                "business strategy documentary",
-                "investing principles explained",
-                "startup founder interview"
-            )),
-            CategoryShelf("🌍 History & Culture", listOf(
-                "history documentary must watch",
-                "civilization explained documentary",
-                "cultural evolution human species"
-            )),
-            CategoryShelf("🧘 Health & Wellness", listOf(
-                "health science explained",
-                "sleep neuroscience documentary",
-                "longevity research breakthrough"
-            ))
-        )
-
-        categories.mapNotNull { shelf ->
-            try {
-                val query = shelf.queries.random()
-                val (results, _) = searchViaInnertube(query)
-                if (results.isNotEmpty()) {
-                    shelf.copy(results = results.take(6))
-                } else null
-            } catch (_: Exception) {
-                null
-            }
-        }
+    suspend fun searchOnce(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
+        searchViaInnertube(query).first
     }
-
-    data class CategoryShelf(
-        val title: String,
-        val queries: List<String> = emptyList(),
-        val results: List<SearchResult> = emptyList()
-    )
 
     /**
      * Parse video results from a YouTube innertube search JSON response.

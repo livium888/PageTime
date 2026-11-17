@@ -416,18 +416,18 @@ class LibraryRepository(
                 ?: error("Could not find a YouTube video ID in this URL")
             // Already added? Checked before anything is fetched, by the id the
             // video gives its book.
-            val owned = { bookDao.getAll().filter { it.id.startsWith("yt-") } }
+            val owned = bookDao.getAll().filter { it.id.startsWith("yt-") }
             fun toOwned(books: List<BookEntity>) = books.map {
                 VideoOwnership.OwnedBook(it.id, it.title, it.author)
             }
-            VideoOwnership.find(toOwned(owned()), videoId)?.let { found ->
+            VideoOwnership.find(toOwned(owned), videoId)?.let { found ->
                 bookDao.getById(found.id)?.let { throw AlreadyInLibraryException(it) }
             }
             val result = fetcher.fetchTranscript(videoId)
                 ?: error("No transcript available for this video. It may not have subtitles.")
             // And again by title and channel, which catches a transcript added
             // before ids named their video.
-            VideoOwnership.find(toOwned(owned()), videoId, result.title, result.author)?.let { found ->
+            VideoOwnership.find(toOwned(owned), videoId, result.title, result.author)?.let { found ->
                 bookDao.getById(found.id)?.let { throw AlreadyInLibraryException(it) }
             }
             val id = VideoOwnership.idFor(videoId)

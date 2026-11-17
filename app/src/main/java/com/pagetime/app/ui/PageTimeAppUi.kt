@@ -367,7 +367,11 @@ fun PageTimeAppUi(
                     },
                 )
             }
-            composable("search") { DiscoverScreen() }
+            composable("search") {
+                DiscoverScreen(
+                    onOpenBook = { bookId -> navController.navigate("reader/$bookId") { launchSingleTop = true } }
+                )
+            }
             composable("settings") {
                 SettingsScreen(
                     onManageBlockedApps = { navController.navigate("blocked_apps") },

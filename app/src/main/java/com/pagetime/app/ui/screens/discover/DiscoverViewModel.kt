@@ -8,6 +8,7 @@ import com.pagetime.app.data.catalog.BookCatalog
 import com.pagetime.app.data.catalog.CatalogHealth
 import com.pagetime.app.data.gutenberg.GutendexBook
 import com.pagetime.app.data.youtube.ReadableVideos
+import com.pagetime.app.data.youtube.VideoOwnership
 import com.pagetime.app.data.youtube.YouTubeSearchApi
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
@@ -144,6 +145,32 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _categoryShelves = MutableStateFlow<List<ReadingShelf>>(emptyList())
     val categoryShelves = _categoryShelves.asStateFlow()
+
+    /**
+     * Videos on screen that are already in the library: video id to the id of
+     * the book that holds it. Kept as the library changes, so a card turns to
+     * "In your library" the moment its import finishes.
+     */
+    val libraryVideos = kotlinx.coroutines.flow.combine(
+        repo.observeBooks(), _youtubeResults, _categoryShelves
+    ) { books, results, shelves ->
+        val owned = books.filter { it.id.startsWith("yt-") }
+            .map { VideoOwnership.OwnedBook(it.id, it.title, it.author) }
+        (results.map { it.video } + shelves.flatMap { shelf -> shelf.picks.map { it.video } })
+            .mapNotNull { video ->
+                VideoOwnership.find(owned, video.videoId, video.title, video.channelName)
+                    ?.let { video.videoId to it.id }
+            }
+            .toMap()
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    /** What to tell the reader about an import: the words, and the book to open if there is one. */
+    data class ImportNotice(val message: String, val bookId: String?)
+
+    private val _notice = MutableStateFlow<ImportNotice?>(null)
+    val notice = _notice.asStateFlow()
+
+    fun consumeNotice() { _notice.value = null }
 
     private val _loadingCategories = MutableStateFlow(false)
     val loadingCategories = _loadingCategories.asStateFlow()
@@ -538,13 +565,28 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Import a YouTube video transcript as a readable book. */
-    fun importYouTubeVideo(videoId: String) {
+    fun importYouTubeVideo(video: YouTubeSearchApi.SearchResult) {
+        val videoId = video.videoId
         if (videoId in _importingVideo.value) return
+        // Already a book: say so and offer it, rather than adding it twice.
+        libraryVideos.value[videoId]?.let { bookId ->
+            _notice.value = ImportNotice("\u201c${video.title}\u201d is already in your library", bookId)
+            return
+        }
         viewModelScope.launch {
             _importingVideo.value += videoId
             val url = "https://www.youtube.com/watch?v=$videoId"
             repo.importYouTubeTranscript(url)
-                .onFailure { _error.value = it.message ?: "Could not fetch transcript" }
+                .onSuccess { book ->
+                    _notice.value = ImportNotice("Added \u201c${book.title}\u201d to your library", book.id)
+                }
+                .onFailure { error ->
+                    if (error is com.pagetime.app.data.LibraryRepository.AlreadyInLibraryException) {
+                        _notice.value = ImportNotice(error.message.orEmpty(), error.book.id)
+                    } else {
+                        _error.value = error.message ?: "Could not fetch transcript"
+                    }
+                }
             _importingVideo.value -= videoId
         }
     }

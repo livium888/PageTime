@@ -64,7 +64,11 @@ import androidx.compose.foundation.layout.height
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
+fun DiscoverScreen(
+    viewModel: DiscoverViewModel = viewModel(),
+    /** Opens a book in the reader; used by "Open" on an import and on a video already added. */
+    onOpenBook: (String) -> Unit = {},
+) {
     val books by viewModel.books.collectAsStateWithLifecycle()
     val source by viewModel.source.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
@@ -77,6 +81,8 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val downloadedIds by viewModel.downloadedIds.collectAsStateWithLifecycle()
     val youtubeResults by viewModel.youtubeResults.collectAsStateWithLifecycle()
     val importingVideo by viewModel.importingVideo.collectAsStateWithLifecycle()
+    val libraryVideos by viewModel.libraryVideos.collectAsStateWithLifecycle()
+    val notice by viewModel.notice.collectAsStateWithLifecycle()
     val categoryShelves by viewModel.categoryShelves.collectAsStateWithLifecycle()
     val searchingAll by viewModel.searchingAll.collectAsStateWithLifecycle()
 
@@ -104,9 +110,24 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     // Show download errors as a snackbar so the user knows why a download failed.
     LaunchedEffect(error) {
-        if (error != null && books.isNotEmpty()) {
+        // Videos have no book list to hold an error, so they show it here too:
+        // without this a transcript that could not be fetched said nothing.
+        if (error != null && (books.isNotEmpty() || source is DiscoverSource.Videos)) {
             snackbarHostState.showSnackbar(error!!)
             viewModel.clearError()
+        }
+    }
+    // What happened to an import: added, or already there, with a way to open it.
+    LaunchedEffect(notice) {
+        val shown = notice ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = shown.message,
+            actionLabel = shown.bookId?.let { "Open" },
+            duration = androidx.compose.material3.SnackbarDuration.Long,
+        )
+        viewModel.consumeNotice()
+        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+            shown.bookId?.let(onOpenBook)
         }
     }
 
@@ -218,9 +239,10 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                             items(categoryShelves, key = { it.title }) { shelf ->
                                 CategoryShelfRow(
                                     shelf = shelf,
-                                    onImport = { videoId ->
-                                        viewModel.importYouTubeVideo(videoId)
-                                    }
+                                    importing = importingVideo,
+                                    inLibrary = libraryVideos,
+                                    onImport = { video -> viewModel.importYouTubeVideo(video) },
+                                    onOpen = onOpenBook,
                                 )
                             }
                         } else {
@@ -228,7 +250,9 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                                 YouTubeVideoRow(
                                     pick = pick,
                                     isImporting = pick.video.videoId in importingVideo,
-                                    onImport = { viewModel.importYouTubeVideo(pick.video.videoId) }
+                                    libraryBookId = libraryVideos[pick.video.videoId],
+                                    onImport = { viewModel.importYouTubeVideo(pick.video) },
+                                    onOpen = onOpenBook,
                                 )
                             }
                         }
@@ -368,7 +392,10 @@ private fun BookRow(
 private fun YouTubeVideoRow(
     pick: VideoPick,
     isImporting: Boolean,
-    onImport: () -> Unit
+    /** The book that already holds this video, or null. */
+    libraryBookId: String?,
+    onImport: () -> Unit,
+    onOpen: (String) -> Unit,
 ) {
     val video = pick.video
     var expanded by remember { mutableStateOf(false) }
@@ -429,7 +456,7 @@ private fun YouTubeVideoRow(
                 }
                 Spacer(Modifier.width(10.dp))
                 Button(
-                    onClick = onImport,
+                    onClick = { if (libraryBookId != null) onOpen(libraryBookId) else onImport() },
                     enabled = !isImporting,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -444,11 +471,18 @@ private fun YouTubeVideoRow(
                             strokeWidth = 2.dp,
                             color = MaterialTheme.colorScheme.onPrimary
                         )
-                    } else {
+                    } else if (libraryBookId == null) {
                         Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text(if (isImporting) "Importing…" else "Read", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        when {
+                            isImporting -> "Fetching…"
+                            libraryBookId != null -> "Open"
+                            else -> "Add"
+                        },
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
             }
             // Expandable description preview
@@ -495,7 +529,10 @@ private fun YouTubeVideoRow(
 @Composable
 private fun CategoryShelfRow(
     shelf: ReadingShelf,
-    onImport: (String) -> Unit
+    importing: Set<String>,
+    inLibrary: Map<String, String>,
+    onImport: (YouTubeSearchApi.SearchResult) -> Unit,
+    onOpen: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -510,7 +547,10 @@ private fun CategoryShelfRow(
                 val pick = shelf.picks[index]
                 CategoryVideoCard(
                     pick = pick,
-                    onImport = { onImport(pick.video.videoId) }
+                    isImporting = pick.video.videoId in importing,
+                    libraryBookId = inLibrary[pick.video.videoId],
+                    onImport = { onImport(pick.video) },
+                    onOpen = onOpen,
                 )
             }
         }
@@ -520,13 +560,18 @@ private fun CategoryShelfRow(
 @Composable
 private fun CategoryVideoCard(
     pick: VideoPick,
-    onImport: () -> Unit
+    isImporting: Boolean,
+    libraryBookId: String?,
+    onImport: () -> Unit,
+    onOpen: (String) -> Unit,
 ) {
     val video = pick.video
     Card(
         modifier = Modifier
             .width(160.dp)
-            .clickable { onImport() },
+            .clickable(enabled = !isImporting) {
+                if (libraryBookId != null) onOpen(libraryBookId) else onImport()
+            },
         shape = RoundedCornerShape(12.dp)
     ) {
         Column {
@@ -549,6 +594,28 @@ private fun CategoryVideoCard(
                 pick.length?.let {
                     Text(
                         it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // What is happening to it, on the card itself.
+                when {
+                    isImporting -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Fetching transcript…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    libraryBookId != null -> Text(
+                        "In your library · tap to open",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    else -> Text(
+                        "Tap to add",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

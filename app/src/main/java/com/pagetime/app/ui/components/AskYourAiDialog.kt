@@ -100,6 +100,9 @@ fun AskYourAiDialog(
                             localError = "That's still the prompt. Copy the AI's reply, then paste."
                         } else {
                             localError = null
+                            // Said at once, so a long reply being checked does
+                            // not look like a button that did nothing.
+                            notice = "Got it. Checking the reply…"
                             onReply(reply)
                         }
                     },

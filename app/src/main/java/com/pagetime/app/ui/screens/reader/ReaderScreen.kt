@@ -606,7 +606,9 @@ fun ReaderScreen(
             // PDFs were converted on import (see PdfToEpub). A PDF imported
             // since is an EPUB by the time it reaches here, and Readium reads it
             // — figures and all — through the branch above.
-            book?.isReflowedText == true && textContent != null -> TextReaderHost(
+            // Rebuilt from nothing when the text itself is replaced, so pages laid
+            // out for the old text are never drawn against the new one.
+            book?.isReflowedText == true && textContent != null -> androidx.compose.runtime.key(bookText?.version ?: 0) { TextReaderHost(
                 content = textContent!!,
                 styleSpans = bookText?.spans.orEmpty(),
                 initialFraction = initialTextFraction,
@@ -632,7 +634,7 @@ fun ReaderScreen(
                 },
                 onRestoreComplete = vm::markTxtRestoreComplete,
                 onToggleChrome = { controlsVisible = !controlsVisible }
-            )
+            ) }
 
             else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 if (readerError != null) {

@@ -449,4 +449,59 @@ class ReadingGuardTest {
         guard.onTick(195 * S)
         assertFalse(guard.state.tooFast)
     }
+
+    // --- The slowest believable reading ---
+
+    private fun unlimited() = ReadingGuard(startingBudgetSeconds = 86_400f, maxBudgetSeconds = 86_400f)
+        .also { it.start(0L) }
+
+    @Test
+    fun `a phone left on one page with taps to keep it awake stops earning after three minutes`() {
+        val g = unlimited()
+        g.onWordsMoved(200, 1 * S)
+        var early = 0L
+        var late = 0L
+        for (t in 2..600) {
+            g.onMovement(t * S)
+            if (g.onTick(t * S)) { if (t < 170) early++ else if (t > 200) late++ }
+        }
+        assertTrue("earned $early early", early > 150)
+        assertEquals(0L, late)
+    }
+
+    @Test
+    fun `a slow careful reader keeps earning`() {
+        val g = unlimited()
+        var credited = 0L
+        for (t in 1..900) {
+            // Fifty words a minute, about a page every five minutes.
+            if (t % 60 == 0) g.onWordsMoved(50, t * S)
+            if (t % 30 == 0) g.onMovement(t * S)
+            if (g.onTick(t * S)) credited++
+        }
+        assertTrue("credited $credited", credited > 850)
+    }
+
+    @Test
+    fun `going back to re-read counts as moving through the text`() {
+        val g = unlimited()
+        var credited = 0L
+        for (t in 1..600) {
+            if (t % 45 == 0) g.onWordsMoved(120, t * S) // the same words, read again
+            if (t % 30 == 0) g.onMovement(t * S)
+            if (g.onTick(t * S)) credited++
+        }
+        assertTrue("credited $credited", credited > 550)
+    }
+
+    @Test
+    fun `a reader that never reports words is not paused for the want of them`() {
+        val g = unlimited()
+        var credited = 0L
+        for (t in 1..600) {
+            if (t % 30 == 0) g.onMovement(t * S)
+            if (g.onTick(t * S)) credited++
+        }
+        assertTrue("credited $credited", credited > 550)
+    }
 }

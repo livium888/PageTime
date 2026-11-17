@@ -25,6 +25,11 @@ data class FlashcardsUiState(
     val groups: List<FlashcardGroup> = emptyList(),
     val counts: Map<FlashcardFilter, Int> = emptyMap(),
     val filter: FlashcardFilter = FlashcardFilter.ALL,
+    /** What is typed in the search box, and the one book being looked at (null for all). */
+    val query: String = "",
+    val bookId: String? = null,
+    /** Books that have cards, for the book picker: id to title. */
+    val bookChoices: List<Pair<String, String>> = emptyList(),
     /**
      * What the reader has actually remembered, from the review log.
      *
@@ -70,6 +75,12 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     private val _filter = MutableStateFlow(FlashcardFilter.ALL)
     val filter = _filter.asStateFlow()
 
+    private val _query = MutableStateFlow("")
+    private val _bookId = MutableStateFlow<String?>(null)
+    /** What is being looked at: status filter, search words and book, as one value. */
+    private data class Lens(val filter: FlashcardFilter, val query: String, val bookId: String?)
+    private val lens = combine(_filter, _query, _bookId) { f, q, b -> Lens(f, q, b) }
+
     private val _editingCardId = MutableStateFlow<String?>(null)
     val editingCardId = _editingCardId.asStateFlow()
 
@@ -77,14 +88,20 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
         combine(
             cardDao.observeLive(),
             bookDao.observeAll(),
-            _filter,
+            lens,
             reviewLog.observeTally(),
             explainBackRepository.observeConceptQueue(),
-        ) { cards, books, filter, tally, conceptQueue ->
+        ) { cards, books, lens, tally, conceptQueue ->
+            val filter = lens.filter
             val titles = books.associate { it.id to it.title }
             val now = System.currentTimeMillis()
             FlashcardsUiState(
-                groups = FlashcardListing.group(cards, titles, filter, now),
+                groups = FlashcardListing.group(cards, titles, filter, now, lens.query, lens.bookId),
+                query = lens.query,
+                bookId = lens.bookId,
+                bookChoices = cards.map { it.bookId }.distinct()
+                    .map { it to (titles[it] ?: "A book no longer in the library") }
+                    .sortedBy { it.second.lowercase() },
                 counts = FlashcardFilter.entries.associateWith {
                     FlashcardListing.countFor(cards, it, now)
                 },
@@ -118,6 +135,41 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setFilter(filter: FlashcardFilter) {
         _filter.value = filter
+    }
+
+    fun setQuery(query: String) {
+        _query.value = query
+    }
+
+    fun setBook(bookId: String?) {
+        _bookId.value = bookId
+    }
+
+    /**
+     * Takes cards out of the list the way "Throw it away" does: marked skipped,
+     * not erased, so a chapter is not asked for its questions all over again
+     * and the review history stays. [restore] puts them back as they were.
+     */
+    fun remove(cards: List<LearningCardEntity>) {
+        viewModelScope.launch {
+            cards.forEach { runCatching { generator.skip(it.id) } }
+        }
+    }
+
+    /** Undo of [remove]: each card goes back to the status it had. */
+    fun restore(cards: List<LearningCardEntity>) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            cards.forEach { runCatching { cardDao.setStatus(it.id, it.status, now) } }
+        }
+    }
+
+    /** Accepts every card in the list that was still waiting to be judged. */
+    fun keepAll(cards: List<LearningCardEntity>) {
+        viewModelScope.launch {
+            cards.filter { it.status == LearningCardEntity.STATUS_PENDING }
+                .forEach { runCatching { generator.keep(it.id) } }
+        }
     }
 
     /** Accepts a card that was still waiting to be judged. */

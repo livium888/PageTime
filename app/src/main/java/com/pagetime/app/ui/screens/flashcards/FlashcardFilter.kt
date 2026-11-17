@@ -58,9 +58,13 @@ object FlashcardListing {
         titles: Map<String, String>,
         filter: FlashcardFilter = FlashcardFilter.ALL,
         now: Long = System.currentTimeMillis(),
+        query: String = "",
+        bookId: String? = null,
     ): List<FlashcardGroup> =
         cards
             .filter { matches(it, filter, now) }
+            .filter { bookId == null || it.bookId == bookId }
+            .filter { matchesQuery(it, query) }
             .groupBy { it.bookId }
             .map { (bookId, forBook) ->
                 FlashcardGroup(
@@ -70,6 +74,20 @@ object FlashcardListing {
                 )
             }
             .sortedBy { it.bookTitle.lowercase() }
+
+    /**
+     * Whether a card's words contain every word typed, in any order.
+     *
+     * Question, answer, chapter and topic all count: people look for a card by
+     * what it asked, by what it said, or by where it came from.
+     */
+    fun matchesQuery(card: LearningCardEntity, query: String): Boolean {
+        val words = query.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return true
+        val haystack = listOfNotNull(card.prompt, card.answer, card.chapterTitle, card.topic)
+            .joinToString(" ").lowercase()
+        return words.all { it in haystack }
+    }
 
     fun countFor(
         cards: List<LearningCardEntity>,

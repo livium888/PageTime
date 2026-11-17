@@ -224,11 +224,11 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel()) {
                                 )
                             }
                         } else {
-                            items(youtubeResults, key = { it.videoId }) { video ->
+                            items(youtubeResults, key = { it.video.videoId }) { pick ->
                                 YouTubeVideoRow(
-                                    video = video,
-                                    isImporting = video.videoId in importingVideo,
-                                    onImport = { viewModel.importYouTubeVideo(video.videoId) }
+                                    pick = pick,
+                                    isImporting = pick.video.videoId in importingVideo,
+                                    onImport = { viewModel.importYouTubeVideo(pick.video.videoId) }
                                 )
                             }
                         }
@@ -366,10 +366,11 @@ private fun BookRow(
 
 @Composable
 private fun YouTubeVideoRow(
-    video: YouTubeSearchApi.SearchResult,
+    pick: VideoPick,
     isImporting: Boolean,
     onImport: () -> Unit
 ) {
+    val video = pick.video
     var expanded by remember { mutableStateOf(false) }
     val hasDescription = video.description.isNotBlank()
 
@@ -404,24 +405,26 @@ private fun YouTubeVideoRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (video.viewCount.isNotBlank()) {
-                            Text(
-                                video.viewCount,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (video.duration.isNotBlank()) {
-                            Text(
-                                video.duration,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                    // What it will read like, not how long it runs or how many
+                    // watched it: the reader's own length, then why it is here.
+                    Text(
+                        pick.length ?: video.duration.ifBlank { "Length unknown" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (pick.why.isNotBlank()) {
+                        Text(
+                            pick.why,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    pick.caution?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
                     }
                 }
                 Spacer(Modifier.width(10.dp))
@@ -491,7 +494,7 @@ private fun YouTubeVideoRow(
 
 @Composable
 private fun CategoryShelfRow(
-    shelf: YouTubeSearchApi.CategoryShelf,
+    shelf: ReadingShelf,
     onImport: (String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -503,11 +506,11 @@ private fun CategoryShelfRow(
         androidx.compose.foundation.lazy.LazyRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(shelf.results.size) { index ->
-                val video = shelf.results[index]
+            items(shelf.picks.size) { index ->
+                val pick = shelf.picks[index]
                 CategoryVideoCard(
-                    video = video,
-                    onImport = { onImport(video.videoId) }
+                    pick = pick,
+                    onImport = { onImport(pick.video.videoId) }
                 )
             }
         }
@@ -516,9 +519,10 @@ private fun CategoryShelfRow(
 
 @Composable
 private fun CategoryVideoCard(
-    video: YouTubeSearchApi.SearchResult,
+    pick: VideoPick,
     onImport: () -> Unit
 ) {
+    val video = pick.video
     Card(
         modifier = Modifier
             .width(160.dp)
@@ -542,11 +546,20 @@ private fun CategoryVideoCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (video.viewCount.isNotBlank()) {
+                pick.length?.let {
                     Text(
-                        video.viewCount,
+                        it,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (pick.why.isNotBlank()) {
+                    Text(
+                        pick.why,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

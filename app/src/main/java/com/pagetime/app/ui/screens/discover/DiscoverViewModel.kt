@@ -7,7 +7,9 @@ import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.catalog.BookCatalog
 import com.pagetime.app.data.catalog.CatalogHealth
 import com.pagetime.app.data.gutenberg.GutendexBook
+import com.pagetime.app.data.youtube.ReadableVideos
 import com.pagetime.app.data.youtube.YouTubeSearchApi
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -137,10 +139,10 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
 
     private val youtubeApi = container.youtubeSearchApi
 
-    private val _youtubeResults = MutableStateFlow<List<YouTubeSearchApi.SearchResult>>(emptyList())
+    private val _youtubeResults = MutableStateFlow<List<VideoPick>>(emptyList())
     val youtubeResults = _youtubeResults.asStateFlow()
 
-    private val _categoryShelves = MutableStateFlow<List<YouTubeSearchApi.CategoryShelf>>(emptyList())
+    private val _categoryShelves = MutableStateFlow<List<ReadingShelf>>(emptyList())
     val categoryShelves = _categoryShelves.asStateFlow()
 
     private val _loadingCategories = MutableStateFlow(false)
@@ -396,7 +398,9 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             _categoryShelves.value = emptyList()
             try {
                 val (results, _) = youtubeApi.search(q)
-                _youtubeResults.value = results
+                val known = channelsReadToTheEnd()
+                _youtubeResults.value = ReadableVideos.search(results.map(::candidateOf), known)
+                    .map { pick -> toVideoPick(pick, results) }
                 _books.value = emptyList()
                 _hasMore.value = false
                 nextPage = null
@@ -418,6 +422,93 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun candidateOf(result: YouTubeSearchApi.SearchResult) = ReadableVideos.Candidate(
+        videoId = result.videoId,
+        title = result.title,
+        channel = result.channelName,
+        duration = result.duration,
+        description = result.description,
+        views = result.viewCount,
+    )
+
+    private fun toVideoPick(pick: ReadableVideos.Pick, source: List<YouTubeSearchApi.SearchResult>): VideoPick {
+        val video = source.first { it.videoId == pick.candidate.videoId }
+        return VideoPick(
+            video = video,
+            length = ReadableVideos.lengthLabel(pick),
+            why = pick.why,
+            caution = ReadableVideos.caution(pick),
+        )
+    }
+
+    /**
+     * Channels the reader has read a transcript from, to more than half way.
+     * The strongest signal available that a source is worth their time: they
+     * chose it, and then went on reading.
+     */
+    private suspend fun channelsReadToTheEnd(): Set<String> =
+        runCatching { container.database.bookDao().getAll() }.getOrDefault(emptyList())
+            .filter { it.id.startsWith("yt-") && it.scrollProgress >= 0.5f && it.author.isNotBlank() }
+            .map { it.author.trim() }
+            .toSet()
+
+    /**
+     * The Discover shelves for videos, filled from the reader's own library.
+     *
+     * One shelf per genre they read most, a general one, and, first, more from
+     * the channels they have read to the end. Searches run side by side.
+     */
+    private suspend fun buildShelves(): List<ReadingShelf> = coroutineScope {
+        val books = runCatching { container.database.bookDao().getAll() }.getOrDefault(emptyList())
+        val owned = books.map { it.title }
+        val known = channelsReadToTheEnd()
+        val genres = com.pagetime.app.data.BookGenreSummary.summarize(books).map { it.genre }
+        val plans = ReadableVideos.plans(genres)
+
+        // Newest-first by the order they were read in: the books list is newest first.
+        val channelsInOrder = books
+            .filter { it.id.startsWith("yt-") && it.scrollProgress >= 0.5f && it.author.isNotBlank() }
+            .map { it.author.trim() }
+            .distinct()
+            .take(3)
+
+        val channelSearches = channelsInOrder.map { channel ->
+            async { channel to runCatching { youtubeApi.searchOnce(channel) }.getOrDefault(emptyList()) }
+        }
+        val planSearches = plans.map { plan ->
+            async {
+                // Every query of a plan, merged: a shelf is fuller than any one search.
+                plan to plan.queries.map { q -> async { runCatching { youtubeApi.searchOnce(q) }.getOrDefault(emptyList()) } }
+                    .awaitAll().flatten()
+            }
+        }
+
+        val shelves = mutableListOf<ReadingShelf>()
+        val fromChannels = channelSearches.awaitAll().flatMap { (channel, results) ->
+            ReadableVideos.shelf(
+                results = results.filter { it.channelName.trim().equals(channel, ignoreCase = true) }
+                    .map(::candidateOf),
+                knownChannels = known,
+                ownedTitles = owned,
+                limit = 2,
+            ).map { toVideoPick(it, results) }
+        }
+        if (fromChannels.isNotEmpty()) shelves += ReadingShelf("More from channels you've read", fromChannels)
+        val used = fromChannels.map { it.video.videoId }.toMutableSet()
+        planSearches.awaitAll().forEach { (plan, results) ->
+            val picks = ReadableVideos.shelf(
+                results = results.map(::candidateOf).filter { it.videoId !in used },
+                knownChannels = known,
+                ownedTitles = owned,
+            ).map { toVideoPick(it, results) }
+            if (picks.isNotEmpty()) {
+                shelves += ReadingShelf(plan.title, picks)
+                used += picks.map { it.video.videoId }
+            }
+        }
+        shelves
+    }
+
     /** Load browse/discovery categories when no search query is entered. */
     private fun loadYouTubeBrowse() {
         loadJob?.cancel()
@@ -426,7 +517,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             _youtubeResults.value = emptyList()
             _categoryShelves.value = emptyList()
             try {
-                val shelves = youtubeApi.browseCategories()
+                val shelves = buildShelves()
                 _categoryShelves.value = shelves
                 _health.value = if (shelves.isNotEmpty()) {
                     CatalogHealth.Working
@@ -470,3 +561,17 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 }
+
+/** A video as Discover shows it: the result, what it will read like, and why it is here. */
+data class VideoPick(
+    val video: YouTubeSearchApi.SearchResult,
+    /** "about 4,500 words · 19 min read", or null when the length is unknown. */
+    val length: String?,
+    /** "Lecture · a channel you've read before", or blank. */
+    val why: String,
+    /** Set when the video is shown but will not read well. */
+    val caution: String?,
+)
+
+/** A row of videos under one heading. */
+data class ReadingShelf(val title: String, val picks: List<VideoPick>)

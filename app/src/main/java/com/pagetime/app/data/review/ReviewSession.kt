@@ -69,8 +69,16 @@ object ReviewSession {
      * A cap exists because an unbounded queue after a fortnight away is how
      * people quit spaced repetition — the backlog stops being a task and
      * becomes a verdict. The rest stay due and come back tomorrow.
+     *
+     * Ten, about four minutes: a sitting that can be seen to end is one that
+     * gets started. It was fifty, which after a few days away reads as a
+     * chore, and the benefit of spacing comes from turning up often, not from
+     * clearing the queue.
      */
-    const val MAX_SESSION = 50
+    const val MAX_SESSION = 10
+
+    /** Seconds a card takes on average, for saying how long a sitting is. */
+    const val SECONDS_PER_CARD = 25
 
     /**
      * How far ahead of now to consider a card due.

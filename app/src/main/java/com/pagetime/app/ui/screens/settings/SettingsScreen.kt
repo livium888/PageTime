@@ -142,11 +142,13 @@ fun SettingsScreen(
     val suggestCards by viewModel.cardNudgeEnabled.collectAsStateWithLifecycle()
     val suggestEvery by viewModel.cardNudgeEvery.collectAsStateWithLifecycle()
     val appsSummary by viewModel.appsSummary.collectAsStateWithLifecycle()
+    val volume by viewModel.readingVolume.collectAsStateWithLifecycle()
     val appAllowance by viewModel.appAllowanceSeconds.collectAsStateWithLifecycle()
     val resetHour by viewModel.lockResetHour.collectAsStateWithLifecycle()
     val cardCredit by viewModel.cardCreditSeconds.collectAsStateWithLifecycle()
     val openOnBook by viewModel.openOnBook.collectAsStateWithLifecycle()
     val showCountdown by viewModel.readerShowCountdown.collectAsStateWithLifecycle()
+    val chapterRecallOn by viewModel.chapterRecall.collectAsStateWithLifecycle()
     val sitesSummary by viewModel.sitesSummary.collectAsStateWithLifecycle()
     val permissionsSummary = if (hasUsageAccessPermission(settingsContext) &&
         isAccessibilityServiceEnabled(settingsContext)
@@ -175,6 +177,7 @@ fun SettingsScreen(
         cardCreditSeconds = cardCredit,
         openOnBook = openOnBook,
         showCountdown = showCountdown,
+        chapterRecall = chapterRecallOn,
     )
     var draft by remember { mutableStateOf<SettingsDraft?>(null) }
     val shown = draft ?: saved
@@ -200,6 +203,7 @@ fun SettingsScreen(
         if (from.cardCreditSeconds != to.cardCreditSeconds) viewModel.setCardCreditSeconds(to.cardCreditSeconds)
         if (from.openOnBook != to.openOnBook) viewModel.setOpenOnBook(to.openOnBook)
         if (from.showCountdown != to.showCountdown) viewModel.setReaderShowCountdown(to.showCountdown)
+        if (from.chapterRecall != to.chapterRecall) viewModel.setChapterRecall(to.chapterRecall)
         if (from.otherAppsCount != to.otherAppsCount) viewModel.setExternalReadingEnabled(to.otherAppsCount)
         if (from.otherAppsCapSeconds != to.otherAppsCapSeconds) viewModel.setExternalReadingDailyCap(to.otherAppsCapSeconds)
         if (from.readingRate != to.readingRate) viewModel.setRatio(to.readingRate)
@@ -409,6 +413,10 @@ fun SettingsScreen(
                 }
                 SettingsLine(label = "Last 24 hours", value = SettingsDraft.minutes(readInLastDay))
                 SettingsLine(label = "All time", value = SettingsDraft.minutes(totalReadingSeconds))
+                if (!volume.isEmpty) {
+                    SettingsLine(label = "Words read", value = volume.wordsLabel)
+                    SettingsLine(label = "Books finished", value = volume.booksLabel)
+                }
                 if (emergencyThisWeek > 0) {
                     SettingsLine(label = "Emergency unlocks this week", value = "$emergencyThisWeek")
                 }
@@ -480,6 +488,12 @@ fun SettingsScreen(
                     was = SettingsDraft.onOff(saved.openOnBook).takeIf { saved.openOnBook != shown.openOnBook },
                     checked = shown.openOnBook,
                     onToggle = { on -> edit { it.copy(openOnBook = on) } },
+                )
+                SettingsLine(
+                    label = "Ask what a chapter was about",
+                    was = SettingsDraft.onOff(saved.chapterRecall).takeIf { saved.chapterRecall != shown.chapterRecall },
+                    checked = shown.chapterRecall,
+                    onToggle = { on -> edit { it.copy(chapterRecall = on) } },
                 )
                 SettingsLine(
                     label = "Show time left to the target",

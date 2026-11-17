@@ -69,7 +69,12 @@ class ReadingGuard(
     /** Upper bound on banked budget, so bursts of small jumps can't stockpile minutes. */
     private val maxBudgetSeconds: Float = 300f,
     /** Allowance when a session starts, so the first pages earn before the watermark builds. */
-    private val startingBudgetSeconds: Float = 120f
+    private val startingBudgetSeconds: Float = 120f,
+    /** Most words a person can turn through in [FLICK_WINDOW_MS]: 1,000 a minute, well past a fast skimmer. */
+    private val maxWordsPerWindow: Int = 500,
+    /** A single step larger than this is navigation, not a page turn. */
+    private val maxPageStepWords: Int = 1_200,
+    private val flickCooldownMs: Long = 90_000L,
 ) {
 
     data class State(
@@ -204,6 +209,57 @@ class ReadingGuard(
     }
 
     /** User taps "Continue reading" on the idle gate. Hides the gate briefly but grants nothing. */
+    // region Flicking through pages
+    //
+    // A SIXTH DEFENCE, IN WORDS
+    //
+    // The pace check above measures a whole minute in book-fractions and only
+    // pauses: a burst of page turns followed by waiting could leave the minute
+    // looking ordinary, and nothing it had already credited was taken back.
+    // This one watches the words themselves, over thirty seconds. Turning
+    // pages that hold more words than anyone reads in that time pauses the
+    // clock for a minute and a half and takes back what was credited in the
+    // same thirty seconds, so flicking costs the time just earned rather than
+    // being merely unrewarded.
+    //
+    // A jump (the contents, a search result, the seek bar) is one large step,
+    // not a run of page turns, and is not counted.
+
+    private companion object {
+        /** The span over which page turns are added up. */
+        const val FLICK_WINDOW_MS = 30_000L
+    }
+
+    private val recentWords = ArrayDeque<Pair<Long, Int>>()
+    private val recentCredits = ArrayDeque<Long>()
+
+    /**
+     * The reader moved forward by [words] words of text.
+     *
+     * Returns the seconds of credit to take back, which is zero unless this
+     * step tipped the last thirty seconds into flicking.
+     */
+    fun onWordsAdvanced(words: Int, now: Long): Int {
+        if (words <= 0 || words > maxPageStepWords) return 0
+        prune(now)
+        recentWords.addLast(now to words)
+        val total = recentWords.sumOf { it.second }
+        if (total <= maxWordsPerWindow) return 0
+        val takeBack = recentCredits.size
+        recentWords.clear()
+        recentCredits.clear()
+        tooFastUntil = maxOf(tooFastUntil, now + flickCooldownMs)
+        recompute(now)
+        return takeBack
+    }
+
+    private fun prune(now: Long) {
+        while (recentWords.isNotEmpty() && now - recentWords.first().first >= FLICK_WINDOW_MS) recentWords.removeFirst()
+        while (recentCredits.isNotEmpty() && now - recentCredits.first() >= FLICK_WINDOW_MS) recentCredits.removeFirst()
+    }
+
+    // endregion
+
     fun onContinueTapped(now: Long) {
         gateHiddenUntil = now + gateGraceMs
         recompute(now)
@@ -235,6 +291,8 @@ class ReadingGuard(
         val credited = state.crediting && budgetSeconds >= 1f
         if (credited) {
             budgetSeconds = (budgetSeconds - 1f).coerceAtLeast(0f)
+            recentCredits.addLast(now)
+            prune(now)
             recompute(now)
         }
         return credited

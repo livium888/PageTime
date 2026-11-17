@@ -397,4 +397,56 @@ class ReadingGuardTest {
         guard.onTick(t + 2 * S)
         assertTrue("backgrounding cleared the cooldown", guard.state.tooFast)
     }
+
+    // --- Flicking through pages ---
+
+    @Test
+    fun `twenty pages in a second pauses the clock and takes back the credit just earned`() {
+        // Thirty seconds of ordinary reading, moving a little so it is not idle.
+        for (i in 1..30) {
+            guard.onProgress(0.10f + i * 0.0005f, i * S)
+            guard.onTick(i * S)
+        }
+        // Then twenty 250-word pages in one second.
+        var takeBack = 0
+        for (page in 1..20) takeBack += guard.onWordsAdvanced(250, 30 * S + page * 50)
+        assertTrue("took back $takeBack", takeBack in 25..30)
+        assertTrue(guard.state.tooFast)
+        assertFalse(guard.state.crediting)
+    }
+
+    @Test
+    fun `ordinary reading and skimming never trip it`() {
+        // 250 words a minute, a page every minute.
+        for (minute in 1..10) assertEquals(0, guard.onWordsAdvanced(250, minute * 60 * S))
+        // Skimming at about 700 words a minute: 350 words in 30 seconds.
+        guard = ReadingGuard().also { it.start(0L) }
+        for (n in 1..20) assertEquals(0, guard.onWordsAdvanced(175, n * 15 * S))
+        assertFalse(guard.state.tooFast)
+    }
+
+    @Test
+    fun `a jump through the contents is navigation, not flicking`() {
+        assertEquals(0, guard.onWordsAdvanced(5_000, 10 * S))
+        assertEquals(0, guard.onWordsAdvanced(40_000, 11 * S))
+        assertFalse(guard.state.tooFast)
+    }
+
+    @Test
+    fun `the pause lasts a minute and a half and only what was in the window is taken back`() {
+        guard.onProgress(0.2f, 1 * S)
+        guard.onTick(1 * S)
+        // Credit earned long before the flick is not taken back.
+        for (i in 2..100) {
+            guard.onProgress(0.2f + i * 0.0001f, i * S)
+            guard.onTick(i * S)
+        }
+        var takeBack = 0
+        for (page in 1..4) takeBack += guard.onWordsAdvanced(250, 100 * S + page * 100)
+        assertTrue("took back $takeBack", takeBack <= 30)
+        assertTrue(guard.state.tooFast)
+        guard.onProgress(0.4f, 195 * S)
+        guard.onTick(195 * S)
+        assertFalse(guard.state.tooFast)
+    }
 }

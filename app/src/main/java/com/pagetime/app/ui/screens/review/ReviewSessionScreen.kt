@@ -52,6 +52,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pagetime.app.data.LumenRating
 import com.pagetime.app.data.review.CardTextSize
 import com.pagetime.app.data.review.ReadingGate
+import com.pagetime.app.data.review.ReviewSession
 import com.pagetime.app.data.review.ReviewSessionState
 
 /**
@@ -432,6 +433,9 @@ private fun CountsBar(remaining: Int) {
             ) { append(remaining.toString()) }
             withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
                 append(if (remaining == 1) " card left" else " cards left")
+                // About how long that is, so the sitting can be seen to end.
+                val minutes = ((remaining * ReviewSession.SECONDS_PER_CARD + 30) / 60).coerceAtLeast(1)
+                append(" · about $minutes min")
             }
         },
         style = MaterialTheme.typography.titleMedium,

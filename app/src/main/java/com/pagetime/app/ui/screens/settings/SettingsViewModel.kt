@@ -66,6 +66,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val gate = container.balanceManager.gate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GateState.Unknown)
 
+    /** Books finished and about how many words, from the library. See [ReadingVolume]. */
+    val readingVolume = container.libraryRepository.observeBooks()
+        .map { ReadingVolume.summarize(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReadingVolume.Summary(0, 0))
+
     /** What happens after the target, when the day resets, and what a card is worth. */
     val appAllowanceSeconds = container.settingsRepository.settings.map { it.appAllowanceSeconds }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
@@ -81,6 +86,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
     val readerShowCountdown = container.settingsRepository.readerShowCountdown
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val chapterRecall = container.settingsRepository.chapterRecallEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setChapterRecall(value: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setChapterRecallEnabled(value) }
+    }
 
     fun setOpenOnBook(value: Boolean) {
         viewModelScope.launch { container.settingsRepository.setOpenOnBook(value) }

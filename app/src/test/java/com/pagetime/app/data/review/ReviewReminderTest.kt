@@ -59,7 +59,9 @@ class ReviewReminderTest {
         // past two and the delay is now costing real memories.
         val cards = List(20) { card(dueDaysAgo = 10.0, intervalDays = 10) } +
             List(30) { DueCard(now + 1 * day, 10 * day) }
-        val verdict = ReviewReminder.decide(cards, now)
+        // Judged against a long sitting: the sitting is now ten cards, and
+        // twenty due would already be a full one.
+        val verdict = ReviewReminder.decide(cards, now, sessionCap = 50)
         assertEquals(ReminderVerdict.TOO_MUCH_DECAY, verdict)
         assertTrue(verdict.shouldNotify)
     }

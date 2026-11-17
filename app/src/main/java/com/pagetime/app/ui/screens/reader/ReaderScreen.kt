@@ -351,6 +351,11 @@ fun ReaderScreen(
     val cardOffer by vm.cardOffer.collectAsStateWithLifecycle()
     val cardOfferOwed by vm.cardOfferOwed.collectAsStateWithLifecycle()
     var showCardOfferOnExit by remember { mutableStateOf(false) }
+    val chapterRecall by vm.chapterRecall.collectAsStateWithLifecycle()
+    chapterRecall?.let { prompt ->
+        // The card suggestion and this are both "between chapters" moments; one at a time.
+        if (cardOffer == null) ChapterRecallSheet(prompt = prompt, onDone = vm::dismissChapterRecall)
+    }
     val openMakeCards: () -> Unit = {
         book?.let { b ->
             // The sheet reads the position once, as it opens, so the

@@ -604,7 +604,11 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // Words moved through since the last page, at about six characters a word.
         if (userInitiated) {
             val last = previousTextOffset
-            if (last != null && pageStartOffset > last) checkForFlicking((pageStartOffset - last) / 6)
+            if (last != null && pageStartOffset != last) {
+                val moved = (pageStartOffset - last) / 6
+                guard.onWordsMoved(kotlin.math.abs(moved), SystemClock.elapsedRealtime())
+                if (moved > 0) checkForFlicking(moved)
+            }
         }
         previousTextOffset = pageStartOffset
         latestTxtPageOffset = pageStartOffset
@@ -1815,11 +1819,14 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             if (before != null && before.first != index) {
                 maybeAskAboutChapter(before.first, index, before.second)
             }
-            if (before != null && before.first == index && fraction > before.second) {
+            if (before != null && before.first == index && fraction != before.second) {
                 val chapterTotal = chapterWords[index]
                     ?: bookWordCount?.let { it / size.coerceAtLeast(1) }
                     ?: 3_000
-                checkForFlicking(((fraction - before.second) * chapterTotal).toInt())
+                val moved = ((fraction - before.second) * chapterTotal).toInt()
+                // Forwards or back, it is moving through the text; only forwards can be flicking.
+                guard.onWordsMoved(kotlin.math.abs(moved), SystemClock.elapsedRealtime())
+                if (moved > 0) checkForFlicking(moved)
             }
             previousEpubPosition = index to fraction
             // The last page of the last chapter starts short of its end, so

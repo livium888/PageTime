@@ -66,7 +66,7 @@ data class Settings(
      * day — see [com.pagetime.app.domain.BalanceManager.earnFromExternalReading].
      * Bounds what a phone merely left open on a trusted app can cost.
      */
-    val externalReadingDailyCapSeconds: Long = 3_600,
+    val externalReadingDailyCapSeconds: Long = DEFAULT_EXTERNAL_READING_CAP_SECONDS,
     val totalReadingSeconds: Long = 0,
     /** Wall-clock time (epoch millis) until the temporary "block paused" grace ends (0 = none). */
     val quickDisableUntil: Long = 0,
@@ -119,6 +119,15 @@ data class Settings(
 )
 
 /** User-tunable reading comfort settings, applied to both plain-text and EPUB books. */
+/**
+ * The most credit reading in other apps (Kindle and the like) can earn in a
+ * day, unless the reader sets another figure: twenty minutes, so it can cover
+ * part of a day's target but never all of it. Those apps cannot be watched for
+ * page turns, so what they can pay is bounded rather than verified. It was an
+ * hour. A figure the reader has already saved is left as it is.
+ */
+const val DEFAULT_EXTERNAL_READING_CAP_SECONDS = 1_200L
+
 /**
  * What answering one flashcard counts as, toward the day's reading, unless the
  * reader sets another figure. About the time a card takes to answer with
@@ -693,7 +702,7 @@ class SettingsRepository(private val context: Context) {
             siteMode = SiteMode.fromKey(p[Keys.SITE_MODE]),
             allowlistSetupGraceUntil = p[Keys.ALLOWLIST_SETUP_GRACE_UNTIL] ?: 0L,
             externalReadingEnabled = p[Keys.EXTERNAL_READING_ENABLED] ?: false,
-            externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L,
+            externalReadingDailyCapSeconds = p[Keys.EXTERNAL_READING_DAILY_CAP] ?: DEFAULT_EXTERNAL_READING_CAP_SECONDS,
             totalReadingSeconds = p[Keys.TOTAL_READING] ?: 0L,
             quickDisableUntil = p[Keys.QUICK_DISABLE_UNTIL] ?: 0L,
             hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
@@ -1331,7 +1340,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun externalReadingDailyCapSeconds(): Long =
-        context.dataStore.data.first()[Keys.EXTERNAL_READING_DAILY_CAP] ?: 3_600L
+        context.dataStore.data.first()[Keys.EXTERNAL_READING_DAILY_CAP] ?: DEFAULT_EXTERNAL_READING_CAP_SECONDS
 
     suspend fun setExternalReadingDailyCapSeconds(value: Long) {
         context.dataStore.edit { it[Keys.EXTERNAL_READING_DAILY_CAP] = value.coerceIn(0L, 4L * 3_600L) }

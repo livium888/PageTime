@@ -75,6 +75,10 @@ class ReadingGuard(
     /** A single step larger than this is navigation, not a page turn. */
     private val maxPageStepWords: Int = 1_200,
     private val flickCooldownMs: Long = 90_000L,
+    /** The span over which the slowest believable reading is measured. */
+    private val floorWindowMs: Long = 180_000L,
+    /** Words that must be moved through in [floorWindowMs]: 40 a minute, far below any careful reader. */
+    private val minWordsPerFloorWindow: Int = 120,
 ) {
 
     data class State(
@@ -131,6 +135,7 @@ class ReadingGuard(
         tooFastUntil = 0L
         gateHiddenUntil = 0L
         this.totalWords = totalWords?.takeIf { it > 0 }
+        floorSince = now
         windowStartAt = now
         windowStartWatermark = watermark
         recompute(now)
@@ -163,6 +168,7 @@ class ReadingGuard(
         lastProgressAt = now
         windowStartAt = now
         windowStartWatermark = watermark
+        floorSince = now
         recompute(now)
     }
 
@@ -260,6 +266,46 @@ class ReadingGuard(
 
     // endregion
 
+    // region The slowest believable reading
+    //
+    // THE OPPOSITE OF FLICKING
+    //
+    // Seconds are what earn time, and seconds alone cannot tell reading from
+    // a phone propped open on one page with the odd tap to keep it awake. So
+    // time counts only while the reader is moving through the text: at least
+    // [minWordsPerFloorWindow] words in any [floorWindowMs]. That is forty a
+    // minute, a page every six, which a slow, careful reader is nowhere near
+    // and a phone left on a page is. Moving backwards counts, because
+    // re-reading is reading.
+    //
+    // Only judged once the caller has started reporting words, so a reader
+    // that cannot measure them is not paused for want of a number it never
+    // sent.
+
+    private val floorWords = ArrayDeque<Pair<Long, Int>>()
+    private var floorSince = 0L
+    private var wordsEverReported = false
+
+    /** The reader moved through [words] words of text, forwards or back. */
+    fun onWordsMoved(words: Int, now: Long) {
+        if (words <= 0 || words > maxPageStepWords) return
+        wordsEverReported = true
+        floorWords.addLast(now to words)
+        pruneFloor(now)
+    }
+
+    private fun pruneFloor(now: Long) {
+        while (floorWords.isNotEmpty() && now - floorWords.first().first >= floorWindowMs) floorWords.removeFirst()
+    }
+
+    private fun belowFloor(now: Long): Boolean {
+        if (!wordsEverReported || now - floorSince < floorWindowMs) return false
+        pruneFloor(now)
+        return floorWords.sumOf { it.second } < minWordsPerFloorWindow
+    }
+
+    // endregion
+
     fun onContinueTapped(now: Long) {
         gateHiddenUntil = now + gateGraceMs
         recompute(now)
@@ -302,7 +348,7 @@ class ReadingGuard(
         val idle = now - lastMovementAt > idleTimeoutMs
         val tooFast = now < tooFastUntil
         state = State(
-            crediting = !idle && !tooFast,
+            crediting = !idle && !tooFast && !belowFloor(now),
             showIdleGate = idle && now >= gateHiddenUntil,
             tooFast = tooFast,
             budgetSeconds = budgetSeconds.toInt()

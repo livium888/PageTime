@@ -148,6 +148,8 @@ fun LibraryScreen(
         )
     }
     val importError by viewModel.importError.collectAsStateWithLifecycle()
+    val coversMissing by viewModel.coversMissing.collectAsStateWithLifecycle()
+    val findingCovers by viewModel.findingCovers.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val todayLine = if (gate.enabled) {
         com.pagetime.app.ui.screens.reader.ReadingToday.label(gate.readToday, gate.target, lockOn = true)
@@ -222,6 +224,18 @@ fun LibraryScreen(
                             enabled = !importing,
                             onClick = { moreMenuExpanded = false; launchYouTubeImport() }
                         )
+                        if (coversMissing > 0 || findingCovers) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (findingCovers) "Looking for covers…"
+                                        else "Find covers for $coversMissing book${if (coversMissing == 1) "" else "s"}"
+                                    )
+                                },
+                                enabled = !findingCovers,
+                                onClick = { moreMenuExpanded = false; viewModel.findCovers() }
+                            )
+                        }
                         if (untaggedCount > 0) {
                             DropdownMenuItem(
                                 text = {
@@ -333,6 +347,7 @@ fun LibraryScreen(
                     onCopy = { viewModel.copyTranscript(book) },
                     onShare = { viewModel.shareTranscript(book) },
                     onOpenPdf = { onOpenPdf(book.id) },
+                    onFindCover = { viewModel.findCover(book) },
                 )
             }
             val current = upNextBook
@@ -722,6 +737,7 @@ private fun BookActionsMenu(
     onCopy: () -> Unit,
     onShare: () -> Unit,
     onOpenPdf: () -> Unit,
+    onFindCover: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         // The title first: a cover on its own does not always say which book it is.
@@ -749,6 +765,12 @@ private fun BookActionsMenu(
         }
         if (book.format == "pdf") {
             DropdownMenuItem(text = { Text("Read the original PDF") }, onClick = { onDismiss(); onOpenPdf() })
+        }
+        if (!book.id.startsWith("paste-")) {
+            DropdownMenuItem(
+                text = { Text(if (book.coverUrl == null) "Find a cover" else "Look for a different cover") },
+                onClick = { onDismiss(); onFindCover() }
+            )
         }
         DropdownMenuItem(text = { Text("Delete book") }, onClick = { onDismiss(); onDelete() })
     }

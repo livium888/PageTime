@@ -25,6 +25,10 @@ interface BookDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(book: BookEntity)
 
+    /** Sets only the cover, so a find that took a while cannot overwrite progress made meanwhile. */
+    @Query("UPDATE books SET coverUrl = :coverUrl WHERE id = :id")
+    suspend fun updateCover(id: String, coverUrl: String?)
+
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteById(id: String)
 

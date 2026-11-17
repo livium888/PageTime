@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pagetime.app.PageTimeApp
 import com.pagetime.app.data.BookGenreSummary
+import com.pagetime.app.data.LibraryRepository
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.domain.ReadingStreak
 import java.time.LocalDate
@@ -285,7 +286,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             container.libraryRepository.importYouTubeTranscript(url)
                 .onSuccess(onImported)
                 .onFailure { error ->
-                    _importError.value = error.message ?: "Could not fetch YouTube transcript"
+                    if (error is LibraryRepository.AlreadyInLibraryException) {
+                        // Already there: say so, and open it rather than adding it twice.
+                        _importError.value = error.message + ". Opened it."
+                        onImported(error.book)
+                    } else {
+                        _importError.value = error.message ?: "Could not fetch YouTube transcript"
+                    }
                 }
             _importing.value = false
         }

@@ -15,6 +15,7 @@ import com.pagetime.app.data.local.SettingsRepository
 import com.pagetime.app.data.local.isReadiumBook
 import com.pagetime.app.data.local.isReflowedText
 import com.pagetime.app.data.library.MarkdownText
+import com.pagetime.app.data.youtube.VideoOwnership
 import com.pagetime.app.data.youtube.YouTubeTranscriptFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -401,14 +402,35 @@ class LibraryRepository(
      * Imports a YouTube video transcript as a plain-text book.
      * The transcript text is saved locally so it works offline.
      */
+    /**
+     * The video is already a book in the library. Not a failure to report: the
+     * caller opens that book, or says it is there.
+     */
+    class AlreadyInLibraryException(val book: BookEntity) :
+        Exception("\u201c${book.title}\u201d is already in your library")
+
     suspend fun importYouTubeTranscript(url: String): Result<BookEntity> = withContext(Dispatchers.IO) {
         runCatching {
             val fetcher = YouTubeTranscriptFetcher()
             val videoId = fetcher.extractVideoId(url)
                 ?: error("Could not find a YouTube video ID in this URL")
+            // Already added? Checked before anything is fetched, by the id the
+            // video gives its book.
+            val owned = bookDao.getAll().filter { it.id.startsWith("yt-") }
+            fun toOwned(books: List<BookEntity>) = books.map {
+                VideoOwnership.OwnedBook(it.id, it.title, it.author)
+            }
+            VideoOwnership.find(toOwned(owned), videoId)?.let { found ->
+                bookDao.getById(found.id)?.let { throw AlreadyInLibraryException(it) }
+            }
             val result = fetcher.fetchTranscript(videoId)
                 ?: error("No transcript available for this video. It may not have subtitles.")
-            val id = "yt-${UUID.randomUUID()}"
+            // And again by title and channel, which catches a transcript added
+            // before ids named their video.
+            VideoOwnership.find(toOwned(owned), videoId, result.title, result.author)?.let { found ->
+                bookDao.getById(found.id)?.let { throw AlreadyInLibraryException(it) }
+            }
+            val id = VideoOwnership.idFor(videoId)
             val booksDir = File(context.filesDir, "books").apply { mkdirs() }
             val destination = File(booksDir, "$id.txt")
             destination.writeText(result.text)

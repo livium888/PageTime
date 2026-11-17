@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pagetime.app.data.LibraryRepository
 import com.pagetime.app.data.local.BookEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,7 +57,11 @@ class BookImportViewModel(app: Application) : AndroidViewModel(app) {
             container.libraryRepository.importYouTubeTranscript(url)
                 .onSuccess { _state.value = State.Done(it) }
                 .onFailure { error ->
-                    _state.value = State.Failed(error.message ?: "Could not fetch transcript")
+                    _state.value = if (error is LibraryRepository.AlreadyInLibraryException) {
+                        State.Done(error.book) // already added: open it
+                    } else {
+                        State.Failed(error.message ?: "Could not fetch transcript")
+                    }
                 }
         }
     }

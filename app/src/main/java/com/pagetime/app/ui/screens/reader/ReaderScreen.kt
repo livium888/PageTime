@@ -100,6 +100,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1496,21 +1498,27 @@ private fun TextReaderHost(
         }
         return
     }
-    var lastFraction by remember { mutableStateOf(0f) }
-    val initialPage = remember(pages, initialFraction, initialOffset) {
-        val offset = if (initialOffset > 0) initialOffset else {
-            (initialFraction.coerceIn(0f, 1f) * content.length).toInt()
-        }
-        TextPageLayout.pageForOffset(pages, offset)
+    // Where in the text the reader is, as a character offset, kept across a
+    // rotation. A page number means nothing once the pages are laid out again
+    // at another width, and a fraction of the page count drifts a page or two
+    // each way; the text offset is the same in every layout. Only the reader's
+    // own turning (or a jump they asked for) moves it, so the re-layout itself
+    // never pulls it back to the start of whatever page happens to hold it.
+    var lastOffset by rememberSaveable { mutableIntStateOf(-1) }
+    // Where the book was opened, until the reader has moved.
+    val openedAt = if (initialOffset > 0) initialOffset else {
+        (initialFraction.coerceIn(0f, 1f) * content.length).toInt()
     }
+    val initialPage = remember(pages, openedAt) { TextPageLayout.pageForOffset(pages, openedAt) }
     val pagerState = rememberPagerState(
         initialPage = initialPage,
         pageCount = { pages.size }
     )
 
     LaunchedEffect(pagerState, pages) {
-        if (lastFraction > 0f && pages.isNotEmpty() && pagerState.currentPage != TextPageLayout.pageForFraction(pages, lastFraction)) {
-            pagerState.scrollToPage(TextPageLayout.pageForFraction(pages, lastFraction))
+        if (pages.isNotEmpty()) {
+            val page = TextPageLayout.pageForOffset(pages, if (lastOffset >= 0) lastOffset else openedAt)
+            if (pagerState.currentPage != page) pagerState.scrollToPage(page)
         }
         onPageChanged(
             pagerState.currentPage,
@@ -1522,8 +1530,8 @@ private fun TextReaderHost(
         onRestoreComplete()
         snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
             .collect { (page, scrolling) ->
-                lastFraction = TextPageLayout.fractionForPage(page, pages.size)
                 if (scrolling) {
+                    lastOffset = pages[page].startOffset
                     onPageChanged(page, pages.size, pages[page].startOffset, pages[page].endOffset, true)
                 }
             }
@@ -1572,7 +1580,7 @@ private fun TextReaderHost(
         val (offset, _) = goOffsetRequest ?: return@LaunchedEffect
         if (pages.isNotEmpty()) {
             val page = TextPageLayout.pageForOffset(pages, offset)
-            lastFraction = TextPageLayout.fractionForPage(page, pages.size)
+            lastOffset = pages[page].startOffset
             pagerState.scrollToPage(page)
         }
     }
@@ -1581,8 +1589,9 @@ private fun TextReaderHost(
     LaunchedEffect(goRequest) {
         val (fraction, _) = goRequest ?: return@LaunchedEffect
         if (pages.isNotEmpty()) {
-            lastFraction = fraction
-            pagerState.scrollToPage(TextPageLayout.pageForFraction(pages, fraction))
+            val page = TextPageLayout.pageForFraction(pages, fraction)
+            lastOffset = pages[page].startOffset
+            pagerState.scrollToPage(page)
         }
     }
 

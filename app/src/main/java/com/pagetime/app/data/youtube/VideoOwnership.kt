@@ -20,6 +20,20 @@ object VideoOwnership {
     fun idFor(videoId: String): String = "yt-$videoId"
 
     /**
+     * The video's own picture, used as the book's cover. The 16:9 size is chosen
+     * because the larger default carries black bars above and below.
+     */
+    fun thumbnailFor(videoId: String): String = "https://i.ytimg.com/vi/$videoId/mqdefault.jpg"
+
+    /** The cover for a book: its own, else the video's picture for a video book, else none. */
+    fun coverFor(bookId: String, coverUrl: String?): String? =
+        coverUrl ?: bookId.takeIf { it.startsWith("yt-") }
+            ?.removePrefix("yt-")
+            // Older transcripts were named with a random id, which names no video.
+            ?.takeIf { it.length == 11 && it.all { c -> c.isLetterOrDigit() || c == '_' || c == '-' } }
+            ?.let(::thumbnailFor)
+
+    /**
      * The book that already holds this video, or null.
      *
      * [title] and [channel] are optional so a check can be made before

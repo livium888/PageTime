@@ -46,4 +46,12 @@ class VideoOwnershipTest {
         assertEquals("yt-5f3c-uuid", VideoOwnership.find(library, "n", "Why We Sleep", null)?.id)
         assertEquals("yt-5f3c-uuid", VideoOwnership.find(library, "n", "Why We Sleep", "")?.id)
     }
+
+    @Test
+    fun `a video book is covered by its video's picture, an older one by nothing`() {
+        assertEquals("https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg", VideoOwnership.coverFor("yt-dQw4w9WgXcQ", null))
+        assertEquals("keep", VideoOwnership.coverFor("yt-dQw4w9WgXcQ", "keep"))
+        assertNull(VideoOwnership.coverFor("yt-5f3c1a2b-9d4e-4c7a-8b1f-0a2b3c4d5e6f", null))
+        assertNull(VideoOwnership.coverFor("epub-1", null))
+    }
 }

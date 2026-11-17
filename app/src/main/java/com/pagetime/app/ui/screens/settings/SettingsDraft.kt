@@ -37,6 +37,8 @@ data class SettingsDraft(
     val openOnBook: Boolean = true,
     /** The reader shows what is left to the day's target beside the clock. */
     val showCountdown: Boolean = true,
+    /** At the end of a chapter the reader is asked what it was about. */
+    val chapterRecall: Boolean = true,
 ) {
     /** One line of the confirmation: a setting, what it was, what it will be. */
     data class Change(
@@ -135,6 +137,14 @@ data class SettingsDraft(
             }
             if (saved.openOnBook != draft.openOnBook) {
                 add(Change("Open the app on my book", onOff(saved.openOnBook), onOff(draft.openOnBook)))
+            }
+            if (saved.chapterRecall != draft.chapterRecall) {
+                add(
+                    Change(
+                        "Ask what a chapter was about", onOff(saved.chapterRecall), onOff(draft.chapterRecall),
+                        if (draft.chapterRecall) "At the end of a chapter, a sentence of your own. Nothing is saved or marked." else null,
+                    )
+                )
             }
             if (saved.showCountdown != draft.showCountdown) {
                 add(

@@ -35,6 +35,7 @@ import com.pagetime.app.data.recommend.OpenLibraryPicks
 import com.pagetime.app.data.recommend.ReaderPicks
 import com.pagetime.app.data.learning.CardDensity
 import com.pagetime.app.data.learning.CardNudge
+import com.pagetime.app.data.learning.ChapterRecall
 import com.pagetime.app.data.learning.ReadingSpan
 import com.pagetime.app.data.learning.SpanPoint
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,8 +101,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
     // switched off here by giving the forward-progress allowance a day's worth
     // from the start. Idle and implausibly fast page-turning still pause it.
     private val guard = ReadingGuard(
-        // A dense page, or stopping to think, takes longer than a minute and a half.
-        idleTimeoutMs = 180_000L,
+        // A dense page, or stopping to think, takes longer than a minute and a
+        // half; two minutes with no page turn is still a person who has left.
+        idleTimeoutMs = 120_000L,
         // Progress through an EPUB is measured per chapter file, so a short
         // chapter reads as many times faster than it was read.
         maxPlausibleWordsPerMinute = 2_500f,
@@ -599,6 +601,12 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageEndOffset: Int = 0
     ) {
         if (pageCount <= 0) return
+        // Words moved through since the last page, at about six characters a word.
+        if (userInitiated) {
+            val last = previousTextOffset
+            if (last != null && pageStartOffset > last) checkForFlicking((pageStartOffset - last) / 6)
+        }
+        previousTextOffset = pageStartOffset
         latestTxtPageOffset = pageStartOffset
         latestTxtPageEndOffset = pageEndOffset
         val fraction = TextPageLayout.fractionForPage(pageIndex, pageCount)
@@ -1695,6 +1703,71 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageAnchor = words?.let { locator to it }
     }
 
+    /** What the reader is asked at the end of a chapter. See [ChapterRecall]. */
+    data class ChapterRecallPrompt(val chapterNumber: Int, val title: String?, val opening: String)
+
+    private val _chapterRecall = MutableStateFlow<ChapterRecallPrompt?>(null)
+    val chapterRecall = _chapterRecall.asStateFlow()
+
+    fun dismissChapterRecall() {
+        _chapterRecall.value = null
+    }
+
+    /**
+     * The reader has gone from one chapter into the next. If it was read
+     * through, asks what it was about, once.
+     */
+    private fun maybeAskAboutChapter(left: Int, entered: Int, fractionWhenLeft: Float) {
+        val b = _book.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                val words = chapterWords[left] ?: run {
+                    val counted = com.pagetime.app.data.BookWordCount.count(
+                        container.learningContextExtractor.chapterText(b, left)
+                    )
+                    if (counted > 0) chapterWords[left] = counted
+                    counted
+                }
+                val ask = ChapterRecall.shouldAsk(
+                    leftChapter = left,
+                    enteredChapter = entered,
+                    fractionWhenLeft = fractionWhenLeft,
+                    chapterWords = words,
+                    alreadyAsked = settingsRepository.chapterRecallAsked(bookId),
+                    enabled = settingsRepository.chapterRecallEnabled.first(),
+                )
+                if (!ask || _chapterRecall.value != null) return@launch
+                val text = container.learningContextExtractor.chapterText(b, left)
+                settingsRepository.markChapterRecallAsked(bookId, left)
+                val title = _publication.value?.readingOrder?.getOrNull(left)?.title
+                _chapterRecall.value = ChapterRecallPrompt(
+                    chapterNumber = left + 1,
+                    title = title,
+                    opening = ChapterRecall.opening(text),
+                )
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+    }
+
+    private var previousEpubPosition: Pair<Int, Float>? = null
+    private var previousTextOffset: Int? = null
+
+    /**
+     * Feeds the guard how far the reader just moved, in words, and takes back
+     * the credit it says was earned by flicking. See [ReadingGuard.onWordsAdvanced].
+     */
+    private fun checkForFlicking(words: Int) {
+        val back = guard.onWordsAdvanced(words, SystemClock.elapsedRealtime())
+        if (back <= 0) return
+        _guardState.value = guard.state
+        // What has not been written yet is simply not written.
+        val unwritten = minOf(pendingSeconds, back.toLong())
+        pendingSeconds -= unwritten
+        _creditedSeconds.value = (_creditedSeconds.value - back).coerceAtLeast(0L)
+        val written = back - unwritten
+        if (written > 0) persistenceScope.launch { balanceManager.takeBackReading(written) }
+    }
+
     /** The size of one page in each chapter, learned as pages are turned. See [EpubRestorePoint]. */
     private val pageStepByChapter = java.util.concurrent.ConcurrentHashMap<String, Double>()
 
@@ -1736,6 +1809,19 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         val size = publication?.readingOrder?.size ?: 0
         if (index != null && size > 0) {
             onProgressChanged((index + fraction) / size)
+            // How many words that page turn moved through, for the flick check.
+            // Within one chapter only: a jump to another is navigation.
+            val before = previousEpubPosition
+            if (before != null && before.first != index) {
+                maybeAskAboutChapter(before.first, index, before.second)
+            }
+            if (before != null && before.first == index && fraction > before.second) {
+                val chapterTotal = chapterWords[index]
+                    ?: bookWordCount?.let { it / size.coerceAtLeast(1) }
+                    ?: 3_000
+                checkForFlicking(((fraction - before.second) * chapterTotal).toInt())
+            }
+            previousEpubPosition = index to fraction
             // The last page of the last chapter starts short of its end, so
             // being in the final chapter and most of the way through counts.
             if ((index + fraction) / size >= ReaderPicks.FINISHED_AT ||

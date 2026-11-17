@@ -311,6 +311,7 @@ class SettingsRepository(private val context: Context) {
         val CARD_NUDGE_ENABLED = booleanPreferencesKey("card_nudge_enabled")
         val READER_SHOW_COUNTDOWN = booleanPreferencesKey("reader_show_countdown")
         val OPEN_ON_BOOK = booleanPreferencesKey("open_on_current_book")
+        val CHAPTER_RECALL = booleanPreferencesKey("chapter_recall_enabled")
         val AI_APP_PACKAGE = stringPreferencesKey("ai_app_package")
         val AI_APP_CLASS = stringPreferencesKey("ai_app_class")
         val CARD_NUDGE_EVERY = intPreferencesKey("card_nudge_every_words")
@@ -934,6 +935,28 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.READER_SHOW_COUNTDOWN] = value }
     }
 
+    /** Whether the reader is asked, at the end of a chapter, what it was about. On unless turned off. */
+    val chapterRecallEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.CHAPTER_RECALL] ?: true }
+
+    suspend fun setChapterRecallEnabled(value: Boolean) {
+        context.dataStore.edit { it[Keys.CHAPTER_RECALL] = value }
+    }
+
+    private fun chapterRecallAskedKey(bookId: String) = stringSetPreferencesKey("chapter_recall_asked_$bookId")
+
+    /** The chapters of this book the reader has already been asked about. */
+    suspend fun chapterRecallAsked(bookId: String): Set<Int> =
+        (context.dataStore.data.first()[chapterRecallAskedKey(bookId)] ?: emptySet())
+            .mapNotNull { it.toIntOrNull() }.toSet()
+
+    suspend fun markChapterRecallAsked(bookId: String, chapter: Int) {
+        context.dataStore.edit { p ->
+            val key = chapterRecallAskedKey(bookId)
+            p[key] = (p[key] ?: emptySet()) + chapter.toString()
+        }
+    }
+
     /** Whether opening the app goes straight to the book being read. On unless turned off. */
     val openOnBook: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.OPEN_ON_BOOK] ?: true }
@@ -1183,6 +1206,19 @@ class SettingsRepository(private val context: Context) {
             p[Keys.USED_TODAY] = total
         }
         return total
+    }
+
+    /**
+     * Takes back [delta] seconds of today's reading, never below zero. Used
+     * when the reader is found to have been flicking through pages: the
+     * seconds credited while it happened are removed from the day's tally.
+     */
+    suspend fun takeBackReadToday(delta: Long, lockDay: Long) {
+        if (delta <= 0) return
+        context.dataStore.edit { p ->
+            if ((p[Keys.READ_TODAY_DAY] ?: Long.MIN_VALUE) != lockDay) return@edit
+            p[Keys.READ_TODAY] = ((p[Keys.READ_TODAY] ?: 0L) - delta).coerceAtLeast(0L)
+        }
     }
 
     /** Unfenced, like the target; the fence is in the balance manager. */

@@ -104,6 +104,12 @@ class BalanceManager(
         return (allowance - used).coerceAtLeast(0L)
     }
 
+    /** Removes [seconds] from today's reading tally: time found to have been earned by flicking pages. */
+    suspend fun takeBackReading(seconds: Long) {
+        if (seconds <= 0L) return
+        mutex.withLock { repository.takeBackReadToday(seconds, LockDay.of(System.currentTimeMillis())) }
+    }
+
     /**
      * Sets how long blocked apps may be used after the day's reading; zero for
      * no limit. Returns whether it was accepted: more time is loosening, so it

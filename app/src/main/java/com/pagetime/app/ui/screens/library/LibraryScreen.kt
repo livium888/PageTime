@@ -149,6 +149,8 @@ fun LibraryScreen(
     }
     val importError by viewModel.importError.collectAsStateWithLifecycle()
     val coversMissing by viewModel.coversMissing.collectAsStateWithLifecycle()
+    val keepReadingList by viewModel.keepReadingList.collectAsStateWithLifecycle()
+    var showKeepReadingList by remember { mutableStateOf(false) }
     val findingCovers by viewModel.findingCovers.collectAsStateWithLifecycle()
     val gate by viewModel.gate.collectAsStateWithLifecycle()
     val todayLine = if (gate.enabled) {
@@ -236,6 +238,12 @@ fun LibraryScreen(
                             enabled = !importing,
                             onClick = { moreMenuExpanded = false; launchYouTubeImport() }
                         )
+                        if (keepReadingList.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("To read next (${keepReadingList.size})") },
+                                onClick = { moreMenuExpanded = false; showKeepReadingList = true }
+                            )
+                        }
                         if (coversMissing > 0 || findingCovers) {
                             DropdownMenuItem(
                                 text = {
@@ -410,6 +418,45 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    if (showKeepReadingList) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        AlertDialog(
+            onDismissRequest = { showKeepReadingList = false },
+            title = { Text("To read next") },
+            text = {
+                androidx.compose.foundation.lazy.LazyColumn {
+                    items(keepReadingList.size) { i ->
+                        val item = keepReadingList[i]
+                        Column(Modifier.padding(vertical = 6.dp)) {
+                            Text("${item.kind.tag} \u00b7 ${item.title}", style = MaterialTheme.typography.titleSmall)
+                            if (item.creator.isNotBlank()) {
+                                Text(item.creator, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (item.why.isNotBlank()) Text(item.why, style = MaterialTheme.typography.bodySmall)
+                            Row {
+                                TextButton(onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse(
+                                                    com.pagetime.app.data.keepreading.KeepReading.searchUrl(item)
+                                                )
+                                            )
+                                        )
+                                    }
+                                }) { Text("Find it") }
+                                TextButton(onClick = { viewModel.removeFromKeepReading(item) }) { Text("Remove") }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showKeepReadingList = false }) { Text("Close") } },
+        )
     }
 
     pasteBook?.let { book ->

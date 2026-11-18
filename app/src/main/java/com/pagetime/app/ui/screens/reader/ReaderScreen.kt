@@ -950,8 +950,34 @@ fun ReaderScreen(
                 onDismiss = { aboutPick = null },
             )
         }
+        // The end of anything: ask the reader's AI what to read next. It comes
+        // before the catalogue picks below, which wait until it is dealt with.
+        val keepReading by vm.keepReading.collectAsStateWithLifecycle()
+        var keepReadingOpen by remember { mutableStateOf(false) }
+        if (keepReadingOpen) {
+            keepReading?.let { offer ->
+                com.pagetime.app.ui.screens.keepreading.KeepReadingSheet(
+                    finished = offer.finished,
+                    onDismiss = { keepReadingOpen = false; vm.dismissKeepReading() },
+                )
+            }
+        }
         AnimatedVisibility(
-            visible = nextBooks != null && cardOffer == null && !showMakeCards,
+            visible = keepReading != null && !keepReadingOpen && cardOffer == null && !showMakeCards,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = ReaderFooterHeight),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            keepReading?.let { offer ->
+                com.pagetime.app.ui.screens.keepreading.KeepReadingCard(
+                    title = offer.finished.title,
+                    onChoose = { keepReadingOpen = true },
+                    onDismiss = vm::dismissKeepReading,
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = nextBooks != null && keepReading == null && cardOffer == null && !showMakeCards,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = fadeIn(),
             exit = fadeOut()

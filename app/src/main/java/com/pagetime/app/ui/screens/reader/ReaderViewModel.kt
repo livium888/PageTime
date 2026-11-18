@@ -634,7 +634,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         // that stopped the drip and left the counter stuck at two minutes.
         onProgressChanged(fraction)
         updateScrollProgress(fraction)
-        if (pageCount > 1 && pageIndex == pageCount - 1) offerNextBooks()
+        if (pageCount > 1 && pageIndex == pageCount - 1) { offerKeepReading(); offerNextBooks() }
         _bookText.value?.let { shown ->
             updateChapterEndForText(shown, pageStartOffset)
             onPageTurnedForCardOffer(
@@ -1315,6 +1315,54 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      * does not answer or has nothing: an empty card on the last page of a book
      * would be worse than none. Marked as shown only when it is.
      */
+    /**
+     * The end of anything: the offer to ask the reader's AI what to read next.
+     * Once per book, and built from what is on this phone: the highlights, the
+     * ideas met, and what the reader already owns.
+     */
+    data class KeepReadingOffer(val finished: com.pagetime.app.data.keepreading.KeepReading.Finished)
+
+    private val _keepReading = MutableStateFlow<KeepReadingOffer?>(null)
+    val keepReading = _keepReading.asStateFlow()
+    private var keepReadingTried = false
+
+    private fun offerKeepReading() {
+        if (keepReadingTried) return
+        keepReadingTried = true
+        val b = _book.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (settingsRepository.keepReadingOffered(bookId)) return@launch
+                val marks = withContext(Dispatchers.IO) {
+                    highlightRepo.observeForBook(bookId).first().map { it.quote }
+                }
+                val ideas = withContext(Dispatchers.IO) {
+                    container.database.conceptDao().getForBook(bookId).map { it.label }
+                }
+                val owned = withContext(Dispatchers.IO) {
+                    container.database.bookDao().getAll().filter { it.id != b.id }.map { it.title }
+                }
+                val what = when {
+                    b.id.startsWith("yt-") -> "video transcript"
+                    b.id.startsWith("paste-") -> "text"
+                    b.format == "pdf" -> "PDF"
+                    else -> "book"
+                }
+                _keepReading.value = KeepReadingOffer(
+                    com.pagetime.app.data.keepreading.KeepReading.Finished(
+                        title = b.title, author = b.author, what = what,
+                        highlights = marks, concepts = ideas, owned = owned,
+                    )
+                )
+                settingsRepository.setKeepReadingOffered(bookId)
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+    }
+
+    fun dismissKeepReading() {
+        _keepReading.value = null
+    }
+
     private fun offerNextBooks() {
         if (nextBooksTried) return
         nextBooksTried = true
@@ -1836,7 +1884,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
             // being in the final chapter and most of the way through counts.
             if ((index + fraction) / size >= ReaderPicks.FINISHED_AT ||
                 (index == size - 1 && size > 1 && fraction >= 0.9f)
-            ) offerNextBooks()
+            ) { offerKeepReading(); offerNextBooks() }
         } else {
             onUserScrolled()
         }

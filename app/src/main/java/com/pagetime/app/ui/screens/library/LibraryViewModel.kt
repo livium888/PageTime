@@ -52,6 +52,20 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** What the reader saved from "where next?", newest last. */
+    val keepReadingList = container.settingsRepository.keepReadingList
+        .map { com.pagetime.app.data.keepreading.KeepReading.decode(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun removeFromKeepReading(item: com.pagetime.app.data.keepreading.KeepReading.Suggestion) {
+        viewModelScope.launch {
+            val rest = keepReadingList.value.filter { it != item }
+            container.settingsRepository.setKeepReadingList(
+                com.pagetime.app.data.keepreading.KeepReading.encode(rest)
+            )
+        }
+    }
+
     /** Looks again for one book's cover, even if it has one. */
     fun findCover(book: BookEntity) {
         viewModelScope.launch {

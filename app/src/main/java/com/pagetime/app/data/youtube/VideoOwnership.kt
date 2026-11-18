@@ -20,6 +20,21 @@ object VideoOwnership {
     fun idFor(videoId: String): String = "yt-$videoId"
 
     /**
+     * A video's title for comparing, whole.
+     *
+     * [ReaderPicks.titleKey] stops at the first colon, which suits a book (the
+     * subtitle is not its name) and ruins a lecture series: "Calculus: Lecture 1"
+     * and "Calculus: Lecture 2" would both read "calculus", and the second could
+     * never be added. Case, punctuation and a leading article are still ignored.
+     */
+    fun titleKey(title: String): String =
+        title.lowercase()
+            .replace(Regex("[^\\p{L}\\p{Nd} ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .replace(Regex("^(the|a|an) "), "")
+
+    /**
      * The video's own picture, used as the book's cover. The 16:9 size is chosen
      * because the larger default carries black bars above and below.
      */
@@ -48,11 +63,11 @@ object VideoOwnership {
     ): OwnedBook? {
         owned.firstOrNull { it.id == idFor(videoId) }?.let { return it }
         if (title.isNullOrBlank()) return null
-        val wanted = ReaderPicks.titleKey(title)
+        val wanted = titleKey(title)
         if (wanted.isEmpty()) return null
         return owned.firstOrNull { book ->
             book.id.startsWith("yt-") &&
-                ReaderPicks.titleKey(book.title) == wanted &&
+                titleKey(book.title) == wanted &&
                 // The channel must agree when both are known, so two different
                 // videos that share a common title are not taken for one.
                 (channel.isNullOrBlank() || book.author.isBlank() || book.author.trim().equals(channel.trim(), ignoreCase = true))

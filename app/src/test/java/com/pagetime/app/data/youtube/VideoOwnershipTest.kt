@@ -54,4 +54,11 @@ class VideoOwnershipTest {
         assertNull(VideoOwnership.coverFor("yt-5f3c1a2b-9d4e-4c7a-8b1f-0a2b3c4d5e6f", null))
         assertNull(VideoOwnership.coverFor("epub-1", null))
     }
+
+    @Test
+    fun `lectures in a series are not taken for one another`() {
+        val owned = listOf(OwnedBook("yt-AAAAAAAAAAA", "Calculus: Lecture 1", "Open University"))
+        assertNull(VideoOwnership.find(owned, "BBBBBBBBBBB", "Calculus: Lecture 2", "Open University"))
+        assertEquals("yt-AAAAAAAAAAA", VideoOwnership.find(owned, "CCCCCCCCCCC", "Calculus - Lecture 1!", "Open University")?.id)
+    }
 }

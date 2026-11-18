@@ -68,4 +68,13 @@ class CoverRulesTest {
         assertNull(CoverRules.openLibraryCover(json, "A Book Not There", ""))
         assertNull(CoverRules.openLibraryCover("not json", "Food Lab", ""))
     }
+
+    @Test
+    fun `a video title must match whole, and cover files are told apart by book`() {
+        assertTrue(CoverRules.sameVideoTitle("Calculus: Lecture 1", "Calculus - Lecture 1"))
+        assertFalse(CoverRules.sameVideoTitle("Calculus: Lecture 1", "Calculus: Lecture 2"))
+        assertTrue(CoverRules.isCoverOf("yt-abc", "yt-abc-1700000000000.jpg"))
+        assertFalse(CoverRules.isCoverOf("yt-abc", "yt-abc-def-1700000000000.jpg"))
+        assertFalse(CoverRules.isCoverOf("yt-ab", "yt-abc-1700000000000.jpg"))
+    }
 }

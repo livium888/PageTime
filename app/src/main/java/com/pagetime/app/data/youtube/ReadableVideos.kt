@@ -213,7 +213,7 @@ object ReadableVideos {
         ownedTitles: Collection<String> = emptyList(),
         limit: Int = 6,
     ): List<Pick> {
-        val owned = ownedTitles.map(ReaderPicks::titleKey).filter { it.isNotEmpty() }.toSet()
+        val owned = ownedTitles.map(VideoOwnership::titleKey).filter { it.isNotEmpty() }.toSet()
         val known = knownChannels.map { it.trim().lowercase() }.toSet()
         return results
             .asSequence()
@@ -221,9 +221,9 @@ object ReadableVideos {
             .mapIndexed { index, candidate -> grade(candidate, index, known) }
             .filter { it.fit == Fit.FITS && it.kind != Kind.UNREADABLE }
             .filter { (views(it.candidate.views) ?: Long.MAX_VALUE) >= VIEW_FLOOR }
-            .filter { ReaderPicks.titleKey(it.candidate.title) !in owned }
+            .filter { VideoOwnership.titleKey(it.candidate.title) !in owned }
             .sortedByDescending { it.score }
-            .distinctBy { ReaderPicks.titleKey(it.candidate.title) }
+            .distinctBy { VideoOwnership.titleKey(it.candidate.title) }
             .distinctBy { it.candidate.channel.trim().lowercase() }
             .take(limit)
             .toList()

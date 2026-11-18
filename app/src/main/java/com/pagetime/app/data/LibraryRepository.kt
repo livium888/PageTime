@@ -379,6 +379,13 @@ class LibraryRepository(
         bookDao.deleteById(book.id)
         runCatching { File(book.localPath).delete() }
         runCatching { stylesFile(File(book.localPath)).delete() }
+        // The tidy-up's backup of the original text, and any cover saved for the book.
+        runCatching { rawBackupFile(book).delete() }
+        runCatching {
+            File(context.filesDir, "covers").listFiles { f ->
+                com.pagetime.app.data.library.CoverRules.isCoverOf(book.id, f.name)
+            }?.forEach { it.delete() }
+        }
         pdfSourceFile(book)?.let { source ->
             runCatching { source.delete() }
             // The note left behind by a conversion that failed; it belongs to

@@ -181,6 +181,18 @@ fun LibraryScreen(
         showYouTubeDialog = true
     }
 
+    val deletedNotice by viewModel.deletedNotice.collectAsStateWithLifecycle()
+    LaunchedEffect(deletedNotice) {
+        val gone = deletedNotice ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = "\u201c${gone.title.take(40)}\u201d deleted",
+            actionLabel = "Undo",
+            duration = androidx.compose.material3.SnackbarDuration.Long,
+        )
+        viewModel.consumeDeletedNotice()
+        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) viewModel.undoDelete(gone)
+    }
+
     LaunchedEffect(importError) {
         importError?.let {
             snackbarHostState.showSnackbar(it)

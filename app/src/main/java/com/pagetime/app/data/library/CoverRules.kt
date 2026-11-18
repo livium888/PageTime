@@ -73,6 +73,16 @@ object CoverRules {
     fun isVideoId(text: String): Boolean =
         text.length == 11 && text.all { it.isLetterOrDigit() || it == '_' || it == '-' }
 
+    /** Whether a video's title is this transcript's title: the whole title, so one lecture is not taken for another. */
+    fun sameVideoTitle(book: String, found: String): Boolean {
+        val a = com.pagetime.app.data.youtube.VideoOwnership.titleKey(book)
+        return a.isNotBlank() && a == com.pagetime.app.data.youtube.VideoOwnership.titleKey(found)
+    }
+
+    /** Whether a file in the covers folder is one of this book's covers (`<id>-<time>.jpg`). */
+    fun isCoverOf(bookId: String, fileName: String): Boolean =
+        Regex("^" + Regex.escape(bookId) + "-\\d+\\.jpg$").matches(fileName)
+
     /** Whether a catalogue's title is this book's title, ignoring subtitles, case and punctuation. */
     fun sameTitle(book: String, found: String): Boolean {
         val a = ReaderPicks.titleKey(book)

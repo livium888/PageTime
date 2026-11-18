@@ -92,7 +92,7 @@ class CoverFinder(
         val (results, _) = youtube.search("${book.title} ${book.author}".trim())
         val channelKey = ReaderPicks.titleKey(book.author)
         val match = results.firstOrNull { result ->
-            CoverRules.sameTitle(book.title, result.title) &&
+            CoverRules.sameVideoTitle(book.title, result.title) &&
                 (channelKey.isBlank() || ReaderPicks.titleKey(result.channelName) == channelKey)
         } ?: return null
         return VideoOwnership.thumbnailFor(match.videoId)
@@ -158,7 +158,7 @@ class CoverFinder(
     private fun saveJpeg(bookId: String, bitmap: Bitmap): String {
         val dir = File(context.filesDir, "covers").apply { mkdirs() }
         // A fresh name each time, so a replaced cover is not served from the image cache.
-        dir.listFiles { f -> f.name.startsWith("$bookId-") }?.forEach { it.delete() }
+        dir.listFiles { f -> CoverRules.isCoverOf(bookId, f.name) }?.forEach { it.delete() }
         val out = File(dir, "$bookId-${System.currentTimeMillis()}.jpg")
         out.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 88, it) }
         return "file://${out.absolutePath}"

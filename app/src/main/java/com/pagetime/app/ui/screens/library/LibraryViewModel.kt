@@ -61,8 +61,18 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    val books = container.libraryRepository.observeBooks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Books taken off the shelf whose files are still waiting out the Undo. */
+    private val hiddenIds = MutableStateFlow<Set<String>>(emptySet())
+    private val pendingDeletes = mutableMapOf<String, kotlinx.coroutines.Job>()
+
+    val books = combine(container.libraryRepository.observeBooks(), hiddenIds) { all, hidden ->
+        if (hidden.isEmpty()) all else all.filter { it.id !in hidden }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _deletedNotice = MutableStateFlow<BookEntity?>(null)
+    /** The book just deleted, for the Undo message; null once it has been shown. */
+    val deletedNotice = _deletedNotice.asStateFlow()
+    fun consumeDeletedNotice() { _deletedNotice.value = null }
 
     /** How many books have no cover and could be given one. */
     val coversMissing = books.map { coverFinder.missing(it).size }
@@ -235,8 +245,31 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Takes the book off the shelf at once and erases its files after
+     * [UNDO_MILLIS], unless [undoDelete] comes first. On the app's own scope,
+     * so leaving the screen does not leave a deleted book behind.
+     */
     fun delete(book: BookEntity) {
-        viewModelScope.launch { container.libraryRepository.deleteBook(book) }
+        hiddenIds.value = hiddenIds.value + book.id
+        _deletedNotice.value = book
+        pendingDeletes[book.id]?.cancel()
+        pendingDeletes[book.id] = container.scope.launch {
+            kotlinx.coroutines.delay(UNDO_MILLIS)
+            container.libraryRepository.deleteBook(book)
+            pendingDeletes.remove(book.id)
+            hiddenIds.value = hiddenIds.value - book.id
+        }
+    }
+
+    fun undoDelete(book: BookEntity) {
+        pendingDeletes.remove(book.id)?.cancel()
+        hiddenIds.value = hiddenIds.value - book.id
+    }
+
+    private companion object {
+        /** A little longer than the message stays on screen. */
+        const val UNDO_MILLIS = 11_000L
     }
 
     /** A transcript waiting for the reader's own AI app to tidy it. */

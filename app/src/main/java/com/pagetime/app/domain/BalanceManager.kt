@@ -301,7 +301,8 @@ class BalanceManager(
     suspend fun earnFromExternalReading(foregroundSeconds: Long): Long {
         val requested = ExternalReadingCredit.creditedSeconds(foregroundSeconds)
         if (requested <= 0) return 0
-        val today = java.time.LocalDate.now().toEpochDay()
+        // The reading day, not the calendar day: the cap resets when the day does.
+        val today = LockDay.of(System.currentTimeMillis())
         val paid = mutex.withLock {
             val earnedSoFar = DailyEarningCap.earnedSoFar(
                 storedEpochDay = repository.externalReadingEarnedEpochDay(),

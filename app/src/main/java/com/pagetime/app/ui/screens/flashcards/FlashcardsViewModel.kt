@@ -93,12 +93,15 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
             explainBackRepository.observeConceptQueue(),
         ) { cards, books, lens, tally, conceptQueue ->
             val filter = lens.filter
+            // A book with no cards left cannot stay chosen: nothing would show
+            // and the picker, with one book, is hidden.
+            val bookId = lens.bookId?.takeIf { id -> cards.any { it.bookId == id } }
             val titles = books.associate { it.id to it.title }
             val now = System.currentTimeMillis()
             FlashcardsUiState(
-                groups = FlashcardListing.group(cards, titles, filter, now, lens.query, lens.bookId),
+                groups = FlashcardListing.group(cards, titles, filter, now, lens.query, bookId),
                 query = lens.query,
-                bookId = lens.bookId,
+                bookId = bookId,
                 bookChoices = cards.map { it.bookId }.distinct()
                     .map { it to (titles[it] ?: "A book no longer in the library") }
                     .sortedBy { it.second.lowercase() },

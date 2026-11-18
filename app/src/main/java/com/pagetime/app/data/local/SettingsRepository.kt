@@ -558,6 +558,26 @@ class SettingsRepository(private val context: Context) {
     private fun spanMarkerKey(bookId: String) =
         stringPreferencesKey("card_span_marker_$bookId")
 
+    private fun keepReadingOfferedKey(bookId: String) =
+        booleanPreferencesKey("keep_reading_offered_$bookId")
+
+    /** Whether the "where next?" offer has already been shown for this book. */
+    suspend fun keepReadingOffered(bookId: String): Boolean =
+        context.dataStore.data.first()[keepReadingOfferedKey(bookId)] == true
+
+    suspend fun setKeepReadingOffered(bookId: String) {
+        context.dataStore.edit { it[keepReadingOfferedKey(bookId)] = true }
+    }
+
+    private val keepReadingListKey = stringPreferencesKey("keep_reading_list")
+
+    /** The saved things to read next, as the JSON [com.pagetime.app.data.keepreading.KeepReading] writes. */
+    val keepReadingList: Flow<String?> = context.dataStore.data.map { it[keepReadingListKey] }
+
+    suspend fun setKeepReadingList(json: String) {
+        context.dataStore.edit { it[keepReadingListKey] = json }
+    }
+
     private fun nextBookOfferedKey(bookId: String) =
         booleanPreferencesKey("next_book_offered_$bookId")
 

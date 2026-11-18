@@ -50,6 +50,27 @@ package com.pagetime.app.ui.screens.reader
  * never System.currentTimeMillis(), so wall-clock changes cannot extend sessions.
  * The class is pure and time-injectable, which makes every cheat scenario unit-testable.
  */
+/**
+ * How long a page may sit untouched before the reader is called idle.
+ *
+ * A fixed limit treats a thin page and a dense one alike, and a slow, careful
+ * reader of a dense page is then told they have left while still reading. The
+ * limit grows with the words on the page, at a pace slower than anyone reads
+ * for understanding, so a person is never idle mid-page and a phone left on a
+ * table still is.
+ */
+object IdleLimit {
+    const val CEILING_MS = 300_000L
+    /** Slower than careful study reading, so the limit is generous to the reader. */
+    private const val SLOWEST_WORDS_PER_MINUTE = 80f
+    private const val GRACE_MS = 30_000L
+
+    fun forWords(words: Int, floorMs: Long): Long {
+        val readingMs = words.coerceAtLeast(0) / SLOWEST_WORDS_PER_MINUTE * 60_000f
+        return (GRACE_MS + readingMs).toLong().coerceIn(floorMs, maxOf(floorMs, CEILING_MS))
+    }
+}
+
 class ReadingGuard(
     private val idleTimeoutMs: Long = 90_000L,
     private val gateGraceMs: Long = 15_000L,
@@ -95,6 +116,13 @@ class ReadingGuard(
     // --- session state ---
     private var startedAt = 0L
     private var lastMovementAt = 0L
+    /** The idle limit for the page on screen, when its size is known; else [idleTimeoutMs]. */
+    private var pageIdleMs: Long? = null
+
+    /** Tells the guard how many words the page now showing holds, so a dense page is given longer. */
+    fun onPageWords(words: Int) {
+        pageIdleMs = IdleLimit.forWords(words, idleTimeoutMs)
+    }
     /** The book's total word count, once known — see [start] and [ReadingPace]. */
     private var totalWords: Int? = null
 
@@ -345,7 +373,7 @@ class ReadingGuard(
     }
 
     private fun recompute(now: Long): State {
-        val idle = now - lastMovementAt > idleTimeoutMs
+        val idle = now - lastMovementAt > (pageIdleMs ?: idleTimeoutMs)
         val tooFast = now < tooFastUntil
         state = State(
             crediting = !idle && !tooFast && !belowFloor(now),

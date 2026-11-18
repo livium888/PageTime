@@ -514,8 +514,9 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         } else {
             // persistenceScope, not viewModelScope: stopReading() runs during
             // teardown and the pending seconds must still be written after
-            // the scope is cancelled.
-            persistenceScope.launch { write() }
+            // the scope is cancelled. A failed write loses those seconds; it
+            // must never take the reader down with it.
+            persistenceScope.launch { runCatching { write() } }
         }
     }
 
@@ -610,6 +611,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                 if (moved > 0) checkForFlicking(moved)
             }
         }
+        // About six characters a word: a dense page gets a longer idle limit.
+        if (pageEndOffset > pageStartOffset) guard.onPageWords((pageEndOffset - pageStartOffset) / 6)
         previousTextOffset = pageStartOffset
         latestTxtPageOffset = pageStartOffset
         latestTxtPageEndOffset = pageEndOffset

@@ -1390,6 +1390,10 @@ private fun TextReaderHost(
 
     var pagesState by remember { mutableStateOf<List<TextPage>?>(null) }
     var layoutProgress by remember { mutableStateOf(0f) }
+    // True while a book already on screen is being laid out again (rotation, a
+    // new font size). The old pages are still drawn, at a size they were not
+    // made for, so they are covered until the new ones are ready.
+    var relayout by remember { mutableStateOf(false) }
 
     LaunchedEffect(
         content,
@@ -1435,6 +1439,7 @@ private fun TextReaderHost(
             (charsPerLine * linesPerPage * 3).coerceIn(2_000, 200_000)
         }
         layoutProgress = 0f
+        relayout = pagesState != null
         pagesState = runCatching {
             TextPageLayout.paginateMeasuredAt(
                 content = content,
@@ -1473,6 +1478,7 @@ private fun TextReaderHost(
             // so the reader always shows the full book rather than nothing.
             TextPageLayout.paginate(content, TextPageLayout.targetCharsFor(settings))
         }
+        relayout = false
     }
 
     val pages = pagesState
@@ -1609,6 +1615,7 @@ private fun TextReaderHost(
     // closed when they say where it stops.
     val chunkSpanEnd = maxOf(chunkEndFraction, readingFraction)
 
+    Box(Modifier.fillMaxSize()) {
     HorizontalPager(
         state = pagerState,
         modifier = Modifier
@@ -1743,6 +1750,28 @@ private fun TextReaderHost(
                 onExtendForward = onExtendGrabForward
             )
         }
+    }
+    // The pages on screen were made for another size; say so rather than show
+    // them clipped, and say how far the new ones are.
+    if (relayout) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(palette.background.copy(alpha = 0.94f))
+                .pointerInput(Unit) { detectTapGestures { } },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = palette.text)
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Laying out pages… ${(layoutProgress.coerceIn(0f, 1f) * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.text
+                )
+            }
+        }
+    }
     }
 }
 

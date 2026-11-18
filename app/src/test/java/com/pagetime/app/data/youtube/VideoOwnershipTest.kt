@@ -26,13 +26,13 @@ class VideoOwnershipTest {
 
     @Test
     fun `a transcript added before ids named their video is found by title and channel`() {
-        val found = VideoOwnership.find(library, "newid", "Why we sleep", "yale courses")
+        val found = VideoOwnership.find(library, "newid", "Why we sleep: A Lecture", "yale courses")
         assertEquals("yt-5f3c-uuid", found?.id)
     }
 
     @Test
     fun `the same title from another channel is a different video`() {
-        assertNull(VideoOwnership.find(library, "newid", "Why We Sleep", "Some Other Channel"))
+        assertNull(VideoOwnership.find(library, "newid", "Why We Sleep: a lecture", "Some Other Channel"))
     }
 
     @Test
@@ -43,8 +43,8 @@ class VideoOwnershipTest {
 
     @Test
     fun `a missing channel does not stop a title match`() {
-        assertEquals("yt-5f3c-uuid", VideoOwnership.find(library, "n", "Why We Sleep", null)?.id)
-        assertEquals("yt-5f3c-uuid", VideoOwnership.find(library, "n", "Why We Sleep", "")?.id)
+        assertEquals("yt-5f3c-uuid", VideoOwnership.find(library, "n", "Why We Sleep: a lecture", null)?.id)
+        assertEquals("yt-5f3c-uuid", VideoOwnership.find(library, "n", "Why We Sleep: a lecture", "")?.id)
     }
 
     @Test

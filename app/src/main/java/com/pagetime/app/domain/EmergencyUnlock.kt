@@ -95,6 +95,37 @@ object EmergencyUnlock {
     fun canUnlock(stamps: List<Long>, nowMillis: Long, hardLockUntil: Long): Boolean =
         nowMillis >= hardLockUntil && usesLeft(stamps, nowMillis) > 0
 
+    /** What pressing the button does. */
+    enum class Outcome {
+        /** A use was spent and the app is open for the window. */
+        OPENED,
+        /** The app is already open under an unlock; nothing more is spent. */
+        ALREADY_OPEN,
+        /** No use left, or a hard lock. */
+        REFUSED,
+    }
+
+    /**
+     * The result of pressing the button.
+     *
+     * The already-open case is first on purpose: a second tap on a button that
+     * is still on screen for a moment must not spend the second use on the very
+     * app the first one just opened, which is how both of a week's unlocks used
+     * to go in a single double tap.
+     */
+    fun attempt(
+        stamps: List<Long>,
+        nowMillis: Long,
+        hardLockUntil: Long,
+        unlockedPackage: String?,
+        untilMillis: Long,
+        packageName: String?,
+    ): Outcome = when {
+        covers(unlockedPackage, untilMillis, packageName, nowMillis) -> Outcome.ALREADY_OPEN
+        canUnlock(stamps, nowMillis, hardLockUntil) -> Outcome.OPENED
+        else -> Outcome.REFUSED
+    }
+
     /**
      * Whether an unlock is currently covering [packageName].
      *

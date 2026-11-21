@@ -72,6 +72,11 @@ class BlockScreenTextTest {
         assertEquals("1h", BlockScreenText.span(60 * 60))
         assertEquals("1h 1m", BlockScreenText.span(61 * 60))
         assertEquals("2h", BlockScreenText.span(7200))
+        // A week's wait reads in days, not hundreds of hours.
+        assertEquals("47h", BlockScreenText.span(47 * 3600))
+        assertEquals("2d", BlockScreenText.span(48 * 3600))
+        assertEquals("6d 4h", BlockScreenText.span((6 * 24 + 4) * 3600L + 59 * 60))
+        assertEquals("7d", BlockScreenText.span(7 * 24 * 3600L))
     }
 
     // --- The emergency hatch ---

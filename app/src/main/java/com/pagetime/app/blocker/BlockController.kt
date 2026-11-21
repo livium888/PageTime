@@ -359,11 +359,17 @@ class BlockController(
     fun useEmergencyUnlock() {
         val pkg = currentBlockedPackage ?: return
         scope.launch {
-            if (settingsRepository.startEmergencyUnlock(pkg)) {
-                emergencyPackage = pkg
-                emergencyUntil = System.currentTimeMillis() + EmergencyUnlock.DURATION_SECONDS * 1000
-                usageRepository.log(UsageRepository.TYPE_EMERGENCY, pkg, EmergencyUnlock.DURATION_SECONDS)
-                if (!accessDenied()) onAccessChanged()
+            when (settingsRepository.startEmergencyUnlock(pkg)) {
+                EmergencyUnlock.Outcome.OPENED -> {
+                    emergencyPackage = pkg
+                    emergencyUntil = System.currentTimeMillis() + EmergencyUnlock.DURATION_SECONDS * 1000
+                    usageRepository.log(UsageRepository.TYPE_EMERGENCY, pkg, EmergencyUnlock.DURATION_SECONDS)
+                    if (!accessDenied()) onAccessChanged()
+                }
+                // A second tap while the first is still taking effect: nothing
+                // more is spent, and the block screen still comes down.
+                EmergencyUnlock.Outcome.ALREADY_OPEN -> if (!accessDenied()) onAccessChanged()
+                EmergencyUnlock.Outcome.REFUSED -> Unit
             }
         }
     }
@@ -529,6 +535,19 @@ class BlockController(
             while (isActive && currentBlockedPackage == pkg) {
                 delay(1000)
                 if (currentBlockedPackage != pkg) break
+                // The rule is asked again every second, so an emergency unlock
+                // that runs out puts the block screen back over the app the
+                // reader is still in. Until now nothing ever looked: under the
+                // reading lock this ticker is unmetered, so the five minutes
+                // were enforced only if the reader happened to leave the app.
+                if (accessDenied()) {
+                    flushSpentSession(pkg)
+                    startEnforcing()
+                    break
+                }
+                // Free time, by design: an emergency is not paid for from the
+                // allowance or the balance.
+                if (emergencyCovers(pkg)) continue
                 // Screen off → nobody is using the app; don't drain their time.
                 if (!powerManager.isInteractive) continue
                 // A blocked site's screen is covering the app. Same reasoning:

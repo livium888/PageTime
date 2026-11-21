@@ -1137,21 +1137,27 @@ class SettingsRepository(private val context: Context) {
     suspend fun startEmergencyUnlock(
         packageName: String,
         nowMillis: Long = System.currentTimeMillis(),
-    ): Boolean {
-        if (packageName.isBlank()) return false
-        var opened = false
+    ): EmergencyUnlock.Outcome {
+        if (packageName.isBlank()) return EmergencyUnlock.Outcome.REFUSED
+        var outcome = EmergencyUnlock.Outcome.REFUSED
         context.dataStore.edit { p ->
-            val hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L
             val uses = EmergencyUnlock.decode(p[Keys.EMERGENCY_USES])
-            if (!EmergencyUnlock.canUnlock(uses, nowMillis, hardLockUntil)) return@edit
+            outcome = EmergencyUnlock.attempt(
+                stamps = uses,
+                nowMillis = nowMillis,
+                hardLockUntil = p[Keys.HARD_LOCK_UNTIL] ?: 0L,
+                unlockedPackage = p[Keys.EMERGENCY_PACKAGE],
+                untilMillis = p[Keys.EMERGENCY_UNTIL] ?: 0L,
+                packageName = packageName,
+            )
+            if (outcome != EmergencyUnlock.Outcome.OPENED) return@edit
             p[Keys.EMERGENCY_PACKAGE] = packageName
             p[Keys.EMERGENCY_UNTIL] = nowMillis + EmergencyUnlock.DURATION_SECONDS * 1000
             p[Keys.EMERGENCY_USES] = EmergencyUnlock.encode(
                 EmergencyUnlock.recordUse(uses, nowMillis)
             )
-            opened = true
         }
-        return opened
+        return outcome
     }
 
     suspend fun gateEnabled(): Boolean =

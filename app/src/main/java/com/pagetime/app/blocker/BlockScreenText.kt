@@ -123,6 +123,13 @@ object BlockScreenText {
         if (totalMinutes <= 0) return "under a minute"
         val hours = totalMinutes / 60
         val minutes = totalMinutes % 60
+        // A week's wait is "6d 4h", not "148h": hundreds of hours is a number
+        // nobody can feel, and it is what the weekly unlock used to show.
+        if (hours >= 48) {
+            val days = hours / 24
+            val rest = hours % 24
+            return if (rest == 0L) "${days}d" else "${days}d ${rest}h"
+        }
         return when {
             hours <= 0 -> "${minutes}m"
             minutes == 0L -> "${hours}h"

@@ -174,4 +174,38 @@ class EmergencyUnlockTest {
         val freeWeekly = EmergencyUnlock.DURATION_SECONDS * EmergencyUnlock.USES_PER_WINDOW
         assertTrue(freeWeekly < GateState.DEFAULT_DAILY_TARGET_SECONDS)
     }
+
+    @Test
+    fun `a second tap on an app already open spends nothing`() {
+        val until = T0 + EmergencyUnlock.DURATION_SECONDS * 1000
+        // One use is already spent, for com.bank, and its window is running.
+        val stamps = listOf(T0)
+        assertEquals(
+            EmergencyUnlock.Outcome.ALREADY_OPEN,
+            EmergencyUnlock.attempt(stamps, T0 + 500, 0L, "com.bank", until, "com.bank"),
+        )
+        // The same app after the window has ended is a new use.
+        assertEquals(
+            EmergencyUnlock.Outcome.OPENED,
+            EmergencyUnlock.attempt(stamps, until + 1, 0L, "com.bank", until, "com.bank"),
+        )
+        // Another app while the first is open is a new use too: one app per unlock.
+        assertEquals(
+            EmergencyUnlock.Outcome.OPENED,
+            EmergencyUnlock.attempt(stamps, T0 + 500, 0L, "com.bank", until, "com.maps"),
+        )
+    }
+
+    @Test
+    fun `no uses left, or a hard lock, refuses`() {
+        val two = listOf(T0, T0 - HOUR)
+        assertEquals(
+            EmergencyUnlock.Outcome.REFUSED,
+            EmergencyUnlock.attempt(two, T0 + 1000, 0L, null, 0L, "com.bank"),
+        )
+        assertEquals(
+            EmergencyUnlock.Outcome.REFUSED,
+            EmergencyUnlock.attempt(emptyList(), T0, T0 + HOUR, null, 0L, "com.bank"),
+        )
+    }
 }

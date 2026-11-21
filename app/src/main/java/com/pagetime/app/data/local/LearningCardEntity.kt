@@ -73,5 +73,12 @@ data class LearningCardEntity(
         const val STATUS_PENDING = "pending"
         const val STATUS_KEPT = "kept"
         const val STATUS_SKIPPED = "skipped"
+
+        /**
+         * Sent to the reader's Anki, which now holds the card and its schedule.
+         * Not due and not reviewed in PageTime's own sessions, so the reader
+         * reviews it once, in Anki; it stays listed here as a record.
+         */
+        const val STATUS_ANKI = "anki"
     }
 }

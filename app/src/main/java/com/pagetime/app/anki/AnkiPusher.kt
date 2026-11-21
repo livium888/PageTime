@@ -78,6 +78,12 @@ class AnkiPusher(
         if (added.isNotEmpty()) {
             val now = AnkiNotes.decodeSent(settings.ankiSentIds.first()) + added
             settings.setAnkiSentIds(AnkiNotes.encodeSent(now))
+            // Anki holds them now: they leave PageTime's own review queue, so
+            // a card is reviewed in one place and never twice.
+            val stamp = System.currentTimeMillis()
+            added.forEach { id -> runCatching {
+                cards.setStatus(id, com.pagetime.app.data.local.LearningCardEntity.STATUS_ANKI, stamp)
+            } }
         }
         _problem.value = if (added.size < notes.size) {
             "Could not reach AnkiDroid. Open it once, then tap Send now."

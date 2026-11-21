@@ -37,4 +37,13 @@ class FlashcardSearchTest {
         assertEquals(listOf("1"), FlashcardListing.group(cards, titles, query = "acid", bookId = "b1").flatMap { g -> g.cards.map { it.id } })
         assertEquals(2, FlashcardListing.group(cards, titles, bookId = "b1").single().cards.size)
     }
+
+    @Test
+    fun `a card sent to Anki is listed as such and is never due in PageTime`() {
+        val sent = card("1", "Acid and pectin").copy(status = LearningCardEntity.STATUS_ANKI, dueAt = 1L)
+        assertTrue(FlashcardListing.matches(sent, FlashcardFilter.ANKI, now = 10L))
+        assertTrue(FlashcardListing.matches(sent, FlashcardFilter.ALL, now = 10L))
+        assertEquals(false, FlashcardListing.matches(sent, FlashcardFilter.DUE, now = 10L))
+        assertEquals(false, FlashcardListing.matches(sent, FlashcardFilter.KEPT, now = 10L))
+    }
 }

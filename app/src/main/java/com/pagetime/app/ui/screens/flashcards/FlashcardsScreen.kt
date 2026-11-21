@@ -201,7 +201,7 @@ fun FlashcardsScreen(
                         )
                     }
                     SlipBoxRow(count = state.slipCount, due = state.slipsDue, onOpen = onOpenSlipBox)
-                    AnkiSendRow(vm = vm)
+                    AnkiSendRow(vm = vm, onReview = { showAnkiReviewer = true })
                     // What the reader has actually remembered. Shown only once
                     // there is something to report: "0% of 0 reviews" is a fact
                     // about having just started, not about the reader.
@@ -502,7 +502,7 @@ private fun TodaysPractice(
  * Cards you already have stay in PageTime.
  */
 @Composable
-private fun AnkiSendRow(vm: FlashcardsViewModel) {
+private fun AnkiSendRow(vm: FlashcardsViewModel, onReview: () -> Unit) {
     val info by vm.anki.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     var message by remember { mutableStateOf<String?>(null) }
@@ -520,7 +520,7 @@ private fun AnkiSendRow(vm: FlashcardsViewModel) {
                 Column(Modifier.weight(1f)) {
                     Text("Send new cards to Anki", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        if (info.on) "On \u00b7 ${info.sent} sent. Review them in AnkiDroid or on your computer."
+                        if (info.on) "On \u00b7 ${info.sent} sent. They are reviewed in Anki, not here, so nothing is reviewed twice."
                         else "New cards you keep are also added to AnkiDroid, ready for AnkiWeb.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -540,6 +540,9 @@ private fun AnkiSendRow(vm: FlashcardsViewModel) {
                         }
                     },
                 )
+            }
+            if (info.on) {
+                androidx.compose.material3.Button(onClick = onReview) { Text("Review Anki cards here") }
             }
             (message ?: info.problem)?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -692,6 +695,13 @@ private fun FlashcardRow(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (card.status == LearningCardEntity.STATUS_ANKI) {
+                            Text(
+                                "in Anki",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                         if (pending) {
                             Text(
                                 "not judged yet",

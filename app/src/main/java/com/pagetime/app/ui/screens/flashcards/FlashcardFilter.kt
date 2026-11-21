@@ -14,6 +14,7 @@ enum class FlashcardFilter(val label: String) {
     NEW("Not judged"),
     DUE("Due"),
     KEPT("Kept"),
+    ANKI("In Anki"),
 }
 
 /** One book's worth of cards, for a screen that groups by where they came from. */
@@ -37,6 +38,7 @@ object FlashcardListing {
             FlashcardFilter.ALL -> true
             FlashcardFilter.NEW -> card.status == LearningCardEntity.STATUS_PENDING
             FlashcardFilter.KEPT -> card.status == LearningCardEntity.STATUS_KEPT
+            FlashcardFilter.ANKI -> card.status == LearningCardEntity.STATUS_ANKI
             // Only a kept card can be due. A pending one has no schedule at
             // all, and listing it under "Due" would promise a review session
             // that will never offer it.

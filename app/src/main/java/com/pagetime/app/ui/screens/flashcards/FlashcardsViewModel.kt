@@ -8,6 +8,7 @@ import com.pagetime.app.data.local.LearningCardEntity
 import com.pagetime.app.data.local.ReviewTally
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -139,6 +140,28 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     fun setFilter(filter: FlashcardFilter) {
         _filter.value = filter
     }
+
+    /** Whether new cards are being sent to Anki, how many have been, and what went wrong. */
+    data class AnkiInfo(val on: Boolean = false, val sent: Int = 0, val problem: String? = null)
+
+    val anki: StateFlow<AnkiInfo> = combine(
+        container.settingsRepository.ankiSendSince,
+        container.settingsRepository.ankiSentIds,
+        container.ankiPusher.problem,
+    ) { since, sent, problem ->
+        AnkiInfo(on = since > 0L, sent = com.pagetime.app.anki.AnkiNotes.decodeSent(sent).size, problem = problem)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AnkiInfo())
+
+    /** Starts sending from now on: the cards already made stay where they are. */
+    fun startSendingToAnki() {
+        viewModelScope.launch { container.settingsRepository.setAnkiSendSince(System.currentTimeMillis()) }
+    }
+
+    fun stopSendingToAnki() {
+        viewModelScope.launch { container.settingsRepository.setAnkiSendSince(0L) }
+    }
+
+    fun retrySendingToAnki() = container.ankiPusher.retry()
 
     fun setQuery(query: String) {
         _query.value = query

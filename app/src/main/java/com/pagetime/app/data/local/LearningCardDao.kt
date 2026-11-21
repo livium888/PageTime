@@ -120,7 +120,7 @@ interface LearningCardDao {
     @Query(
         "DELETE FROM learning_cards " +
             "WHERE bookId = :bookId AND chapterIndex = :chapterIndex " +
-            "AND generatedByAi = 1 AND status != 'kept'"
+            "AND generatedByAi = 1 AND status NOT IN ('kept', 'anki')"
     )
     suspend fun deleteUnkeptForChapter(bookId: String, chapterIndex: Int)
 

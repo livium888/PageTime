@@ -201,6 +201,7 @@ fun FlashcardsScreen(
                         )
                     }
                     SlipBoxRow(count = state.slipCount, due = state.slipsDue, onOpen = onOpenSlipBox)
+                    AnkiSendRow(vm = vm, onReview = { showAnkiReviewer = true })
                     // What the reader has actually remembered. Shown only once
                     // there is something to report: "0% of 0 reviews" is a fact
                     // about having just started, not about the reader.
@@ -496,6 +497,69 @@ private fun TodaysPractice(
 }
 
 /**
+ * "Send new cards to Anki": from the moment it is switched on, each card you
+ * keep is also added to AnkiDroid, which syncs to AnkiWeb and your computer.
+ * Cards you already have stay in PageTime.
+ */
+@Composable
+private fun AnkiSendRow(vm: FlashcardsViewModel, onReview: () -> Unit) {
+    val info by vm.anki.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var message by remember { mutableStateOf<String?>(null) }
+    val askPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) { message = null; vm.startSendingToAnki() }
+        else message = "Without that permission PageTime cannot add cards to AnkiDroid."
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Send new cards to Anki", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (info.on) "On \u00b7 ${info.sent} sent. They are reviewed in Anki, not here, so nothing is reviewed twice."
+                        else "New cards you keep are also added to AnkiDroid, ready for AnkiWeb.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                androidx.compose.material3.Switch(
+                    checked = info.on,
+                    onCheckedChange = { wantOn ->
+                        if (!wantOn) { vm.stopSendingToAnki(); return@Switch }
+                        when {
+                            !com.pagetime.app.anki.AnkiExporter.isInstalled(context) ->
+                                message = "Install AnkiDroid first, then switch this on."
+                            com.pagetime.app.anki.AnkiExporter.hasPermission(context) -> {
+                                message = null; vm.startSendingToAnki()
+                            }
+                            else -> askPermission.launch(com.pagetime.app.anki.AnkiReviewer.PERMISSION)
+                        }
+                    },
+                )
+            }
+            if (info.on) {
+                androidx.compose.material3.Button(onClick = onReview) { Text("Review Anki cards here") }
+            }
+            (message ?: info.problem)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                if (message == null && info.problem != null) {
+                    TextButton(onClick = vm::retrySendingToAnki) { Text("Send now") }
+                }
+            }
+            Text(
+                "Edits and deletes here stay here; Anki keeps its own copy once a card is sent.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
  * The way into the slip box from Recall.
  *
  * Notes and questions are different things and stay different: a question is
@@ -631,6 +695,13 @@ private fun FlashcardRow(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (card.status == LearningCardEntity.STATUS_ANKI) {
+                            Text(
+                                "in Anki",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                         if (pending) {
                             Text(
                                 "not judged yet",

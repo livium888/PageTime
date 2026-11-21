@@ -558,6 +558,23 @@ class SettingsRepository(private val context: Context) {
     private fun spanMarkerKey(bookId: String) =
         stringPreferencesKey("card_span_marker_$bookId")
 
+    private val ankiSendSinceKey = androidx.datastore.preferences.core.longPreferencesKey("anki_send_since")
+    private val ankiSentKey = stringPreferencesKey("anki_sent_card_ids")
+
+    /** When sending new cards to Anki was switched on (epoch ms); 0 when it is off. */
+    val ankiSendSince: Flow<Long> = context.dataStore.data.map { it[ankiSendSinceKey] ?: 0L }
+
+    suspend fun setAnkiSendSince(millis: Long) {
+        context.dataStore.edit { it[ankiSendSinceKey] = millis }
+    }
+
+    /** The ids of cards already sent to Anki, comma-separated. */
+    val ankiSentIds: Flow<String?> = context.dataStore.data.map { it[ankiSentKey] }
+
+    suspend fun setAnkiSentIds(raw: String) {
+        context.dataStore.edit { it[ankiSentKey] = raw }
+    }
+
     private fun keepReadingOfferedKey(bookId: String) =
         booleanPreferencesKey("keep_reading_offered_$bookId")
 

@@ -179,6 +179,14 @@ class AppContainer(context: Context) {
         context = appContext,
     )
 
+    /** Adds newly kept cards to the reader's AnkiDroid, while that is switched on. */
+    val ankiPusher = com.pagetime.app.anki.AnkiPusher(
+        context = appContext,
+        cards = database.learningCardDao(),
+        books = bookDao,
+        settings = settingsRepository,
+    ).also { it.start() }
+
     /** Finds covers for books already in the library. */
     val coverFinder = com.pagetime.app.data.library.CoverFinder(
         context = appContext,

@@ -39,4 +39,15 @@ class LibraryShelvesTest {
         assertEquals("TXT", LibraryShelves.badge(book("b3", "txt")))
         assertEquals("TEXT", LibraryShelves.badge(book("paste-1", "txt")))
     }
+
+    @Test
+    fun `finished books go to the bottom of their shelf, the rest keep their order`() {
+        fun b(id: String, progress: Float, format: String = "epub") = book(id, format).copy(scrollProgress = progress)
+        val shelves = LibraryShelves.shelves(
+            listOf(b("done1", 1f), b("new1", 0f), b("mid", 0.4f), b("done2", 0.99f), b("new2", 0.1f),
+                b("yt-done", 1f, "txt"), b("yt-new", 0.2f, "txt"))
+        )
+        assertEquals(listOf("new1", "mid", "new2", "done1", "done2"), shelves[0].second.map { it.id })
+        assertEquals(listOf("yt-new", "yt-done"), shelves[1].second.map { it.id })
+    }
 }

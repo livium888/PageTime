@@ -32,9 +32,20 @@ object LibraryShelves {
         BookKind.BOOK -> if (book.format == "epub") "EPUB" else book.format.uppercase()
     }
 
-    /** Only shelves that have something on them, in a fixed order, each keeping the order given. */
+    /** Read to the end, by the same line the end-of-book offers use. */
+    fun isFinished(book: BookEntity): Boolean =
+        book.scrollProgress >= com.pagetime.app.data.recommend.ReaderPicks.FINISHED_AT
+
+    /**
+     * Only shelves that have something on them, in a fixed order. On each shelf
+     * what is still to read comes first and what is finished goes to the bottom,
+     * each part keeping the order given (newest first).
+     */
     fun shelves(books: List<BookEntity>): List<Pair<BookKind, List<BookEntity>>> =
         BookKind.entries.mapNotNull { kind ->
-            books.filter { kindOf(it) == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+            books.filter { kindOf(it) == kind }
+                // A stable sort: false (unfinished) before true, order within each kept.
+                .sortedBy { isFinished(it) }
+                .takeIf { it.isNotEmpty() }?.let { kind to it }
         }
 }

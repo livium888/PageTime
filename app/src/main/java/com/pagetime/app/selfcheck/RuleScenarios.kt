@@ -192,6 +192,11 @@ object RuleScenarios {
                 "the card reply format is still last" to cards.trimEnd().endsWith("is discarded."),
                 "the talk prompt carries both ways of asking" to (talk.contains("Feynman") && talk.contains("Franklin")),
                 "the talk prompt still asks for the receipt" to talk.contains("PAGETIME RECEIPT"),
+                "a roundtable prompt seats the reader at a Junto and keeps the receipt" to
+                    TalkItThrough.buildPrompt(
+                        "Book", "Chapter", "Text.", emptyList(), emptyList(), 1, "talk-abc12",
+                        style = TalkItThrough.Style.ROUNDTABLE,
+                    ).let { it.contains("Junto") && it.contains("I am a member of the club") && it.contains("PAGETIME RECEIPT") },
             )
         },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {

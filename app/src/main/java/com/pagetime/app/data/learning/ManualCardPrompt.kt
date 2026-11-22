@@ -49,7 +49,7 @@ object ManualCardPrompt {
             template = template,
             howManyText = howMany(target),
         )
-        return instructions.trimEnd() + "\n\n" + REPLY_FORMAT
+        return instructions.trimEnd() + "\n\n" + LearnerStyle.CARDS + "\n\n" + REPLY_FORMAT
     }
 
     /**

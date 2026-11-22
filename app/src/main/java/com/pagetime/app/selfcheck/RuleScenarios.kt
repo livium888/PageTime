@@ -184,6 +184,16 @@ object RuleScenarios {
                     (TalkItThrough.questionsFor(1_000) == 1 && TalkItThrough.questionsFor(9_000) == 3),
             )
         },
+        Scenario("prompts.style", G, "Prompts: questions ask for understanding, and the reply formats are unchanged") {
+            val cards = com.pagetime.app.data.learning.ManualCardPrompt.build("Book", "Chapter", "A passage of some length.")
+            val talk = TalkItThrough.buildPrompt("Book", "Chapter", "Text.", emptyList(), emptyList(), 1, "talk-abc12")
+            expect(
+                "the card prompt carries the style" to cards.contains("STYLE OF THE QUESTIONS"),
+                "the card reply format is still last" to cards.trimEnd().endsWith("is discarded."),
+                "the talk prompt carries both ways of asking" to (talk.contains("Feynman") && talk.contains("Franklin")),
+                "the talk prompt still asks for the receipt" to talk.contains("PAGETIME RECEIPT"),
+            )
+        },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {
             val zone = ZoneId.systemDefault()
             val reset = LockDay.resetHour

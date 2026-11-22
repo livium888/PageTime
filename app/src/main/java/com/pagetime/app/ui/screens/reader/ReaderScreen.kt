@@ -1011,6 +1011,30 @@ fun ReaderScreen(
             }
         }
 
+        // A finished chapter, offered once, quietly. "Not now" leaves it on the
+        // Talks list in Recall. See TalkQueue for when it appears.
+        val talkOffer by vm.talkOffer.collectAsStateWithLifecycle()
+        AnimatedVisibility(
+            visible = talkOffer != null && cardOffer == null && !showMakeCards && !showTalk && keepReading == null,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            talkOffer?.let { offer ->
+                TalkOfferCard(
+                    offer = offer.waiting,
+                    onStart = {
+                        vm.acceptTalkOffer()
+                        book?.let { b ->
+                            talkVm.openFor(b, offer.waiting)
+                            showTalk = true
+                        }
+                    },
+                    onNotNow = vm::dismissTalkOffer,
+                )
+            }
+        }
+
         // The suggestion to make cards: a bar the reader can read past, never a
         // dialog. See CardNudge for when it appears.
         AnimatedVisibility(
@@ -1025,10 +1049,6 @@ fun ReaderScreen(
                     onMakeCards = {
                         vm.cardOfferLater()
                         openMakeCards()
-                    },
-                    onTalk = {
-                        vm.cardOfferLater()
-                        openTalk()
                     },
                     onLater = vm::cardOfferLater,
                 )
@@ -2974,12 +2994,44 @@ private fun NextBooksCard(
     }
 }
 
+/** A finished chapter, offered for a conversation with the reader's AI. */
+@Composable
+private fun TalkOfferCard(
+    offer: com.pagetime.app.data.talk.TalkQueue.Waiting,
+    onStart: () -> Unit,
+    onNotNow: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = ReaderFooterHeight)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
+            Text("${offer.label} done", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "Talk it through with your AI? About " +
+                    "${com.pagetime.app.data.talk.TalkItThrough.estimateMinutes(com.pagetime.app.data.talk.TalkItThrough.questionsFor(offer.words))} " +
+                    "minutes, and it earns reading time. Not now keeps it in your Talks list.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onNotNow) { Text("Not now") }
+                TextButton(onClick = onStart) { Text("Start") }
+            }
+        }
+    }
+}
+
 /** The suggestion to make cards, at the foot of the page. It never blocks the text above it. */
 @Composable
 private fun CardOfferBar(
     offer: CardNudge.Offer,
     onMakeCards: () -> Unit,
-    onTalk: () -> Unit,
     onLater: () -> Unit,
 ) {
     Surface(
@@ -3003,7 +3055,6 @@ private fun CardOfferBar(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onLater) { Text("Later") }
-                TextButton(onClick = onTalk) { Text("Talk it through") }
                 TextButton(onClick = onMakeCards) { Text("Make cards") }
             }
         }

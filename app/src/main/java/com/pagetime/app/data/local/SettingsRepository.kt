@@ -575,6 +575,41 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[ankiSentKey] = raw }
     }
 
+    private val talkWaitingKey = stringPreferencesKey("talk_waiting")
+    private val talkModeKey = stringPreferencesKey("talk_offer_mode")
+    private val talkDeclinesKey = androidx.datastore.preferences.core.intPreferencesKey("talk_declined_in_row")
+    private val talkPausedDayKey = androidx.datastore.preferences.core.longPreferencesKey("talk_paused_day")
+
+    /** Finished chapters waiting to be talked through, as [com.pagetime.app.data.talk.TalkQueue.encode] writes them. */
+    val talkWaiting: Flow<String?> = context.dataStore.data.map { it[talkWaitingKey] }
+
+    suspend fun setTalkWaiting(json: String) {
+        context.dataStore.edit { it[talkWaitingKey] = json }
+    }
+
+    /** How pushy the "talk it through" offers are. */
+    val talkOfferMode: Flow<com.pagetime.app.data.talk.TalkQueue.Mode> = context.dataStore.data.map { p ->
+        runCatching { com.pagetime.app.data.talk.TalkQueue.Mode.valueOf(p[talkModeKey].orEmpty()) }
+            .getOrDefault(com.pagetime.app.data.talk.TalkQueue.Mode.AT_CHAPTER_ENDS)
+    }
+
+    suspend fun setTalkOfferMode(mode: com.pagetime.app.data.talk.TalkQueue.Mode) {
+        context.dataStore.edit { it[talkModeKey] = mode.name }
+    }
+
+    /** Offers declined in a row, and the day the cards are paused on (0 for none). */
+    suspend fun talkDeclines(): Pair<Int, Long> {
+        val p = context.dataStore.data.first()
+        return (p[talkDeclinesKey] ?: 0) to (p[talkPausedDayKey] ?: 0L)
+    }
+
+    suspend fun setTalkDeclines(count: Int, pausedDay: Long) {
+        context.dataStore.edit {
+            it[talkDeclinesKey] = count
+            it[talkPausedDayKey] = pausedDay
+        }
+    }
+
     private fun talkPendingKey(bookId: String) = stringPreferencesKey("talk_pending_$bookId")
 
     /** A "talk it through" conversation that was sent and not yet answered, as [com.pagetime.app.data.talk.TalkItThrough.encode] writes it. */

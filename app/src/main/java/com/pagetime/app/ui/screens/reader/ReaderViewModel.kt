@@ -613,6 +613,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         }
         // About six characters a word: a dense page gets a longer idle limit.
         if (pageEndOffset > pageStartOffset) guard.onPageWords((pageEndOffset - pageStartOffset) / 6)
+        trackTextSections(pageStartOffset, userInitiated)
         previousTextOffset = pageStartOffset
         latestTxtPageOffset = pageStartOffset
         latestTxtPageEndOffset = pageEndOffset
@@ -1758,6 +1759,102 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
         pageAnchor = words?.let { locator to it }
     }
 
+    // region Talk it through: offers at the end of a chapter
+
+    /** The card offered when a chapter is finished. */
+    data class TalkOfferCard(val waiting: com.pagetime.app.data.talk.TalkQueue.Waiting)
+
+    private val _talkOffer = MutableStateFlow<TalkOfferCard?>(null)
+    val talkOffer = _talkOffer.asStateFlow()
+    private var talkOfferedThisSession = false
+
+    /**
+     * A chapter has been finished: put it on the Talks list, and, if the rules
+     * allow, offer it now as well. Declining the card never loses the chapter.
+     */
+    private fun queueTalk(waiting: com.pagetime.app.data.talk.TalkQueue.Waiting, anotherPrompt: Boolean) {
+        viewModelScope.launch {
+            runCatching {
+                val mode = settingsRepository.talkOfferMode.first()
+                if (!com.pagetime.app.data.talk.TalkQueue.shouldQueue(mode, waiting.words)) return@launch
+                val list = com.pagetime.app.data.talk.TalkQueue.decode(settingsRepository.talkWaiting.first())
+                settingsRepository.setTalkWaiting(
+                    com.pagetime.app.data.talk.TalkQueue.encode(com.pagetime.app.data.talk.TalkQueue.add(list, waiting))
+                )
+                val (declined, paused) = settingsRepository.talkDeclines()
+                val busy = anotherPrompt || _cardOffer.value != null || _chapterRecall.value != null ||
+                    _keepReading.value != null || _talkOffer.value != null
+                val today = com.pagetime.app.domain.LockDay.of(System.currentTimeMillis())
+                if (com.pagetime.app.data.talk.TalkQueue.shouldOfferNow(
+                        mode, waiting.words, talkOfferedThisSession, busy, declined, paused, today,
+                    )
+                ) {
+                    talkOfferedThisSession = true
+                    _talkOffer.value = TalkOfferCard(waiting)
+                }
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+    }
+
+    /** "Not now": the chapter stays on the list, and two in a row pause the cards for the day. */
+    fun dismissTalkOffer() {
+        _talkOffer.value = null
+        viewModelScope.launch {
+            runCatching {
+                val (declined, paused) = settingsRepository.talkDeclines()
+                val today = com.pagetime.app.domain.LockDay.of(System.currentTimeMillis())
+                val (count, day) = com.pagetime.app.data.talk.TalkQueue.afterDecline(declined, paused, today)
+                settingsRepository.setTalkDeclines(count, day)
+            }
+        }
+    }
+
+    /** "Start": the reader said yes, so the run of declines starts again. */
+    fun acceptTalkOffer() {
+        _talkOffer.value = null
+        viewModelScope.launch {
+            runCatching {
+                val (_, paused) = settingsRepository.talkDeclines()
+                settingsRepository.setTalkDeclines(0, paused)
+            }
+        }
+    }
+
+    private var textSectionIndex: Int? = null
+
+    /**
+     * For a text book with headings: stepping forward over a heading finishes
+     * the section before it. Not set on the first page reported or on a jump.
+     */
+    private fun trackTextSections(pageStart: Int, userInitiated: Boolean) {
+        val shown = _bookText.value ?: return
+        val heads = shown.spans
+            .filter { it.kind == com.pagetime.app.data.library.MarkdownText.Kind.HEADING }
+            .sortedBy { it.start }
+        if (heads.isEmpty()) return
+        val index = heads.indexOfLast { it.start <= pageStart }
+        val previous = textSectionIndex
+        textSectionIndex = index
+        if (previous == null || !userInitiated || previous < 0 || index != previous + 1) return
+        val b = _book.value ?: return
+        val start = heads[previous].start
+        val end = heads[index].start.coerceAtMost(shown.text.length)
+        if (end <= start) return
+        val words = ReadingSpan.words(shown.text.substring(start, end))
+        val title = shown.text.substring(start, heads[previous].end.coerceAtMost(shown.text.length))
+            .trim().lineSequence().firstOrNull().orEmpty().take(80).ifBlank { "Section ${previous + 1}" }
+        queueTalk(
+            com.pagetime.app.data.talk.TalkQueue.Waiting(
+                id = com.pagetime.app.data.talk.TalkQueue.idFor(bookId, 0, start),
+                bookId = bookId, bookTitle = b.title, label = title, words = words,
+                finishedAt = System.currentTimeMillis(), chapter = 0, startOffset = start, endOffset = end,
+            ),
+            anotherPrompt = false,
+        )
+    }
+
+    // endregion
+
     /** What the reader is asked at the end of a chapter. See [ChapterRecall]. */
     data class ChapterRecallPrompt(val chapterNumber: Int, val title: String?, val opening: String)
 
@@ -1791,6 +1888,20 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
                     alreadyAsked = settingsRepository.chapterRecallAsked(bookId),
                     enabled = settingsRepository.chapterRecallEnabled.first(),
                 )
+                // The chapter is also put on the Talks list, whatever the recall
+                // question does, and offered as a card only if nothing else is up.
+                if (entered == left + 1 && fractionWhenLeft >= ChapterRecall.READ_THROUGH && words > 0) {
+                    val label = _publication.value?.readingOrder?.getOrNull(left)?.title ?: "Chapter ${left + 1}"
+                    queueTalk(
+                        com.pagetime.app.data.talk.TalkQueue.Waiting(
+                            id = com.pagetime.app.data.talk.TalkQueue.idFor(bookId, left, null),
+                            bookId = bookId, bookTitle = b.title, label = label, words = words,
+                            finishedAt = System.currentTimeMillis(), chapter = left, startOffset = null, endOffset = null,
+                        ),
+                        // The recall question goes first, so a card must not stack on it.
+                        anotherPrompt = ask,
+                    )
+                }
                 if (!ask || _chapterRecall.value != null) return@launch
                 val text = container.learningContextExtractor.chapterText(b, left)
                 settingsRepository.markChapterRecallAsked(bookId, left)

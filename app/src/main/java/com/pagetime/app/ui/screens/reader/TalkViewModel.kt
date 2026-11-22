@@ -71,6 +71,8 @@ class TalkViewModel(
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var book: BookEntity? = null
+    /** The Talks list entry being talked through, removed once it has earned its credit. */
+    private var waitingId: String? = null
     private var passage = ""
     private var highlights: List<String> = emptyList()
     private var concepts: List<String> = emptyList()
@@ -78,14 +80,26 @@ class TalkViewModel(
 
     /** Reads the stretch once, as the sheet opens, or resumes a conversation already sent. */
     fun open(b: BookEntity, startHere: SpanPoint?, endHere: SpanPoint?) {
+        waitingId = null
+        begin(b) {
+            val marker = settings.spanMarker(bookId)
+            (marker?.start ?: startHere) to (marker?.pendingEnd ?: endHere)
+        }
+    }
+
+    /** A finished chapter from the Talks list, cut from its own first point to its last. */
+    fun openFor(b: BookEntity, waiting: com.pagetime.app.data.talk.TalkQueue.Waiting) {
+        waitingId = waiting.id
+        begin(b) { waiting.startPoint() to waiting.endPoint() }
+    }
+
+    private fun begin(b: BookEntity, points: suspend () -> Pair<SpanPoint?, SpanPoint?>) {
         book = b
         _state.value = UiState(busy = true)
         viewModelScope.launch {
             val aiApp = aiAppLabel()
             val pending = TalkItThrough.decode(settings.talkPending(bookId))
-            val marker = settings.spanMarker(bookId)
-            val start = marker?.start ?: startHere
-            val end = marker?.pendingEnd ?: endHere
+            val (start, end) = points()
             if (start == null || end == null) {
                 _state.value = UiState(error = "Turn to a page of the book first, then try again.")
                 return@launch
@@ -222,6 +236,15 @@ class TalkViewModel(
                 viewModelScope.launch {
                     if (credit.seconds > 0) container.balanceManager.creditTalkedThrough(credit.seconds)
                     settings.setTalkPending(bookId, null)
+                    // Done: a chapter from the list leaves it.
+                    waitingId?.let { id ->
+                        val list = com.pagetime.app.data.talk.TalkQueue.decode(settings.talkWaiting.first())
+                        settings.setTalkWaiting(
+                            com.pagetime.app.data.talk.TalkQueue.encode(
+                                com.pagetime.app.data.talk.TalkQueue.remove(list, id)
+                            )
+                        )
+                    }
                 }
                 _state.update { it.copy(step = Step.RESULT, receipt = r, credit = credit, notice = null, error = null) }
             }

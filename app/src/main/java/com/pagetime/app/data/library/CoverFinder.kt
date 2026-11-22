@@ -89,6 +89,8 @@ class CoverFinder(
      * channel, when the book knows it).
      */
     private suspend fun videoThumbnailByTitle(book: BookEntity): String? {
+        // A transcript saved with no real title says nothing to search for.
+        if (VideoOwnership.isStandIn(book.title)) return null
         val (results, _) = youtube.search("${book.title} ${book.author}".trim())
         val channelKey = ReaderPicks.titleKey(book.author)
         val match = results.firstOrNull { result ->

@@ -61,4 +61,14 @@ class VideoOwnershipTest {
         assertNull(VideoOwnership.find(owned, "BBBBBBBBBBB", "Calculus: Lecture 2", "Open University"))
         assertEquals("yt-AAAAAAAAAAA", VideoOwnership.find(owned, "CCCCCCCCCCC", "Calculus - Lecture 1!", "Open University")?.id)
     }
+
+    @Test
+    fun `videos whose title lookup failed are not taken for one another`() {
+        val owned = listOf(OwnedBook("yt-AAAAAAAAAAA", "YouTube Transcript", "YouTube"))
+        // A second video that also came back untitled is a different video.
+        assertNull(VideoOwnership.find(owned, "BBBBBBBBBBB", "YouTube Transcript", "YouTube"))
+        assertNull(VideoOwnership.find(owned, "BBBBBBBBBBB", "A real title", "Some Channel"))
+        // And an untitled book is never the match for a real one.
+        assertEquals("yt-AAAAAAAAAAA", VideoOwnership.find(owned, "AAAAAAAAAAA", "x", "y")?.id)
+    }
 }

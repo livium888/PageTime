@@ -395,6 +395,17 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
      * No API key required — this is a public, unauthenticated endpoint.
      */
     private fun fetchVideoMetadata(videoId: String): Pair<String, String> {
+        // Twice: adding several videos in a row sometimes gets one refused, and
+        // a second try a moment later usually answers.
+        repeat(2) { attempt ->
+            val found = fetchVideoMetadataOnce(videoId)
+            if (found != null) return found
+            if (attempt == 0) Thread.sleep(600)
+        }
+        return Pair("YouTube Transcript", "YouTube")
+    }
+
+    private fun fetchVideoMetadataOnce(videoId: String): Pair<String, String>? {
         return try {
             val url = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$videoId&format=json"
             val request = okhttp3.Request.Builder().url(url).get().build()
@@ -408,9 +419,9 @@ class YouTubeTranscriptFetcher(private val okHttpClient: OkHttpClient? = null) {
                 } else {
                     null
                 }
-            } ?: Pair("YouTube Transcript", "YouTube")
+            }
         } catch (e: Exception) {
-            Pair("YouTube Transcript", "YouTube")
+            null
         }
     }
 

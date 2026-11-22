@@ -576,7 +576,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _importingVideo.value += videoId
             val url = "https://www.youtube.com/watch?v=$videoId"
-            repo.importYouTubeTranscript(url)
+            repo.importYouTubeTranscript(url, video.title, video.channelName)
                 .onSuccess { book ->
                     _notice.value = ImportNotice("Added \u201c${book.title}\u201d to your library", book.id)
                 }

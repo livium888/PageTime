@@ -416,7 +416,16 @@ class LibraryRepository(
     class AlreadyInLibraryException(val book: BookEntity) :
         Exception("\u201c${book.title}\u201d is already in your library")
 
-    suspend fun importYouTubeTranscript(url: String): Result<BookEntity> = withContext(Dispatchers.IO) {
+    /**
+     * [knownTitle] and [knownChannel] are what the caller already saw (the
+     * search result the reader tapped). They stand in only when YouTube's own
+     * lookup fails, which it can when several videos are added in a row.
+     */
+    suspend fun importYouTubeTranscript(
+        url: String,
+        knownTitle: String? = null,
+        knownChannel: String? = null,
+    ): Result<BookEntity> = withContext(Dispatchers.IO) {
         runCatching {
             val fetcher = YouTubeTranscriptFetcher()
             val videoId = fetcher.extractVideoId(url)
@@ -430,8 +439,18 @@ class LibraryRepository(
             VideoOwnership.find(toOwned(owned), videoId)?.let { found ->
                 bookDao.getById(found.id)?.let { throw AlreadyInLibraryException(it) }
             }
-            val result = fetcher.fetchTranscript(videoId)
+            val fetched = fetcher.fetchTranscript(videoId)
                 ?: error("No transcript available for this video. It may not have subtitles.")
+            // A video must never go in as a bare "YouTube Transcript": that tells
+            // one from another by nothing, and two of them look like a copy.
+            val result = fetched.copy(
+                title = fetched.title.takeUnless { VideoOwnership.isStandIn(it) }
+                    ?: knownTitle?.takeIf { it.isNotBlank() }
+                    ?: "YouTube video $videoId",
+                author = fetched.author.takeUnless { VideoOwnership.isStandIn(it) }
+                    ?: knownChannel?.takeIf { it.isNotBlank() }
+                    ?: VideoOwnership.FALLBACK_CHANNEL,
+            )
             // And again by title and channel, which catches a transcript added
             // before ids named their video.
             VideoOwnership.find(toOwned(owned), videoId, result.title, result.author)?.let { found ->

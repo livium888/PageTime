@@ -19,6 +19,19 @@ object VideoOwnership {
 
     fun idFor(videoId: String): String = "yt-$videoId"
 
+    /** What the transcript fetcher writes when YouTube would not say a video's real title or channel. */
+    const val FALLBACK_TITLE = "YouTube Transcript"
+    const val FALLBACK_CHANNEL = "YouTube"
+
+    /**
+     * Whether a title or channel is that stand-in. Every video whose lookup
+     * failed carries the same one, so it says nothing about which video it is:
+     * matching on it called every later video a copy of the first, and a reader
+     * adding several at once saw all but one refused as "already in your library".
+     */
+    fun isStandIn(text: String?): Boolean =
+        text.isNullOrBlank() || titleKey(text) == titleKey(FALLBACK_TITLE) || titleKey(text) == titleKey(FALLBACK_CHANNEL)
+
     /**
      * A video's title for comparing, whole.
      *
@@ -63,14 +76,16 @@ object VideoOwnership {
     ): OwnedBook? {
         owned.firstOrNull { it.id == idFor(videoId) }?.let { return it }
         if (title.isNullOrBlank()) return null
+        if (isStandIn(title)) return null
         val wanted = titleKey(title)
         if (wanted.isEmpty()) return null
         return owned.firstOrNull { book ->
             book.id.startsWith("yt-") &&
+                !isStandIn(book.title) &&
                 titleKey(book.title) == wanted &&
                 // The channel must agree when both are known, so two different
                 // videos that share a common title are not taken for one.
-                (channel.isNullOrBlank() || book.author.isBlank() || book.author.trim().equals(channel.trim(), ignoreCase = true))
+                (isStandIn(channel) || isStandIn(book.author) || book.author.trim().equals(channel?.trim(), ignoreCase = true))
         }
     }
 }

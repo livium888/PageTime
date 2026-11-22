@@ -66,6 +66,7 @@ object TalkItThrough {
                 "would change if…? an example?) until my answer is clear and in my own words, or until it is " +
                 "clear I do not know it. Use only the passage above, and say so if you are unsure."
         )
+        appendLine(com.pagetime.app.data.learning.LearnerStyle.SOCRATIC)
         appendLine(
             "When you are satisfied, or after at most ${questions * 3 + 3} exchanges, finish with exactly this receipt, " +
                 "counting each of my answers as one exchange:"

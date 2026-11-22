@@ -44,6 +44,8 @@ object ExplainBackMarking {
             |Reader's explanation:
             |${userExplanation.trim().take(MAX_EXPLANATION_CHARS)}
             |
+            |${com.pagetime.app.data.learning.LearnerStyle.MARKING}
+            |
             |Mark it on three dimensions, each from 1 to 5:
             |1. ACCURACY: Are the facts correct?
             |2. COMPLETENESS: Did they cover the key aspects?

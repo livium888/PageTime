@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -140,6 +141,42 @@ class FlashcardsViewModel(app: Application) : AndroidViewModel(app) {
     fun setFilter(filter: FlashcardFilter) {
         _filter.value = filter
     }
+
+    /** Finished chapters waiting to be talked through, and how pushy the offers are. */
+    data class TalksUi(
+        val waiting: List<com.pagetime.app.data.talk.TalkQueue.Waiting> = emptyList(),
+        val mode: com.pagetime.app.data.talk.TalkQueue.Mode = com.pagetime.app.data.talk.TalkQueue.Mode.AT_CHAPTER_ENDS,
+    )
+
+    val talks: StateFlow<TalksUi> = combine(
+        container.settingsRepository.talkWaiting,
+        container.settingsRepository.talkOfferMode,
+        bookDao.observeAll(),
+    ) { raw, mode, books ->
+        TalksUi(
+            waiting = com.pagetime.app.data.talk.TalkQueue.forBooks(
+                com.pagetime.app.data.talk.TalkQueue.decode(raw), books.map { it.id }.toSet()
+            ),
+            mode = mode,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TalksUi())
+
+    fun setTalkMode(mode: com.pagetime.app.data.talk.TalkQueue.Mode) {
+        viewModelScope.launch { container.settingsRepository.setTalkOfferMode(mode) }
+    }
+
+    fun removeTalk(id: String) {
+        viewModelScope.launch {
+            val list = com.pagetime.app.data.talk.TalkQueue.decode(
+                container.settingsRepository.talkWaiting.first()
+            )
+            container.settingsRepository.setTalkWaiting(
+                com.pagetime.app.data.talk.TalkQueue.encode(com.pagetime.app.data.talk.TalkQueue.remove(list, id))
+            )
+        }
+    }
+
+    suspend fun bookFor(id: String) = bookDao.getById(id)
 
     /** Whether new cards are being sent to Anki, how many have been, and what went wrong. */
     data class AnkiInfo(val on: Boolean = false, val sent: Int = 0, val problem: String? = null)

@@ -110,6 +110,8 @@ fun FlashcardsScreen(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    val talks by vm.talks.collectAsStateWithLifecycle()
+    var talkFor by remember { mutableStateOf<com.pagetime.app.data.talk.TalkQueue.Waiting?>(null) }
     val allCards = remember(state.groups) { state.groups.flatMap { it.cards } }
     val selectedCards = allCards.filter { it.id in selected }
     // A card that has left the list (filtered out, deleted elsewhere) cannot stay selected.
@@ -175,9 +177,17 @@ fun FlashcardsScreen(
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Practise") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Cards (${state.total})") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Talks (${talks.waiting.size})") })
             }
 
-            if (tab == 0) {
+            if (tab == 2) {
+                TalksTab(
+                    talks = talks,
+                    onMode = vm::setTalkMode,
+                    onStart = { talkFor = it },
+                    onRemove = vm::removeTalk,
+                )
+            } else if (tab == 0) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                     // Cards and concepts are PageTime's own two systems, both
                     // cheap reactive counts; one combined number answers "how
@@ -199,6 +209,22 @@ fun FlashcardsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         )
+                    }
+                    if (talks.waiting.isNotEmpty()) {
+                        Card(
+                            onClick = { tab = 2 },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("Talks waiting", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${talks.waiting.size} finished chapter${if (talks.waiting.size == 1) "" else "s"} " +
+                                        "you could talk through with your AI.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                     SlipBoxRow(count = state.slipCount, due = state.slipsDue, onOpen = onOpenSlipBox)
                     AnkiSendRow(vm = vm, onReview = { showAnkiReviewer = true })
@@ -228,6 +254,18 @@ fun FlashcardsScreen(
                 )
             }
         }
+    }
+
+    talkFor?.let { waiting ->
+        val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext as android.app.Application
+        val talkVm: com.pagetime.app.ui.screens.reader.TalkViewModel = viewModel(
+            key = "talk-${waiting.bookId}",
+            factory = com.pagetime.app.ui.screens.reader.TalkViewModelFactory(appContext, waiting.bookId),
+        )
+        androidx.compose.runtime.LaunchedEffect(waiting.id) {
+            vm.bookFor(waiting.bookId)?.let { talkVm.openFor(it, waiting) }
+        }
+        com.pagetime.app.ui.screens.reader.TalkSheet(vm = talkVm, onDismiss = { talkFor = null })
     }
 
     if (confirmDeleteSelected) {
@@ -365,6 +403,61 @@ private fun CardsTab(
                             onEdit = { vm.startEditing(card) },
                             onOpenBook = { onOpenBook(card.bookId) },
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Finished chapters waiting for a conversation, and how pushy the offers are. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun TalksTab(
+    talks: FlashcardsViewModel.TalksUi,
+    onMode: (com.pagetime.app.data.talk.TalkQueue.Mode) -> Unit,
+    onStart: (com.pagetime.app.data.talk.TalkQueue.Waiting) -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
+        item {
+            Text("When to offer", style = MaterialTheme.typography.labelLarge)
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(vertical = 6.dp),
+            ) {
+                com.pagetime.app.data.talk.TalkQueue.Mode.entries.forEach { m ->
+                    FilterChip(selected = talks.mode == m, onClick = { onMode(m) }, label = { Text(m.label) })
+                }
+            }
+            Text(
+                talks.mode.hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (talks.waiting.isEmpty()) {
+            item {
+                Text(
+                    "Nothing is waiting. Chapters you finish appear here, ready to talk through with your AI.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 24.dp),
+                )
+            }
+        }
+        items(talks.waiting, key = { it.id }) { w ->
+            Card(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(w.bookTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                    Text(
+                        "${w.label} \u00b7 about ${com.pagetime.app.data.talk.TalkItThrough.estimateMinutes(com.pagetime.app.data.talk.TalkItThrough.questionsFor(w.words))} min",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row {
+                        Button(onClick = { onStart(w) }) { Text("Talk it through") }
+                        TextButton(onClick = { onRemove(w.id) }) { Text("Remove") }
                     }
                 }
             }

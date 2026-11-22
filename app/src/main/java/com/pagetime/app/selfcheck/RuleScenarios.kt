@@ -199,6 +199,20 @@ object RuleScenarios {
                     ).let { it.contains("Junto") && it.contains("I am a member of the club") && it.contains("PAGETIME RECEIPT") },
             )
         },
+        Scenario("talk.offers", G, "Talk offers: listed at chapter ends, a card once and alone, paused after two declines") {
+            val mode = com.pagetime.app.data.talk.TalkQueue.Mode.AT_CHAPTER_ENDS
+            val q = com.pagetime.app.data.talk.TalkQueue
+            expect(
+                "a long chapter is listed" to q.shouldQueue(mode, 2_000),
+                "a short one is not" to !q.shouldQueue(mode, 500),
+                "nothing is listed when the reader wants no offers" to
+                    !q.shouldQueue(com.pagetime.app.data.talk.TalkQueue.Mode.ONLY_ASK, 2_000),
+                "a card appears when nothing else does" to q.shouldOfferNow(mode, 2_000, false, false, 0, 0L, 100L),
+                "not on top of another prompt" to !q.shouldOfferNow(mode, 2_000, false, true, 0, 0L, 100L),
+                "not twice in a session" to !q.shouldOfferNow(mode, 2_000, true, false, 0, 0L, 100L),
+                "two declines in a row pause the day" to (q.afterDecline(1, 0L, 100L) == (0 to 100L)),
+            )
+        },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {
             val zone = ZoneId.systemDefault()
             val reset = LockDay.resetHour

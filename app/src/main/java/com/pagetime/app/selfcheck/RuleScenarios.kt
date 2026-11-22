@@ -6,6 +6,7 @@ import com.pagetime.app.data.keepreading.KeepReading
 import com.pagetime.app.data.library.CoverRules
 import com.pagetime.app.data.local.BookEntity
 import com.pagetime.app.data.local.LearningCardEntity
+import com.pagetime.app.data.talk.TalkItThrough
 import com.pagetime.app.data.youtube.VideoOwnership
 import com.pagetime.app.domain.EmergencyUnlock
 import com.pagetime.app.domain.LockDay
@@ -167,6 +168,20 @@ object RuleScenarios {
                 "a thin page keeps the usual limit" to (IdleLimit.forWords(100, floor) == floor),
                 "a dense page is given longer" to (IdleLimit.forWords(350, floor) > 280_000L),
                 "there is a ceiling" to (IdleLimit.forWords(9_000, floor) == 300_000L),
+            )
+        },
+        Scenario("talk.credit", G, "Talk it through: credit is the smallest of three numbers, the receipt must match") {
+            val r = TalkItThrough.Receipt("talk-abc12", 4, TalkItThrough.Verdict.UNDERSTOOD, emptyList())
+            val reply = "PAGETIME RECEIPT\ncode: talk-abc12\nexchanges: 4\nverdict: understood\nshaky: none"
+            expect(
+                "a normal talk earns six minutes" to (TalkItThrough.credit(612L, r).seconds == 360L),
+                "three hours away is still six minutes" to (TalkItThrough.credit(3 * 3600L, r).seconds == 360L),
+                "a receipt pasted at once earns nothing" to (TalkItThrough.credit(25L, r).seconds == 0L),
+                "the receipt is read" to (TalkItThrough.parseReceipt(reply, "talk-abc12").getOrNull()?.exchanges == 4),
+                "a receipt for another conversation is refused" to
+                    (TalkItThrough.parseReceipt(reply, "talk-zzzzz").isFailure),
+                "a longer stretch earns more questions" to
+                    (TalkItThrough.questionsFor(1_000) == 1 && TalkItThrough.questionsFor(9_000) == 3),
             )
         },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {

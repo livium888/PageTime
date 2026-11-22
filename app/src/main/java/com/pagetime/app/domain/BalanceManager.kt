@@ -153,6 +153,18 @@ class BalanceManager(
     }
 
     /**
+     * Time earned by talking a section through with the reader's AI: counted
+     * toward today's target like an answered card, not as minutes with a book
+     * and not into the browse balance. How much is worked out by
+     * [com.pagetime.app.data.talk.TalkItThrough.credit], which caps it.
+     */
+    suspend fun creditTalkedThrough(seconds: Long) {
+        if (seconds <= 0L) return
+        mutex.withLock { repository.addReadToday(seconds, LockDay.of(System.currentTimeMillis())) }
+        ledger?.log(UsageRepository.TYPE_EARNED, packageName = null, seconds = seconds)
+    }
+
+    /**
      * Turns the stored switch off once its cooling-off has elapsed.
      *
      * Not required for correctness — [GateState.enabled] already reads false —

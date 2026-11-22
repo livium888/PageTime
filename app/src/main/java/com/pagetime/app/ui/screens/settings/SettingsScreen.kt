@@ -110,6 +110,7 @@ fun SettingsScreen(
     onUsageAudit: () -> Unit,
     onPrompts: () -> Unit,
     onScheduling: () -> Unit,
+    onSelfCheck: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel()
 ) {
     val balanceSeconds by viewModel.balanceSeconds.collectAsStateWithLifecycle()
@@ -567,6 +568,11 @@ fun SettingsScreen(
             SettingsGroup {
                 SettingsLine(label = "Permissions", value = permissionsSummary, onClick = onPermissions)
                 SettingsLine(label = "Usage history", onClick = onUsageAudit)
+                SettingsLine(
+                    label = "Self-check",
+                    sub = "Run the test scenarios on this phone",
+                    onClick = onSelfCheck,
+                )
                 SettingsLine(
                     label = "Explain slip-box actions",
                     was = SettingsDraft.onOff(saved.slipBoxHelp).takeIf { saved.slipBoxHelp != shown.slipBoxHelp },

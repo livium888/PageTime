@@ -380,8 +380,12 @@ fun PageTimeAppUi(
                     onPermissions = { navController.navigate("permissions") },
                     onUsageAudit = { navController.navigate("usage_audit") },
                     onPrompts = { navController.navigate("prompts") },
-                    onScheduling = { navController.navigate("scheduling") }
+                    onScheduling = { navController.navigate("scheduling") },
+                    onSelfCheck = { navController.navigate("self_check") },
                 )
+            }
+            composable("self_check") {
+                com.pagetime.app.selfcheck.SelfCheckScreen(onBack = { navController.popBackStack() })
             }
             composable("scheduling") {
                 SchedulingScreen(onBack = { navController.popBackStack() })

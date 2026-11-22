@@ -283,6 +283,9 @@ fun ReaderScreen(
     // sheet's state survives the reader recomposing while the reader is away.
     val cardsVm: ManualCardsViewModel =
         viewModel(key = "make-cards-$bookId", factory = ManualCardsViewModelFactory(app, bookId))
+    // A Socratic conversation about the same stretch, in the reader's own AI app.
+    val talkVm: TalkViewModel =
+        viewModel(key = "talk-$bookId", factory = TalkViewModelFactory(app, bookId))
 
     val book by vm.book.collectAsStateWithLifecycle()
     val bookText by vm.bookText.collectAsStateWithLifecycle()
@@ -368,6 +371,17 @@ fun ReaderScreen(
                 endHere = vm.currentSpanPoint(forStart = false),
             )
             showMakeCards = true
+        }
+    }
+    var showTalk by remember { mutableStateOf(false) }
+    val openTalk: () -> Unit = {
+        book?.let { b ->
+            talkVm.open(
+                b,
+                startHere = vm.currentSpanPoint(forStart = true),
+                endHere = vm.currentSpanPoint(forStart = false),
+            )
+            showTalk = true
         }
     }
     // Closing the book with a suggestion owed that never found a break to
@@ -767,6 +781,7 @@ fun ReaderScreen(
                 } else null,
                 onSetCheckpoint = vm::setLearningCheckpoint,
                 onMakeCards = openMakeCards,
+                onTalkItThrough = openTalk,
                 // This is an explicit reader action, so it must work mid-chapter;
                 // the chapter-completion prompt is reserved for automatic reminders.
                 onExplainBack = {
@@ -1011,6 +1026,10 @@ fun ReaderScreen(
                         vm.cardOfferLater()
                         openMakeCards()
                     },
+                    onTalk = {
+                        vm.cardOfferLater()
+                        openTalk()
+                    },
                     onLater = vm::cardOfferLater,
                 )
             }
@@ -1098,6 +1117,10 @@ fun ReaderScreen(
                 },
             )
         }
+    }
+
+    if (showTalk) {
+        TalkSheet(vm = talkVm, onDismiss = { showTalk = false })
     }
 
     if (showMakeCards) {
@@ -2234,6 +2257,7 @@ private fun ReaderTopBar(
     onShareTranscript: (() -> Unit)? = null,
     onSetCheckpoint: () -> Unit = {},
     onMakeCards: () -> Unit = {},
+    onTalkItThrough: () -> Unit = {},
     onExplainBack: () -> Unit,
     isTextBook: Boolean = false,
     onEnhance: () -> Unit = {},
@@ -2335,6 +2359,14 @@ private fun ReaderTopBar(
                             onClick = {
                                 optionsExpanded = false
                                 onMakeCards()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Talk it through with your AI") },
+                            leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                            onClick = {
+                                optionsExpanded = false
+                                onTalkItThrough()
                             }
                         )
                         DropdownMenuItem(
@@ -2947,6 +2979,7 @@ private fun NextBooksCard(
 private fun CardOfferBar(
     offer: CardNudge.Offer,
     onMakeCards: () -> Unit,
+    onTalk: () -> Unit,
     onLater: () -> Unit,
 ) {
     Surface(
@@ -2970,6 +3003,7 @@ private fun CardOfferBar(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onLater) { Text("Later") }
+                TextButton(onClick = onTalk) { Text("Talk it through") }
                 TextButton(onClick = onMakeCards) { Text("Make cards") }
             }
         }

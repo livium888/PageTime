@@ -575,6 +575,18 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[ankiSentKey] = raw }
     }
 
+    private fun talkPendingKey(bookId: String) = stringPreferencesKey("talk_pending_$bookId")
+
+    /** A "talk it through" conversation that was sent and not yet answered, as [com.pagetime.app.data.talk.TalkItThrough.encode] writes it. */
+    suspend fun talkPending(bookId: String): String? =
+        context.dataStore.data.first()[talkPendingKey(bookId)]
+
+    suspend fun setTalkPending(bookId: String, json: String?) {
+        context.dataStore.edit { p ->
+            if (json == null) p.remove(talkPendingKey(bookId)) else p[talkPendingKey(bookId)] = json
+        }
+    }
+
     private fun keepReadingOfferedKey(bookId: String) =
         booleanPreferencesKey("keep_reading_offered_$bookId")
 

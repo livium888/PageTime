@@ -41,6 +41,9 @@ object TalkItThrough {
         return "talk-" + (1..5).map { letters[random.nextInt(letters.length)] }.joinToString("")
     }
 
+    /** One tutor, or a roundtable of famous thinkers with the reader as a member. */
+    enum class Style(val label: String) { TUTOR("Tutor"), ROUNDTABLE("Roundtable") }
+
     fun buildPrompt(
         bookTitle: String,
         sectionLabel: String,
@@ -49,8 +52,14 @@ object TalkItThrough {
         concepts: List<String>,
         questions: Int,
         code: String,
+        style: Style = Style.TUTOR,
+        guests: String = "",
     ): String = buildString {
-        appendLine("You are a Socratic tutor. I have just read this part of “${bookTitle.trim()}” ($sectionLabel):")
+        appendLine(
+            if (style == Style.ROUNDTABLE) "You are hosting a conversation about something I have just read."
+            else "You are a Socratic tutor."
+        )
+        appendLine("I have just read this part of “${bookTitle.trim()}” ($sectionLabel):")
         appendLine()
         appendLine(excerpt(passage))
         appendLine()
@@ -66,7 +75,10 @@ object TalkItThrough {
                 "would change if…? an example?) until my answer is clear and in my own words, or until it is " +
                 "clear I do not know it. Use only the passage above, and say so if you are unsure."
         )
-        appendLine(com.pagetime.app.data.learning.LearnerStyle.SOCRATIC)
+        appendLine(
+            if (style == Style.ROUNDTABLE) com.pagetime.app.data.learning.LearnerStyle.roundtable(guests)
+            else com.pagetime.app.data.learning.LearnerStyle.SOCRATIC
+        )
         appendLine(
             "When you are satisfied, or after at most ${questions * 3 + 3} exchanges, finish with exactly this receipt, " +
                 "counting each of my answers as one exchange:"

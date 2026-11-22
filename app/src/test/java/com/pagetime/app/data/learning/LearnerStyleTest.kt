@@ -35,4 +35,38 @@ class LearnerStyleTest {
         assertTrue(p.contains("\"accuracy\""))
         assertTrue(p.contains("\"simplerVersion\""))
     }
+
+    @Test
+    fun `the roundtable seats the reader at a Junto, one speaker at a time, and still ends with the receipt`() {
+        val p = TalkItThrough.buildPrompt(
+            "Book", "Chapter 1", "Text.", emptyList(), emptyList(), 2, "talk-abc12",
+            style = TalkItThrough.Style.ROUNDTABLE,
+        )
+        assertTrue(p.contains("Junto"))
+        assertTrue(p.contains("Franklin chairs"))
+        assertTrue(p.contains("I am a member of the club"))
+        assertTrue(p.contains("Only ONE member speaks at a time"))
+        assertTrue(p.contains("do not put quotations"))
+        assertTrue(p.contains("Choose two other guests"))
+        assertTrue(p.contains("Ask me 2 core questions, ONE at a time"))
+        assertTrue(p.contains("code: talk-abc12"))
+    }
+
+    @Test
+    fun `named guests are invited, and only people no longer living`() {
+        val p = TalkItThrough.buildPrompt(
+            "Book", "Chapter 1", "Text.", emptyList(), emptyList(), 1, "talk-abc12",
+            style = TalkItThrough.Style.ROUNDTABLE, guests = "Marie Curie, David Hume",
+        )
+        assertTrue(p.contains("The guests are: Marie Curie, David Hume"))
+        assertTrue(p.contains("no longer living"))
+        assertTrue(!p.contains("Choose two other guests"))
+    }
+
+    @Test
+    fun `the tutor style is unchanged`() {
+        val p = TalkItThrough.buildPrompt("Book", "Chapter 1", "Text.", emptyList(), emptyList(), 1, "talk-abc12")
+        assertTrue(p.startsWith("You are a Socratic tutor."))
+        assertTrue(!p.contains("Junto"))
+    }
 }

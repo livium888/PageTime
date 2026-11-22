@@ -52,6 +52,38 @@ object LearnerStyle {
             "again, and finish with one question about what I could do with it, or what in it is worth passing on to " +
             "someone else."
 
+    /**
+     * The Socratic conversation held as a roundtable, in the spirit of Franklin's
+     * Junto: a club of curious friends who met to question each other about what
+     * they had read and how it might serve others. The reader is a member.
+     *
+     * Franklin's own rules for it, as the Autobiography tells them, were to
+     * avoid direct contradiction and flat assertion and to question instead,
+     * from a Socratic habit he took from Xenophon. People no longer living only,
+     * speaking in their known manner: a model invents quotations, so it is told not to.
+     */
+    fun roundtable(guests: String): String {
+        val invited = guests.trim()
+        val panel = if (invited.isNotEmpty()) {
+            "The guests are: $invited. Keep them to people no longer living, and if one is a living person, " +
+                "replace them with someone who is not."
+        } else {
+            "Choose two other guests, people no longer living whose way of thinking would best light up this " +
+                "passage, and say who they are in your first message."
+        }
+        return "Run this as a roundtable in the spirit of Benjamin Franklin's Junto, a club of curious friends " +
+            "who met to question each other about what they had read and how it might serve others. Franklin " +
+            "chairs. $panel I am a member of the club: the others speak to me.\n" +
+            "Each speaks in the manner they were known for, not in invented words: do not put quotations in " +
+            "anyone's mouth. Franklin opens by asking what in the passage is remarkable and worth passing on, " +
+            "and closes by asking how it might be useful to others. Socrates-style members ask humble questions; " +
+            "Feynman-style members ask for plain words, an example not given, and what would change if a part " +
+            "were different; a sceptic asks what would show the idea wrong. Franklin's rule: no flat " +
+            "contradiction and no pronouncements, question instead.\n" +
+            "Only ONE member speaks at a time, under 60 words, name them at the start of the line, and every " +
+            "turn ends with a question to me. They may react briefly to each other but always come back to me."
+    }
+
     /** Added to the explain-back marking prompt. */
     val MARKING: String =
         "Mark it in Richard Feynman's spirit: note any technical term used but not explained in plain words, " +

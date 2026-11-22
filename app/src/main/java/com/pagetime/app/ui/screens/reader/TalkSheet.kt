@@ -99,6 +99,30 @@ private fun Choose(state: TalkViewModel.UiState, vm: TalkViewModel) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    Text("Who is asking?", style = MaterialTheme.typography.labelLarge)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TalkItThrough.Style.entries.forEach { s ->
+            FilterChip(selected = state.style == s, onClick = { vm.setStyle(s) }, label = { Text(s.label) })
+        }
+    }
+    Text(
+        if (state.style == TalkItThrough.Style.ROUNDTABLE)
+            "A roundtable in the spirit of Franklin's Junto: Franklin chairs, two other thinkers join, and you " +
+                "are one of the members."
+        else "One Socratic tutor asks, one question at a time.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (state.style == TalkItThrough.Style.ROUNDTABLE) {
+        OutlinedTextField(
+            value = state.guests,
+            onValueChange = vm::setGuests,
+            singleLine = true,
+            label = { Text("Invite someone (optional)") },
+            supportingText = { Text("For example Marie Curie, David Hume. Leave it empty and your AI chooses.") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
     Text("How deep?", style = MaterialTheme.typography.labelLarge)
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         (1..3).forEach { n ->

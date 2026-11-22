@@ -49,6 +49,10 @@ class TalkViewModel(
         val sectionLabel: String = "",
         val words: Int = 0,
         val questions: Int = 1,
+        /** A roundtable of thinkers with the reader as a member, or one tutor. */
+        val style: TalkItThrough.Style = TalkItThrough.Style.ROUNDTABLE,
+        /** Thinkers the reader wants at the table; empty leaves the choice to the AI. */
+        val guests: String = "",
         /** The reader's own wording, when they have edited the prompt. */
         val edited: String? = null,
         val basePrompt: String = "",
@@ -126,9 +130,13 @@ class TalkViewModel(
             concepts = concepts,
             questions = questions,
             code = code,
+            style = style,
+            guests = guests,
         )
     )
 
+    fun setStyle(style: TalkItThrough.Style) = _state.update { it.copy(style = style, edited = null).withPrompt() }
+    fun setGuests(guests: String) = _state.update { it.copy(guests = guests.take(120), edited = null).withPrompt() }
     fun setQuestions(n: Int) = _state.update { it.copy(questions = n.coerceIn(1, 3), edited = null).withPrompt() }
     fun edit(text: String) = _state.update { it.copy(edited = text) }
     fun resetEdits() = _state.update { it.copy(edited = null) }

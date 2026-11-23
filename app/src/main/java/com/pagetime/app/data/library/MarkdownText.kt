@@ -141,7 +141,9 @@ object MarkdownText {
             if (column == 0) {
                 val start = out.length
                 inline(cell, out, spans)
-                if (out.length > start) spans += StyleSpan(start, out.length, Kind.BOLD)
+                // A cell already written in bold has this span; adding it again would double it.
+                val whole = StyleSpan(start, out.length, Kind.BOLD)
+                if (out.length > start && whole !in spans) spans += whole
             } else {
                 val name = header.getOrNull(column).orEmpty()
                 if (name.isNotBlank()) {

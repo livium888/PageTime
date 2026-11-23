@@ -892,6 +892,15 @@ class SettingsRepository(private val context: Context) {
         CardTextSize.fromKey(p[Keys.CARD_TEXT_SIZE])
     }
 
+    private val writeOwnAnswerKey = booleanPreferencesKey("review_write_own_answer")
+
+    /** Whether the review card asks for the reader's own answer before showing the real one. */
+    val reviewWriteOwnAnswer: Flow<Boolean> = context.dataStore.data.map { it[writeOwnAnswerKey] == true }
+
+    suspend fun setReviewWriteOwnAnswer(on: Boolean) {
+        context.dataStore.edit { it[writeOwnAnswerKey] = on }
+    }
+
     suspend fun setCardTextSize(size: CardTextSize) {
         context.dataStore.edit { it[Keys.CARD_TEXT_SIZE] = size.key }
     }

@@ -150,4 +150,115 @@ class MarkdownTextTest {
             MarkdownText.pageSpans(spans, pageStart = 10, pageEnd = 30),
         )
     }
+
+    private fun levels(c: MarkdownText.Converted): List<Pair<String, Int>> =
+        c.spans.filter { it.kind == Kind.HEADING }.map { c.text.substring(it.start, it.end) to it.level }
+
+    @Test
+    fun `every heading level from one to six is kept`() {
+        val md = (1..6).joinToString("\n\n") { "${"#".repeat(it)} Level $it" }
+        assertEquals((1..6).map { "Level $it" to it }, levels(MarkdownText.convert(md)))
+    }
+
+    @Test
+    fun `seven hashes is not a heading`() {
+        val c = MarkdownText.convert("####### nope")
+        assertTrue(c.spans.none { it.kind == Kind.HEADING })
+    }
+
+    @Test
+    fun `heading levels survive the stored file and old files read as level one`() {
+        val c = MarkdownText.convert("# A\n\n### B\n\nbody **bold**")
+        val stored = MarkdownText.encode(c.text.length, c.spans)
+        assertEquals(c.spans, MarkdownText.decode(stored, c.text.length))
+        val old = """{"length":5,"spans":[[0,5,"HEADING"],[0,2,"BOLD"]]}"""
+        val read = MarkdownText.decode(old, 5)
+        assertEquals(1, read.first { it.kind == Kind.HEADING }.level)
+        assertEquals(0, read.first { it.kind == Kind.BOLD }.level)
+    }
+
+    @Test
+    fun `page spans keep their level`() {
+        val c = MarkdownText.convert("Intro.\n\n## Part\n\nText.")
+        val heading = c.spans.first { it.kind == Kind.HEADING }
+        val page = MarkdownText.pageSpans(c.spans, heading.start - 2, c.text.length)
+        assertEquals(2, page.first { it.kind == Kind.HEADING }.level)
+    }
+
+    @Test
+    fun `a table becomes one small block per row, first cell as the title`() {
+        val md = "| Era | Years | Notable |\n| --- | :---: | --- |\n| Bronze | 3300-1200 | Writing |\n| Iron | 1200-600 | |\n\nAfter."
+        val c = MarkdownText.convert(md)
+        assertEquals("Bronze\nYears: 3300-1200\nNotable: Writing\n\nIron\nYears: 1200-600\n\nAfter.", c.text)
+        assertEquals(listOf("Bronze", "Iron"), styled(c, Kind.BOLD))
+        assertEquals(listOf("Years", "Notable", "Years"), styled(c, Kind.ITALIC))
+    }
+
+    @Test
+    fun `a table without outer pipes and with markup in its cells`() {
+        val md = "Option | Cost\n--- | ---\n**Rent** | \\| 900 \\|\nBuy | *a lot*"
+        val c = MarkdownText.convert(md)
+        assertEquals("Rent\nCost: | 900 |\n\nBuy\nCost: a lot", c.text)
+        assertEquals(listOf("Rent", "Buy"), styled(c, Kind.BOLD))
+    }
+
+    @Test
+    fun `a line with a pipe but no divider under it is ordinary text`() {
+        val c = MarkdownText.convert("either a | b works\n\nnext")
+        assertEquals("either a | b works\n\nnext", c.text)
+    }
+
+    @Test
+    fun `a table sits between paragraphs and does not swallow them`() {
+        val c = MarkdownText.convert("Before.\n| A | B |\n|---|---|\n| x | y |\nAfter the table.")
+        assertEquals("Before.\n\nx\nB: y\n\nAfter the table.", c.text)
+    }
+
+    @Test
+    fun `a quotation is set in italics`() {
+        val c = MarkdownText.convert("He said:\n\n> to be or not to be\n\nand left.")
+        assertEquals("He said:\n\nto be or not to be\n\nand left.", c.text)
+        assertEquals(listOf("to be or not to be"), styled(c, Kind.ITALIC))
+    }
+
+    @Test
+    fun `sections are the two shallowest levels in use`() {
+        val c = MarkdownText.convert("# Talk\n\n## One\n\n#### deep\n\n## Two\n\n### sub")
+        val names = MarkdownText.sectionHeadings(c.spans).map { c.text.substring(it.start, it.end) }
+        assertEquals(listOf("Talk", "One", "Two"), names)
+        val onlyDeep = MarkdownText.convert("## A\n\n### B\n\n#### C")
+        assertEquals(2, MarkdownText.sectionHeadings(onlyDeep.spans).size)
+        assertTrue(MarkdownText.sectionHeadings(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `a realistic reply from an AI app converts cleanly and every span is in range`() {
+        val md = """
+            # The Roman Economy
+
+            **Host:** Welcome back. Today: *money*.
+
+            ## Coins
+
+            ### The denarius
+
+            Silver, at first. The **debasement** came later:
+
+            - Nero cut the silver
+            - Severus cut it more
+
+            > "The army's pay was the empire's budget."
+
+            ## Compared
+
+            | Period | Silver | Effect |
+            |---|---|---|
+            | Augustus | 95% | Stable |
+            | Severus | 50% | Inflation |
+        """.trimIndent()
+        val c = MarkdownText.convert(md)
+        assertEquals(listOf("The Roman Economy" to 1, "Coins" to 2, "The denarius" to 3, "Compared" to 2), levels(c))
+        assertTrue(c.spans.all { it.start >= 0 && it.end <= c.text.length && it.end > it.start })
+        assertTrue(!c.text.contains("|") && !c.text.contains("#") && !c.text.contains("**"))
+    }
 }

@@ -165,7 +165,7 @@ fun rememberAnnotatedPageWithHighlights(
 /**
  * The weight and slant for [spans], given page-relative.
  *
- * A heading is drawn bold and [headingScale] times the body size. Bold and
+ * A heading is drawn as [headingStyle] says: up to [headingScale] times the body size, by level. Bold and
  * larger letters are wider, so pagination measures the page WITH these styles
  * (see the measuring function in the text reader): measured as plain text and
  * drawn styled, a page wraps onto more lines than were measured and loses its
@@ -180,14 +180,41 @@ internal fun formattingLayer(
     val end = span.end.coerceIn(start, text.length)
     if (end <= start) return@mapNotNull null
     val style = when (span.kind) {
-        MarkdownText.Kind.HEADING -> SpanStyle(
-            fontWeight = FontWeight.Bold,
-            fontSize = if (headingScale > 1f) headingScale.em else TextUnit.Unspecified,
-        )
+        MarkdownText.Kind.HEADING -> headingStyle(span.level, headingScale)
         MarkdownText.Kind.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
         MarkdownText.Kind.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
     }
     AnnotatedString.Range(style, start, end)
+}
+
+/**
+ * The look of a heading of [level] (1 to 6, 0 meaning one stored without a level).
+ *
+ * Lines are a fixed height, so the size cannot grow past [headingScale]
+ * however many levels there are. Instead the top of that range is shared out
+ * and, once the levels run out of size, they are told apart by weight and
+ * slant:
+ *
+ *  - 1: the full [headingScale], bold
+ *  - 2: two thirds of the way up from body size, bold
+ *  - 3: one third of the way up, bold
+ *  - 4: body size, bold
+ *  - 5: body size, bold italic
+ *  - 6: body size, italic
+ */
+internal fun headingStyle(level: Int, headingScale: Float): SpanStyle {
+    val growth = (headingScale - 1f).coerceAtLeast(0f)
+    val scale = when (level) {
+        0, 1 -> 1f + growth
+        2 -> 1f + growth * 2f / 3f
+        3 -> 1f + growth / 3f
+        else -> 1f
+    }
+    return SpanStyle(
+        fontWeight = if (level == 6) FontWeight.Normal else FontWeight.Bold,
+        fontStyle = if (level >= 5) FontStyle.Italic else FontStyle.Normal,
+        fontSize = if (scale > 1.001f) scale.em else TextUnit.Unspecified,
+    )
 }
 
 /**

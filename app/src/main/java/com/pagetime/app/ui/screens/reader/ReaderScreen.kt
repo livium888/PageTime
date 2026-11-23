@@ -416,11 +416,12 @@ fun ReaderScreen(
     // transcripts carry headings; without this they had no way to move around
     // except page by page.
     val textHeadings = remember(bookText) {
-        val book = bookText ?: return@remember emptyList<Pair<String, Int>>()
+        val book = bookText ?: return@remember emptyList<Triple<String, Int, Int>>()
         book.spans
             .filter { it.kind == MarkdownText.Kind.HEADING && it.end <= book.text.length }
-            .map { book.text.substring(it.start, it.end).trim() to it.start }
+            .map { Triple(book.text.substring(it.start, it.end).trim(), it.start, it.level) }
             .filter { it.first.isNotEmpty() }
+            .sortedBy { it.second }
     }
     var progressMode by remember { mutableStateOf(ProgressIndicatorMode.PERCENT) }
     var sleepRemainingMs by remember { mutableStateOf<Long?>(null) }
@@ -3061,11 +3062,14 @@ private fun CardOfferBar(
     }
 }
 
-/** A text book's headings as a chapter list; choosing one jumps to its page. */
+/**
+ * A text book's headings as a chapter list; choosing one jumps to its page.
+ * Each is (title, offset, level): deeper headings are indented under the ones above.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TextHeadingsSheet(
-    headings: List<Pair<String, Int>>,
+    headings: List<Triple<String, Int, Int>>,
     onSelect: (offset: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -3076,16 +3080,18 @@ private fun TextHeadingsSheet(
                 .heightIn(max = 480.dp)
                 .padding(bottom = 24.dp)
         ) {
-            itemsIndexed(headings, key = { i, _ -> i }) { _, (title, offset) ->
+            val shallowest = headings.minOfOrNull { it.third } ?: 1
+            itemsIndexed(headings, key = { i, _ -> i }) { _, (title, offset, level) ->
+                val depth = (level - shallowest).coerceIn(0, 4)
                 Text(
                     title,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = if (depth == 0) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onSelect(offset) }
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                        .padding(start = 20.dp + 16.dp * depth, end = 20.dp, top = 14.dp, bottom = 14.dp)
                 )
             }
         }

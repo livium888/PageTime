@@ -2,7 +2,13 @@ package com.pagetime.app.ui.screens.review
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -27,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,7 +50,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import com.pagetime.app.ui.theme.Literata
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -123,6 +133,7 @@ fun ReviewSessionScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val cardTextSize by vm.cardTextSize.collectAsStateWithLifecycle()
+    val writeOwn by vm.writeOwnAnswer.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
 
     // Whether the answer still needs bringing into view.
@@ -144,7 +155,9 @@ fun ReviewSessionScreen(
     LaunchedEffect(scrollState.maxValue, answerNeedsScroll) {
         if (answerNeedsScroll && scrollState.maxValue > 0) {
             answerNeedsScroll = false
-            scrollState.animateScrollTo(scrollState.maxValue)
+            // The question is pinned above the scroll area now, so the answer is
+            // read from its top; scrolling to the bottom would hide its start.
+            scrollState.scrollTo(0)
         }
     }
 
@@ -169,6 +182,8 @@ fun ReviewSessionScreen(
                             onUndo = vm::undo,
                             onSkip = vm::skip,
                             showSkip = !gateMode,
+                            writeOwn = writeOwn,
+                            onWriteOwn = vm::setWriteOwnAnswer,
                         )
                     }
                 },
@@ -216,6 +231,7 @@ fun ReviewSessionScreen(
                     state = state,
                     textSize = cardTextSize,
                     scrollState = scrollState,
+                    writeOwn = writeOwn,
                     onReveal = vm::reveal,
                     onGrade = vm::grade,
                     onOpenSource = onOpenSource,
@@ -248,78 +264,165 @@ private fun ColumnScope.CardReviewContent(
     state: ReviewUiState,
     textSize: CardTextSize,
     scrollState: ScrollState,
+    writeOwn: Boolean,
     onReveal: () -> Unit,
     onGrade: (LumenRating) -> Unit,
     onOpenSource: (bookId: String) -> Unit,
 ) {
+    var yourAnswer by remember(card.id) { mutableStateOf("") }
+    var questionOpen by remember(card.id) { mutableStateOf(false) }
     CardPanel(Modifier.weight(1f)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            // Which book asked this, not just that a book did. A sitting now
-            // mixes questions from several books, and some prompts are
-            // ambiguous without knowing the subject — through no fault of the
-            // reader.
-            Text(
-                card.sourceLabel
-                    ?: if (card.fromChapter) "From the book" else "From your slip box",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                card.front,
-                style = scaled(MaterialTheme.typography.titleLarge, textSize),
-                fontWeight = FontWeight.SemiBold,
-            )
-
-            if (state.revealed) {
+        Column(Modifier.fillMaxSize()) {
+            // The question never scrolls away: big before you answer, a pinned
+            // reminder once you have, so the answer is always read against it.
+            Column(
+                Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Which book asked this, not just that a book did. A sitting
+                // mixes questions from several books, and some prompts are
+                // ambiguous without knowing the subject.
                 Text(
-                    card.back,
-                    style = scaled(MaterialTheme.typography.bodyLarge, textSize),
+                    card.sourceLabel
+                        ?: if (card.fromChapter) "From the book" else "From your slip box",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                // The answer says what; this says why. It is the part worth
-                // reading on the tenth review, when the answer itself is long
-                // since automatic.
-                card.explanation?.let { why ->
+                if (!state.revealed) {
+                    CardLabel("Question")
                     Text(
-                        why,
-                        style = scaled(MaterialTheme.typography.bodyMedium, textSize),
+                        card.front,
+                        style = scaled(MaterialTheme.typography.titleLarge, textSize),
+                        fontFamily = Literata,
+                        fontWeight = FontWeight.SemiBold,
                     )
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { questionOpen = !questionOpen },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            CardLabel("Question")
+                            Text(
+                                card.front,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = Literata,
+                                maxLines = if (questionOpen) Int.MAX_VALUE else 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
-                card.source?.takeIf { it.isNotBlank() }?.let { source ->
-                    Spacer(Modifier.height(2.dp))
-                    // Labelled, because unlabelled it read as the explanation —
-                    // which is exactly what it was standing in for while the
-                    // explanation column went unfilled.
+            }
+
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                if (!state.revealed) {
+                    if (writeOwn) {
+                        OutlinedTextField(
+                            value = yourAnswer,
+                            onValueChange = { yourAnswer = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            label = { Text("Your answer, in your own words (optional)") },
+                        )
+                        Text(
+                            "Putting it in words first makes the real answer stick better than only thinking it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    if (writeOwn && yourAnswer.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                CardLabel("You said")
+                                Text(
+                                    yourAnswer.trim(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontFamily = Literata,
+                                )
+                            }
+                        }
+                    }
+                    CardLabel("Answer", MaterialTheme.colorScheme.primary)
                     Text(
-                        "From the book",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        card.back,
+                        style = scaled(MaterialTheme.typography.bodyLarge, textSize),
+                        fontFamily = Literata,
                     )
-                    // Deliberately NOT scaled with the card. This is the
-                    // provenance of the question, not the question; it is the
-                    // first thing that should give way when the reader asks for
-                    // bigger text.
-                    Text(
-                        source.trim(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (card.bookId.isNotBlank()) {
-                    TextButton(onClick = { onOpenSource(card.bookId) }) {
-                        Text("Open the passage")
+                    // The answer says what; this says why. It is the part worth
+                    // reading on the tenth review, when the answer itself is long
+                    // since automatic. Set apart like a note in a margin.
+                    card.explanation?.takeIf { it.isNotBlank() }?.let { why ->
+                        Row(Modifier.height(IntrinsicSize.Min)) {
+                            Box(
+                                Modifier
+                                    .width(3.dp)
+                                    .fillMaxHeight()
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                            )
+                            Column(Modifier.padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                CardLabel("Why")
+                                Text(
+                                    why,
+                                    style = scaled(MaterialTheme.typography.bodyMedium, textSize),
+                                    fontFamily = Literata,
+                                    fontStyle = FontStyle.Italic,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    card.source?.takeIf { it.isNotBlank() }?.let { source ->
+                        Spacer(Modifier.height(2.dp))
+                        // Labelled, because unlabelled it read as the explanation.
+                        CardLabel("From the book")
+                        // Deliberately NOT scaled with the card: provenance, not
+                        // the question, and the first thing to give way when the
+                        // reader asks for bigger text.
+                        Text(
+                            source.trim(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (card.bookId.isNotBlank()) {
+                        TextButton(onClick = { onOpenSource(card.bookId) }) {
+                            Text("Open the passage")
+                        }
                     }
                 }
             }
         }
     }
 
-    SittingFooter(state = state, onReveal = onReveal, onGrade = onGrade)
+    SittingFooter(state = state, writeOwn = writeOwn, onReveal = onReveal, onGrade = onGrade)
+}
+
+/** A small caps label, so every part of a card says what it is. */
+@Composable
+private fun CardLabel(text: String, color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = androidx.compose.ui.unit.TextUnit(1.2f, androidx.compose.ui.unit.TextUnitType.Sp),
+        color = color,
+    )
 }
 
 /**
@@ -338,6 +441,7 @@ private fun ColumnScope.CardReviewContent(
 @Composable
 private fun SittingFooter(
     state: ReviewUiState,
+    writeOwn: Boolean,
     onReveal: () -> Unit,
     onGrade: (LumenRating) -> Unit,
 ) {
@@ -361,7 +465,7 @@ private fun SittingFooter(
                 modifier = Modifier.fillMaxWidth().height(AnswerButtonHeight),
                 shape = AnswerButtonShape,
             ) {
-                Text("Show answer", style = MaterialTheme.typography.labelLarge)
+                Text(if (writeOwn) "Check my answer" else "Show answer", style = MaterialTheme.typography.labelLarge)
             }
         } else {
             // Four ratings rather than right/wrong: FSRS uses the difference to
@@ -432,10 +536,11 @@ private fun CountsBar(remaining: Int) {
                 )
             ) { append(remaining.toString()) }
             withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                append(if (remaining == 1) " card left" else " cards left")
+                // Short enough to fit beside the buttons in the bar: it was cut off at "about 3".
+                append(" left")
                 // About how long that is, so the sitting can be seen to end.
                 val minutes = ((remaining * ReviewSession.SECONDS_PER_CARD + 30) / 60).coerceAtLeast(1)
-                append(" · about $minutes min")
+                append(" \u00b7 ~$minutes min")
             }
         },
         style = MaterialTheme.typography.titleMedium,
@@ -495,6 +600,8 @@ private fun SittingMenu(
     onUndo: () -> Unit,
     onSkip: () -> Unit,
     showSkip: Boolean = true,
+    writeOwn: Boolean = false,
+    onWriteOwn: (Boolean) -> Unit = {},
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -507,6 +614,16 @@ private fun SittingMenu(
                 enabled = canUndo,
                 onClick = {
                     onUndo()
+                    open = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Write my own answer first") },
+                trailingIcon = {
+                    if (writeOwn) Icon(Icons.Filled.Check, contentDescription = "On")
+                },
+                onClick = {
+                    onWriteOwn(!writeOwn)
                     open = false
                 },
             )

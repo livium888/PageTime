@@ -168,6 +168,13 @@ class ReviewSessionViewModel(
     val cardTextSize = settings.cardTextSize
         .stateIn(viewModelScope, SharingStarted.Eagerly, CardTextSize.DEFAULT)
 
+    val writeOwnAnswer = settings.reviewWriteOwnAnswer
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setWriteOwnAnswer(on: Boolean) {
+        viewModelScope.launch { runCatching { settings.setReviewWriteOwnAnswer(on) } }
+    }
+
     fun setCardTextSize(size: CardTextSize) {
         viewModelScope.launch { runCatching { settings.setCardTextSize(size) } }
     }

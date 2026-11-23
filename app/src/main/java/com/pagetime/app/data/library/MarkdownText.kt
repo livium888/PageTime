@@ -25,7 +25,8 @@ object MarkdownText {
 
     enum class Kind { HEADING, BOLD, ITALIC }
 
-    data class StyleSpan(val start: Int, val end: Int, val kind: Kind)
+    /** [level] is 1 to 6 for a [Kind.HEADING] (`#` to `######`) and 0 for everything else. */
+    data class StyleSpan(val start: Int, val end: Int, val kind: Kind, val level: Int = 0)
 
     data class Converted(val text: String, val spans: List<StyleSpan>)
 
@@ -34,6 +35,9 @@ object MarkdownText {
     private val QUOTE = Regex("""^\s{0,3}>\s?(.*)$""")
     private val RULE = Regex("""^\s{0,3}([-*_])(\s*\1){2,}\s*$""")
     private val FENCE = Regex("""^\s{0,3}(```|~~~).*$""")
+
+    /** `| --- | :---: |`: the line under a table's header. At least two columns. */
+    private val TABLE_DIVIDER = Regex("""^\s{0,3}\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$""")
 
     fun convert(markdown: String): Converted {
         val out = StringBuilder()
@@ -46,14 +50,28 @@ object MarkdownText {
             while (!out.endsWith("\n\n")) out.append('\n')
         }
 
-        for (rawLine in markdown.replace("\r\n", "\n").replace('\r', '\n').split('\n')) {
-            val line = rawLine.trimEnd()
+        val lines = markdown.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+        var index = 0
+        while (index < lines.size) {
+            val line = lines[index++].trimEnd()
             if (FENCE.matches(line)) {
                 inFence = !inFence
                 continue
             }
             if (inFence) {
                 out.append(line).append('\n')
+                continue
+            }
+            if (line.contains('|') && index < lines.size && TABLE_DIVIDER.matches(lines[index].trimEnd())) {
+                val header = splitRow(line)
+                index++
+                val rows = mutableListOf<List<String>>()
+                while (index < lines.size && lines[index].isNotBlank() && lines[index].contains('|')) {
+                    rows += splitRow(lines[index].trimEnd())
+                    index++
+                }
+                ensureBlankLine()
+                for (row in rows) table(header, row, out, spans)
                 continue
             }
             if (line.isBlank() || RULE.matches(line)) {
@@ -65,7 +83,9 @@ object MarkdownText {
                 ensureBlankLine()
                 val start = out.length
                 inline(heading.groupValues[2], out, spans)
-                if (out.length > start) spans += StyleSpan(start, out.length, Kind.HEADING)
+                if (out.length > start) {
+                    spans += StyleSpan(start, out.length, Kind.HEADING, heading.groupValues[1].length)
+                }
                 out.append("\n\n")
                 continue
             }
@@ -76,7 +96,13 @@ object MarkdownText {
                     out.append(bullet.groupValues[1]).append("• ")
                     inline(bullet.groupValues[2], out, spans)
                 }
-                quote != null -> inline(quote.groupValues[1], out, spans)
+                quote != null -> {
+                    // A quotation is set in italics: its mark is gone, so this
+                    // is what still tells it from the speaker's own words.
+                    val start = out.length
+                    inline(quote.groupValues[1], out, spans)
+                    if (out.length > start) spans += StyleSpan(start, out.length, Kind.ITALIC)
+                }
                 else -> inline(line, out, spans)
             }
             out.append('\n')
@@ -90,6 +116,87 @@ object MarkdownText {
                 if (end > span.start) span.copy(end = end) else null
             },
         )
+    }
+
+    /**
+     * One table row as a small block, because a table cannot be drawn on a
+     * phone: the page is a column of wrapped text, a few characters wide per
+     * column, and a table's cells would wrap into an unreadable grid.
+     *
+     * The row's first cell is its title, in bold; every other cell goes on its
+     * own line as "Column: value" with the column name in italics. Nothing in
+     * the table is lost except the first column's own heading, which is the
+     * title's role and says nothing the titles do not. Empty cells are skipped.
+     */
+    private fun table(header: List<String>, row: List<String>, out: StringBuilder, spans: MutableList<StyleSpan>) {
+        if (row.all { it.isBlank() }) return
+        var wrote = false
+        fun newLine() {
+            if (wrote) out.append('\n')
+            wrote = true
+        }
+        row.forEachIndexed { column, cell ->
+            if (cell.isBlank()) return@forEachIndexed
+            newLine()
+            if (column == 0) {
+                val start = out.length
+                inline(cell, out, spans)
+                if (out.length > start) spans += StyleSpan(start, out.length, Kind.BOLD)
+            } else {
+                val name = header.getOrNull(column).orEmpty()
+                if (name.isNotBlank()) {
+                    val start = out.length
+                    inline(name, out, spans)
+                    if (out.length > start) spans += StyleSpan(start, out.length, Kind.ITALIC)
+                    out.append(": ")
+                }
+                inline(cell, out, spans)
+            }
+        }
+        out.append("\n\n")
+    }
+
+    /** The cells of a table row, without its outer pipes; `\|` stays inside its cell. */
+    private fun splitRow(line: String): List<String> {
+        val cells = mutableListOf<String>()
+        val current = StringBuilder()
+        var i = 0
+        while (i < line.length) {
+            val c = line[i]
+            when {
+                c == '\\' && i + 1 < line.length && line[i + 1] == '|' -> {
+                    current.append("\\|")
+                    i += 2
+                }
+                c == '|' -> {
+                    cells += current.toString().trim()
+                    current.clear()
+                    i++
+                }
+                else -> {
+                    current.append(c)
+                    i++
+                }
+            }
+        }
+        cells += current.toString().trim()
+        // "| a | b |" splits into "", "a", "b", "": the outer pipes are not cells.
+        if (line.trimStart().startsWith("|") && cells.isNotEmpty()) cells.removeAt(0)
+        if (line.trimEnd().endsWith("|") && !line.trimEnd().endsWith("\\|") && cells.isNotEmpty()) cells.removeAt(cells.size - 1)
+        return cells
+    }
+
+    /**
+     * The headings that open a section worth a pause, a "talk it through" offer
+     * or a section receipt: the two shallowest levels the text uses. A
+     * transcript with one `#` and a dozen `##` is divided by its `##`s; one
+     * that never goes above `##` is divided by those and its `###`s. Deeper
+     * headings are still drawn and listed, but do not split the reading up.
+     */
+    fun sectionHeadings(spans: List<StyleSpan>): List<StyleSpan> {
+        val headings = spans.filter { it.kind == Kind.HEADING }
+        val top = headings.minOfOrNull { it.level } ?: return emptyList()
+        return headings.filter { it.level <= top + 1 }
     }
 
     /** Appends [source] to [out] with its inline markers removed, recording what they meant. */
@@ -237,7 +344,7 @@ object MarkdownText {
             .put(
                 "spans",
                 JSONArray().apply {
-                    spans.forEach { put(JSONArray().put(it.start).put(it.end).put(it.kind.name)) }
+                    spans.forEach { put(JSONArray().put(it.start).put(it.end).put(it.kind.name).put(it.level)) }
                 },
             )
             .toString()
@@ -254,7 +361,9 @@ object MarkdownText {
                 val kind = Kind.entries.firstOrNull { it.name == item.optString(2) } ?: return@mapNotNull null
                 val start = item.optInt(0, -1)
                 val end = item.optInt(1, -1)
-                if (start < 0 || end <= start || end > textLength) null else StyleSpan(start, end, kind)
+                // Files written before levels existed have none: those headings were all drawn alike.
+                val level = if (kind == Kind.HEADING) item.optInt(3, 1).coerceIn(1, 6) else 0
+                if (start < 0 || end <= start || end > textLength) null else StyleSpan(start, end, kind, level)
             }
         } catch (_: JSONException) {
             emptyList()
@@ -266,7 +375,7 @@ object MarkdownText {
         spans.mapNotNull { span ->
             val start = span.start.coerceAtLeast(pageStart)
             val end = span.end.coerceAtMost(pageEnd)
-            if (end > start) StyleSpan(start - pageStart, end - pageStart, span.kind) else null
+            if (end > start) StyleSpan(start - pageStart, end - pageStart, span.kind, span.level) else null
         }
 
     // endregion

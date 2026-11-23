@@ -21,7 +21,13 @@ object TranscriptFormatPrompt {
     /** A formatted transcript keeps at least this share of the original's words. */
     const val MIN_KEPT_FRACTION = 0.6
 
-    fun words(text: String): Int = text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+    /**
+     * Words, not tokens: a table's `|` and `---` and a heading's `#` are marks,
+     * not words, and counting them would let a reply with a lot of formatting
+     * pass the length check while missing part of the transcript.
+     */
+    fun words(text: String): Int =
+        text.trim().split(Regex("\\s+")).count { token -> token.any { it.isLetterOrDigit() } }
 
     /** Why [raw] cannot be sent, or null when it can. */
     fun problem(raw: String): String? {
@@ -36,23 +42,52 @@ object TranscriptFormatPrompt {
     }
 
     fun build(title: String, raw: String): String = """
-        |You are a professional editor formatting a raw transcript into a clean,
-        |readable book-like document.
+        |You are a professional editor turning a raw transcript into a clean,
+        |well-structured document that will be read on a phone. Reply in Markdown.
         |
         |Title: $title
         |
-        |RULES:
+        |CLEAN-UP
         |1. Fix caption artifacts: repeated words, missing punctuation, broken sentences.
-        |2. If it is a conversation, label speaker turns with "**Host:**" and "**Guest:**"
-        |   (or names if they are mentioned). If you cannot tell who is who, use
+        |2. Remove filler words (um, uh, you know) when they add no meaning, and
+        |   [Music], [Applause] and other bracket tags.
+        |3. Keep the speaker's voice and conversational tone. Do not make it formal.
+        |4. Preserve ALL content and meaning. Do not summarize, skip, reorder or invent
+        |   anything. The reply should be nearly as long as the transcript.
+        |5. If it is a conversation, start each turn with "**Host:**" and "**Guest:**"
+        |   (or the names, if they are mentioned). If you cannot tell who is who, use
         |   "**Speaker A:**" and "**Speaker B:**".
-        |3. Organize into clear paragraphs at natural topic transitions.
-        |4. Add a topic heading when the subject changes, as a single line starting with "# ".
-        |5. Remove filler words (um, uh, you know) when they add no meaning.
-        |6. Keep the conversational tone. Do not make it formal.
-        |7. Preserve ALL content and meaning. Do not summarize, skip, reorder or invent anything.
-        |8. Remove [Music], [Applause] and other bracket tags.
-        |9. Reply with ONLY the formatted text: no preamble, no commentary, no code block.
+        |6. Put paragraphs at natural topic transitions. Keep them short: 2 to 5 sentences.
+        |
+        |STRUCTURE: use headings so the reader can see how the talk is built
+        |- "# " (one only): the talk's overall subject, as the very first line.
+        |- "## ": each major part, when the subject clearly changes.
+        |- "### ": a distinct topic inside a major part.
+        |- "#### " and deeper only if a part is long and truly has a fourth level.
+        |- Headings are short (2 to 8 words), name the topic, and are never a full
+        |  sentence. Never skip a level (no "###" straight after "#"). Do not put a
+        |  heading over every paragraph: a typical hour has 5 to 12 "##" parts.
+        |- Put a blank line before and after every heading. No numbering in headings.
+        |
+        |INLINE FORMATTING (use sparingly, it must stay meaningful)
+        |- **Bold**: a key term where the speaker defines it, or a name the talk is
+        |  about. Not for whole sentences, and not for more than a few words at a time.
+        |- *Italics*: titles of books and films, foreign words, and words the speaker
+        |  clearly stresses.
+        |- Lists: when the speaker walks through items ("first, second, third", steps,
+        |  examples), use "- " bullets, or "1. " if the order matters.
+        |- Blockquotes ("> "): only when the speaker reads aloud or quotes a passage.
+        |- Tables: only when the speaker compares several things on the same
+        |  attributes (for example three options and their costs), as a Markdown table
+        |  with a header row, a "| --- | --- |" row and one row per item. The first
+        |  column names the item. Keep cells to a few words. Never use a table for
+        |  ordinary prose, and never put a conversation in one.
+        |
+        |DO NOT USE: horizontal rules, HTML, emoji, footnotes, images or links, and
+        |nothing that is not in the transcript.
+        |
+        |OUTPUT: reply with ONLY the formatted Markdown: no preamble, no commentary,
+        |no closing remarks, and do not wrap it in a code block.
         |
         |Here is the raw transcript:
         |

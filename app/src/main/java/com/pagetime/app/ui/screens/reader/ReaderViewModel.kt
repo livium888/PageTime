@@ -142,8 +142,8 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
 
     /** For a text book the section ends at the next heading, or the end of the text. */
     private fun updateChapterEndForText(shown: TextBook, pageStart: Int) {
-        val end = shown.spans
-            .filter { it.kind == com.pagetime.app.data.library.MarkdownText.Kind.HEADING && it.start > pageStart }
+        val end = com.pagetime.app.data.library.MarkdownText.sectionHeadings(shown.spans)
+            .filter { it.start > pageStart }
             .minOfOrNull { it.start } ?: shown.text.length
         // Further than this is over a quarter of an hour away and is not shown
         // anyway, so a long text with no headings is not counted on every page.
@@ -1828,8 +1828,7 @@ class ReaderViewModel(private val app: Application, private val bookId: String) 
      */
     private fun trackTextSections(pageStart: Int, userInitiated: Boolean) {
         val shown = _bookText.value ?: return
-        val heads = shown.spans
-            .filter { it.kind == com.pagetime.app.data.library.MarkdownText.Kind.HEADING }
+        val heads = com.pagetime.app.data.library.MarkdownText.sectionHeadings(shown.spans)
             .sortedBy { it.start }
         if (heads.isEmpty()) return
         val index = heads.indexOfLast { it.start <= pageStart }

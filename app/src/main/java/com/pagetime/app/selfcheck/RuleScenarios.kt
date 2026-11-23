@@ -213,6 +213,24 @@ object RuleScenarios {
                 "two declines in a row pause the day" to (q.afterDecline(1, 0L, 100L) == (0 to 100L)),
             )
         },
+        Scenario("transcript.markdown", G, "Tidied transcripts: heading levels, tables and quotes are kept; the prompt asks for them") {
+            val md = "# Talk\n\n## Part\n\n### Topic\n\nSome **key** words.\n\n> quoted\n\n" +
+                "| Option | Cost |\n|---|---|\n| Rent | 900 |"
+            val c = com.pagetime.app.data.library.MarkdownText.convert(md)
+            val kinds = com.pagetime.app.data.library.MarkdownText.Kind.HEADING
+            val prompt = com.pagetime.app.data.TranscriptFormatPrompt.build("Talk", "one two three")
+            expect(
+                "three heading levels are kept" to
+                    (c.spans.filter { it.kind == kinds }.map { it.level } == listOf(1, 2, 3)),
+                "no marks are left on screen" to (!c.text.contains('#') && !c.text.contains('|') && !c.text.contains("**")),
+                "a table row becomes a titled block" to c.text.contains("Rent\nCost: 900"),
+                "sizes shrink by level and stop at body size" to
+                    (com.pagetime.app.ui.screens.reader.headingStyle(1, 1.3f).fontSize.value >
+                        com.pagetime.app.ui.screens.reader.headingStyle(3, 1.3f).fontSize.value),
+                "the prompt asks for levels, tables and quotes" to
+                    (prompt.contains("\"### \"") && prompt.contains("Tables") && prompt.contains("Blockquotes")),
+            )
+        },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {
             val zone = ZoneId.systemDefault()
             val reset = LockDay.resetHour

@@ -305,12 +305,29 @@ fun BlockedAppsScreen(
                             .padding(horizontal = 16.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            app.label,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        // A blocked app that cannot be switched off says why,
+                        // on its own row, where the greyed switch is.
+                        val whyWaits = if (blocked && pkg in saved.blocked) {
+                            AppRulesDraft.whyRemovalWaits(
+                                canRemove = gate.canRemoveBlockedApps,
+                                hardLockRemainingMillis = hardRemaining,
+                                secondsToUnlock = gate.secondsToUnlock,
+                            )
+                        } else null
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                app.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (whyWaits != null) {
+                                Text(
+                                    whyWaits,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         Switch(
                             checked = blocked,
                             onCheckedChange = { on ->

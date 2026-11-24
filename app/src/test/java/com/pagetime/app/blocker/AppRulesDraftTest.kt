@@ -69,4 +69,30 @@ class AppRulesDraftTest {
         val lines = AppRulesDraft.summary(AppRulesDraft.diff(inAllowlist, draft), draft, ::label)
         assertEquals(listOf("Switch back to blocking only chosen apps. Everything else opens again."), lines)
     }
+
+    @Test
+    fun `a locked app says why: hard lock first, then the reading still to do`() {
+        assertEquals(
+            "Hard lock: stays blocked for 25 min",
+            AppRulesDraft.whyRemovalWaits(canRemove = false, hardLockRemainingMillis = 24 * 60_000L + 1L, secondsToUnlock = 600L),
+        )
+        assertEquals(
+            "Stays blocked until you've read 10 min more today",
+            AppRulesDraft.whyRemovalWaits(canRemove = false, hardLockRemainingMillis = 0L, secondsToUnlock = 600L),
+        )
+        assertEquals(
+            "Stays blocked until you've read 1 min more today",
+            AppRulesDraft.whyRemovalWaits(canRemove = false, hardLockRemainingMillis = 0L, secondsToUnlock = 5L),
+        )
+        assertEquals(
+            "Stays blocked until today's reading is done",
+            AppRulesDraft.whyRemovalWaits(canRemove = false, hardLockRemainingMillis = 0L, secondsToUnlock = 0L),
+        )
+    }
+
+    @Test
+    fun `nothing is said when removal is allowed, but a hard lock still is`() {
+        assertEquals(null, AppRulesDraft.whyRemovalWaits(canRemove = true, hardLockRemainingMillis = 0L, secondsToUnlock = 0L))
+        assertTrue(AppRulesDraft.whyRemovalWaits(canRemove = true, hardLockRemainingMillis = 60_000L, secondsToUnlock = 0L)!!.startsWith("Hard lock"))
+    }
 }

@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -97,6 +98,12 @@ fun ReaderAppearanceSheet(
         mutableStateOf(settings.volumeKeysTurnPages)
     }
 
+    // The darkest this theme can go, at the warmth chosen, before its text is
+    // hard to read. Drives the slider's end and what is saved.
+    val dimCap = PaperVeilRules.maxDim(
+        paletteFor(theme).background.toArgb(), paletteFor(theme).text.toArgb(), warmth,
+    )
+
     fun apply() {
         onApply(
             ReaderSettings(
@@ -109,7 +116,7 @@ fun ReaderAppearanceSheet(
                 conceptHints = conceptHints,
                 brightness = brightness.takeIf { !useSystemBrightness },
                 warmth = warmth,
-                nightDim = nightDim,
+                nightDim = nightDim.coerceAtMost(dimCap),
                 volumeKeysTurnPages = volumeKeys,
             )
         )
@@ -146,7 +153,7 @@ fun ReaderAppearanceSheet(
                     conceptHints = conceptHints,
                     brightness = brightness.takeIf { !useSystemBrightness },
                     warmth = warmth,
-                    nightDim = nightDim,
+                    nightDim = nightDim.coerceAtMost(dimCap),
                     volumeKeysTurnPages = volumeKeys,
                 )
             )
@@ -350,11 +357,12 @@ fun ReaderAppearanceSheet(
                 valueRange = 0f..1f,
             )
 
+            val shownDim = nightDim.coerceAtMost(dimCap)
             Text(
-                if (nightDim <= 0f) {
+                if (shownDim <= 0f) {
                     "Dim further — off"
                 } else {
-                    "Dim further — ${(nightDim * 100).toInt()}%"
+                    "Dim further — ${(shownDim * 100).toInt()}%"
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -365,13 +373,23 @@ fun ReaderAppearanceSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Slider(
-                value = nightDim,
+                value = shownDim,
                 onValueChange = { nightDim = it },
                 onValueChangeFinished = { apply() },
-                // The same constant the clamp uses, so the slider cannot offer
-                // a value the settings would silently refuse.
-                valueRange = 0f..ReaderSettings.MAX_NIGHT_DIM,
+                // Ends where this theme's text would stop being readable, and
+                // never past the settings' own limit, so the slider cannot
+                // offer a value that would be refused or that hides the page.
+                valueRange = 0f..dimCap.coerceAtLeast(0.01f),
+                enabled = dimCap > 0.01f,
             )
+            if (PaperVeilRules.atLimit(shownDim, dimCap)) {
+                Text(
+                    "As dark as this theme goes: any darker and the text gets hard to read. " +
+                        "Lower the brightness or choose the Night theme to go further.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             Row(

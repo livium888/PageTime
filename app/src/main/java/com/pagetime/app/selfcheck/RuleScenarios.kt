@@ -241,6 +241,20 @@ object RuleScenarios {
                 "nothing is said when removing is allowed" to (d.whyRemovalWaits(true, 0L, 0L) == null),
             )
         },
+        Scenario("reader.veil", G, "Reader night veil: warming keeps black black, and dimming stops short of unreadable") {
+            val r = com.pagetime.app.ui.screens.reader.PaperVeilRules
+            val bg = 0xFF1E1E1E.toInt()
+            val text = 0xFFD5D5D5.toInt()
+            val held = r.effectiveDim(0.62f, bg, text, 1f)
+            expect(
+                "no warmth is no tint" to (r.tintArgb(0f) == 0xFFFFFFFF.toInt()),
+                "full warmth takes blue down most" to
+                    r.tintChannels(1f).let { it[0] > it[1] && it[1] > it[2] },
+                "62% dim on Dark is held back" to (held < 0.5f),
+                "what is left stays readable" to (r.contrast(bg, text, 1f, held) >= r.MIN_CONTRAST - 0.01),
+                "a gentle dim is left alone" to (r.effectiveDim(0.1f, bg, text, 0f) == 0.1f),
+            )
+        },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {
             val zone = ZoneId.systemDefault()
             val reset = LockDay.resetHour

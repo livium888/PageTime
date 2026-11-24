@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import com.pagetime.app.data.local.ReaderSettings
 
 /**
@@ -19,8 +21,8 @@ import com.pagetime.app.data.local.ReaderSettings
  * the display driver's floor rather than a policy.
  *
  * What an app can do is draw over its own window. Black at low alpha takes the
- * page below that floor; amber at low alpha shifts a 6500K daylight-white page
- * toward the colour paper takes under a lamp. Both are the same one-line
+ * page below that floor; multiplying by a warm colour shifts a 6500K
+ * daylight-white page toward the colour paper takes under a lamp. Both are the same one-line
  * mechanism, and together they are most of what software can do to stop a
  * screen reading as a light source.
  *
@@ -40,13 +42,22 @@ import com.pagetime.app.data.local.ReaderSettings
 @Composable
 fun PaperVeil(settings: ReaderSettings, modifier: Modifier = Modifier) {
     val warmth = settings.warmth
-    val dim = settings.nightDim
+    val palette = paletteFor(settings.theme)
+    // Held to what this theme can take: a dim saved under another theme, or
+    // with more warmth, must not leave the text unreadable. See PaperVeilRules.
+    val dim = PaperVeilRules.effectiveDim(
+        settings.nightDim, palette.background.toArgb(), palette.text.toArgb(), warmth,
+    )
     if (warmth <= 0f && dim <= 0f) return
 
-    // Amber first, then black over it. Two passes rather than one blended
-    // colour because they are independent controls: warming a bright page and
-    // darkening a warm one are different requests, and the reader may want
-    // either on its own.
+    // Warm first (a multiply, so black stays black), then black over it. Two
+    // passes rather than one blended colour because they are independent
+    // controls: warming a bright page and darkening a warm one are different
+    // requests, and the reader may want either on its own.
+    //
+    // Multiply blends with what is already drawn beneath this node in the
+    // window, which is the page: the node must not be given its own offscreen
+    // layer, where there would be nothing to multiply.
     //
     // drawBehind, not drawWithContent — this Box holds nothing. Everything it
     // covers is beneath it in the parent's stack, so the rectangles ARE the
@@ -56,18 +67,9 @@ fun PaperVeil(settings: ReaderSettings, modifier: Modifier = Modifier) {
             .fillMaxSize()
             .drawBehind {
                 if (warmth > 0f) {
-                    drawRect(Color(0xFFFF9500).copy(alpha = warmth * MAX_WARMTH_ALPHA))
+                    drawRect(Color(PaperVeilRules.tintArgb(warmth)), blendMode = BlendMode.Multiply)
                 }
                 if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
             }
     )
 }
-
-/**
- * The strongest the amber ever gets.
- *
- * Full opacity would be a solid orange rectangle. A third is about as far as
- * the page can warm before the text starts losing contrast against it, which
- * is the opposite of the point.
- */
-private const val MAX_WARMTH_ALPHA = 0.33f

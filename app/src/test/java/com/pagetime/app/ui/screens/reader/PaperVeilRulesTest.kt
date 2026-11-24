@@ -23,14 +23,13 @@ class PaperVeilRulesTest {
     }
 
     @Test
-    fun `warming multiplies so black stays black`() {
-        // The old amber overlay turned this #000000 into #542F00.
-        assertEquals(
-            PaperVeilRules.contrast(nightBg, nightText, 0f, 0f),
-            PaperVeilRules.contrast(nightBg, nightText, 1f, 0f),
-            1.0,
-        )
-        assertTrue(PaperVeilRules.tintChannels(1f).all { it * 0 == 0.0 })
+    fun `warming multiplies so black stays black and white only goes cream`() {
+        // The old amber overlay turned #000000 into #542F00 and left white/black
+        // at about 5:1. Multiplying keeps the black and the gap.
+        val white = 0xFFFFFFFF.toInt()
+        val black = 0xFF000000.toInt()
+        assertTrue(PaperVeilRules.contrast(black, white, 1f, 0f) > 12.0)
+        assertEquals(21.0, PaperVeilRules.contrast(black, white, 0f, 0f), 0.01)
     }
 
     @Test

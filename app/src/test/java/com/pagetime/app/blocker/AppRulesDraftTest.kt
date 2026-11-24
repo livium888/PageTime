@@ -71,7 +71,7 @@ class AppRulesDraftTest {
     }
 
     @Test
-    fun `a locked app says why: hard lock first, then the reading still to do`() {
+    fun `a locked app says why, hard lock first and then the reading still to do`() {
         assertEquals(
             "Hard lock: stays blocked for 25 min",
             AppRulesDraft.whyRemovalWaits(canRemove = false, hardLockRemainingMillis = 24 * 60_000L + 1L, secondsToUnlock = 600L),

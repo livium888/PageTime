@@ -231,6 +231,16 @@ object RuleScenarios {
                     (prompt.contains("\"### \"") && prompt.contains("Tables") && prompt.contains("Blockquotes")),
             )
         },
+        Scenario("blocked.removal", G, "Blocked apps: a locked app says why, and when it will let go") {
+            val d = com.pagetime.app.blocker.AppRulesDraft
+            expect(
+                "10 minutes of reading left is named" to
+                    (d.whyRemovalWaits(false, 0L, 600L)?.contains("10 min") == true),
+                "a hard lock is named before the reading" to
+                    (d.whyRemovalWaits(false, 30 * 60_000L, 600L)?.startsWith("Hard lock") == true),
+                "nothing is said when removing is allowed" to (d.whyRemovalWaits(true, 0L, 0L) == null),
+            )
+        },
         Scenario("lock.day", G, "Reading day: it starts at your reset hour, not midnight") {
             val zone = ZoneId.systemDefault()
             val reset = LockDay.resetHour

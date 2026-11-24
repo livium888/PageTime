@@ -23,6 +23,26 @@ data class AppRules(
 
 object AppRulesDraft {
 
+    /**
+     * Why a blocked app cannot be switched off right now, in a few words for
+     * the row itself, or null when it can.
+     *
+     * The switch used to be greyed out with nothing beside it: the reason was
+     * one sentence in the intro, scrolled away by the time the list was
+     * reached, so a locked screen looked like a broken one. A hard lock is
+     * named first because it outlasts today's reading.
+     */
+    fun whyRemovalWaits(canRemove: Boolean, hardLockRemainingMillis: Long, secondsToUnlock: Long): String? = when {
+        hardLockRemainingMillis > 0L ->
+            "Hard lock: stays blocked for ${minutesLabel((hardLockRemainingMillis + 59_999L) / 60_000L)}"
+        canRemove -> null
+        secondsToUnlock > 0L ->
+            "Stays blocked until you've read ${minutesLabel((secondsToUnlock + 59L) / 60L)} more today"
+        else -> "Stays blocked until today's reading is done"
+    }
+
+    private fun minutesLabel(minutes: Long): String = if (minutes <= 1L) "1 min" else "$minutes min"
+
     data class Change(
         val entersAllowlist: Boolean,
         val leavesAllowlist: Boolean,
